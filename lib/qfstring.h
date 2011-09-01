@@ -27,6 +27,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "qtime.h"
+
 #ifndef Inline
 #define Inline static inline
 #endif
@@ -78,7 +80,11 @@ enum pf_flags
   pf_zeros      = 1 <<  3,      /* "0" seen             */
   pf_alt        = 1 <<  4,      /* "#" seen             */
 
-  pf_precision  = 1 <<  7,      /* '.' seen             */
+  pf_precision  = 1 <<  5,      /* '.' seen             */
+
+  /* For scaled formatting of decimals and byte counts          */
+  pf_scale      = 1 <<  6,
+  pf_trailing   = 1 <<  7,      /* add blank scale if required  */
 
   /* The following signal how to render the value               */
   pf_oct        = 1 <<  8,      /* octal                */
@@ -111,7 +117,7 @@ Inline int   qfs_left(qf_str qfs) ;
 
 extern void qfs_append(qf_str qfs, const char* src) ;
 extern void qfs_append_n(qf_str qfs, const char* src, size_t n) ;
-
+extern void qfs_append_ch(qf_str qfs, char ch) ;
 extern void qfs_append_ch_x_n(qf_str qfs, char ch, size_t n) ;
 extern void qfs_append_justified(qf_str qfs, const char* src, int width) ;
 extern void qfs_append_justified_n(qf_str qfs, const char* src,
@@ -127,6 +133,25 @@ extern void qfs_pointer(qf_str qfs, void* p_val, enum pf_flags flags,
 extern void qfs_printf(qf_str qfs, const char* format, ...)
                                                        PRINTF_ATTRIBUTE(2, 3) ;
 extern void qfs_vprintf(qf_str qfs, const char *format, va_list args) ;
+
+
+/* Construction of numbers from long
+ *
+ * Need enough space for groups of 3 decimal digits plus ',' or '\0', and an
+ * extra group for sign and some slack.  For 64 bits comes out at 32 bytes !
+ */
+enum { qfs_number_len = (((64 + 9) / 10) + 1) * (3 + 1) } ;
+
+CONFIRM((sizeof(long) * 8) <= 64) ;
+
+typedef struct qfs_num_str_t
+{
+  char   str[qfs_number_len] ;
+} qfs_num_str_t;
+
+extern qfs_num_str_t qfs_dec_value(long val, enum pf_flags flags) ;
+extern qfs_num_str_t qfs_bin_value(long val, enum pf_flags flags) ;
+extern qfs_num_str_t qfs_time_period(qtime_t val, enum pf_flags flags) ;
 
 /*==============================================================================
  * The Inline functions.

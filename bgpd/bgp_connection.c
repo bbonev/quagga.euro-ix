@@ -28,6 +28,7 @@
 #include "bgpd/bgp_session.h"
 #include "bgpd/bgp_notification.h"
 #include "bgpd/bgp_msg_read.h"
+#include "bgpd/bgp_dump.h"
 
 #include "lib/memory.h"
 #include "lib/mqueue.h"
@@ -1097,6 +1098,9 @@ bgp_connection_read_action(qps_file qf, void* file_info)
    if (connection->session != NULL)      /* don't bother if session gone ! */
      {
        BGP_CONNECTION_SESSION_LOCK(connection) ;    /*<<<<<<<<<<<<<<<<<<<<<<<<*/
+
+       if (bgp_dump_packet_flag)
+         bgp_dump_packet(connection) ;
 
        connection->msg_func(connection, connection->msg_body_size) ;
 

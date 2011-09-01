@@ -139,7 +139,7 @@ qtimer_pile_init_new(qtimer_pile qtp)
  * is returned.
  */
 extern qtime_t
-qtimer_pile_top_wait(qtimer_pile qtp, qtime_t max_wait)
+qtimer_pile_top_wait(qtimer_pile qtp, qtime_t max_wait, qtime_t now)
 {
   qtime_t top_wait ;
   qtimer  qtr = heap_top_item(&qtp->timers) ;
@@ -147,7 +147,7 @@ qtimer_pile_top_wait(qtimer_pile qtp, qtime_t max_wait)
   if (qtr == NULL)
     return max_wait ;
 
-  top_wait = qtr->time - qt_get_monotonic() ;
+  top_wait = qtr->time - now ;
 
   return (top_wait < max_wait) ? top_wait : max_wait ;
 } ;
@@ -178,16 +178,19 @@ qtimer_pile_dispatch_next(qtimer_pile qtp, qtime_mono_t upto)
   if ((qtr == NULL) || (qtr->time > upto))
     return 0 ;
 
-  passert((qtp == qtr->pile) && (qtr->active)) ;
+  passert((qtp == qtr->pile) && (qtr->state == qtrs_active)) ;
 
-  qtp->implicit_unset = qtr ;   /* Timer must be unset if is still here
-                                   when the action function returns       */
+  qtr->state = qtrs_dispatch | qtrs_unset_pending | qtrs_active ;
+                                /* Timer must be unset if is still here
+                                   when the action function returns     */
   qtr->action(qtr, qtr->timer_info, upto) ;
 
-  if (qtp->implicit_unset == qtr)
+  qtr->state ^= qtrs_dispatch ; /* No longer in dispatch                */
+
+  if      ((qtr->state & qtrs_free_pending) != 0)
+    qtimer_free(qtr) ;
+  else if ((qtr->state & qtrs_unset_pending) != 0)
     qtimer_unset(qtr) ;
-  else
-    assert(qtp->implicit_unset == NULL) ;   /* check for tidy-ness      */
 
   return 1 ;
 } ;
@@ -219,7 +222,7 @@ qtimer_pile_ream(qtimer_pile qtp, int free_structure)
 
   qtr = heap_ream_keep(&qtp->timers) ;  /* ream, keeping the heap structure   */
   if (qtr != NULL)
-    qtr->active = false ;               /* has been removed from pile         */
+    qtr->state = qtrs_inactive ;        /* has been removed from pile         */
   else
     if (free_structure)                 /* pile is empty, may now free it     */
       XFREE(MTYPE_QTIMER_PILE, qtp) ;
@@ -255,7 +258,7 @@ qtimer_init_new(qtimer qtr, qtimer_pile qtp,
    *   pile        -- NULL -- not in any pile (yet)
    *   backlink    -- unset
    *
-   *   active      -- false
+   *   state       -- qtrs_inactive
    *
    *   time        -- unset
    *   action      -- NULL -- no action set (yet)
@@ -263,6 +266,7 @@ qtimer_init_new(qtimer qtr, qtimer_pile qtp,
    *
    *   interval    -- unset
    */
+  confirm(qtrs_inactive == 0) ;
 
   qtr->pile       = qtp ;
   qtr->action     = action ;
@@ -274,9 +278,13 @@ qtimer_init_new(qtimer qtr, qtimer_pile qtp,
 /*------------------------------------------------------------------------------
  * Free given timer -- if any.
  *
- * Unsets it first if it is active or pending unset.
+ * Unsets it first if it is active.
  *
  * Returns: NULL
+ *
+ * Note: if this is currently a dispatched timer, then does not actually free,
+ *       but leaves that for the dispatch loop to tidy up.  The caller is
+ *       expected to assume that the timer has gone, gone.
  */
 extern qtimer
 qtimer_free(qtimer qtr)
@@ -286,10 +294,13 @@ qtimer_free(qtimer qtr)
    */
   if (qtr != NULL)
     {
-      if (qtr->active)
+      if ((qtr->state & qtrs_active) != 0)
         qtimer_unset(qtr) ;
 
-      XFREE(MTYPE_QTIMER, qtr) ;
+      if ((qtr->state & qtrs_dispatch) == 0)
+        XFREE(MTYPE_QTIMER, qtr) ;
+      else
+        qtr->state = qtrs_dispatch | qtrs_free_pending ;
     } ;
 
   return NULL ;
@@ -311,7 +322,7 @@ qtimer_set_pile(qtimer qtr, qtimer_pile qtp)
   /* Note that if is the current dispatched timer and an unset is still
    * pending, then it must still be active.
    */
-  if (qtr->active)
+  if ((qtr->state & qtrs_active) != 0)
     qtimer_unset(qtr) ;
 
   qtr->pile = qtp ;
@@ -325,7 +336,9 @@ qtimer_set_pile(qtimer qtr, qtimer_pile qtp)
  * Sets any given action -- if the action given is NULL, retains previously set
  * action.
  *
- * If the timer is already active, sets the new time & updates pile.
+ * If the timer is already active, sets the new time & updates pile.  If is the
+ * dispatched timer, and was pending being unset, then no longer needs to be
+ * unset.
  *
  * Otherwise, sets the time and adds to pile -- making timer active.
  *
@@ -347,22 +360,19 @@ qtimer_set(qtimer qtr, qtime_mono_t when, qtimer_action* action)
 
   qtr->time = when ;
 
-  if (qtr->active)
+  if ((qtr->state & qtrs_active) != 0)
     {
       /* Is active, so update the timer in the pile.                    */
       heap_update_item(&qtp->timers, qtr) ;
 
-      if (qtr == qtp->implicit_unset)
-        qtp->implicit_unset = NULL ;        /* no unset required, now   */
+      qtr->state &= ~qtrs_unset_pending ;   /* no unset required, now   */
     }
   else
     {
       /* Is not active, so insert the timer into the pile.              */
       heap_push_item(&qtp->timers, qtr) ;
 
-      assert(qtr != qtp->implicit_unset) ;  /* because it's not active  */
-
-      qtr->active = true ;
+      qtr->state |= qtrs_active ;
     } ;
 
   if (action != NULL)
@@ -372,12 +382,19 @@ qtimer_set(qtimer qtr, qtime_mono_t when, qtimer_action* action)
 
   if (qdebug)
     qtimer_pile_verify(qtp) ;
+
+  if (qdebug)
+    assert( (qtr->state ==  qtrs_active) ||
+            (qtr->state == (qtrs_active | qtrs_dispatch)) ) ;
 } ;
 
 /*------------------------------------------------------------------------------
  * Unset given timer
  *
  * If the timer is active, removes from pile and sets inactive.
+ *
+ * If timer was pending being unset (because is the dispatched timer), then no
+ * longer needs to be unset.
  */
 extern void
 qtimer_unset(qtimer qtr)
@@ -389,20 +406,19 @@ qtimer_unset(qtimer qtr)
   if (qdebug)
     qtimer_pile_verify(qtp) ;
 
-  if (qtr->active)
+  if ((qtr->state & qtrs_active) != 0)
     {
-      if (qtr == qtp->implicit_unset)
-        qtp->implicit_unset = NULL ;        /* no unset required, now       */
-
       heap_delete_item(&qtp->timers, qtr) ;
 
+      qtr->state &= ~(qtrs_unset_pending | qtrs_active);
+                                  /* not active, no unset required, now   */
       if (qdebug)
         qtimer_pile_verify(qtp) ;
+    } ;
 
-      qtr->active = false ;
-    }
-  else
-    assert(qtr != qtp->implicit_unset) ;
+  if (qdebug)
+    assert( (qtr->state ==  qtrs_inactive) ||
+            (qtr->state == (qtrs_inactive | qtrs_dispatch)) ) ;
 } ;
 
 /*==============================================================================
@@ -416,7 +432,7 @@ qtimer_pile_verify(qtimer_pile qtp)
   vector_index i ;
   vector_index e ;
   qtimer qtr ;
-  bool seen ;
+  bool seen_dispatch ;
 
   assert(qtp != NULL) ;
 
@@ -431,20 +447,23 @@ qtimer_pile_verify(qtimer_pile qtp)
 
   v = &th->v ;
   e = vector_end(v) ;
+  seen_dispatch = false ;
   for (i = 0 ; i < e ; ++i)
     {
       qtr = vector_get_item(v, i) ;
       assert(qtr != NULL) ;
 
-      if (qtr == qtp->implicit_unset)
-        seen = 1 ;
-
-      assert(qtr->active) ;
+      if (qtr->state != qtrs_active)
+        {
+          assert((qtr->state & qtrs_dispatch) != 0) ;
+          assert((qtr->state & qtrs_free_pending) == 0) ;
+          assert((qtr->state & qtrs_active) != 0) ;
+          assert(!seen_dispatch) ;
+          seen_dispatch = true ;
+        } ;
 
       assert(qtr->pile     == qtp) ;
       assert(qtr->backlink == i) ;
       assert(qtr->action   != NULL) ;
     } ;
-
-  assert(seen || (qtp->implicit_unset == NULL)) ;
 } ;

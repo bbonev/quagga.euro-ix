@@ -84,14 +84,16 @@
  * Data types
  */
 
-typedef pthread_t        qpt_thread_t ;
-typedef pthread_mutex_t  qpt_mutex_t ;
-typedef pthread_cond_t   qpt_cond_t ;
+typedef pthread_t          qpt_thread_t ;
+typedef pthread_mutex_t    qpt_mutex_t ;
+typedef pthread_cond_t     qpt_cond_t ;
+typedef pthread_spinlock_t qpt_spin_t ;
 
 typedef pthread_attr_t   qpt_thread_attr_t ;
 
 typedef qpt_mutex_t*     qpt_mutex ;
 typedef qpt_cond_t*      qpt_cond ;
+typedef qpt_spin_t*      qpt_spin ;
 
 /*==============================================================================
  * Thread Creation -- see qpthreads.c for further discussion.
@@ -299,6 +301,30 @@ Inline void                       /* do nothing if !qpthreads_enabled   */
 qpt_cond_broadcast(qpt_cond cv) ;
 
 /*==============================================================================
+ * Spinlock handling
+ *
+ * Spinlocks are pretty trivial -- requiring only to be initialised, locked,
+ * unlocked and, finally, destroyed.
+ *
+ * NB: recursive spinlocks are not supported !
+ *
+ * NB: if NOT qpthreads_enabled, locking and unlocking always succeed.  This
+ *     allows code to be made thread-safe for when pthreads is running, but to
+ *     work perfectly well without pthreads.
+ */
+extern void                     /* freezes qpthreads_enabled          */
+qpt_spin_init(qpt_spin slk) ;
+
+extern void                     /* do nothing if !qpthreads_enabled   */
+qpt_spin_destroy(qpt_spin slk) ;
+
+Inline void                     /* do nothing if !qpthreads_enabled   */
+qpt_spin_lock(qpt_spin slk) ;
+
+Inline void                     /* do nothing if !qpthreads_enabled   */
+qpt_spin_unlock(qpt_spin slk) ;
+
+/*==============================================================================
  * Mutex inline functions
  */
 
@@ -427,6 +453,50 @@ qpt_cond_broadcast(qpt_cond cv)
       int err = pthread_cond_broadcast(cv) ;
       if (err != 0)
         zabort_err("pthread_cond_broadcast failed", err) ;
+#endif
+    } ;
+} ;
+
+/*==============================================================================
+ * Spinlock inline functions
+ */
+
+/* Lock spinlock  -- do nothing if !qpthreads_enabled
+ *
+ * Unless both NCHECK_QPTHREADS and NDEBUG are defined, checks that the
+ * return value is valid -- zabort_errno if it isn't.
+ */
+Inline void
+qpt_spin_lock(qpt_spin slk)
+{
+  if (qpthreads_enabled)
+    {
+#if defined(NDEBUG) && defined(NDEBUG_QPTHREADS)
+      pthread_spin_lock(slk) ;
+#else
+      int err = pthread_spin_lock(slk) ;
+      if (err != 0)
+        zabort_err("pthread_spin_lock failed", err) ;
+#endif
+    } ;
+} ;
+
+/* Unlock spinlock  -- do nothing if !qpthreads_enabled
+ *
+ * Unless both NCHECK_QPTHREADS and NDEBUG are defined, checks that the
+ * return value is valid -- zabort_errno if it isn't.
+ */
+Inline void
+qpt_spin_unlock(qpt_spin slk)
+{
+  if (qpthreads_enabled)
+    {
+#if defined(NDEBUG) && defined(NDEBUG_QPTHREADS)
+      pthread_spin_unlock(slk) ;
+#else
+      int err = pthread_spin_unlock(slk) ;
+      if (err != 0)
+        zabort_err("pthread_spin_unlock failed", err) ;
 #endif
     } ;
 } ;

@@ -22,7 +22,6 @@
 #ifndef _ZEBRA_QPNEXUS_H
 #define _ZEBRA_QPNEXUS_H
 
-#include <stdint.h>
 #include <time.h>
 #include <pthread.h>
 #include <unistd.h>
@@ -70,10 +69,31 @@ struct qpn_hook_list
   unsigned  count ;
 } ;
 
+typedef struct qpn_stats
+{
+  qtime_mono_t  start_time ;
+  qtime_mono_t  last_time ;
+  qtime_mono_t  idle ;
+
+  ulong   cycles ;
+  ulong   signals ;
+  ulong   foreg ;
+  ulong   dispatch ;
+  ulong   io_acts ;
+  ulong   timers ;
+  ulong   backg ;
+
+} qpn_stats_t ;
+
+typedef qpn_stats_t* qpn_stats ;
+
 typedef struct qpn_nexus* qpn_nexus ;
 
 struct qpn_nexus
 {
+  /* name of thread                                             */
+  const char* name ;
+
   /* set true to terminate the thread (eventually) */
   bool terminate;
 
@@ -140,13 +160,23 @@ struct qpn_nexus
    * and return.  MUST return 0 iff there is no more work to do.
    */
   struct qpn_hook_list background ;
+
+
+  /* statistics gathering
+   */
+  qpt_spin_t    stats_slk[1] ;
+
+  qpn_stats_t   raw ;           /* belongs to thread                    */
+  qpn_stats_t   stats ;         /* set, under spin lock, once per cycle */
+  qpn_stats_t   prev_stats ;    /* set, under spin lock, each time stats
+                                 * are fetched.                         */
 };
 
 /*==============================================================================
  * Functions
  */
-
-extern qpn_nexus qpn_init_new(qpn_nexus qpn, bool main_thread);
+extern qpn_nexus qpn_init_new(qpn_nexus qpn, bool main_thread,
+                                                             const char* name) ;
 extern void qpn_add_hook_function(qpn_hook_list list, void* hook) ;
 extern void qpn_exec(qpn_nexus qpn);
 extern void qpn_terminate(qpn_nexus qpn);
@@ -154,5 +184,7 @@ extern qpn_nexus qpn_reset(qpn_nexus qpn, bool free_structure);
 
 #define qpn_reset_free(qpn) qpn_reset(qpn, 1)
 #define qpn_reset_keep(qpn) qpn_reset(qpn, 0)
+
+extern void qpn_get_stats(qpn_nexus qpn, qpn_stats curr, qpn_stats prev) ;
 
 #endif /* _ZEBRA_QPNEXUS_H */
