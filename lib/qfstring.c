@@ -1585,20 +1585,27 @@ qfs_time_period(qtime_t val, enum pf_flags flags)
 {
   qfs_num_str_t num ;
   qf_str_t qfs[1] ;
-  int s ;
   int w ;
 
   qfs_init(qfs, num.str, sizeof(num.str)) ;
 
-  flags &= (pf_commas | pf_plus | pf_space) ;
-
-  if (val >= 0)
-    s = +1 ;
-  else
+  /* Worry about the sign
+   */
+  if      (val >= 0)
     {
-      s = -1 ;
+      if      ((val > 0) && ((flags & pf_plus) != 0))
+        qfs_append_ch(qfs, '+') ;
+      else if ((flags & pf_space) != 0)
+        qfs_append_ch(qfs, ' ') ;
+    }
+  else if (val < 0)
+    {
+      qfs_append_ch(qfs, '-') ;
+
       val = -val ;
-    } ;
+    }
+
+  flags &= pf_commas ;  /* unlikely though that is !    */
 
   /* Round value to milli seconds
    */
@@ -1608,38 +1615,35 @@ qfs_time_period(qtime_t val, enum pf_flags flags)
 
   if (val >= (2 * 24 * 60 * 60 * 1000))
     {
-      qfs_signed(qfs, (val / (24 * 60 * 60 * 1000)) * s, flags, w, w) ;
+      qfs_signed(qfs, val / (24 * 60 * 60 * 1000), flags, w, w) ;
       qfs_append_ch(qfs, 'd') ;
 
       val %= (24 * 60 * 60 * 1000) ;
-      s = 1 ;
       flags = pf_zeros ;
       w = 2 ;
     } ;
 
   if ((val >= (2 * 60 * 60 * 1000)) || (w > 0))
     {
-      qfs_signed(qfs, (val / (60 * 60 * 1000)) * s, flags, w, w) ;
+      qfs_signed(qfs, val / (60 * 60 * 1000), flags, w, w) ;
       qfs_append_ch(qfs, 'h') ;
 
       val %= (60 * 60 * 1000) ;
-      s = 1 ;
       flags = pf_zeros ;
       w = 2 ;
     } ;
 
   if ((val >= (2 * 60 * 1000)) || (w > 0))
     {
-      qfs_signed(qfs, (val / (60 * 1000)) * s, flags, w, w) ;
+      qfs_signed(qfs, val / (60 * 1000), flags, w, w) ;
       qfs_append_ch(qfs, 'm') ;
 
       val %= (60 * 1000) ;
-      s = 1 ;
       flags = pf_zeros ;
       w = 2 ;
     } ;
 
-  qfs_signed(qfs, (val / 1000) * s, flags, w, w) ;
+  qfs_signed(qfs, val / 1000, flags, w, w) ;
   qfs_append_ch(qfs, '.') ;
   qfs_unsigned(qfs, val % 1000, pf_zeros, 3, 3) ;
   qfs_append_ch(qfs, 's') ;
