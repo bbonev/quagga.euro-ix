@@ -1254,6 +1254,8 @@ uty_vf_new(vty_io vio, const char* name, int fd, vfd_type_t type,
    *   vin_type         = VIN_NONE          ) -- see uty_vin_push()
    *   vin_state        = vf_closed         )
    *
+   *   vin_wedged       = 0     -- so far, so good
+   *
    *   vin_next         = NULL                -- see uty_vin_push()
    *
    *   context          = NULL                -- see uty_cmd_loop_prepare()
@@ -2220,26 +2222,34 @@ uty_vf_error(vio_vf vf, vio_err_type_t err_type, int err)
   bool            was_final ;
   bool            epipe ;
 
+  vio_err_type_t  where ;
+  vio_err_type_t  sort ;
+
   VTY_ASSERT_LOCKED() ;
 
   vio = vf->vio ;
+
+  where = err_type & verr_w_mask ;
+  sort  = err_type & verr_s_mask ;
 
   /* Decide how to handle the error, post the exception and signal.
    */
   epipe = false ;
 
-  if ((vf != vio->vin_base) && (vf != vio->vout_base))
-    vx = vx_io_error ;
-  else
+  vx = vx_io_error ;
+
+  if (sort == verr_wedged)
+    vx = vx_stop_final ;
+  else if ((vf == vio->vin_base) || (vf == vio->vout_base))
     {
       vx = vx_stop_io_error ;
 
       if (vf == vio->vout_base)
         {
-          if ((err_type & verr_io) || ((err_type & verr_mask) == verr_vout))
+          if ((sort == verr_io) || (where == verr_vout))
             {
               vx = vx_stop_final ;
-              epipe = (err_type & verr_io) && (err == EPIPE) ;
+              epipe = (sort == verr_io) && (err == EPIPE) ;
             } ;
         } ;
     } ;
@@ -2257,7 +2267,7 @@ uty_vf_error(vio_vf vf, vio_err_type_t err_type, int err)
    * We only output an error message for the first error on the vf, and then
    * only if was not vst_final before the error.
    */
-  if ((!vf->had_error || (err_type & verr_io)) && !epipe)
+  if ((!vf->had_error || (sort == verr_io)) && !epipe)
     zlog_warn("%s", uty_error_message(vf, err_type, err, true /* log */).str) ;
 
   if (!vf->had_error && !was_final)
@@ -2277,7 +2287,7 @@ uty_vf_error(vio_vf vf, vio_err_type_t err_type, int err)
   /* If this is an I/O error, tell the vfd not to generate any further I/O
    * error messages on close etc.
    */
-  if (err_type & verr_io)
+  if (sort == verr_io)
     vio_vfd_set_failed(vf->vfd) ;
 
   /* Signal to the command loop and return CMD_IO_ERROR.
@@ -2301,48 +2311,54 @@ uty_error_message(vio_vf vf, vio_err_type_t err_type, int err, bool log)
 {
   verr_mess_t QFB_QFS(qfb, qfs) ;
 
-  const char* name ;
-  const char* where ;
-  const char* what ;
-  const char* sort ;
+  const char* s_name ;
+  const char* s_where ;
+  const char* s_what ;
+  const char* s_sort ;
   bool   vout ;
   int    fd ;
   bool   epipe ;
 
+  vio_err_type_t  where ;
+  vio_err_type_t  sort ;
+
   VTY_ASSERT_LOCKED() ;
 
-  epipe = (err_type & verr_io) && (err == EPIPE) ;
+  where = err_type & verr_w_mask ;
+  sort  = err_type & verr_s_mask ;
 
-  vout = false ;
-  fd   = -1 ;
-  what = "*unknown verr_xxx (bug)*" ;
+  epipe = (sort == verr_io) && (err == EPIPE) ;
 
-  switch (err_type & verr_mask)
+  vout   = false ;
+  fd     = -1 ;
+  s_what = "*unknown verr_xxx 'where' (bug)*" ;
+
+  switch (where)
     {
       case verr_vin:
-        vout = false ;
-        what = "read" ;
+        vout   = false ;
+        s_what = "read" ;
         if (log && (vf->vfd != NULL))
           fd = vio_vfd_fd(vf->vfd) ;
         break ;
 
       case verr_vout:
-        vout = true ;
-        what = "write" ;
+        vout   = true ;
+        s_what = "write" ;
         if (log && (vf->vfd != NULL))
           fd = vio_vfd_fd(vf->vfd) ;
         break ;
 
       case verr_pr:
-        vout = true ;
-        what = "pipe return" ;
+        vout   = true ;
+        s_what = "pipe return" ;
         if (log)
           fd = vio_vfd_fd(vf->pr_vfd) ;
         break ;
 
       case verr_ps:
-        vout = (vf->vout_state & vf_open) ;
-        what = "stderr return" ;
+        vout   = (vf->vout_state & vf_open) ;
+        s_what = "stderr return" ;
         if (log)
           fd = vio_vfd_fd(vf->ps_vfd) ;
         break ;
@@ -2352,8 +2368,8 @@ uty_error_message(vio_vf vf, vio_err_type_t err_type, int err, bool log)
         epipe = false ;
     } ;
 
-  name  = vf->name ;
-  where = NULL ;
+  s_name  = vf->name ;
+  s_where = NULL ;
 
   if (vout)
     {
@@ -2364,50 +2380,50 @@ uty_error_message(vio_vf vf, vio_err_type_t err_type, int err, bool log)
             break ;
 
           case VOUT_TERM:
-            where = "Terminal" ;
+            s_where = "Terminal" ;
             if (!log)
-              name = NULL ;
+              s_name = NULL ;
             break ;
 
           case VOUT_VTYSH_SERVER:
-            where = "VTY Shell" ;
+            s_where = "VTY Shell" ;
             if (!log)
-              name = NULL ;
+              s_name = NULL ;
             break ;
 
           case VOUT_FILE:
-            where = "File" ;
+            s_where = "File" ;
             break ;
 
           case VOUT_PIPE:
-            where = "Pipe" ;
+            s_where = "Pipe" ;
             break ;
 
           case VOUT_CONFIG:
-            where = "Configuration file" ;
+            s_where = "Configuration file" ;
             break ;
 
           case VOUT_DEV_NULL:
-            where = "/dev/null" ;
+            s_where = "/dev/null" ;
             break ;
 
           case VOUT_SH_CMD:
-            where = "Command" ;
+            s_where = "Command" ;
             break ;
 
           case VOUT_VTYSH:      /* vtysh *own* vty      */
-            where = "vtysh" ;
+            s_where = "vtysh" ;
             break ;
 
           case VOUT_STDOUT:
-            where = "stdout" ;
+            s_where = "stdout" ;
             break ;
 
           default:
             qassert(false) ;
 
-            where = "*unknown VOUT_XXX (bug)*" ;
-            epipe = false ;
+            s_where = "*unknown VOUT_XXX (bug)*" ;
+            epipe   = false ;
             break ;
         } ;
     }
@@ -2420,97 +2436,121 @@ uty_error_message(vio_vf vf, vio_err_type_t err_type, int err, bool log)
             break ;
 
           case VIN_TERM:
-            where = "Terminal" ;
+            s_where = "Terminal" ;
             if (!log)
-              name = NULL ;
+              s_name = NULL ;
             break ;
 
           case VIN_VTYSH_SERVER:
-            where = "VTY Shell Server" ;
+            s_where = "VTY Shell Server" ;
             if (!log)
               fd  = vio_vfd_fd(vf->vfd) ;
             break ;
 
           case VIN_FILE:
-            where = "File" ;
+            s_where = "File" ;
             break ;
 
           case VIN_PIPE:
-            where = "Pipe" ;
+            s_where = "Pipe" ;
             break ;
 
           case VIN_CONFIG:
-            where = "Configuration file" ;
+            s_where = "Configuration file" ;
             break ;
 
           case VIN_VTYSH:       /* vtysh *own* vty      */
-            where = "vtysh" ;
+            s_where = "vtysh" ;
             break ;
 
           case VIN_DEV_NULL:
-            where = "/dev/null" ;
+            s_where = "/dev/null" ;
             break ;
 
           default:
             qassert(false) ;
 
-            where = "*unknown VIN_XXX (bug)*" ;
-            epipe = false ;
+            s_where = "*unknown VIN_XXX (bug)*" ;
+            epipe   = false ;
             break ;
         } ;
     } ;
 
-  if      ((err_type & verr_io) != 0)
-    sort = "I/O error" ;
-  else if ((err_type & verr_vtysh) != 0)
-    sort = "vtysh error" ;
-  else if ((err_type & verr_not_open) != 0)
-    sort = "?NOT-OPEN?" ;
-  else
-    sort = "time-out" ;
+  s_sort = "*unknown verr_xxx 'sort' (bug)*" ;
+  switch (sort)
+    {
+      case verr_to:
+        s_sort = "time-out" ;
+        break ;
+
+      case verr_io:
+        s_sort = "I/O error" ;
+        break ;
+
+      case verr_vtysh:
+        s_sort = "vtysh error" ;
+        break ;
+
+      case verr_not_open:
+        s_sort = "?NOT-OPEN?" ;
+        break ;
+
+      case verr_wedged:
+        s_sort = "?WEDGED?" ;
+        break ;
+
+      default:
+        qassert(false) ;
+        epipe = false ;
+    } ;
 
   if (!epipe)
-    qfs_printf(qfs, "%s %s %s", where, what, sort) ;
+    qfs_printf(qfs, "%s %s %s", s_where, s_what, s_sort) ;
   else
-    qfs_printf(qfs, "%s", where) ;
+    qfs_printf(qfs, "%s", s_where) ;
 
-  if (name != NULL)
-    qfs_printf(qfs, " '%s'", name) ;
+  if (s_name != NULL)
+    qfs_printf(qfs, " '%s'", s_name) ;
 
   if (fd >= 0)
     qfs_printf(qfs, " (fd=%d)", fd) ;
 
-  if      (err_type & verr_io)
+  switch (sort)
     {
-      if (!epipe)
-        qfs_printf(qfs, ": %s", errtoa(err, 0).str) ;
-      else
-        qfs_printf(qfs, " connection closed") ;
-    }
-  else if (err_type & verr_vtysh)
-    {
-      switch (err)
-        {
-          case verr_vtysh_vin_eof:      /* eof in the middle of something */
-            qfs_printf(qfs, ": unexpected eof") ;
-            break ;
+      case verr_io:
+        if (!epipe)
+          qfs_printf(qfs, ": %s", errtoa(err, 0).str) ;
+        else
+          qfs_printf(qfs, " connection closed") ;
+        break ;
 
-          case verr_vtysh_vin_nonce:
-            qfs_printf(qfs, ": unexpected nonce value") ;
-            break ;
+      case verr_vtysh:
+        switch (err)
+          {
+            case verr_vtysh_vin_eof:    /* eof in the middle of something */
+              qfs_printf(qfs, ": unexpected eof") ;
+              break ;
 
-          case verr_vtysh_vin_type:     /* unrecognised message type      */
-            qfs_printf(qfs, ": unknown message type") ;
-            break ;
+            case verr_vtysh_vin_nonce:
+              qfs_printf(qfs, ": unexpected nonce value") ;
+              break ;
 
-          case verr_vtysh_vin_length:   /* invalid length field           */
-            qfs_printf(qfs, ": invalid message length") ;
-            break ;
+            case verr_vtysh_vin_type:   /* unrecognised message type      */
+              qfs_printf(qfs, ": unknown message type") ;
+              break ;
 
-          default:
-            qfs_printf(qfs, ": *unknown error %d (bug)*", err) ;
-            break ;
-        } ;
+            case verr_vtysh_vin_length: /* invalid length field           */
+              qfs_printf(qfs, ": invalid message length") ;
+              break ;
+
+            default:
+              qfs_printf(qfs, ": *unknown error %d (bug)*", err) ;
+              break ;
+          } ;
+        break ;
+
+      default:
+        break ;
     } ;
 
   if (qfs_term(qfs) != 0)

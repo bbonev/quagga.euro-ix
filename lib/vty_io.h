@@ -324,6 +324,8 @@ struct vio_vf
   vio_in_type_t   vin_type ;
   vf_state_t      vin_state ;
 
+  uint            vin_wedged ;  /* see vty_cmd_hiatus                   */
+
   vio_vf      vin_next ;        /* list of inputs                       */
 
   cmd_context     context ;     /* for current vin == exec->context
@@ -470,18 +472,29 @@ enum vio_err_type
 {
   verr_none             = 0,
 
+  /* Where the error occurred.
+   */
   verr_vin              = 1,
   verr_vout             = 2,
   verr_pr               = 3,    /* pipe return (read)           */
   verr_ps               = 4,    /* pipe stderr return (read)    */
 
-  verr_mask             = BIT(4) - 1,
+  verr_w_bits           = 4,
+  verr_w_mask           = BIT(verr_w_bits) - 1,
 
-  verr_to               = 0,
-  verr_io               = BIT(4),
-  verr_vtysh            = BIT(5),
-  verr_not_open         = BIT(6),
+  /* The sort of error.
+   */
+  verr_io               = 1 << verr_w_bits,
+  verr_to               = 2 << verr_w_bits,
+  verr_vtysh            = 3 << verr_w_bits,
+  verr_not_open         = 4 << verr_w_bits,
+  verr_wedged           = 5 << verr_w_bits,
 
+  verr_s_bits           = 4,
+  verr_s_mask           = (BIT(verr_s_bits) - 1) << verr_w_bits,
+
+  /* Various useful combinations
+   */
   verr_io_vin           = verr_vin  | verr_io,
   verr_io_vout          = verr_vout | verr_io,
   verr_io_pr            = verr_pr   | verr_io,
@@ -493,6 +506,8 @@ enum vio_err_type
   verr_to_ps            = verr_ps   | verr_to,
 
   verr_vtysh_vin        = verr_vin  | verr_vtysh,
+
+  verr_vin_wedged       = verr_vin  | verr_wedged,
 } ;
 typedef enum vio_err_type  vio_err_type_t ;
 

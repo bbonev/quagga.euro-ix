@@ -435,6 +435,7 @@ vio_vfd_new(int fd, vfd_type_t type, vfd_io_type_t io_type, void* action_info)
    *   type           -- X           -- see below
    *   io_type        -- X           -- see below
    *   failed         -- false
+   *   ready          -- vfd_not_ready
    *
    *   action_info    -- NULL        -- set below if ! "blocking" vio_vfd
    *
@@ -456,6 +457,7 @@ vio_vfd_new(int fd, vfd_type_t type, vfd_io_type_t io_type, void* action_info)
    *
    *   mqb            -- NULL        -- none, yet
    */
+  confirm(vfd_not_ready == 0) ;
   confirm(VIO_TIMER_INIT_ZERO) ;
 
   vfd->fd      = fd ;
@@ -743,13 +745,26 @@ vio_vfd_set_read(vio_vfd vfd, on_off_b how, vio_timer_time timeout)
 {
   VTY_ASSERT_LOCKED() ;
 
-  if ((vfd == NULL) || (vfd->fd < 0) || ((vfd->io_type & vfd_io_read) == 0))
+  if (vfd == NULL)
     return off ;
+
+  if ((vfd->fd < 0) || ((vfd->io_type & vfd_io_read) == 0))
+    {
+      qassert((vfd->ready & vfd_read_ready) == 0) ;
+
+      vfd->ready &= ~vfd_read_ready ;   /* make sure            */
+      return off ;
+    } ;
 
   qassert((vfd->io_type & vfd_io_blocking) == 0) ;
 
   if ((vfd->io_type & vfd_io_blocking) != 0)
-    return off ;
+    {
+      qassert((vfd->ready & vfd_read_ready) == 0) ;
+
+      vfd->ready &= ~vfd_read_ready ;   /* make sure            */
+      return off ;
+    } ;
 
   if (vty_is_cli_thread())
     {
@@ -771,6 +786,7 @@ vio_vfd_set_read(vio_vfd vfd, on_off_b how, vio_timer_time timeout)
                                     vio_vfd_thread_read_action, vfd, vfd->fd) ;
             } ;
 
+          vfd->ready |= vfd_read_ready ;
           vio_timer_set(vfd->read_timer, timeout) ;
         }
       else
@@ -818,6 +834,7 @@ vio_vfd_set_read_off(vio_vfd vfd)
         } ;
     } ;
 
+  vfd->ready &= ~vfd_read_ready ;
   vio_timer_unset(vfd->read_timer) ;
 } ;
 
@@ -842,12 +859,26 @@ vio_vfd_set_write(vio_vfd vfd, on_off_b how, vio_timer_time timeout)
 {
   VTY_ASSERT_LOCKED() ;
 
-  if ((vfd == NULL) || (vfd->fd < 0) || ((vfd->io_type & vfd_io_write) == 0))
+  if (vfd == NULL)
     return off ;
 
+  if ((vfd->fd < 0) || ((vfd->io_type & vfd_io_write) == 0))
+    {
+      qassert((vfd->ready & vfd_write_ready) == 0) ;
+
+      vfd->ready &= ~vfd_write_ready ;  /* make sure            */
+      return off ;
+    } ;
+
   qassert((vfd->io_type & vfd_io_blocking) == 0) ;
+
   if ((vfd->io_type & vfd_io_blocking) != 0)
-    return off ;
+    {
+      qassert((vfd->ready & vfd_write_ready) == 0) ;
+
+      vfd->ready &= ~vfd_write_ready ;  /* make sure            */
+      return off ;
+    } ;
 
   if (vty_is_cli_thread())
     {
@@ -869,6 +900,7 @@ vio_vfd_set_write(vio_vfd vfd, on_off_b how, vio_timer_time timeout)
                                     vio_vfd_thread_write_action, vfd, vfd->fd) ;
             } ;
 
+          vfd->ready |= vfd_write_ready ;
           vio_timer_set(vfd->write_timer, timeout) ;
         }
       else
@@ -916,6 +948,7 @@ vio_vfd_set_write_off(vio_vfd vfd)
         } ;
     } ;
 
+  vfd->ready &= ~vfd_write_ready ;
   vio_timer_unset(vfd->write_timer) ;
 } ;
 

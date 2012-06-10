@@ -70,7 +70,8 @@ cmd_exec_new(vty vty, cmd_context context)
    *
    *   line_buf     = NULL      -- none, yet
    */
-  confirm(exec_null == 0) ;             /* state        */
+  confirm(exec_null   == 0) ;           /* state        */
+  confirm(CMD_SUCCESS == 0) ;           /* ret          */
 
   exec->vty     = vty ;
   exec->parsed  = cmd_parsed_new() ;

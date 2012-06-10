@@ -1343,8 +1343,49 @@ vty_cmd_hiatus(vty vty, cmd_ret_t ret)
    * there is some input.  A flag is used because for VIN_TERM/VOUT_TERM the
    * position is a little complicated.  In particular, changes on the output
    * side may affect whether is waiting in the CLI.
+   *
+   * If comes out of the hiatus with CMD_SUCCESS or CMD_WAITING, loop back
+   * into the hiatus if some signal has been set in the meantime.
+   *
+   * There are two bad things that can happen:
+   *
+   *   1) leaves here with CMD_WAITING but no timer or read ready or write
+   *      ready is actually going to wake us up again.
+   *
+   *      This would be (obviously) a bug, but the worst that happens is that
+   *      a vty of whatever sort hangs.
+   *
+   *      However... if this happens repeatedly, then may eventually run out
+   *      of file handles...   TODO some limit on vty file handles ??
+   *
+   *   2) leaves here with CMD_SUCCESS, but the read side has nothing to
+   *      offer, so end up here again... and we enter a screaming loop.
+   *
+   *      This is a BAD bug, because the CLI locks up, eating CPU and generally
+   *      looking like a complete twonk.
+   *
+   *      The vin_wedged field is:
+   *
+   *        * zeroised when a vin is created
+   *
+   *        * zeroised each time arrives here with ret != CMD_WAITING.
+   *
+   *        * incremented each time arrives here with ret == CMD_WAITING
+   *
+   *        * zeroised each time leaves the nexus with ret != CMD_SUCCESS
+   *
+   *        * if tries to leave here nexus with ret == CMD_SUCCESS and the
+   *          vin_wedged
+   *
+   *          and if reaches a 100 (an arbitrary, but large value), the
+   *          vty is summarily executed.
    */
-  do
+  if (ret == CMD_WAITING)
+    ++(vio->vin->vin_wedged) ;
+  else
+    vio->vin->vin_wedged = 0 ;
+
+  while (1)
     {
       vio->signal = CMD_SUCCESS ;       /* we are here !        */
 
@@ -1353,23 +1394,90 @@ vty_cmd_hiatus(vty vty, cmd_ret_t ret)
 
       switch (ret)
         {
-          case CMD_SUCCESS:     /* ready to continue            */
-            if (vio->vin->vin_waiting)
-              ret = CMD_WAITING ;
-            break ;
+          case CMD_SUCCESS:
+            /* Ready to exit hiatus state: all output and any closing of vin
+             * and/or vout has been completed.
+             *
+             * If there is an outstanding signal, loop back into the hiatus
+             * to make sure we have cleared everything.
+             *
+             * If we are wedged -- raise suitable error and loop back to deal
+             * with it.
+             *
+             * If the vin is waiting, then we set waiting for that, and return
+             * CMD_WAITING instead.
+             */
+            if (vio->signal != CMD_SUCCESS)
+              continue ;
 
-          case CMD_IO_ERROR:    /* for information              */
+            if (vio->vin->vin_wedged > 100)
+              {
+                ret = uty_vf_error(vio->vin, verr_vin_wedged, 0) ;
+                continue ;
+              } ;
+
+            if (vio->vin->vin_waiting)
+              {
+                qassert(vio->cl_state = vcl_cq_running) ;
+                vio->cl_state = vcl_cq_waiting ;
+
+                ret = CMD_WAITING ;
+              } ;
+
             break ;
 
           case CMD_WAITING:
+            /* Waiting for some output or closing of vin and/or vout to
+             * complete.
+             *
+             * Clear wedged.
+             *
+             * If there is an outstanding signal, loop back into the hiatus
+             * to make sure we have cleared everything.
+             *
+             * If this is a blocking output, then this is where we block, and
+             * then loop back.
+             *
+             * Otherwise, set waiting and return the CMD_WAITING.
+             */
+            vio->vin->vin_wedged = 0 ;
+
+            if (vio->signal != CMD_SUCCESS)
+              continue ;
+
             if (vio->vout->blocking)
               {
                 ret = uty_cmd_out_block(vio->vout) ;
                 continue ;
               } ;
+
+            qassert(vio->cl_state = vcl_cq_running) ;
+            vio->cl_state = vcl_cq_waiting ;
+
+            break ;
+
+          case CMD_IO_ERROR:
+            /* Encountered some IO Error.
+             *
+             * Clear wedged.
+             *
+             * We return this in the sure and certain knowledge that the
+             * caller will loop back into the hiatus.  We do this so that the
+             * caller is made aware that not all is well.
+             *
+             * The state of the signal is irrelevant, but left unchanged to be
+             * dealt with next time enters here.
+             */
+            vio->vin->vin_wedged = 0 ;
+
             break ;
 
           case CMD_STOP:
+            /* It is all over -- force stopped state and tidy up to reflect
+             * the fact that the vty is about to be closed.
+             *
+             * The state of the wedged count and the signal are irrelevant.
+             */
             vio->cl_state = vcl_stopped ;
 
             uty_cmd_config_lock(vio, EXIT_NODE) ;
@@ -1387,13 +1495,8 @@ vty_cmd_hiatus(vty vty, cmd_ret_t ret)
           default:
             zabort("invalid return code from uty_cmd_hiatus") ;
         } ;
-    }
-  while (vio->signal != CMD_SUCCESS);
 
-  if (ret == CMD_WAITING)
-    {
-      qassert(vio->cl_state = vcl_cq_running) ;
-      vio->cl_state = vcl_cq_waiting ;
+      break ;
     } ;
 
   VTY_UNLOCK() ;

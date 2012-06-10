@@ -552,13 +552,17 @@ uty_term_set_readiness(vio_vf vf, cmd_ret_t ret)
    * read-ready !
    */
   ret_read  = uty_vf_set_read_ready(vf, read_on) ;
+
+  if ((ret_read != CMD_WAITING) && cli_active)
+    write_on = true ;                   /* make sure    */
+
   ret_write = uty_vf_set_write_ready(vf, write_on) ;
 
   /* Set vf->vin_waiting if cli was active *and* we are, in fact, read-ready
-   * *and* all is well.
+   * or write-ready.
    */
-  vf->vin_waiting = cli_active && (ret_read  == CMD_WAITING)
-                               && (ret_write != CMD_IO_ERROR) ;
+  vf->vin_waiting = cli_active && (   (ret_read  == CMD_WAITING)
+                                   || (ret_write == CMD_WAITING) ) ;
 
   /* Done -- return prepared response, or CMD_IO_ERROR if anything failed
    */
@@ -1005,9 +1009,9 @@ uty_term_write(vio_vf vf)
        *   expires, will restart activity.  A keystroke arriving will also
        *   restart activity.
        *
-       * Should not be here with vst_mon_paused.  If not pausing, make sure it is
-       * clear.  If is pausing, does *not* restart the timer -- so do not get
-       * trapped here !
+       * Should not be here with vst_mon_paused.  If not pausing, make sure it
+       * is clear.  If is pausing, does *not* restart the timer -- so do not
+       * get trapped here !
        */
       if ((cli->pause_timer == NULL) || !vf->vio->monitor)
         {

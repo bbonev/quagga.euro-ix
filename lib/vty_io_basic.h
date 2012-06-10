@@ -71,6 +71,14 @@ enum vfd_io_type                /* NB: *bit*significant*        */
 } ;
 typedef enum vfd_io_type vfd_io_type_t ;
 
+enum vfd_ready                  /* NB: *bit*significant*        */
+{
+  vfd_not_ready       = 0,
+  vfd_read_ready      = BIT(0),
+  vfd_write_ready     = BIT(1),
+} ;
+typedef enum vfd_ready vfd_ready_t ;
+
 /*------------------------------------------------------------------------------
  * Timers -- implemented as qtimer or thread timer, depending on environment.
  *
@@ -125,6 +133,8 @@ struct vio_vfd
   vfd_io_type_t   io_type ;     /* read, write, read/write              */
 
   bool            failed ;      /* avoid repeated error messages        */
+
+  vfd_ready_t     ready ;       /* vfd_not_ready etc.                   */
 
   /* The rest of the vfd is to do with managing read/write ready and
    * read/write timeouts for *non* blocking vfd.

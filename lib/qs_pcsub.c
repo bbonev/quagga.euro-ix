@@ -170,6 +170,8 @@ qs_pcsub(qstring qs, qs_pcsub_table table, ...)
                   qs_replace(qs, strlen(esc) + 2, s) ;
 
                   cp += qs_len_nn(s) - 1 ;
+
+                  s = qs_free(s) ;
                 } ;
             } ;
         } ;

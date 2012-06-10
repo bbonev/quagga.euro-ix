@@ -198,7 +198,7 @@ uty_cli_free(vty_cli cli)
     return NULL ;
 
   while ((line = vector_ream(cli->hist, free_it)) != NULL)
-    qs_reset(line, free_it) ;
+    qs_free(line) ;
 
   cli->hist = NULL ;
   cli->key_stream = keystroke_stream_free(cli->key_stream) ;

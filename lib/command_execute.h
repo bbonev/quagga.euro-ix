@@ -63,7 +63,7 @@ struct cmd_exec
   cmd_exec_state_t  state ;     /* for cq_process               */
   qpn_nexus         locus ;     /* for cq_process               */
 
-  cmd_ret_t ret ;       /* for cq_process               */
+  cmd_ret_t     ret ;           /* for cq_process               */
 
   union
   {
