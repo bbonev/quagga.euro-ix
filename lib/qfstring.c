@@ -46,6 +46,17 @@ qfs_init(qf_str qfs, char* str, uint size)
 } ;
 
 /*------------------------------------------------------------------------------
+ * Reset qf_str to completely empty, with zero offset and zero overflow (again)
+ */
+extern void
+qfs_reset(qf_str qfs)
+{
+  qfs->ptr      = qfs->str ;
+  qfs->offset   = 0 ;
+  qfs->overflow = 0 ;
+} ;
+
+/*------------------------------------------------------------------------------
  * Initialise qf_str -- to given size, with given offset and zero overflow.
  *
  * Note that does not terminate the string -- that must be done separately.

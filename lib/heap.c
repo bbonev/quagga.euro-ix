@@ -404,7 +404,7 @@ Private void
 heap_bubble(heap h, vector_index_t i, p_vector_item p_v)
 {
   /* If this is < parent, we bubble upwards.	*/
-  if ((i != 0) && (h->cmp(&p_v, h->v->p_items[HEAP_UP(i)]) < 0))
+  if ((i != 0) && (h->cmp(&p_v, &(h->v->p_items[HEAP_UP(i)])) < 0))
     heap_bubble_up(h, i, p_v) ;
   /* Otherwise we try bubbling downwards.       */
   else

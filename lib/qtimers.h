@@ -100,11 +100,17 @@ struct qtimer
   void*           timer_info ;
 
   qtime_t         interval ;    /* optional timer interval              */
+
+  char            name[32] ;    /* optional timer name                  */
 } ;
 
 struct qtimer_pile
 {
   struct heap timers ;
+
+  bool        ok ;              /* for pile verification                */
+
+  char        name[31] ;        /* optional time pile name              */
 } ;
 
 /*==============================================================================
@@ -112,6 +118,7 @@ struct qtimer_pile
  */
 
 extern qtimer_pile qtimer_pile_init_new(qtimer_pile qtp) ;
+extern void qtimer_pile_set_name(qtimer_pile qtp, const char* name) ;
 extern bool qtimer_pile_dispatch_next(qtimer_pile qtp, qtime_mono_t upto) ;
 extern qtime_t qtimer_pile_top_wait(qtimer_pile qtp, qtime_t max_wait,
                                                                   qtime_t now) ;
@@ -119,6 +126,7 @@ extern qtimer qtimer_pile_ream(qtimer_pile qtp, free_keep_b free_structure) ;
 
 extern qtimer qtimer_init_new(qtimer qtr, qtimer_pile qtp,
                                       qtimer_action* action, void* timer_info) ;
+extern void qtimer_set_name(qtimer qtr, const char* name) ;
 extern void qtimer_set_pile(qtimer qtr, qtimer_pile qtp) ;
 Inline void qtimer_set_action(qtimer qtr, qtimer_action* action) ;
 Inline void qtimer_set_info(qtimer qtr, void* timer_info) ;

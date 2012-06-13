@@ -24,6 +24,7 @@
 #include <errno.h>
 
 #include "qtime.h"
+#include "qpthreads.h"
 #include "qfstring.h"
 #include "pthread_safe.h"
 #include "log.h"
@@ -31,18 +32,143 @@
 /*==============================================================================
  * This is a collection of functions and (in qtime.h) macros and inline
  * functions which support system time and a monotonic clock.
- *
- * TODO: introduce mutex for crafted monotonic time, and initialisation
- *       routine for that: which can preset the various variables... but
- *       unless is guaranteed to be called, must leave the on-the-fly
- *       initialisation...  could also start a watchdog at that point.
  */
+
+CONFIRM((sizeof(clock_t) >= 4) && (sizeof(clock_t) <= 8)) ;
+
+/* Variables for qt_craft_monotonic()
+ *
+ * The spinlock should be redundant... expect to HAVE_CLOCK_MONOTONIC if is
+ * able to run qpthreads_enabled !
+ *
+ * Note that apart from times_monotonic and last_times_sample, these are constant
+ * from qt_start_up() onwards.
+ */
+static qpt_spin_t qt_slock ;
+
+static int64_t times_monotonic ;        /* crafted monotonic clock
+                                         *                 in _SC_CLK_TCK's */
+static int64_t last_times_sample ;      /* last value returned by times()
+                                         *                 in _SC_CLK_TCK's */
+
+static int64_t times_clk_tcks ;         /* sysconf(_SC_CLK_TCK)             */
+static qtime_t times_scale_q ;          /* 10**9 / times_clk_tcks           */
+static qtime_t times_scale_r ;          /* 10**9 % times_clk_tcks           */
+
+static int64_t step_limit ;             /* for sanity check                 */
+
+/* For qt_random -- some rubbish which depends on state when qt_start_up is
+ * called.
+ */
+static uint32_t qt_random_seed ;
+
+/* For debug we track the CLOCK_MONOTONIC to make sure that it really is !
+ *
+ * Protected by qt_slock.
+ */
+static qtime_mono_t track_monotonic ;
+
+/*------------------------------------------------------------------------------
+ * Wrapper for times().
+ *
+ * No errors are defined for times(), but a return of -1 is defined
+ * to indicate an error condition, with errno saying what it is !
+ *
+ * The following deals carefully with this -- cannot afford for the
+ * clock either to jump or to get stuck !
+ */
+static inline clock_t
+qt_times(void)
+{
+#ifdef GNU_LINUX
+# define TIMES_ARG  NULL
+#else
+  struct tms dummy[1] ;
+# define TIMES_ARG  dummy
+#endif
+
+  clock_t   sample ;
+
+  sample = times(TIMES_ARG) ;
+  if (sample == -1)                     /* deal with theoretical error  */
+    {
+       errno = 0 ;
+       sample = times(TIMES_ARG) ;
+       if (errno != 0)
+         zabort_errno("times() failed") ;
+    } ;
+
+  return sample ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Early morning start.
+ *
+ * Prepare for crafted monotonic (just in case !).
+ *
+ * Prepare for debug tracking of monotonic time (if required).
+ */
+extern void
+qt_start_up(void)
+{
+  lldiv_t  qr ;
+
+  /* Initial values for crafted monotonic time -- if required.
+   */
+  times_monotonic   = 0 ;
+  last_times_sample = qt_times() ;
+
+  /* Set up times_scale_q & times_scale_q
+   */
+  confirm(sizeof(qtime_t) <= sizeof(long long int)) ;
+
+  times_clk_tcks = sysconf(_SC_CLK_TCK) ;
+  passert((times_clk_tcks > 0) &&
+          (times_clk_tcks <= (sizeof(clock_t) > 4) ? 1000000
+                                                   :    1000)) ;
+
+  qr = lldiv(QTIME_SECOND, times_clk_tcks) ;
+  times_scale_q = qr.quot ;
+  times_scale_r = qr.rem ;
+
+  step_limit = (int64_t)24 * 60 * 60 * times_clk_tcks ;
+
+  /* Local "random" seed.
+   */
+  qt_random_seed = (uintptr_t)(&qr) ;
+  qt_random_seed = qt_random(3141592653) ;      /* final seed   */
+
+  /* For debug tracking of monotonic time
+   */
+  track_monotonic = qt_get_monotonic() ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * For qpthreads_enabled, need a spin lock
+ */
+extern void
+qt_second_stage(void)
+{
+  qpt_spin_init(qt_slock) ;
+}
+
+/*------------------------------------------------------------------------------
+ * Final curtain.
+ */
+extern void
+qt_finish(void)
+{
+  qpt_spin_destroy(qt_slock) ;
+} ;
 
 /*==============================================================================
  * Replacement for CLOCK_MONOTONIC.
  *
  * With thanks to Joakim Tjernlund for reminding everyone of the return value
  * from times() !
+ *
+ * NB: we assume that if this is called, will *NOT* be qpthreads_enabled...
+ *     ...we expect will HAVE_CLOCK_MONOTONIC
  *
  * times() is defined to return a value which is the time since some fixed time
  * before the application started (or when the application started).  This time
@@ -117,83 +243,30 @@
  *
  * TODO: Add a watchdog to monitor the behaviour of this clock ?
  */
+Private qtime_mono_t
+qt_craft_monotonic(void)
+{
+  clock_t      this_times_sample ;
+  int64_t      result ;
+  qtime_mono_t monotonic ;
 
-CONFIRM((sizeof(clock_t) >= 4) && (sizeof(clock_t) <= 8)) ;
-
-#ifdef GNU_LINUX
-#define TIMES_TAKES_NULL 1
-#else
-#define TIMES_TAKES_NULL 0
-#endif
-
-static int64_t monotonic          = 0 ; /* monotonic clock in _SC_CLK_TCK's */
-static int64_t last_times_sample  = 0 ; /* last value returned by times()   */
-
-static int64_t step_limit         = 0 ; /* for sanity check                 */
-
-static int64_t times_clk_tcks     = 0 ; /* sysconf(_SC_CLK_TCK)             */
-static qtime_t times_scale_q      = 0 ; /* 10**9 / times_clk_tcks           */
-static qtime_t times_scale_r      = 0 ; /* 10**9 % times_clk_tcks           */
-
-qtime_mono_t
-qt_craft_monotonic(void) {
-#if !TIMES_TAKES_NULL
-  struct tms dummy[1] ;
-#endif
-  clock_t   this_times_sample ;
-
-  /* Set up times_scale_q & times_scale_q if not yet done.              */
-  if (times_clk_tcks == 0)      /* Is zero until it's initialized       */
-    {
-      lldiv_t qr ;
-      confirm(sizeof(qtime_t) <= sizeof(long long int)) ;
-
-      times_clk_tcks = sysconf(_SC_CLK_TCK) ;
-      passert((times_clk_tcks > 0) &&
-              (times_clk_tcks <= (sizeof(clock_t) > 4) ? 1000000
-                                                       :    1000)) ;
-
-      qr = lldiv(QTIME_SECOND, times_clk_tcks) ;
-      times_scale_q = qr.quot ;
-      times_scale_r = qr.rem ;
-
-      step_limit = (int64_t)24 * 60 * 60 * times_clk_tcks ;
-    } ;
-
-  /* No errors are defined for times(), but a return of -1 is defined   */
-  /* to indicate an error condition, with errno saying what it is !     */
-  /*                                                                    */
-  /* The following deals carefully with this -- cannot afford for the   */
-  /* clock either to jump or to get stuck !                             */
-
-#if TIMES_TAKES_NULL
-# define TIMES_ARG  NULL
-#else
-# define TIMES_ARG  dummy
-#endif
-
-  this_times_sample = times(TIMES_ARG) ;
-  if (this_times_sample == -1)            /* deal with theoretical error  */
-    {
-       errno = 0 ;
-       this_times_sample = times(TIMES_ARG) ;
-       if (errno != 0)
-         zabort_errno("times() failed") ;
-    } ;
-#undef TIMES_ARG
-
-  /* If clock_t is large enough, treat as monotonic (!).
+  /* If clock_t is large enough then we can use it directly, and not keep the
+   * times_monotonic up to date.
    *
    * Otherwise calculate the difference between this sample and the
    * previous one -- the step.
    *
    * We do the sum in signed 64 bits, and the samples are signed 64 bits.
    */
+  this_times_sample = qt_times() ;
+
   if (sizeof(clock_t) > 4)
-    monotonic = this_times_sample ;
+    result = this_times_sample ;
   else
     {
       int64_t step ;
+
+      qpt_spin_lock(qt_slock) ;         /* <-<-<-<-<-<-<-<-<-<-<-<-<-<- */
 
       step = this_times_sample - last_times_sample ;
 
@@ -208,70 +281,81 @@ qt_craft_monotonic(void) {
           step += (uint64_t)INT32_MAX + 1 ;
         } ;
 
-      if (step > step_limit)
-        zabort("Sudden large monotonic clock jump") ;
+      result = times_monotonic + step ;
 
-      monotonic        += step ;
+      times_monotonic   = result ;
       last_times_sample = this_times_sample ;
+
+      qpt_spin_unlock(qt_slock) ;       /* <-<-<-<-<-<-<-<-<-<-<-<-<-<- */
+
+      if (step > step_limit)
+        zabort("Sudden large times_monotonic clock jump") ;
     } ;
 
-  /* Scale to qtime_t units.                                            */
-  if (times_scale_r == 0)
-    return monotonic * times_scale_q ;
-  else
-    return (monotonic * times_scale_q) +
-                                ((monotonic * times_scale_r) / times_clk_tcks) ;
-} ;
+  /* Scale to qtime_t units and, if required, make sure is, indeed, monotonic.
+   */
+  monotonic = result * times_scale_q ;
 
-/*------------------------------------------------------------------------------
- * Get crafted monotonic time -- in seconds
- */
-extern time_t
-qt_craft_mono_secs(void)
-{
-  qt_craft_monotonic() ;        /* update the monotonic counter */
+  if (times_scale_r != 0)
+    monotonic += ((result * times_scale_r) / times_clk_tcks) ;
 
-  return monotonic / times_clk_tcks ;
+  if (qtime_debug)
+    qt_track_monotonic(monotonic) ;
+
+  return monotonic ;
 } ;
 
 /*==============================================================================
  * A simple minded random number generator.
  *
- * Designed to be reasonably unpredictable... particularly the ms bits !
+ * Uses time and other stuff to produce something which is not particularly
+ * predictable... particularly the ms bits !
  */
 
+/*------------------------------------------------------------------------------
+ * Take q ^ s, reduce to 32 bits by parts together, then use Knuth recommended
+ * linear congruent to "randomise" that, so that most of the original bits
+ * affect the result.
+ *
+ * The result of the linear congruent thingie depends rather more on the low
+ * order bits.  The values we are dealing with are times in nano-seconds
+ * and addresses and such, the low order bits of which we have a little
+ * doubt about.  Hence the "folding" we do on the value.
+ *
+ * Note that linear congruent tends to be "more random" in the ms bits.
+ */
 static inline uint32_t
 qt_rand(uint64_t q, uint64_t s)
 {
-  /* Takes q ^ s and reduces to 32 bits by xoring ms and ls halves
-   * then uses Knuth recommended linear congruent to randomise that, so that
-   * most of the original bits affect the result.
-   *
-   * Note that linear congruent tends to be "more random" in the ms bits.
-   */
   q ^= s ;
-  q = (q ^ (q >> 32)) & 0xFFFFFFFF ;
+  q  = (q ^ ((q >> 16) & 0xFFFF) ^ (q >> 32)) & 0xFFFFFFFF ;
+
   return ((q * 2650845021) + 5) & 0xFFFFFFFF ;
 } ;
 
+/*------------------------------------------------------------------------------
+ * Random and largely unpredictable number.
+ */
 extern uint32_t
 qt_random(uint32_t seed)
 {
   uint32_t x, y ;
   uint64_t t ;
 
-  t = qt_get_realtime() ;
+  t = qt_get_realtime() ;       /* in nano-seconds      */
+
+  seed ^= qt_random_seed ;      /* munge a bit          */
 
   /* Set x by munging the time, the address of x, the current contents of x,
-   * and the "seed".  (Munge the seed a bit for good measure.)
+   * and the "seed".
    */
-  x = qt_rand(t ^ (uint64_t)x ^ (uint64_t)&x, seed ^ 3141592653) ;
+  x = qt_rand(t ^ (uint64_t)x ^ (uintptr_t)&x, seed) ;
                   /* munge the address and the contents with the seed   */
 
   /* Set y by munging the time, the address of y, the current contents of y,
-   * and the "seed".  (Munge the seed a bit for good measure.)
+   * and the "seed".
    */
-  y = qt_rand(t ^ (uint64_t)y ^ (uint64_t)&y, seed ^ 3562951413) ;
+  y = qt_rand(t ^ (uint64_t)y ^ (uintptr_t)&y, seed) ;
                   /* munge the current real time with the seed          */
 
   /* Return x and y munged together.
@@ -282,11 +366,13 @@ qt_random(uint32_t seed)
   return x ^ ((y >> 16) & 0xFFFF) ^ ((y & 0xFFFF) << 16) ;
 } ;
 
+
 /*==============================================================================
  * Error handling
  */
 
-static qtime_t qt_clock_failed(clockid_t clock_id, const char* op, qtime_t ret);
+static void qt_clock_failed(clockid_t clock_id, const char* op,
+                                                          struct timespec* ts) ;
 
 /*------------------------------------------------------------------------------
  * clock_gettime() for the given clock_id has failed
@@ -295,10 +381,10 @@ static qtime_t qt_clock_failed(clockid_t clock_id, const char* op, qtime_t ret);
  *
  * Returns:  0 -- if returns
  */
-Private qtime_t
-qt_clock_gettime_failed(clockid_t clock_id)
+Private void
+qt_clock_gettime_failed(clockid_t clock_id, struct timespec* ts)
 {
-  return qt_clock_failed(clock_id, "clock_gettime", 0) ;
+  return qt_clock_failed(clock_id, "clock_gettime", ts) ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -306,16 +392,17 @@ qt_clock_gettime_failed(clockid_t clock_id)
  *
  * See: qt_clock_getres()
  */
-Private qtime_t qt_clock_getres_failed(clockid_t clock_id)
+Private void
+qt_clock_getres_failed(clockid_t clock_id, struct timespec* ts)
 {
-  return qt_clock_failed(clock_id, "clock_getres", 0) ;
+  return qt_clock_failed(clock_id, "clock_getres", ts) ;
 } ;
 
 /*------------------------------------------------------------------------------
  * Report clock operation failure.
  */
-Private qtime_t
-qt_clock_failed(clockid_t clock_id, const char* op, qtime_t ret)
+Private void
+qt_clock_failed(clockid_t clock_id, const char* op, struct timespec* ts)
 {
   int err = errno ;
 
@@ -331,7 +418,37 @@ qt_clock_failed(clockid_t clock_id, const char* op, qtime_t ret)
 
   zlog_err("failed to %s(%d): %s", op, clock_id, errtoa(err, 0).str) ;
 
-  return ret ;
+  memset(ts, 0, sizeof(*ts)) ;
+} ;
+
+/*==============================================================================
+ * For debug
+ */
+
+/*------------------------------------------------------------------------------
+ * If the monotonic clock jumps around, we will be confused.
+ *
+ * For debug purposes we check each CLOCK_MONOTONIC result against the previous
+ * one.  If it goes backwards by more than 1ms, then we complain.
+ *
+ * If the clock jumps forwards, then timers will go off early, which is not so
+ * bad, and that is not detected here -- but the qpnexus watch-dog will detect
+ * the monotonic and realtime clocks diverging.
+ */
+Private void
+qt_track_monotonic(qtime_mono_t this)
+{
+  qtime_mono_t last ;
+
+  qpt_spin_lock(qt_slock) ;     /* <-<-<-<-<-<-<-<-<-<-<-<-<-<- */
+
+  last = track_monotonic ;
+  track_monotonic = this ;
+
+  qpt_spin_unlock(qt_slock) ;   /* <-<-<-<-<-<-<-<-<-<-<-<-<-<- */
+
+  if ((this - last) < -(QTIME(1) / 1000))
+    zlog_err("CLOCK_MONOTONIC gone backwards by: %ld", (long)(last - this)) ;
 } ;
 
 /*==============================================================================
@@ -351,7 +468,7 @@ qt_clock_failed(clockid_t clock_id, const char* op, qtime_t ret)
  *
  *   c) that DST changes occur on times which are on 5 minute boundaries
  *      (60 probably -- but this means that the DST change is on a 5 minute
- *       bounderay in local and epoch times !)
+ *       boundary in local and epoch times !)
  *
  * Sets up and maintains a table containing 8 entries:
  *

@@ -29,6 +29,7 @@
 #include "memory.h"
 #include "qpnexus.h"
 #include "qpthreads.h"
+#include "qtime.h"
 #include "qpselect.h"
 #include "thread.h"
 #include "privs.h"
@@ -177,13 +178,23 @@ qlib_init_first_stage(mode_t cmask)
 
   /* Initialise as required.
    *
-   * NB: memory is the first to be initialised, and the last to be shut down.
+   * The start_up initialisers really ought to have few if any dependencies,
+   * and ay there are must be documented here:
+   *
+   *  1. memory is the first to be initialised, and the last to be shut down.
+   *
+   *  2. qtime is initialised early, so that crafted monotonic time etc are
+   *     available just in case other initialisation wants it.
+   *
+   *  3. qpthreads is also initialised early, to make sure that its state is
+   *     correct, just in case.
    */
   memory_start_up(qlib_pagesize) ;
+  qt_start_up() ;
+  qpt_start_up(qlib_cputime, qlib_thread_cputime) ;
   qps_start_up() ;
   qiovec_start_up(qlib_iov_max) ;
   thread_start_up();
-  qpt_start_up(qlib_cputime, qlib_thread_cputime) ;
   qpn_wd_start_up() ;
 } ;
 
@@ -205,6 +216,7 @@ qlib_init_second_stage(bool pthreaded)
 {
   qpt_second_stage(pthreaded);
   memory_init_r();
+  qt_second_stage() ;
   qpn_init() ;
   thread_init_r();
   log_init_r() ;
@@ -239,6 +251,7 @@ qexit(int exit_code, bool mem_stats)
   zprivs_finish();
   log_finish();
   thread_finish();
+  qt_finish() ;
   memory_finish(mem_stats);
   exit (exit_code);
 }

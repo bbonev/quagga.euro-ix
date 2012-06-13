@@ -24,7 +24,7 @@
  * Data structures etc.
  */
 
-typedef int heap_cmp(p_vector_item* a, p_vector_item*) ;
+typedef int heap_cmp(p_vector_item* a, p_vector_item* b) ;
 
 enum heap_state {
   Heap_Has_Backlink  = 0x01,    /* Set if backlink set  */

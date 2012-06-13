@@ -28,10 +28,43 @@
 #include <sys/time.h>
 #include <unistd.h>
 
+/*------------------------------------------------------------------------------
+ * Sort out QTIME_DEBUG.
+ *
+ *   Set to 1 if defined, but blank.
+ *   Set to QDEBUG if not defined.
+ *
+ *   Force to 0 if QTIME_NO_DEBUG is defined and not zero.
+ *
+ * So: defaults to same as QDEBUG, but no matter what QDEBUG is set to:
+ *
+ *       * can set QTIME_DEBUG    == 0 to turn off debug
+ *       *  or set QTIME_DEBUG    != 0 to turn on debug
+ *       *  or set QTIME_NO_DEBUG != 0 to force debug off
+ */
+
+#ifdef QTIME_DEBUG              /* If defined, make it 1 or 0           */
+# if IS_BLANK_OPTION(QTIME_DEBUG)
+#  undef  QTIME_DEBUG
+#  define QTIME_DEBUG 1
+# endif
+#else                           /* If not defined, follow QDEBUG        */
+# define QTIME_DEBUG QDEBUG
+#endif
+
+#ifdef QTIME_NO_DEBUG           /* Override, if defined                 */
+# if IS_NOT_ZERO_OPTION(QTIME_NO_DEBUG)
+#  undef  QTIME_DEBUG
+#  define QTIME_DEBUG 0
+# endif
+#endif
+
+enum { qtime_debug  = QTIME_DEBUG } ;
+
 /*==============================================================================
  * qtime_t -- signed 64-bit integer.
  *
- * The various time functions work in terms of the structures:
+ * The various system/POSIX time functions work in terms of the structures:
  *
  *   timespec   -- tv_secs    seconds
  *                 tv_nsecs   nano-seconds
@@ -43,7 +76,6 @@
  * (signed) nano-second value.  That gives > 34 bits for the seconds count,
  * and counts from zero to > 290 years.
  */
-
 typedef int64_t qtime_t ;
 
 typedef qtime_t qtime_real_t ;  /* qtime_t value, realtime time-base      */
@@ -54,65 +86,56 @@ typedef qtime_t qtime_tod_t ;   /* qtime_t value, timeofday time-base...  */
 
 /* A qtime_t second                 123456789 -- nano-seconds             */
 #define QTIME_SECOND     ((qtime_t)1000000000)
-#define TIMESPEC_SECOND            1000000000
-#define TIMEVAL_SECOND             1000000
+#define TIMESPEC_SECOND  ((int64_t)1000000000)
+#define TIMEVAL_SECOND   ((int64_t)1000000)
 
-/* Macro to convert time in seconds to a qtime_t                */
-/* Note that the time to convert may be a float.                */
-#define QTIME(s) ((qtime_t)(s) * QTIME_SECOND)
+/* Macro to convert time in seconds to a qtime_t
+ *
+ * Note that the time to convert may be a float.
+ */
+#define QTIME(s) ((qtime_t)((s) * QTIME_SECOND))
+
+/* Construct qt_have_clock_monotonic from HAVE_CLOCK_MONOTONIC
+ */
+enum
+{
+  qt_have_clock_monotonic
+#ifdef HAVE_CLOCK_MONOTONIC
+                         = true
+#else
+                         = false
+#endif
+};
+
 
 /*==============================================================================
- * Conversion functions
+ * Functions
  */
+extern void qt_start_up(void) ;
+extern void qt_second_stage(void) ;
+extern void qt_finish(void) ;
+
 Inline qtime_t timespec2qtime(struct timespec* p_ts) ;
 Inline qtime_t timeval2qtime(struct timeval* p_tv) ;
 Inline struct timespec* qtime2timespec(struct timespec* p_ts, qtime_t qt) ;
 Inline struct timeval* qtime2timeval(struct timeval* p_tv, qtime_t qt) ;
 
-/*==============================================================================
- * Clocks.
- *
- * Here is support for:
- *
- *   * System Clock
- *
- *     This can be read using either clock_gettime(CLOCK_REALTIME, &ts) or
- *     gettimeofday(&tv, NULL) -- which (are believed to) return the same clock,
- *     but in different units.
- *
- *   * Monotonic Clock
- *
- *     Using clock_gettime(CLOCK_MONOTONIC, &ts) if it is available, otherwise
- *     a manufactured equivalent using times() -- see qt_craft_monotonic().
- */
-
 Inline qtime_real_t qt_get_realtime(void) ;
-                                /* clock_gettime(CLOCK_REALTIME, ...)   */
 Inline qtime_mono_t qt_add_realtime(qtime_t interval) ;
-                                /* qt_get_realtime() + interval         */
-
 Inline qtime_mono_t qt_get_monotonic(void) ;
-                                /* clock_gettime(CLOCK_MONOTONIC, ...)  */
-                                /* OR equivalent using times()          */
 Inline qtime_mono_t qt_add_monotonic(qtime_t interval) ;
-                                /* qt_get_monotonic() + interval        */
 Inline time_t qt_get_mono_secs(void) ;
-                                /* clock_gettime(CLOCK_MONOTONIC, ...)  */
-                                /* OR equivalent using times()          */
 
-/* These are provided just in case gettimeofday() != CLOCK_REALTIME     */
 Inline qtime_tod_t qt_get_timeofday(void) ;
-                                /* gettimeofday(&tv, NULL)              */
 Inline qtime_tod_t qt_add_timeofday(qtime_t interval) ;
-                                /* qt_get_timeofday() + interval        */
 
-/*==============================================================================
- * Primitive random number generation.
- *
- * Uses time and other stuff to produce something which is not particularly
- * predictable.
- */
 extern uint32_t qt_random(uint32_t seed) ;
+
+Private qtime_mono_t qt_craft_monotonic(void) ;
+
+Private void qt_clock_gettime_failed(clockid_t clock_id, struct timespec* ts) ;
+Private void qt_clock_getres_failed(clockid_t clock_id, struct timespec* ts) ;
+Private void qt_track_monotonic(qtime_mono_t this) ;
 
 /*==============================================================================
  * Inline conversion functions
@@ -179,14 +202,24 @@ qtime2timeval(struct timeval* p_tv, qtime_t qt)
 } ;
 
 /*==============================================================================
- * Inline Clock Functions.
+ * Clocks.
+ *
+ * Here is support for:
+ *
+ *   * System Clock
+ *
+ *     This can be read using either clock_gettime(CLOCK_REALTIME, &ts) or
+ *     gettimeofday(&tv, NULL) -- which (are believed to) return the same clock,
+ *     but in different units.
+ *
+ *   * Monotonic Clock
+ *
+ *     Using clock_gettime(CLOCK_MONOTONIC, &ts) if it is available, otherwise
+ *     a manufactured equivalent using times() -- see qt_craft_monotonic().
  */
 
-/* Function to manufacture a monotonic clock.   */
-Private qtime_mono_t qt_craft_monotonic(void) ;
-Private time_t qt_craft_mono_secs(void) ;
-Private qtime_t qt_clock_gettime_failed(clockid_t clock_id) ;
-Private qtime_t qt_clock_getres_failed(clockid_t clock_id) ;
+Inline void qt_clock_gettime_ts(clockid_t clock_id, struct timespec* ts) ;
+Inline void qt_clock_getres_ts(clockid_t clock_id, struct timespec* ts) ;
 
 /*------------------------------------------------------------------------------
  * Read given clock & return a qtime_t value.
@@ -201,12 +234,11 @@ Private qtime_t qt_clock_getres_failed(clockid_t clock_id) ;
 Inline qtime_t
 qt_clock_gettime(clockid_t clock_id)
 {
-  struct timespec ts ;
+  struct timespec ts[1] ;
 
-  if (clock_gettime(clock_id, &ts) == 0)
-    return timespec2qtime(&ts) ;
+  qt_clock_gettime_ts(clock_id, ts) ;
 
-  return qt_clock_gettime_failed(clock_id) ;
+  return timespec2qtime(ts) ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -215,19 +247,19 @@ qt_clock_gettime(clockid_t clock_id)
  * For CLOCK_REALTIME and CLOCK_MONOTONIC any failure is (a) exotic, to say
  * the least, and (b) impossible to recover from.
  *
- * For other clocks, it may be possible to continue, so we return zero and
- * leave it up to the caller to worry (should they care) that the clock either
- * occasionally or consistently returns 0 !
+ * For other clocks, it may be possible to continue, so we return a resolution
+ * of 0 nanoseconds per clock tick and leave it up to the caller to worry !
+ *
+ * NB: beware of dividing by this without checking for possible error !!
  */
 Inline qtime_t
 qt_clock_getres(clockid_t clock_id)
 {
-  struct timespec ts ;
+  struct timespec ts[1] ;
 
-  if (clock_getres(clock_id, &ts) == 0)
-    return timespec2qtime(&ts) ;
+  qt_clock_getres_ts(clock_id, ts) ;
 
-  return qt_clock_getres_failed(clock_id) ;
+  return timespec2qtime(ts) ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -261,11 +293,10 @@ qt_add_realtime(qtime_t interval)
 Inline qtime_mono_t
 qt_get_monotonic(void)
 {
-#ifdef HAVE_CLOCK_MONOTONIC
-  return qt_clock_gettime(CLOCK_MONOTONIC) ;
-#else
-  return qt_craft_monotonic() ;
-#endif
+  if (qt_have_clock_monotonic)
+    return qt_clock_gettime(CLOCK_MONOTONIC) ;
+  else
+    return qt_craft_monotonic() ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -289,16 +320,15 @@ qt_add_monotonic(qtime_t interval)
 Inline time_t
 qt_get_mono_secs(void)
 {
-#ifdef HAVE_CLOCK_MONOTONIC
-  struct timespec ts ;
+  if (qt_have_clock_monotonic)
+    {
+      struct timespec ts ;
 
-  if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0)
-    zabort_errno("clock_gettime failed") ;
-
-  return ts.tv_sec ;
-#else
-  return qt_craft_mono_secs() ;
-#endif
+      qt_clock_gettime_ts(CLOCK_MONOTONIC, &ts) ;
+      return ts.tv_sec ;
+    }
+  else
+    return qt_craft_monotonic() / QTIME(1) ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -319,6 +349,31 @@ Inline qtime_tod_t
 qt_add_timeofday(qtime_t interval)
 {
   return qt_get_timeofday() + interval;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Read given clock, filling in given struct timespec and dealing with any
+ * error.
+ */
+Inline void
+qt_clock_gettime_ts(clockid_t clock_id, struct timespec* ts)
+{
+  if (clock_gettime(clock_id, ts) != 0)
+    qt_clock_gettime_failed(clock_id, ts) ;
+
+  if (qtime_debug && (clock_id == CLOCK_MONOTONIC))
+    qt_track_monotonic(timespec2qtime(ts)) ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Read given clock's resolution, filling in given struct timespec and dealing
+ * with any error.
+ */
+Inline void
+qt_clock_getres_ts(clockid_t clock_id, struct timespec* ts)
+{
+  if (clock_getres(clock_id, ts) != 0)
+    qt_clock_getres_failed(clock_id, ts) ;
 } ;
 
 #endif /* _ZEBRA_QTIME_H */

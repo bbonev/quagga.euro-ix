@@ -40,6 +40,7 @@
 #include "lib/stream.h"
 #include "lib/sockunion.h"
 #include "lib/list_util.h"
+#include "qfstring.h"
 
 /*==============================================================================
  * BGP Connections.
@@ -94,8 +95,8 @@ enum { CUT_LOOSE_LOCK_COUNT = 1000 } ;
  */
 static const char* bgp_connection_tags[] =
 {
-  [bgp_connection_primary]   = "(primary)",
-  [bgp_connection_secondary] = "(secondary)",
+  [bgp_connection_primary]   = "(c)",   /* outbound connect()   */
+  [bgp_connection_secondary] = "(a)",   /* inbound accept()     */
 } ;
 
 static void bgp_connection_init_host(bgp_connection connection,
@@ -157,7 +158,8 @@ bgp_connection_init_new(bgp_connection connection, bgp_session session,
   /* Put on the connections that exist list                             */
   sdl_push(bgp_connection_list, connection, exist) ;
 
-  /* Link back to session, point at its mutex and point session here    */
+  /* Link back to session, point at its mutex and point session here
+   */
   connection->session    = session ;
   connection->p_mutex    = session->mutex ;
   connection->lock_count = 0 ;  /* no question about it         */
@@ -167,26 +169,34 @@ bgp_connection_init_new(bgp_connection connection, bgp_session session,
 
   session->connections[ordinal] = connection ;
 
-  /* qps_file structure                                                 */
+  /* qps_file structure
+   */
   connection->qf = qps_file_init_new(NULL, NULL) ;
 
-  /* Initialise all the timers                                          */
+  /* Initialise all the timers
+   */
   connection->hold_timer      = qtimer_init_new(NULL, bgp_nexus->pile,
                                                              NULL, connection) ;
   connection->keepalive_timer = qtimer_init_new(NULL, bgp_nexus->pile,
                                                              NULL, connection) ;
 
-  /* Copy log destination and make host name + (primary)/(secondary)    */
-  /* Makes complete copies so that connection may continue to run, even */
-  /* after the session has stopped, and may have been destroyed.        */
+  /* Copy log destination and make host name + (c)/(a)
+   *
+   * Makes complete copies so that connection may continue to run, even
+   * after the session has stopped, and may have been destroyed.
+   *
+   * This also names the timers -- so done after the timers are created.
+   */
   connection->log  = session->log ;
   bgp_connection_init_host(connection, bgp_connection_tags[ordinal]) ;
 
-  /* Need two empty "stream" buffers                                    */
+  /* Need two empty "stream" buffers
+   */
   connection->ibuf = stream_new(BGP_STREAM_SIZE) ;
   connection->obuf = stream_new(BGP_STREAM_SIZE) ;
 
-  /* Ensure mqueue_local_queue is empty.                                */
+  /* Ensure mqueue_local_queue is empty.
+   */
   mqueue_local_init_new(&connection->pending_queue) ;
 
   return connection ;
@@ -221,19 +231,41 @@ BGP_CONNECTION_SESSION_CUT_LOOSE(bgp_connection connection)
 /*------------------------------------------------------------------------------
  * Set the host field for the connection to session->host + given tag.
  *
+ * Also name any existing timers if DEBUG_FSM
+ *
  * NB: requires the session to be LOCKED.
  */
 static void
 bgp_connection_init_host(bgp_connection connection, const char* tag)
 {
-  const char* host = connection->session->host ;
+  qfb_gen_t QFB_QFS(qfb, qfs) ;
 
   if (connection->host != NULL)
     XFREE(MTYPE_BGP_PEER_HOST, connection->host) ;
-  connection->host = XMALLOC(MTYPE_BGP_PEER_HOST, strlen(host)
-                                                + strlen(tag) + 1) ;
-  strcpy(connection->host, host) ;
-  strcat(connection->host, tag) ;
+
+  qfs_reset(qfs) ;
+  qfs_printf(qfs, "%s%s", connection->session->host, tag) ;
+
+  connection->host = XMALLOC(MTYPE_BGP_PEER_HOST, qfs_len(qfs) + 1) ;
+  qassert(qfs_len(qfs) == strlen(qfs_string(qfs))) ;
+  strcpy(connection->host, qfs_string(qfs)) ;
+
+  if (BGP_DEBUG(fsm, FSM))
+    {
+      if (connection->hold_timer != NULL)
+        {
+          qfs_reset(qfs) ;
+          qfs_printf(qfs, "%s-%s", connection->host, "Hold") ;
+          qtimer_set_name(connection->hold_timer, qfs_string(qfs)) ;
+        } ;
+
+      if (connection->keepalive_timer != NULL)
+        {
+          qfs_reset(qfs) ;
+          qfs_printf(qfs, "%s-%s", connection->host, "KeepA") ;
+          qtimer_set_name(connection->keepalive_timer, qfs_string(qfs)) ;
+        } ;
+    } ;
 } ;
 
 /*------------------------------------------------------------------------------

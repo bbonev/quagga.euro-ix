@@ -227,6 +227,7 @@ typedef struct qfs_keyword
  * Functions
  */
 extern void qfs_init(qf_str qfs, char* str, uint size) ;
+extern void qfs_reset(qf_str qfs) ;
 extern void qfs_init_offset(qf_str qfs, char* str, uint size, uint offset) ;
 extern void qfs_reset_offset(qf_str qfs, uint offset) ;
 extern void qfs_init_as_is(qf_str qfs, char* str, uint size) ;
@@ -234,6 +235,7 @@ extern void qfs_init_as_is(qf_str qfs, char* str, uint size) ;
 Inline uint qfs_overflow(qf_str qfs) ;
 Inline uint qfs_term(qf_str qfs) ;
 extern void qfs_term_string(qf_str qfs, const char* src, uint n) ;
+Inline const char* qfs_string(qf_str qfs) ;
 
 Inline uint  qfs_len(qf_str qfs) ;
 Inline void* qfs_ptr(qf_str qfs) ;
@@ -354,6 +356,19 @@ qfs_term(qf_str qfs)
   *qfs->ptr = '\0' ;
   return qfs->overflow ;
 } ;
+
+/*------------------------------------------------------------------------------
+ * Insert '\0' terminator and return address of string.
+ *
+ * NB: does not advance pointer
+ */
+Inline const char*
+qfs_string(qf_str qfs)
+{
+  qfs_term(qfs) ;
+  return qfs->str ;
+} ;
+
 
 /*------------------------------------------------------------------------------
  * async-signal-safe strlen

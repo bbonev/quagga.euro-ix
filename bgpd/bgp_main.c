@@ -455,7 +455,8 @@ main (int argc, char **argv)
 
   bm->as2_speaker = config_as2_speaker ;
 
-  /* Start execution only if not in dry-run mode */
+  /* Start execution only if not in dry-run mode
+   */
   if (dryrun)
     return(0);
 
@@ -465,20 +466,24 @@ main (int argc, char **argv)
    */
   assert(!qpthreads_main_started);
 
-  /* Turn into daemon if daemon_mode is set.    */
+  /* Turn into daemon if daemon_mode is set.
+   */
   if (daemon_mode && daemon (0, 0) < 0)
     {
       zlog_err("BGPd daemon failed: %s", errtoa(errno, 0).str);
       return (1);
     }
 
-  /* Process ID file creation.                  */
+  /* Process ID file creation.
+   */
   pid_output (pid_file);
 
-  /* Ready to run VTY now.                      */
+  /* Ready to run VTY now.
+   */
   vty_start(vty_addr, vty_port, BGP_VTYSH_PATH);
 
-  /* Print banner. */
+  /* Print banner.
+   */
   if (qdebug)
     zlog_notice(debug_banner, argv[0], "");
 
@@ -488,6 +493,14 @@ main (int argc, char **argv)
                vty_port,
                (bm->address ? bm->address : "<all>"),
                (int)bm->port);
+
+  /* If we are debugging the FSM, set the name of the bgp_nexus timer pile.
+   *
+   * If was compiled with qtimers debugging enabled at a suitable level, this
+   * enables a lot of logging of timers !
+   */
+  if (BGP_DEBUG(fsm, FSM))
+    qtimer_pile_set_name(bgp_nexus->pile, bgp_nexus->name) ;
 
   /* Launch finite state machine(s)
    */

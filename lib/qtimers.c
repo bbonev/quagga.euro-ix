@@ -23,6 +23,7 @@
 #include "qtimers.h"
 #include "memory.h"
 #include "heap.h"
+#include "log.h"
 
 /*==============================================================================
  * Quagga Timers -- qtimer_xxxx
@@ -107,7 +108,8 @@ qtimer_pile_init_new(qtimer_pile qtp)
   /* Zeroising has initialised:
    *
    *   timers        -- invalid heap -- need to properly initialise
-   *   current       = NULL -- no current timer
+   *
+   *   name          -- empty '\0' terminated name
    */
 
   /* (The typedef is required to stop Eclipse (3.4.2 with CDT 5.0) whining
@@ -121,24 +123,67 @@ qtimer_pile_init_new(qtimer_pile qtp)
 } ;
 
 /*------------------------------------------------------------------------------
+ * Set name of given qtimer pile -- name field is fixed length
+ */
+extern void
+qtimer_pile_set_name(qtimer_pile qtp, const char* name)
+{
+  uint l ;
+
+  l = strlen(name) ;
+  if (l >= sizeof(qtp->name))
+    l = sizeof(qtp->name) - 1 ;
+
+  strncpy(qtp->name, name, l) ;
+} ;
+
+/*------------------------------------------------------------------------------
  * Get the timer time for the first timer due to go off in the given pile.
  *
  * The caller must provide a maximum acceptable time.  If the qtimer pile is
  * empty, or the top entry times out after the maximum time, then the maximum
  * is returned.
+ *
+ * NB: returns a time *interval*, which may be -ve !
  */
 extern qtime_t
 qtimer_pile_top_wait(qtimer_pile qtp, qtime_t max_wait, qtime_t now)
 {
-  qtime_t top_wait ;
-  qtimer  qtr = heap_top_item(&qtp->timers) ;
+  qtimer  qtr ;
+
+  qtr = heap_top_item(&qtp->timers) ;
 
   if (qtr == NULL)
-    return max_wait ;
+    {
+      if ((qtimers_debug > 1) && (qtp->name[0] != '\0'))
+        {
+          qtime_mono_t actual = qt_get_monotonic() ;
 
-  top_wait = qtr->time - now ;
+          zlog_debug("%s(%s) @ %ld: pile empty, now=%+ld, max_wait=%ld",
+                       __func__, qtp->name, (long)actual, (long)(now - actual),
+                                                                     max_wait) ;
+        } ;
+    }
+  else
+    {
+      qtime_t top_wait ;
 
-  return (top_wait < max_wait) ? top_wait : max_wait ;
+      top_wait = qtr->time - now ;
+
+      if ((qtimers_debug > 1) && (qtp->name[0] != '\0'))
+        {
+          qtime_mono_t actual = qt_get_monotonic() ;
+
+          zlog_debug("%s(%s) @ %ld: now=%+ld, '%s'=%+ld, max_wait=%+ld",
+                       __func__, qtp->name, (long)actual, (long)(now - actual),
+                                                qtr->name, top_wait, max_wait) ;
+        } ;
+
+      if (top_wait < max_wait)
+        max_wait = top_wait ;
+    } ;
+
+  return max_wait ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -165,10 +210,35 @@ qtimer_pile_dispatch_next(qtimer_pile qtp, qtime_mono_t upto)
 
   qtr = heap_top_item(&qtp->timers) ;
 
-  if ((qtr == NULL) || (qtr->time > upto))
-    return 0 ;
+  if (qtr == NULL)
+    return false ;
 
   passert((qtp == qtr->pile) && (qtr->state == qtrs_active)) ;
+
+  if (qtr->time > upto)
+    {
+      if ((qtimers_debug > 1) && (qtr->name[0] != '\0'))
+        {
+          qtime_mono_t actual = qt_get_monotonic() ;
+
+          zlog_debug("%s(%s) @ %ld: '%s' time %+ld > upto=%+ld -- Stop",
+                                      __func__, qtr->pile->name, (long)actual,
+                                        qtr->name, (long)(qtr->time - actual),
+                                                        (long)(upto - actual)) ;
+        } ;
+
+      return false ;
+    } ;
+
+  if ((qtimers_debug > 1) && (qtr->name[0] != '\0'))
+    {
+      qtime_mono_t actual = qt_get_monotonic() ;
+
+      zlog_debug("%s(%s) @ %ld: '%s' time %+ld <= upto=%+ld -- Dispatched",
+                                     __func__, qtr->pile->name, (long)actual,
+                                        qtr->name, (long)(qtr->time - actual),
+                                                        (long)(upto - actual)) ;
+    } ;
 
   qtr->state = qtrs_dispatch | qtrs_unset_pending | qtrs_active ;
                                 /* Timer must be unset if is still here
@@ -185,7 +255,7 @@ qtimer_pile_dispatch_next(qtimer_pile qtp, qtime_mono_t upto)
   else if ((state & qtrs_unset_pending) != 0)
     qtimer_unset(qtr) ;
 
-  return 1 ;
+  return true ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -269,6 +339,8 @@ qtimer_init_new(qtimer qtr, qtimer_pile qtp,
    *   timer_info  -- NULL -- no timer info set (yet)
    *
    *   interval    -- unset
+   *
+   *   name        -- empty '\0' terminated string
    */
   confirm(qtrs_inactive == 0) ;
 
@@ -277,6 +349,21 @@ qtimer_init_new(qtimer qtr, qtimer_pile qtp,
   qtr->timer_info = timer_info ;
 
   return qtr ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Set name of given qtimer -- name field is fixed length
+ */
+extern void
+qtimer_set_name(qtimer qtr, const char* name)
+{
+  uint l ;
+
+  l = strlen(name) ;
+  if (l >= sizeof(qtr->name))
+    l = sizeof(qtr->name) - 1 ;
+
+  strncpy(qtr->name, name, l) ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -353,11 +440,21 @@ qtimer_set(qtimer qtr, qtime_mono_t when, qtimer_action* action)
 {
   qtimer_pile qtp ;
 
-  if (when < 0)
-    return qtimer_unset(qtr) ;
-
   qtp = qtr->pile ;
   assert(qtp != NULL) ;
+
+  if ((qtimers_debug > 1) && (qtr->name[0] != '\0'))
+    {
+      qtime_mono_t actual = qt_get_monotonic() ;
+
+      zlog_debug("%s(%s) @ %ld: '%s' for %+ld",
+                                  __func__, qtp->name, (long)actual,
+                                            qtr->name, (long)(when - actual)) ;
+    }
+  confirm(sizeof(long) > 4) ;
+
+  if (when < 0)
+    return qtimer_unset(qtr) ;
 
   if (qtimers_debug)
     qtimer_pile_verify(qtp) ;
@@ -366,14 +463,16 @@ qtimer_set(qtimer qtr, qtime_mono_t when, qtimer_action* action)
 
   if ((qtr->state & qtrs_active) != 0)
     {
-      /* Is active, so update the timer in the pile.                    */
+      /* Is active, so update the timer in the pile.
+       */
       heap_update_item(&qtp->timers, qtr) ;
 
       qtr->state &= ~qtrs_unset_pending ;   /* no unset required, now   */
     }
   else
     {
-      /* Is not active, so insert the timer into the pile.              */
+      /* Is not active, so insert the timer into the pile.
+       */
       heap_push_item(&qtp->timers, qtr) ;
 
       qtr->state |= qtrs_active ;
@@ -403,6 +502,29 @@ qtimer_set(qtimer qtr, qtime_mono_t when, qtimer_action* action)
 extern void
 qtimer_unset(qtimer qtr)
 {
+  if ((qtimers_debug > 1) && (qtr->name[0] != '\0'))
+    {
+      const char*  unset ;
+      qtime_mono_t when ;
+      qtime_mono_t actual = qt_get_monotonic() ;
+
+      if (qtr->state & qtrs_active)
+        {
+          when  = qtr->time - actual ;
+          unset = "" ;
+        }
+      else
+        {
+          when  = 0 ;
+          unset = "unset=" ;
+        } ;
+
+      zlog_debug("%s(%s) @ %ld: '%s' for %s%+ld",
+                            __func__, qtr->pile->name, (long)actual,
+                                                 qtr->name, unset, (long)when) ;
+      confirm(sizeof(long) > 4) ;
+    } ;
+
   if ((qtr->state & qtrs_active) != 0)
     {
       qtimer_pile qtp = qtr->pile ;
@@ -427,6 +549,8 @@ qtimer_unset(qtimer qtr)
 /*==============================================================================
  * Verification code for debug purposes.
  */
+static void qtimer_pile_assert_fail(qtimer_pile qtp, qtimer qtr,
+                                        vector_index_t iq, const char* failed) ;
 extern void
 qtimer_pile_verify(qtimer_pile qtp)
 {
@@ -438,6 +562,11 @@ qtimer_pile_verify(qtimer_pile qtp)
   bool seen_dispatch ;
 
   assert(qtp != NULL) ;
+
+#define qtimer_assert(assertion) \
+  if (!(assertion)) qtimer_pile_assert_fail(qtp, qtr, i, #assertion)
+
+  qtp->ok = true ;
 
   /* (The typedef is required to stop Eclipse (3.4.2 with CDT 5.0) whining
    *  about first argument of offsetof().)
@@ -454,19 +583,87 @@ qtimer_pile_verify(qtimer_pile qtp)
   for (i = 0 ; i < e ; ++i)
     {
       qtr = vector_get_item(v, i) ;
-      assert(qtr != NULL) ;
+
+      if (qtr == NULL)
+        {
+          qtimer_assert(qtr != NULL) ;
+          continue ;
+        }
 
       if (qtr->state != qtrs_active)
         {
-          assert((qtr->state & qtrs_dispatch) != 0) ;
-          assert((qtr->state & qtrs_free_pending) == 0) ;
-          assert((qtr->state & qtrs_active) != 0) ;
-          assert(!seen_dispatch) ;
-          seen_dispatch = true ;
+          uint valid_state ;
+
+          valid_state = qtr->state & (qtrs_active | qtrs_dispatch
+                                                  | qtrs_unset_pending) ;
+
+          if (qtr->state & qtrs_dispatch)
+            {
+              qtimer_assert(!seen_dispatch) ;
+              seen_dispatch = true ;
+           } ;
+
+          qtimer_assert(qtr->state == valid_state) ;
         } ;
 
-      assert(qtr->pile     == qtp) ;
-      assert(qtr->backlink == i) ;
-      assert(qtr->action   != NULL) ;
+      qtimer_assert(qtr->pile     == qtp) ;
+      qtimer_assert(qtr->backlink == i) ;
+      qtimer_assert(qtr->action   != NULL) ;
+
+      if (i != 0)
+        {
+          qtimer qtr_p ;
+
+          qtr_p = vector_get_item(v, (i - 1) / 2) ;
+
+          qtimer_assert(qtr_p->time <= qtr->time) ;
+        } ;
     } ;
+
+  assert(qtp->ok) ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Report a qtimer_pile verification error.
+ *
+ * On the first failure, dump the entire pile.
+ *
+ * For all failures, output the assertion failure message.
+ */
+static void
+qtimer_pile_assert_fail(qtimer_pile qtp, qtimer qtr, vector_index_t iq,
+                                                             const char* failed)
+{
+  if (qtp->ok)
+    {
+      vector v ;
+      vector_index_t  i ;
+      vector_length_t e ;
+
+      qtp->ok = false ;
+
+      v = qtp->timers.v ;
+      e = vector_end(v) ;
+
+      zlog_err("*** qtimer_pile failure in pile '%s' @ %p with %d entries",
+                                                            qtp->name, qtp, e) ;
+      for (i = 0 ; i < e ; ++i)
+        {
+          qtimer qtr ;
+
+          qtr = vector_get_item(v, i) ;
+
+          if (qtr == NULL)
+            {
+              zlog_err("***%5u: NULL entry", (uint)i) ;
+              continue ;
+            } ;
+
+          zlog_err("***%5u: %p(%u) '%s' st=%0X t=%ld i=%ld (p=%p)",
+              (uint)i, qtr, (uint)(qtr->backlink), qtr->name, (uint)qtr->state,
+              (long)(qtr->time), (long)(qtr->interval), qtr->pile) ;
+        } ;
+    } ;
+
+  zlog_err("*** (%s) is not true for entry %u", failed, iq) ;
 } ;
