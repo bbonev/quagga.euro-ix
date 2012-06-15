@@ -116,6 +116,47 @@ else
   )
 fi
 
+dnl -------------------------------------------------------------------
+dnl Gizmo for testing whether compiler accepts given options
+dnl
+dnl ACQ_PROG_CC_OPTIONS([options], [var]) -- for each option will:
+dnl
+dnl   set: acq_cv_prog_cc_option_$option (shell variable)
+dnl
+dnl   append the option to the given (shell) var if it is supported
+dnl
+dnl ACQ_PROG_CC_OPTIONS([-Wno-type-limits -pthread], [CQFLAGS])
+dnl
+dnl   sets acq_cv_prog_cc_option__Wno_type_limits
+dnl    and acq_cv_prog_cc_option_pthread    to "yes" or "no"
+dnl
+dnl   and appends each to CQFLAGS if "yes"
+
+AC_USE_SYSTEM_EXTENSIONS
+
+AC_DEFUN([ACQ_PROG_CC_OPTIONS],
+[AC_REQUIRE([AC_PROG_CC])dnl
+m4_pushdef([acq_var], [$2])dnl
+AC_SUBST(acq_var)dnl
+m4_expand_once([acq_var=
+],m4_quote(acq_var=))dnl
+save_CFLAGS="$CFLAGS"
+for option in $1; do
+  AS_VAR_PUSHDEF([acq_option], [acq_cv_prog_cc_option_$option])
+  AC_CACHE_CHECK([whether $CC supports $option], acq_option,
+    [CFLAGS="$option"
+    AC_COMPILE_IFELSE([AC_LANG_PROGRAM([],[])],
+      [AS_VAR_SET(acq_option, yes)],
+      [AS_VAR_SET(acq_option, no)])
+  ])
+  AS_IF([test AS_VAR_GET(acq_option) = yes],
+        [acq_var="$acq_var${acq_var:+ }$option"])
+  AS_VAR_POPDEF([acq_option])dnl
+done
+CFLAGS="$save_CFLAGS"
+m4_popdef([acq_var])dnl
+])# ACQ_PROG_CC_OPTION
+
 dnl ---------------------------------------------
 dnl If CFLAGS doesn\'t exist set default value
 dnl AC_PROG_CC will have set minimal default
@@ -136,6 +177,11 @@ dnl Sun Studio 10 / SunPro 5.7 is also supported,
 dnl so lets set some sane CFLAGS for it.
 dnl ---------------------------------------------
 
+dnl older gcc (possibly just FreeBSD) reject -Wno-type-limits (though later
+dnl gcc are expected to accept anything -Wno-xxxx)
+
+ACQ_PROG_CC_OPTIONS([-Wno-type-limits -pthread], [CQFLAGS])
+
 AC_MSG_CHECKING([whether to set a default CFLAGS])
 if test "x${cflags_specified}" = "x" ; then
   case ${COMPILER} in
@@ -144,15 +190,19 @@ if test "x${cflags_specified}" = "x" ; then
         AC_MSG_RESULT([Intel default])
         ;;
     "GCC")
-  	CFLAGS="-O2 -fno-omit-frame-pointer -g -std=c99 -Wall -Wextra"
-    CFLAGS="${CFLAGS} -Wno-missing-field-initializers -Wno-type-limits"
+  	CFLAGS="-O2 -fno-omit-frame-pointer -g -std=c99"
+  	CFLAGS="${CFLAGS} -Wall -Wextra"
+    CFLAGS="${CFLAGS} -Wno-missing-field-initializers"
     CFLAGS="${CFLAGS} -Wno-unused-parameter"
-    CFLAGS="${CFLAGS} -Wbad-function-cast -Wcast-qual -Wchar-subscripts"
-  	CFLAGS="${CFLAGS} -Wmissing-declarations -Wmissing-prototypes"
-    CFLAGS="${CFLAGS} -Wpointer-arith -Wwrite-strings"
+    CFLAGS="${CFLAGS} -Wbad-function-cast"
+    CFLAGS="${CFLAGS} -Wcast-qual -Wchar-subscripts"
+  	CFLAGS="${CFLAGS} -Wmissing-declarations"
+  	CFLAGS="${CFLAGS} -Wmissing-prototypes"
+    CFLAGS="${CFLAGS} -Wpointer-arith"
+    CFLAGS="${CFLAGS} -Wwrite-strings"
   # CFLAGS="${CFLAGS} -Wswitch-default"    -- interesting, but tedious
-  # CFLAGS="${CFLAGS} -Wtype-limits"       -- interesting, but tedious 
-  	CFLAGS="${CFLAGS} -pthread"
+
+  	CFLAGS="${CFLAGS} ${CQFLAGS}"
   	# TODO: conditionally addd -Wpacked if handled
   	AC_MSG_RESULT([gcc default])
   	;;
@@ -544,7 +594,8 @@ AC_CHECK_HEADERS([sys/un.h netinet/in_systm.h netinet/in_var.h \
 	inet/nd.h arpa/inet.h netinet/ip_icmp.h \
 	fcntl.h stddef.h sys/ioctl.h syslog.h wchar.h wctype.h \
 	sys/sysctl.h sys/sockio.h kvm.h sys/conf.h \
-	pthread.h pthread_np.h],
+	pthread.h pthread_np.h \
+	byteswap.h sys/endian.h],
 	[], [], QUAGGA_INCLUDES)
 
 AC_CHECK_HEADERS([ucontext.h], [], [],
@@ -840,7 +891,8 @@ AC_CHECK_FUNCS([dup2 ftruncate getcwd gethostbyname getpagesize gettimeofday \
 	if_nametoindex if_indextoname getifaddrs \
   uname fcntl \
   pthread_attr_getstack pthread_attr_setstack \
-  pthread_attr_get_np pthread_getattr_np])
+  pthread_attr_get_np pthread_getattr_np \
+  ])
 
 AC_CHECK_FUNCS(setproctitle, ,
   [AC_CHECK_LIB(util, setproctitle, 

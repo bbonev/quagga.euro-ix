@@ -152,70 +152,107 @@ typedef const void* cvp ;
 
 /*------------------------------------------------------------------------------
  * htonq/ntohq -- sadly missing elsewhere
+ *
+ * Also qbswap16/qbswap32/qbswap64 --
  */
-union htonq_ntohq {
-  uint64_t q ;
-  struct {
-    uint32_t ms ;
-    uint32_t ls ;
-  } l ;
+Inline uint16_t qbswap16(uint16_t u) Always_Inline ;
+Inline uint32_t qbswap32(uint32_t u) Always_Inline ;
+Inline uint64_t qbswap64(uint64_t u) Always_Inline ;
+
+Inline uint64_t htonq(uint64_t q) Always_Inline ;
+Inline uint64_t ntohq(uint64_t q) Always_Inline ;
+
+#if   defined(HAVE_BYTESWAP_HX)
+/* The GNU C Library provides this
+ */
+#include <byteswap.h>
+
+Inline uint16_t
+qbswap16(uint16_t u)
+{
+  return bswap_16(u) ;
 } ;
 
-CONFIRM( (sizeof(union htonq_ntohq) == 8)
-                                 && (offsetof(union htonq_ntohq, l.ms) == 0)
-                                 && (offsetof(union htonq_ntohq, l.ls) == 4) ) ;
+Inline uint32_t
+qbswap32(uint32_t u)
+{
+  return bswap_32(u) ;
+} ;
 
-#ifdef __GNUC__
-Inline uint64_t htonq(uint64_t q) __attribute__((always_inline)) ;
-Inline uint64_t ntohq(uint64_t q) __attribute__((always_inline)) ;
+Inline uint64_t
+qbswap64(uint64_t u)
+{
+  return bswap_64(u) ;
+} ;
+
+#elif defined(HAVE_SYS_ENDIAN_H)
+#include <sys/endian.h>
+/* This is the BSD way.
+ */
+
+Inline uint16_t
+qbswap16(uint16_t u)
+{
+  return bswap16(u) ;
+} ;
+
+Inline uint32_t
+qbswap32(uint32_t u)
+{
+  return bswap32(u) ;
+} ;
+
+Inline uint64_t
+qbswap64(uint64_t u)
+{
+  return bswap64(u) ;
+} ;
+
+#else
+/* This is the fall back
+ */
+
+Inline uint16_t
+qbswap16(uint16_t u)
+{
+  return (u << 8) | (u >> 8) ;
+} ;
+
+Inline uint32_t
+qbswap32(uint32_t u)
+{
+  return    (u >> 24)           |  (u           << 24)
+         | ((u >>  8) & 0xFF00) | ((u & 0xFF00) <<  8) ;
+} ;
+
+Inline uint64_t
+qbswap64(uint64_t u)
+{
+  return   (u >> 56)               |  (u               << 56)
+        | ((u >> 40) & 0x0000FF00) | ((u & 0x0000FF00) << 40)
+        | ((u >> 24) & 0x00FF0000) | ((u & 0x00FF0000) << 24)
+        | ((u >>  8) & 0xFF000000) | ((u & 0xFF000000) <<  8) ;
+} ;
+
 #endif
 
 Inline uint64_t
 htonq(uint64_t hq)
 {
-#ifdef __GNUC__
-  #if   BYTE_ORDER == BIG_ENDIAN
-
+#if   BYTE_ORDER == BIG_ENDIAN
   return q ;
-
-  #elif BYTE_ORDER == LITTLE_ENDIAN
-
-  return __builtin_bswap64(hq) ;
-
-  #else
-    #error BYTE_ORDER is neither BIG_ENDIAN nor LITTLE_ENDIAN !
-  #endif
-#else
-  union htonq_ntohq t ;
-
-  t.l.ms = htonl(hq >> 32) ;
-  t.l.ls = htonl(hq      ) ;
-
-  return t.q ;
+#elif BYTE_ORDER == LITTLE_ENDIAN
+  return qbswap64(hq) ;
 #endif
 } ;
 
 Inline uint64_t
 ntohq(uint64_t nq)
 {
-#ifdef __GNUC__
-  #if   BYTE_ORDER == BIG_ENDIAN
-
+#if   BYTE_ORDER == BIG_ENDIAN
   return q ;
-
-  #elif BYTE_ORDER == LITTLE_ENDIAN
-
-  return __builtin_bswap64(nq) ;
-
-  #else
-    #error BYTE_ORDER is neither BIG_ENDIAN nor LITTLE_ENDIAN !
-  #endif
-#else
-  union htonq_ntohq t ;
-
-  t.q = nq ;
-
-  return ((uint64_t)ntohl(t.l.ms) << 32) | (uint64_t)ntohl(t.l.ls) ;
+#elif BYTE_ORDER == LITTLE_ENDIAN
+  return qbswap64(nq) ;
 #endif
 } ;
 
