@@ -4758,7 +4758,7 @@ host_init(const char* arg0)
 
   qs_reduce(cs_path, ":", ":") ;
 
-  host.sh_name  = "sh" ;                /* currently fixed      */
+  host.sh_name  = "sh" ;        /* Could/Should be a configure option ? */
   host.sh_path  = NULL ;
 
   while (1)
@@ -4789,12 +4789,9 @@ host_init(const char* arg0)
       if (ret == 0)
         break ;
 
-      if (ret > 0)
-        {
-          fprintf(stderr, "Cannot stat(%s): %s\n", qpath_string(host.sh_path),
-                                                         errtoa(errno, 0).str) ;
-          exit(1) ;
-        } ;
+      if ((ret > 0) && (ret != ENOENT))
+        fprintf(stderr, "Cannot stat(%s): %s\n", qpath_string(host.sh_path),
+                                                          errtoa(ret, 0).str) ;
     } ;
 
   qs_free(cs_path) ;
