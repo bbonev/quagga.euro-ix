@@ -81,30 +81,34 @@ const char*  daemon_name  = "" ;
  */
 struct host host =
 {
-    /* Host name of this router.                                */
+    /* Host name of this router.
+     */
     .name               = NULL,  /* set by host_init     */
     .name_set           = false, /* set by command       */
     .name_gen           = 0,     /* set by host_init     */
 
-    /* Password for vty interface.                              */
+    /* Passwords for vty interface.
+     */
     .password           = { .text = NULL, .encrypted = false },
-
-    /* Enable password                                          */
     .enable             = { .text = NULL, .encrypted = false },
 
-    /* System wide terminal lines.                              */
+    /* System wide terminal lines.
+     */
     .lines              = -1,   /* unset                */
 
-    /* Log filename.                                            */
+    /* Log filename.
+     */
     .logfile            = NULL,
 
-    /* config file files                                        */
+    /* config file files
+     */
     .own_config_file    = NULL,
     .int_config_file    = NULL,
     .config_file        = NULL,
     .config_dir         = NULL,
 
-    /* Initialisation and configuration                         */
+    /* Initialisation and configuration
+     */
     .pthreads_allowed   = false,
     .pthreaded_option   = false,
     .pthreaded_config   = false,
@@ -112,44 +116,62 @@ struct host host =
     .newborn            = true,
     .init_second_stage  = NULL,
 
-    /* Flags for services                                       */
+    /* Flags for services
+     */
     .advanced           = false,
     .encrypt            = false,
 
-    /* Banner configuration.                                    */
+    /* Banner configuration.
+     */
     .motd               = NULL,
     .motdfile           = NULL,
 
-    /* Nobody has the config symbol of power                    */
+    /* Nobody has the config symbol of power
+     */
     .config             = 0,
     .config_brand       = 0,
 
-    /* allow VTY to start without password                      */
+    /* allow VTY to start without password
+     */
     .no_password_check  = false,
 
-    /* if VTY starts without password, use RESTRICTED_NODE      */
+    /* if VTY starts without password, use RESTRICTED_NODE
+     */
     .restricted_mode    = false,
 
-    /* Vty timeout value -- see "exec-timeout" command          */
+    /* Vty timeout value -- see "exec-timeout" command
+     */
     .vty_timeout_val    = VTY_TIMEOUT_DEFAULT,
 
-    /* vty access-class for IPv4 and IPv6                       */
+    /* vty access-class for IPv4 and IPv6
+     */
     .vty_accesslist_name      = NULL,
     .vty_ipv6_accesslist_name = NULL,
 
-    /* How to configure listeners -- set by vty_start()         */
+    /* How to configure listeners -- set by vty_start()
+     */
     .vty_listen_addr    = NULL,
     .vty_listen_port    = 0,
     .vtysh_listen_path  = NULL,
 
-    /* Current directory                                        */
+    /* Current directory
+     */
     .cwd                = NULL,
 
-    /* Program name(s)                                          */
+    /* Program name(s)
+     */
     .full_progname      = "*progname*",
     .progname           = "*progname*",
 
-    /* __DATE__ & __TIME__ from last compilation                */
+    /* The shell and path to it for shell pipe commands.
+     *
+     * Currently set at host_init() and not changed thereafter.
+     */
+    .sh_name            = NULL,
+    .sh_path            = NULL,
+
+    /* __DATE__ & __TIME__ from last compilation
+     */
     .date               = __DATE__,
     .time               = __TIME__,
 } ;
@@ -3555,7 +3577,7 @@ show_configuration(vty vty, bool config_to_vtysh)
 
   vty->config_to_vtysh = false ;
 
-  return CMD_SUCCESS;
+  return ret ;
 } ;
 
 DEFUN (config_write_terminal,
@@ -4616,6 +4638,8 @@ host_init(const char* arg0)
   char* p, * e ;
   const char* s, * y ;
 
+  qstring  cs_path ;
+
   qassert(!qpthreads_enabled) ;
 
   /* Is new born -- nothing configured, yet
@@ -4704,6 +4728,76 @@ host_init(const char* arg0)
   *p++ = '\0' ;
 
   host.date = date_reformed ;
+
+  /* Establish location of the shell for shell commands.
+   */
+  cs_path = qs_new(0) ;
+
+  while (1)
+    {
+      usize get ;
+
+      errno = 0 ;
+      get = confstr(_CS_PATH, qs_char(cs_path), qs_size(cs_path)) ;
+
+      if ((get == 0) && (errno != 0))
+        {
+          fprintf(stderr, "Cannot confstr(_CS_PATH): %s\n",
+                                                         errtoa(errno, 0).str) ;
+          exit(1) ;
+        } ;
+
+      if (get <= qs_size(cs_path))
+        {
+          qs_set_len_nn(cs_path, get - 1) ;
+          break ;
+        } ;
+
+      qs_new_size(cs_path, get) ;
+    } ;
+
+  qs_reduce(cs_path, ":", ":") ;
+
+  host.sh_name  = "sh" ;                /* currently fixed      */
+  host.sh_path  = NULL ;
+
+  while (1)
+    {
+      const char* cs_path_element ;
+      int ret ;
+
+      cs_path_element = qs_next_word(cs_path) ;
+
+      if (cs_path_element == NULL)
+        {
+          confstr(_CS_PATH, qs_char(cs_path), qs_size(cs_path)) ;
+
+          fprintf(stderr, "Cannot find shell '%s' on path '%s'\n",
+                                               host.sh_name, qs_char(cs_path)) ;
+          exit(1) ;
+        } ;
+
+      host.sh_path = qpath_set(host.sh_path, cs_path_element) ;
+
+      if ((qpath_sex(host.sh_path) & qp_rooted) == 0)
+        continue ;              /* ignore relative or '~' or '//' !     */
+
+      qpath_append_str(host.sh_path, host.sh_name) ;
+
+      ret = qpath_stat_is_file(host.sh_path) ;
+
+      if (ret == 0)
+        break ;
+
+      if (ret > 0)
+        {
+          fprintf(stderr, "Cannot stat(%s): %s\n", qpath_string(host.sh_path),
+                                                         errtoa(errno, 0).str) ;
+          exit(1) ;
+        } ;
+    } ;
+
+  qs_free(cs_path) ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -4744,5 +4838,6 @@ host_finish(void)
   XFREE(MTYPE_HOST, host.vty_listen_addr) ;
   XFREE(MTYPE_HOST, host.vtysh_listen_path) ;
 
+  host.sh_path         = qpath_free(host.sh_path) ;
   host.cwd             = qpath_free(host.cwd) ;
 } ;

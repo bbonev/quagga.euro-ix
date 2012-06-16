@@ -553,7 +553,7 @@ static void mtype_log (const char *func, void *memory, mtype_t mtype,
 /*------------------------------------------------------------------------------
  * Fatal memory allocation error occured.
  */
-static void __attribute__ ((noreturn))
+static void No_Return
 zerror (const char *fname, mtype_t mtype, size_t size)
 {
   zlog_err ("%s : can't allocate memory for '%s'(%d) size %zd: %s\n",

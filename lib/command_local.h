@@ -63,30 +63,34 @@ typedef unsigned long int name_gen_t ;
 
 struct host
 {
-  /* Host name of this router.                                          */
+  /* Host name of this router.
+   */
   char*      name ;
   bool       name_set ;         /* set by command                       */
   name_gen_t name_gen ;         /* incremented each time name changes   */
 
-  /* Password for vty interface.                        */
-  password_t password;
+  /* Passwords for vty interface.
+   */
+  password_t password;          /* VIEW/EXEC                            */
+  password_t enable;            /* ENABLE                               */
 
-  /* Enable password                                    */
-  password_t enable;
-
-  /* System wide terminal lines default                 */
+  /* System wide terminal lines default
+  */
   int        lines;
 
-  /* Log filename.                                      */
+  /* Log filename.
+   */
   qpath      logfile;
 
-  /* config file names etc of this host                 */
+  /* config file names etc of this host
+   */
   qpath      own_config_file ;
   qpath      int_config_file ;
   qpath      config_file ;
   qpath      config_dir ;
 
-  /* Initialisation and configuration                   */
+  /* Initialisation and configuration
+   */
   bool       pthreads_allowed ;
   bool       pthreaded_option ;
   bool       pthreaded_config ;
@@ -94,44 +98,62 @@ struct host
   bool       newborn ;
   init_second_stage init_second_stage ;
 
-  /* Flags for services                                 */
+  /* Flags for services
+   */
   bool       advanced;
   bool       encrypt;
 
-  /* Banner configuration.                              */
+  /* Banner configuration.
+   */
   const char* motd ;
   qpath      motdfile;
 
-  /* Someone has the config symbol of power             */
+  /* Someone has the config symbol of power
+   */
   ulong      config ;           /* zero <=> no owner    */
   ulong      config_brand ;
 
-  /* Allow vty to start without password                */
+  /* Allow vty to start without password
+   */
   bool       no_password_check ;
 
-  /* Restrict unauthenticated logins?                   */
+  /* Restrict unauthenticated logins?
+   */
   bool       restricted_mode ;
 
-  /* vty timeout value -- see "exec-timeout" command    */
+  /* vty timeout value -- see "exec-timeout" command
+   */
   unsigned long vty_timeout_val ;
 
-  /* vty access-class for IPv4 and IPv6                 */
+  /* vty access-class for IPv4 and IPv6
+   */
   char*      vty_accesslist_name ;
   char*      vty_ipv6_accesslist_name ;
 
-  /* How to configure listeners                         */
+  /* How to configure listeners
+   */
   char*      vty_listen_addr ;
   ushort     vty_listen_port ;
   char*      vtysh_listen_path  ;
 
-  /* Current directory -- set in host_init()            */
+  /* Current directory -- set in host_init()
+   */
   qpath      cwd ;
 
-  /* Program name -- set in host_init(), never unset    */
+  /* Program name -- set in host_init(), never unset
+   */
   const char* full_progname ;
   const char* progname ;
 
-  /* __DATE__ & __TIME__ from last compilation          */
+  /* The shell and path to it for shell pipe commands.
+   *
+   * Currently set at host_init() and not changed thereafter.
+   */
+  const char* sh_name ;         /* "sh" unless overridden       */
+  qpath       sh_path ;
+
+  /* __DATE__ & __TIME__ from last compilation
+   */
   const char* date ;
   const char* time ;
 } ;

@@ -147,14 +147,10 @@ static void qsig_add(int signo, qsig_event* event) ;
 static int signal_set_set(sigset_t* set, sig_handler* handler, bool required) ;
 static int signal_set(int signo, sig_handler* handler, bool required) ;
 
-static void __attribute__ ((noreturn))
-  core_handler(int signo, siginfo_t *info, void *context) ;
-static void __attribute__ ((noreturn))
-  exit_handler(int signo, siginfo_t* info, void* context) ;
-static void
-  quagga_signal_handler(int signo, siginfo_t* info, void* context) ;
-static void
-  quagga_interrupt_handler(int signo, siginfo_t* info, void* context) ;
+static void core_handler(int signo, siginfo_t *info, void *context)  No_Return ;
+static void exit_handler(int signo, siginfo_t* info, void* context)  No_Return ;
+static void quagga_signal_handler(int signo, siginfo_t* info, void* context) ;
+static void quagga_interrupt_handler(int signo, siginfo_t* info, void* context);
 
 /*------------------------------------------------------------------------------
  * The following signals are not known to POSIX (2008) or are extensions.
@@ -514,7 +510,7 @@ static void * program_counter(void *context) ;
 /*------------------------------------------------------------------------------
  * Terminate + Core
  */
-static void __attribute__ ((noreturn))
+static void
 core_handler(int signo, siginfo_t *info, void *context)
 {
   zlog_signal(signo, "aborting...", info, program_counter(context)) ;
@@ -524,7 +520,7 @@ core_handler(int signo, siginfo_t *info, void *context)
 /*------------------------------------------------------------------------------
  * Terminate
  */
-static void __attribute__ ((noreturn))
+static void
 exit_handler(int signo, siginfo_t* info, void* context)
 {
   zlog_signal(signo, "exiting...", info, program_counter(context));

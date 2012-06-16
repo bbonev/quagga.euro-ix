@@ -1020,55 +1020,6 @@ qpath_trim_home(const char* p, ulen n)
 #if 0
 
 /*------------------------------------------------------------------------------
- * Does the given path start and end '/' ?
- */
-extern bool
-qpath_sex(qpath qp)
-{
-  char*     sp ;
-
-  if (qp == NULL)
-    return qp_empty ;           /* NULL qpath is empty          */
-
-  sp  = qs_chars(&qp->path) ;
-
-  if ((sp == NULL) || (*sp == '\0'))
-    return qp_empty ;           /* NULL body or just '\0'       */
-
-  if (*sp == '~')
-    return qp_homed ;
-
-  if (*sp == '/')
-    {
-      ++sp ;
-      if (*sp == '\0')
-        return qp_root ;
-      if (*sp != '/')
-        return qp_absolute ;
-
-      ++sp ;
-      if (*sp == '\0')
-        return qp_double_root ;
-      else
-        return qp_double_absolute ;
-    } ;
-
-
-
-  qp_empty,             /* nothing at all                       */
-  qp_relative,          /* something, not starting '/'          */
-  qp_root,              /* "/" all on its own                   */
-  qp_absolute,          /* something, starting with single '/'  */
-  qp_homed,             /* something, starting with '~'         */
-  qp_double_root,       /* "//" all on its own                  */
-  qp_double_absolute    /* something, starting with "//"        */
-
-
-
-  return ((qp->path).len == 1) && (*sp == '/') ;
-} ;
-
-/*------------------------------------------------------------------------------
  * Is there anything there ?
  */
 extern bool
@@ -1253,11 +1204,14 @@ qpath_is_atom(qpath qp)
 #endif
 
 /*==============================================================================
- *
- *
- *
+ * Path reduction and sexing of same.
  */
+
 /*------------------------------------------------------------------------------
+ * Reduce path to canonical form.
+ *
+ * If is already in canonical form, this is a scan along the string.
+ *
  * Reduce multiple '/' to single '/' (except for exactly "//" at start).
  *
  * Reduce "zzz/./zzz" to "zzz/zzz"         -- s/\/\.(\/|\0)/$1/g
@@ -1277,7 +1231,7 @@ qpath_is_atom(qpath qp)
  *
  *        where aaa is anything except '/'
  *
- * NB:
+ * NB: result is always the same length or shorter.
  *
  * NB: does not strip trailing '/' (including '/' of trailing "/." or "/..")
  *
@@ -1517,3 +1471,85 @@ qpath_reduce(qpath qp)
   qs_set_len_nn(qp->path, q - sp) ;   /* set the new length (shorter !) */
 } ;
 
+/*------------------------------------------------------------------------------
+ * Make sure path is in canonical form, and then sex it.
+ *
+ * Returns:
+ *
+ *   qp_empty                -- nothing at all
+ *
+ *   qp_some                 -- non-empty relative path (no '~', '/' or '//')
+ *
+ *   qp_homed                -- '~...[/]' on its own
+ *   qp_homed | qp_some      -- '~.../' followed by something
+ *
+ *   qp_rooted               -- '/' on its own
+ *   qp_rooted | qp_some     -- '/' followed by something
+ *
+ *   qp_dbl_rooted           -- '//' on its own
+ *   qp_dbl_rooted | qp_some -- '//' followed by something
+ *
+ * Note the values:
+ *
+ *   qp_relative   == qp_some
+ *   qp_home       == qp_homed
+ *   qp_root       == qp_rooted
+ *   qp_dble_root  == qp_dbl_rooted
+ *
+ * In particular, qp_home means that the path is just the home specification,
+ * with or without a trailing '/'.
+ *
+ * NB: qp_rooted and qp_dbl_routed are entirely distinct.
+ *
+ * So can, for example:
+ *
+ *   * test for an absolute path starting at root:
+ *
+ *       (sex & qp_rooted) != 0
+ *
+ *     Noting that this will exclude '~' and '//' paths.
+ *
+ *       (sex & (qp_rooted | qp_homed)) != 0
+ *
+ *   * test for absolute path starting at root or some home:
+ *
+ *   * test for root on its own:   (sex == qp_root)
+ */
+extern qpath_sex_t
+qpath_sex(qpath qp)
+{
+  char*     sp ;
+  qpath_sex_t sex ;
+
+  if (qp == NULL)
+    return qp_empty ;           /* NULL qpath is empty          */
+
+  qpath_reduce(qp) ;            /* make sure canonical          */
+
+  sp = qs_char_nn(qp->path) ;
+
+  sex = qp_empty ;
+
+  if      (*sp == '/')
+    {
+      sex = qp_rooted ;
+      ++sp ;
+      if (*sp == '/')
+        {
+          sex = qp_dbl_rooted ;
+          ++sp ;
+        } ;
+    }
+  else if (*sp == '~')
+    {
+      sex = qp_homed ;
+      do
+        ++sp ;
+      while ((*sp != '/') && (*sp !='\0')) ;
+
+      if (*sp == '/')
+        ++sp ;
+    } ;
+
+  return (*sp == '\0') ? sex : sex | qp_some ;
+} ;

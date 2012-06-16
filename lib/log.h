@@ -123,7 +123,7 @@ extern void zlog_signal(int signo, const char *action, siginfo_t *siginfo,
                                                         void *program_counter) ;
 
 /* Ring down the curtain -- turn of SIGABRT handler and abort()         */
-extern void zabort_abort(void)  __attribute__ ((noreturn)) ;
+extern void zabort_abort(void)  No_Return ;
 
 /* Log a backtrace. */
 extern void zlog_backtrace(int priority);

@@ -942,6 +942,9 @@ test_prefix_same(counts ct)
                       fam2 = rand() % 31415 ;
                     while (fam2 == fam1) ;
                     break ;
+
+                  default:
+                    assert(false) ;
                 } ;
 
               for (plt = 0 ; plt < 4 ; ++plt)
@@ -972,6 +975,9 @@ test_prefix_same(counts ct)
                         do
                           plen2 = rand() % 256 ;
                         while (plen2 == plen) ;
+
+                      default:
+                        assert(false) ;
                     } ;
 
                   p1->family    = fam1 ;
@@ -1100,6 +1106,9 @@ test_prefix_cmp(counts ct)
                   fam2 = fam1 ^ rand() % 65536 ;
                 while (fam2 == fam1) ;
                 break ;
+
+              default:
+                assert(false) ;
             } ;
 
           for (plt = 0 ; plt < 4 ; ++plt)
@@ -1130,6 +1139,9 @@ test_prefix_cmp(counts ct)
                     do
                       plen2 = rand() % 129 ;
                     while (plen2 == plen) ;
+
+                  default:
+                    assert(false) ;
                 } ;
 
               p1->family    = fam1 ;
@@ -1295,6 +1307,9 @@ test_prefix_common_bits(counts ct)
                       fam2 = rand() % 31415 ;
                     while (fam2 == fam1) ;
                     break ;
+
+                  default:
+                    assert(false) ;
                 } ;
 
               for (plt = 0 ; plt < 4 ; ++plt)
@@ -1325,6 +1340,9 @@ test_prefix_common_bits(counts ct)
                         do
                           plen2 = rand() % 256 ;
                         while (plen2 == plen) ;
+
+                      default:
+                        assert(false) ;
                     } ;
 
                   p1->family    = fam1 ;

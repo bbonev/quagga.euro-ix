@@ -1556,16 +1556,18 @@ uty_pipe_fork(vty_io vio, const char* cmd_str, std_set set, pipe_type_t type)
   if (!uty_fd_pair(vio, cmd_str, "stderr pipe", set, stderr_fd, in_half))
     return -1 ;
 
-  /* Off to the races                                                   */
-
-  child = vfork() ;
+  /* Off to the races -- frankly, we'd rather vfork... but POSIX does not
+   *                     countenance it (and did not work for us with FreeBSD).
+   */
+  child = fork() ;
 
   if      (child == 0)          /* In child                             */
     {
       /* Prepare all file descriptors and then execute the child
        */
       if (uty_pipe_exec_prepare(vio, set))
-        execl("/bin/bash", "bash", "-c", cmd_str, NULL) ; /* does not return */
+        execl(qpath_string(host.sh_path), host.sh_name,
+                               "-c", cmd_str, NULL) ;   /* no return    */
       else
         exit(0x80 | errno) ;
     }
@@ -1578,7 +1580,7 @@ uty_pipe_fork(vty_io vio, const char* cmd_str, std_set set, pipe_type_t type)
       uty_pipe_close_half(set[stderr_fd], out_half) ;
     }
   else if (child < 0)           /* In parent -- failed                  */
-    uty_pipe_fork_fail(vio, cmd_str, "vfork", set, NULL, "child") ;
+    uty_pipe_fork_fail(vio, cmd_str, "fork", set, NULL, "child") ;
 
   return child ;
 } ;

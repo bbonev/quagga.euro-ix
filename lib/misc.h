@@ -28,8 +28,31 @@
  */
 #include "zconfig.h"
 
-/* Stuff which we generally expect to have
-*/
+/*------------------------------------------------------------------------------
+ * Get compiler specific issues deal with ASAP
+ */
+
+/* __attribute__((always_inline)) -- where available !
+ */
+#ifdef __GNUC__
+#define Always_Inline __attribute__((always_inline))
+#else
+#define Always_Inline
+#warning __attribute__((always_inline)) not available ??
+#endif
+
+/* __attribute__((noreturn)) -- where available
+ */
+#ifdef __GNUC__
+#define No_Return __attribute__((noreturn))
+#else
+#define No_Return
+#warning __attribute__((noreturn)) not available ??
+#endif
+
+/*------------------------------------------------------------------------------
+ * Now a "minimum" set of includes
+ */
 #include <string.h>
 #include <limits.h>
 #include <unistd.h>
@@ -71,16 +94,6 @@
 /* For use in switch/case
  */
 #define fall_through
-
-/* always_inline -- where available !
- */
-#ifdef __GNUC__
-#define Always_Inline __attribute__((always_inline))
-#endif
-
-/* No Return -- where available
- */
-#define NO_RETURN __attribute__ ((noreturn))
 
 /*------------------------------------------------------------------------------
  * Various names for true/false pairs

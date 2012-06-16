@@ -123,7 +123,7 @@ int log_assert_fail   = 0 ;
 /*------------------------------------------------------------------------------
  * Prototypes
  */
-static void zlog_abort (const char *mess) __attribute__ ((noreturn)) ;
+static void zlog_abort (const char *mess)     No_Return ;
 static void uzlog_backtrace(int priority);
 
 /*==============================================================================

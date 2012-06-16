@@ -41,13 +41,25 @@ typedef enum qpath_sex qpath_sex_t ;
 
 enum qpath_sex
 {
-  qp_empty,             /* nothing at all                       */
-  qp_relative,          /* something, not starting '/'          */
-  qp_root,              /* "/" all on its own                   */
-  qp_absolute,          /* something, starting with single '/'  */
-  qp_homed,             /* something, starting with '~'         */
-  qp_double_root,       /* "//" all on its own                  */
-  qp_double_absolute    /* something, starting with "//"        */
+  qp_empty,                     /* nothing at all                       */
+
+  qp_some       = BIT(1),       /* something, or something after
+                                 * '~', '/' or '//'                     */
+
+  qp_homed      = BIT(2),       /* starts with '~'                      */
+  qp_rooted     = BIT(3),       /* starts with '/'                      */
+  qp_dbl_rooted = BIT(4),       /* starts with '//'                     */
+
+  qp_relative = qp_some,        /* sex == qp_relative <=> not empty
+                                 *                     && not '~'
+                                 *                     && not '/'
+                                 *                     && not '//'
+                                 */
+  qp_home     = qp_homed,       /* sex == qp_home <=> '~...[/]'
+                                 *            ie *just* the home
+                                 */
+  qp_root     = qp_rooted,      /* sex == qp_root <=> '/' alone         */
+  qp_dbl_root = qp_dbl_rooted,  /* sex == qp_dbl_root <=> '//' alone    */
 } ;
 
 /* The qpath structure is largely a qstring, but one in which there is always
@@ -92,6 +104,8 @@ extern int qpath_setcwd(qpath dst) ;
 extern int qpath_stat(qpath qp, struct stat* stat) ;
 extern int qpath_stat_is_file(qpath qp) ;
 extern int qpath_stat_is_directory(qpath qp) ;
+
+extern qpath_sex_t qpath_sex(qpath qp) ;
 
 extern qpath qpath_shave(qpath qp) ;
 extern bool qpath_has_trailing_slash(qpath qp) ;

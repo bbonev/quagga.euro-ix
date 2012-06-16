@@ -10,18 +10,18 @@
 
 extern void _zlog_assert_failed (const char *assertion, const char *file,
 				 unsigned int line, const char *function)
-				 __attribute__ ((noreturn));
+                                                                     No_Return ;
 extern void _zlog_abort_mess (const char *mess, const char *file,
                                  unsigned int line, const char *function)
-                                 __attribute__ ((noreturn));
+                                                                     No_Return ;
 
 extern void _zlog_abort_errno (const char *mess, const char *file,
                                  unsigned int line, const char *function)
-                                 __attribute__ ((noreturn));
+                                                                     No_Return ;
 
 extern void _zlog_abort_err (const char *mess, int err, const char *file,
                                  unsigned int line, const char *function)
-                                 __attribute__ ((noreturn));
+                                                                     No_Return ;
 
 
 #if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 199901L

@@ -1139,17 +1139,18 @@ qs_globex_str(qstring qs, const char* find, const char* replace)
  * Reduce given qstring to a number of "words".
  *
  * The result is the "words" found, each one terminated by '\0'.  The resulting
- * qstring 'len' *includes* these terminators.  If the qstring 'len' is zero,
- * then the input contained only whitespace.  The 'cp' is set to zero, see... XXX
+ * qstring 'len' *includes* these terminators.  If the result qstring 'len' is
+ * zero, then the input contained only whitespace, and possibly a terminator.
+ * The 'cp' is set to zero, see qs_next_word().
  *
  * Words may be separated and/or terminated by the given characters.  Note that
  * '\0' is implicitly a separator and terminator.  Also note that control
  * characters and space may be separators.
  *
- * For our purposes we define whitespace to be any character <= ' ', which is
- * not a separator -- noting that '\0' is implictly a separator.
+ * For our purposes we define whitespace to be any character <= ' ', and which
+ * is not a separator -- noting that '\0' is implictly a separator.
  *
- * All whitespace is treated as ' '.
+ * All whitespace (as defined above) is treated as ' '.
  *
  * Multiple spaces are treated as one (and returned as one, if required).
  *
@@ -1219,7 +1220,7 @@ qs_reduce(qstring qs, const char* seps, const char* terms)
   while (ch != '\0') ;
 
   if (terms == NULL)
-    terms = "" ;       /* '\0' is a separator           */
+    terms = "" ;       /* '\0' is a terminator          */
 
   /* Scan through the string:
    *
