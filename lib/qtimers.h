@@ -72,7 +72,10 @@ enum { qtimers_debug  = QTIMERS_DEBUG } ;
  * Data Structures.
  */
 
+typedef struct qtimer        qtimer_t ;
 typedef struct qtimer*       qtimer ;
+
+typedef struct qtimer_pile   qtimer_pile_t ;
 typedef struct qtimer_pile*  qtimer_pile ;
 
 typedef void (qtimer_action)(qtimer qtr, void* timer_info, qtime_mono_t when) ;

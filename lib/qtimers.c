@@ -78,14 +78,26 @@
  * implicitly unset when the action function returns.
  */
 
+/*------------------------------------------------------------------------------
+ * The heap comparison function for qtimer_pile
+ */
 static int
-qtimer_cmp(qtimer* a, qtimer* b)        /* the heap discipline  */
+qtimer_cmp(const qtimer_t* const* a, const qtimer_t* const* b)
 {
   if ((**a).time < (**b).time)
     return -1 ;
   if ((**a).time > (**b).time)
     return +1 ;
   return 0 ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Return pointer to backlink entry in given qtimer
+ */
+static heap_backlink_t*
+qtimer_backlink(qtimer qtr)
+{
+  return &(qtr->backlink) ;
 } ;
 
 /*==============================================================================
@@ -111,14 +123,8 @@ qtimer_pile_init_new(qtimer_pile qtp)
    *
    *   name          -- empty '\0' terminated name
    */
-
-  /* (The typedef is required to stop Eclipse (3.4.2 with CDT 5.0) whining
-   *  about first argument of offsetof().)
-   */
-  typedef struct qtimer qtimer_t ;
-
-  heap_init_new_backlinked(&qtp->timers, 0, (heap_cmp*)qtimer_cmp,
-                                                 offsetof(qtimer_t, backlink)) ;
+  heap_init_new(&qtp->timers, 0, (heap_cmp*)qtimer_cmp,
+                                 (heap_backlink*)qtimer_backlink) ;
   return qtp ;
 } ;
 
@@ -554,7 +560,7 @@ static void qtimer_pile_assert_fail(qtimer_pile qtp, qtimer qtr,
 extern void
 qtimer_pile_verify(qtimer_pile qtp)
 {
-  heap   th = &qtp->timers ;
+  heap   th ;
   vector v ;
   vector_index_t  i ;
   vector_length_t e ;
@@ -568,14 +574,10 @@ qtimer_pile_verify(qtimer_pile qtp)
 
   qtp->ok = true ;
 
-  /* (The typedef is required to stop Eclipse (3.4.2 with CDT 5.0) whining
-   *  about first argument of offsetof().)
-   */
-  typedef struct qtimer qtimer_t ;
+  th = &qtp->timers ;
 
-  assert(th->cmp             == (heap_cmp*)qtimer_cmp) ;
-  assert(th->state           == Heap_Has_Backlink) ;
-  assert(th->backlink_offset == offsetof(qtimer_t, backlink)) ;
+  assert(th->cmp == (heap_cmp*)qtimer_cmp) ;
+  assert(th->bl  == (heap_backlink*)qtimer_backlink) ;
 
   v = th->v ;
   e = vector_end(v) ;

@@ -636,16 +636,16 @@ vector_move_here(vector dst, vector src)
   assert((src != NULL) && (src != dst)) ;
 
   if (dst != NULL)
-    dst = vector_reset(dst, 0) ;     /* Reset to deallocate any existing body */
+    dst = vector_reset(dst, keep_it) ;  /* deallocate any existing body */
   else
-    dst = vector_init_new(dst, 0) ;  /* Create new structure sans body.       */
+    dst = vector_init_new(dst, 0) ;     /* create sans body             */
 
-  *dst = *src ;                      /* Copy the vector structure             */
+  *dst = *src ;                         /* copy the vector structure    */
 
-  vector_init_new(src, 0) ;          /* Set empty, forgetting body            */
+  vector_init_new(src, 0) ;             /* set empty, forgetting body   */
 
   return dst ;
-}
+} ;
 
 /*------------------------------------------------------------------------------
  * Shallow vector copy append -- copies pointers to item values, not the values.
@@ -689,7 +689,8 @@ vector_copy_append(vector dst, vector src)
  *
  * Creates a new destination vector if required (dst == NULL).
  *
- * Leaves the source vector empty -- does not release the structure.
+ * Leaves the source vector empty -- does not release the structure, but does
+ * release the body.
  *
  * NB: do NOT try moving a vector to itself !!
  */
@@ -701,8 +702,8 @@ vector_move_append(vector dst, vector src)
   if ((dst == NULL) || (dst->end == 0))
     return vector_move_here(dst, src) ;  /* Easy way to do it if dst empty  */
 
-  vector_copy_append(dst, src) ;  /* Extend dst and copy src      */
-  vector_init_new(src, 0) ;       /* Set empty, forgetting body   */
+  vector_copy_append(dst, src) ;        /* Extend dst and copy src      */
+  vector_reset(src, keep_it) ;          /* Set empty, discarding body   */
 
   return dst ;
 } ;
