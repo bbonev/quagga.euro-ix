@@ -87,7 +87,8 @@ assert_true(int result, const char * message)
  * Data structures and related functions
  */
 
-/* The test avl_value is pretty simple.                                  */
+/* The test avl_value is pretty simple.
+ */
 struct test_value
 {
   uint  val ;
@@ -283,7 +284,7 @@ test_avl_unset_all(void)
 static int
 test_avl_cmp(avl_key_c name, avl_value value)
 {
-  return symbol_mixed_name_cmp(name, ((const struct test_value*)value)->name) ;
+  return strcmp_mixed(name, ((const struct test_value*)value)->name) ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -294,7 +295,7 @@ test_avl_cmp(avl_key_c name, avl_value value)
  * Updates the value_count.
  */
 static avl_value
-test_avl_new(avl_key_c name)
+test_avl_new(avl_tree tree, avl_key_c name)
 {
   struct test_value* value ;
 
@@ -303,6 +304,16 @@ test_avl_new(avl_key_c name)
 
   return value ;
 } ;
+
+/*------------------------------------------------------------------------------
+ * The avl_tree parameters for our test tree
+ */
+static const avl_tree_params_t test_avl_tree_params =
+    {
+      .new    = test_avl_new,
+      .cmp    = test_avl_cmp,
+      .offset = offsetof(test_value_t, avl),
+    };
 
 /*------------------------------------------------------------------------------
  * Test that can construct and destroy a tree.
@@ -323,8 +334,7 @@ test_avl_tree_new(void)
   bool  add ;
 
   printf("%s\n", __func__);
-  tree = avl_tree_init_new(NULL, test_avl_new, test_avl_cmp,
-                                                  offsetof(test_value_t, avl)) ;
+  tree = avl_tree_init_new(NULL, &test_avl_tree_params, NULL) ;
   assert_true(tree != NULL, "tree == NULL");
 
   /* expect to not find                                 */
@@ -412,8 +422,7 @@ test_avl_tree_lookup(const uint len, const order_t how, const uint seed)
   printf("%s %s\n", __func__, desc) ;
   free(desc) ;
 
-  tree = avl_tree_init_new(NULL, test_avl_new, test_avl_cmp,
-                                                  offsetof(test_value_t, avl)) ;
+  tree = avl_tree_init_new(NULL, &test_avl_tree_params, NULL) ;
 
   /* add                                                                */
   for (i = 0; i < len; ++i)
@@ -455,14 +464,15 @@ test_avl_tree_lookup(const uint len, const order_t how, const uint seed)
       value->visit = value_visit ;
       ++i;
 
-      value = avl_get_next_value(tree, value) ;
+      value = avl_get_next_linked(tree, value) ;
     } ;
   assert_true(i == len, "i != len");
 
-  /* try walking the entire tree -- depth first                         */
+  /* try walking the entire tree -- depth first: post_order
+   */
   ++value_visit ;               /* new walk     */
   i = 0;
-  value = avl_tree_link(tree, avl_depth_first) ;
+  value = avl_tree_link(tree, avl_post_order) ;
   while (value != NULL)
     {
       test_value child ;
@@ -471,15 +481,15 @@ test_avl_tree_lookup(const uint len, const order_t how, const uint seed)
       value->visit = value_visit ;
       ++i;
 
-      child = avl_get_child_value(tree, value, avl_left) ;
+      child = avl_get_child(tree, value, avl_left) ;
       if (child != NULL)
         assert_true(child->visit == value_visit, "left child not seen") ;
 
-      child = avl_get_child_value(tree, value, avl_left) ;
+      child = avl_get_child(tree, value, avl_left) ;
       if (child != NULL)
         assert_true(child->visit == value_visit, "right child not seen") ;
 
-      value = avl_get_next_value(tree, value) ;
+      value = avl_get_next_linked(tree, value) ;
     } ;
   assert_true(i == len, "i != len");
 
@@ -516,8 +526,7 @@ test_avl_tree_delete(const uint len, const order_t how, const uint seed)
   printf("%s %s\n", __func__, desc) ;
   free(desc) ;
 
-  tree = avl_tree_init_new(NULL, test_avl_new, test_avl_cmp,
-                                                  offsetof(test_value_t, avl)) ;
+  tree = avl_tree_init_new(NULL, &test_avl_tree_params, NULL) ;
 
   /* Fill tree for the first time                                       */
   for (i = 0; i < len; ++i)
@@ -695,7 +704,7 @@ scan_avl_tree(avl_tree tree, bool compare)
   i = 0 ;
   max_d = 0 ;
   tpl = 0 ;
-  value = avl_tree_link(tree, avl_depth_first) ;
+  value = avl_tree_link(tree, avl_post_order) ;
   while (value != NULL)
     {
       d = avl_get_level(tree, value) + 1 ;
@@ -712,7 +721,7 @@ scan_avl_tree(avl_tree tree, bool compare)
 
       ++i ;
 
-      value = avl_get_next_value(tree, value) ;
+      value = avl_get_next_linked(tree, value) ;
     } ;
 
   h = avl_get_height(tree) ;
@@ -832,7 +841,7 @@ show_tree(avl_tree tree)
     {
       value->pos  = i ;
       ++i ;
-      value = avl_get_next_value(tree, value) ;
+      value = avl_get_next_linked(tree, value) ;
     } ;
   assert_true(i == tree->node_count, "i != tree_node_count");
 
@@ -843,7 +852,7 @@ show_tree(avl_tree tree)
   pos = 0 ;
   level = UINT_MAX ;
   bp = 0 ;
-  value = avl_tree_link(tree, avl_breadth_first) ;
+  value = avl_tree_link(tree, avl_level_order) ;
   while (value != NULL)
     {
       uint old_level ;
@@ -881,7 +890,7 @@ show_tree(avl_tree tree)
           pos = 0 ;
         } ;
 
-      child = avl_get_child_value(tree, value, avl_left) ;
+      child = avl_get_child(tree, value, avl_left) ;
       if (child != NULL)
         {
           uint cpos ;
@@ -929,7 +938,7 @@ show_tree(avl_tree tree)
       printf("%03d", value->val) ;
       pos += 3 ;
 
-      child = avl_get_child_value(tree, value, avl_right) ;
+      child = avl_get_child(tree, value, avl_right) ;
       if (child != NULL)
         {
           uint cpos ;
@@ -956,7 +965,7 @@ show_tree(avl_tree tree)
             } ;
         } ;
 
-      value = avl_get_next_value(tree, value) ;
+      value = avl_get_next_linked(tree, value) ;
     } ;
 
   printf("\n") ;

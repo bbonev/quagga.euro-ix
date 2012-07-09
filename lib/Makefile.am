@@ -14,14 +14,15 @@ libzebra_la_SOURCES = \
 	keystroke.c  linklist.c  list_util.c  log.c  md5.c \
 	memory.c  memtypes.c 	misc.c  mqueue.c  network.c  name_map.c \
 	pid_output.c  plist.c  pqueue.c  prefix.c  privs.c \
-	pthread_safe.c  qfstring.c  qiovec.c  qlib_init.c  \
+	pthread_safe.c  qafi_safi.c  qfstring.c  qiovec.c  qlib_init.c  \
 	qpath.c 	qpnexus.c  qpselect.c  qpthreads.c 	qrand.c \
 	qstring.c  qs_pcsub.c  qtime.c  qtimers.c  routemap.c \
 	sigevent.c  smux.c 	sockopt.c  sockunion.c  str.c  stream.c \
 	symtab.c 	table.c  thread.c  vector.c  vio_fifo.c  vio_lines.c \
 	vty.c  vty_cli.c  vty_command.c  vty_io.c  vty_io_basic.c \
 	vty_io_file.c  vty_io_std.c  vty_io_term.c  vty_io_vtysh.c \
-	vty_log.c  vty_vtysh.c  workqueue.c  zclient.c
+	vty_log.c  vty_vtysh.c  vty_vtysh_content.c \
+	workqueue.c  zclient.c
 	
 BUILT_SOURCES = memtypes.h route_types.h
 
@@ -45,7 +46,7 @@ pkginclude_HEADERS = \
 	vector.h  version.h  vio_fifo.h  vio_lines.h  vty.h  vty_cli.h \
 	vty_command.h  vty_common.h  vty_io.h  vty_io_basic.h \
 	vty_io_file.h  vty_io_std.h  vty_io_term.h  vty_io_vtysh.h \
-	vty_local.h  vty_log.h  vty_vtysh.h \
+	vty_local.h  vty_log.h  vty_vtysh.h  vty_vtysh_content.h \
 	workqueue.h  zassert.h  zclient.h \
 	zconfig.h  zebra.h
 		

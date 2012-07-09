@@ -81,7 +81,7 @@ QFB_T(60) name_str_t ;          /* Reasonable size "name"       */
  * To allow for value ranges that include -ve numbers or start with large
  * values, a "min-value" may be specified.  So that:
  *
- *   const char* foo_body[] =
+ *   const char* const foo_body[] =
  *   {
  *     [foo_val_a - foo_min]   = "A",
  *     [foo_val_b - foo_min]   = "B",
@@ -95,8 +95,8 @@ QFB_T(60) name_str_t ;          /* Reasonable size "name"       */
  */
 typedef const struct map_direct
 {
-  const char** body ;
-  const char* deflt ;
+  const char* const* body ;
+  const char* const deflt ;
 
   int   min_val ;
   int   count ;

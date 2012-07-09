@@ -54,8 +54,7 @@
  * Returns the AVL tree which has been initialised.
  */
 extern avl_tree
-avl_tree_init_new(avl_tree tree, avl_new_func* new, avl_cmp_func* cmp,
-                                                                    uint offset)
+avl_tree_init_new(avl_tree tree, avl_tree_params_c params, void* parent)
 {
   if (tree == NULL)
     tree = XCALLOC(MTYPE_RB_TREE, sizeof(avl_tree_t)) ;
@@ -64,25 +63,22 @@ avl_tree_init_new(avl_tree tree, avl_new_func* new, avl_cmp_func* cmp,
 
   /* Zeroising the structure has set:
    *
+   *   parent      -- X, set below
+   *
    *   root        -- NULL, empty tree
    *
    *   node_count  -- 0, no nodes, yet
    *
-   *   offset      -- 0,    set below
-   *
-   *   linked      -- 0 => avl_unlinked
+   *   link_is     -- 0 => avl_parent
    *   height      -- 0
    *
    *   base        -- NULL, no nodes linked
    *
-   *   cmp         -- NULL, set below
-   *   new         -- NULL, set below
+   *   params      -- X, set below
    */
-  confirm(avl_unlinked == 0) ;
+  confirm(avl_parent == 0) ;
 
-  tree->cmp    = cmp ;
-  tree->new    = new ;
-  tree->offset = offset ;
+  tree->params = *params ;
 
   return tree ;
 } ;
@@ -99,24 +95,50 @@ avl_tree_init_new(avl_tree tree, avl_new_func* new, avl_cmp_func* cmp,
  * was initialised -- so tree can be reused without reinitialising it.
  *
  * NB: once started, this process MUST be completed.
+ *
+ *     The first step of the process is to empty the tree, and link all the
+ *     nodes in in_order.
+ *
+ *     If the process does not run to completion, the unprocessed nodes will
+ *     remain unprocessed, but the tree is valid and empty.
  */
 extern avl_value
 avl_tree_ream(avl_tree tree, free_keep_b free_structure)
 {
-  avl_node next ;
+  avl_node  next ;
+  avl_value value ;
 
   if (tree == NULL)
     return NULL ;               /* easy if no tree !    */
 
-  if (tree->linked != avl_reaming)
-    avl_tree_link(tree, avl_reaming) ;
+  if (tree->link_is != avl_reaming)
+    {
+      /* Start the reaming process by creating the in_order list, and then
+       * mark the tree as empty.
+       *
+       * Each node is reset to have no children and nothing else other than
+       * the link -- which is cleared when the node is reamed.
+       */
+      avl_tree_link(tree, avl_reaming) ;
 
-  next = dsl_pop(&next, tree->base, next) ;
+      tree->root       = NULL ;
+      tree->node_count = 0 ;
+    } ;
 
-  if (next == NULL)
-    avl_tree_reset(tree, free_structure) ;
+  next = dsl_pop(&next, tree->base, link) ;
 
-  return next ;
+  if (next != NULL)
+    {
+      next->link = NULL ;
+      value = avl_value_for(tree, next) ;
+    }
+  else
+    {
+      avl_tree_reset(tree, free_structure) ;
+      value = NULL ;
+    } ;
+
+  return value ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -148,7 +170,7 @@ avl_tree_reset(avl_tree tree, free_keep_b free_structure)
     {
       tree->root       = NULL ;
       tree->node_count = 0 ;
-      tree->linked     = avl_unlinked ;
+      tree->link_is    = avl_parent ;
       dsl_init(tree->base) ;
     } ;
 
@@ -158,8 +180,7 @@ avl_tree_reset(avl_tree tree, free_keep_b free_structure)
 /*==============================================================================
  * AVL lookup, lookup-add and delete.
  */
-static inline void avl_set_tos_pointer(avl_tree tree, const avl_stack_t* stack,
-                                                                avl_node node) ;
+static inline void avl_set_parent(avl_tree tree, avl_node node) ;
 static avl_node avl_rebalance_left(avl_node b) ;
 static avl_node avl_rebalance_right(avl_node d) ;
 static avl_node avl_rebalance_centre(avl_node b, avl_node c, avl_node d) ;
@@ -167,10 +188,12 @@ static avl_node avl_rebalance_centre(avl_node b, avl_node c, avl_node d) ;
 static uint avl_tree_check(avl_tree tree) ;
 
 /*------------------------------------------------------------------------------
- * Lookup item in the red-black tree -- does NOT add if not found.
+ * Lookup item in the AVL tree -- does NOT add if not found.
  *
  * Returns:  address of item found
  *       or: NULL if not found
+ *
+ * NB: does not affect how the tree is linked.
  */
 extern avl_value
 avl_lookup(avl_tree tree, avl_key_c key)
@@ -183,8 +206,8 @@ avl_lookup(avl_tree tree, avl_key_c key)
       avl_value  value ;
       int cmp ;
 
-      value = avl_get_value(tree, node) ;
-      cmp   = tree->cmp(key, value) ;
+      value = avl_value_for(tree, node) ;
+      cmp   = tree->params.cmp(key, value) ;
 
       if (cmp == 0)
         return value ;          /* FOUND                        */
@@ -206,218 +229,211 @@ avl_lookup(avl_tree tree, avl_key_c key)
  * Sets:     *add false/true <=> found/added
  *
  * Uses the avl_create_func() to create the entry to insert from the given key.
+ *
+ * NB: if has to add an item to the tree, will relink as avl_parent if
+ *     required.
  */
 extern avl_value
-avl_lookup_add(avl_tree tree, avl_key_c key, bool* add)
+avl_lookup_add(avl_tree tree, avl_key_c key, bool* added)
 {
-  avl_stack_t stack ;
   avl_value value ;
   avl_node  node ;
-  avl_node* cp ;
+  avl_node  parent_node ;
+  avl_dir_t which_child ;
 
-  if (avl_debug || qdebug)
-    memset(&stack, 0, sizeof(avl_stack_t)) ;
-
-  /* Go down tree.
+  /* Go down tree looking for node or its putative parent.
    */
-  stack.sp = stack.empty ;
-  cp = &tree->root ;
-  while (1)
+  parent_node = tree->root ;
+  which_child = avl_left ;
+
+  node = parent_node ;
+  while (node != NULL)
     {
       int cmp ;
 
-      node = *cp ;
-
-      if (node == NULL)
-        break ;                 /* Not found -- must insert     */
-
-      value = avl_get_value(tree, node) ;
-      cmp   = tree->cmp(key, value) ;
+      value = avl_value_for(tree, node) ;
+      cmp   = tree->params.cmp(key, value) ;
 
       if (cmp == 0)
         {
-          *add = false ;        /* Have not had to add          */
+          *added = false ;
           return value ;        /* FOUND -- easy !!             */
         } ;
 
-      stack.sp->node = node ;
+      parent_node = node ;      /* proceed down from here       */
 
       if (cmp < 0)              /* key < node's key             */
-        {
-          stack.sp->dir = avl_left ;
-          cp = &node->child[avl_left] ;
-        }
+        which_child = avl_left ;
       else
-        {
-          stack.sp->dir = avl_right ;
-          cp = &node->child[avl_right] ;
-        } ;
+        which_child = avl_right ;
 
-      ++stack.sp ;
-
-      qassert((stack.sp > stack.empty) && (stack.sp <= stack.full));
+      node = parent_node->child[which_child] ;
     } ;
 
   /* Create value and insert.
    *
    * When we emerge from the down tree loop we have:
    *
-   *   cp -> points to empty pointer to the child to come.
+   *   parent_node -> node which will be parent -- NULL <=> tree is empty
+   *   parent_dir  -> which child this will be.
+   *
+   * We now need the tree to be linked avl_parent-wise.
+   *
+   * Create a new value and initialise the node.  Zeroising sets:
+   *
+   *   * child[]        -- both NULL  -- no children
+   *
+   *   * link           -- X          -- set below
+   *   * which          -- X          -- set below
+   *
+   *   * bal            -- 0          -- is balanced
+   *   * level          -- 0          -- not known ATM
    */
-  value = tree->new(key) ;      /* make (minimal) value         */
-  node  = avl_get_node(tree, value) ;
+  if (tree->link_is != avl_parent)
+    avl_tree_link(tree, avl_parent) ;
 
-  node->child[avl_left]  = NULL ;
-  node->child[avl_right] = NULL ;
-  node->next             = NULL ;       /* tidy */
-  node->bal = 0 ;
+  value = tree->params.new(tree, key) ;        /* make (minimal) value */
+  node  = avl_node_for(tree, value) ;
 
-  *cp = node ;                  /* insert                       */
+  memset(node, 0, sizeof(avl_node_t)) ;
 
-  /* When we emerge from the down tree loop we have:
-   *
-   *   sp - 1 -> node which will be parent, and whether left/right
-   *
-   *   but if tree is empty, then stack will be empty.
-   *
-   * Proceed up the stack, rebalancing as required.
-   */
-  while (stack.sp != stack.empty)
+  node->link  = parent_node ;
+  node->which = which_child ;
+
+  if (parent_node == NULL)
     {
-      int delta ;
-      int bal ;
-
-      --stack.sp ;                      /* pop                  */
-      qassert(stack.sp >= stack.empty) ;
-
-      node  = stack.sp->node ;
-      delta = (stack.sp->dir == avl_left) ? -1 : +1 ;
-
-      bal = node->bal ;
-      qassert((bal >= -1) && (bal <= +1)) ;
-
-      /* If the old balance == 0:
-       *
-       *   new balance = delta.
-       *
-       *   the change has tipped the node, increasing the height, which
-       *   must be propagated up the tree.
-       *
-       * If the new balance == 0:
-       *
-       *   the change has rebalanced the node, so height has not changed,
-       *   so can stop now.
-       *
-       * Otherwise:
-       *
-       *   the change has unbalanced the node, in the delta direction, must
-       *   now rebalance and if that succeeds, propagate up the tree, otherwise
-       *   stop.
+      /* Add first node in tree.
        */
-      if (bal == 0)
-        {
-          node->bal = delta ;
-          continue ;            /* tipped => height increased           */
-        } ;
-
-      bal += delta ;
-
-      if (bal == 0)
-        {
-          node->bal = bal ;
-          break ;               /* rebalanced => height unchanged       */
-        } ;
-
-      /* Must now rebalance and then update parent down pointer.
+      tree->root = node ;
+    }
+  else
+    {
+      /* Add node to parent, then rebalance as required.
        */
-      if (node->bal < 0)
-        node = avl_rebalance_right(node) ;
-      else
-        node = avl_rebalance_left(node) ;
+      qassert(parent_node->child[which_child] == NULL) ;
 
-      avl_set_tos_pointer(tree, &stack, node) ;
+      parent_node->child[which_child] = node ;
 
-      qassert(node->bal == 0) ;
-      break ;                   /* rebalanced => height unchanged       */
+      while (1)
+        {
+          int delta ;
+          int bal ;
+
+          delta = (which_child == avl_left) ? -1 : +1 ;
+
+          bal = parent_node->bal ;
+
+          /* If the old balance == 0:
+           *
+           *   new balance = delta.
+           *
+           *   the change has tipped the node, increasing the height, which
+           *   must be propagated up the tree.
+           *
+           * If the new balance == 0:
+           *
+           *   the change has rebalanced the node, so height has not changed,
+           *   so can stop now.
+           *
+           * Otherwise:
+           *
+           *   the change has unbalanced the node, in the delta direction, must
+           *   now rebalance and if that succeeds, propagate up the tree,
+           *   otherwise stop.
+           */
+          if (bal == 0)
+            {
+              parent_node->bal = delta ;        /* 0 -> -1 or +1        */
+
+              which_child = parent_node->which ;
+              parent_node = parent_node->link ;
+
+              if (parent_node == NULL)
+                break ;         /* Hit root                             */
+            }
+          else
+            {
+              qassert((bal == -1) || (bal == +1)) ;
+
+              bal += delta ;
+
+              if (bal == 0)
+                {
+                  parent_node->bal = bal ;
+                  break ;       /* rebalanced => height unchanged       */
+                } ;
+
+              /* Must now rebalance and then update parent down pointer.
+               */
+              if (parent_node->bal < 0)
+                parent_node = avl_rebalance_right(parent_node) ;
+              else
+                parent_node = avl_rebalance_left(parent_node) ;
+
+              avl_set_parent(tree, parent_node) ;
+
+              qassert(parent_node->bal == 0) ;
+              break ;           /* rebalanced => height unchanged       */
+            } ;
+        } ;
     } ;
 
   if (avl_debug)
     avl_tree_check(tree) ;      /* check the balance            */
 
-  /* Count in the new node and return its value.                        */
-
+  /* Count in the new node and return its value.
+   */
   ++tree->node_count ;
-  tree->linked = avl_unlinked ; /* no longer complete           */
 
-  *add = true ;                 /* we have added                */
+  *added = true ;
   return value ;
 } ;
 
 /*------------------------------------------------------------------------------
- * Delete item from the red-black tree, if finds it.
+ * Delete item from the AVL tree, if finds it.
  *
  * Returns:  address of item deleted
  *       or: NULL if not found.
+ *
+ * NB: unless the item is not found, will relink as avl_parent if required.
  */
 extern avl_value
 avl_delete(avl_tree tree, avl_key_c key)
 {
-  avl_stack_t stack ;
   avl_value value ;
-  avl_node  node ;
-  avl_node  down ;
-  avl_node* cp ;
-
-  if (qdebug || avl_debug)
-    memset(&stack, 0, sizeof(avl_stack_t)) ;
+  avl_node  node, parent_node, child_node, del_parent ;
+  avl_dir_t del_which ;
 
   /* Go down tree, looking for the node to be deleted.
    */
-  stack.sp = stack.empty ;
-  cp = &tree->root ;
+  node = tree->root ;
   while (1)
     {
       int cmp ;
 
-      node = *cp ;
-
       if (node == NULL)
-        return NULL ;                   /* quit if not found    */
+        return NULL ;
 
-      value = avl_get_value(tree, node) ;
-      cmp   = tree->cmp(key, value) ;
+      value = avl_value_for(tree, node) ;
+      cmp   = tree->params.cmp(key, value) ;
 
       if (cmp == 0)
         break ;                         /* found node to delete */
 
-      stack.sp->node = node ;
-
       if (cmp < 0)                      /* key < node's key     */
-        {
-          stack.sp->dir = avl_left ;
-          cp = &node->child[avl_left] ;
-        }
+        node = node->child[avl_left] ;
       else
-        {
-          stack.sp->dir = avl_right ;
-          cp = &node->child[avl_right] ;
-        } ;
-
-      ++stack.sp ;
-
-      qassert((stack.sp > stack.empty) && (stack.sp <= stack.full));
+        node = node->child[avl_right] ;
     } ;
 
   /* When we emerge from the down tree loop we have found the node to be
    * deleted:
    *
-   *   sp - 1 -> node which is the parent, and whether is left/right
-   *
-   *   cp    == address of parent pointer to node
-   *
    *   node  == address of node
    *
    *   value == address of node value -- to be returned
+   *
+   * We now need the tree to be linked avl_parent-wise.
    *
    * If the node has no left child, or no right child, or no children at all,
    * then the node can be deleted directly.
@@ -427,36 +443,51 @@ avl_delete(avl_tree tree, avl_key_c key)
    * We then "delete" the successor -- moving it to replace the node to be
    * really deleted.
    */
-  down = node->child[avl_right] ;
-  if ((down == NULL) || (node->child[avl_left] == NULL))
+  if (tree->link_is != avl_parent)
+    avl_tree_link(tree, avl_parent) ;
+
+  child_node  = node->child[avl_right] ;
+  parent_node = node->link ;
+
+  if ((child_node == NULL) || (node->child[avl_left] == NULL))
     {
       /* Node to be deleted has no right child or no left child, or no
        * children at all.
        *
-       * Deletion is straightforward -- point parent at the child, if any.
+       * Deletion is straightforward -- point parent at the child, if any,
+       * copying the deleted node's link and which settings to the child.
        *
        *   down == right child.
        *   cp   == pointer to parent's pointer to the node
        */
-      if (down == NULL)
+      del_parent = parent_node ;
+      del_which  = node->which ;
+
+      if (child_node == NULL)
         {
           /* No right child, go left.
            */
-          down = node->child[avl_left] ;
+          child_node = node->child[avl_left] ;
 
-          if (down == NULL)
+          if (child_node == NULL)
             {
-              /* No left child -- we are deleting a leaf.       */
+              /* No left child -- we are deleting a leaf.
+               */
               qassert(node->bal == 0) ;
             }
           else
             {
               /* Left child must be a leaf.                     */
               qassert(node->bal == -1) ;
-              qassert(down->bal ==  0) ;
-              qassert( (down->child[avl_left]  == NULL) &&
-                       (down->child[avl_right] == NULL) ) ;
-            }
+              qassert(child_node->bal ==  0) ;
+              qassert( (child_node->child[avl_left]  == NULL) &&
+                       (child_node->child[avl_right] == NULL) ) ;
+              qassert(child_node->link  == node) ;
+              qassert(child_node->which == avl_left) ;
+
+              child_node->link  = node->link ;
+              child_node->which = node->which ;
+            } ;
         }
       else
         {
@@ -465,105 +496,125 @@ avl_delete(avl_tree tree, avl_key_c key)
            * The right child must be a leaf.
            */
           qassert(node->bal == +1) ;
-          qassert(down->bal ==  0) ;
-          qassert( (down->child[avl_left]  == NULL) &&
-                   (down->child[avl_right] == NULL) ) ;
+          qassert(child_node->bal ==  0) ;
+          qassert( (child_node->child[avl_left]  == NULL) &&
+                   (child_node->child[avl_right] == NULL) ) ;
+          qassert(child_node->link  == node) ;
+          qassert(child_node->which == avl_right) ;
+
+          child_node->link  = node->link ;
+          child_node->which = node->which ;
         } ;
     }
   else
     {
-      /* Node to be deleted has both left and right children.
+      /* Node to be deleted has both left and right children (and may be root).
        *
        * Go find the successor and move it into the place occupied by the
        * node to be deleted.
        *
-       *   down == right child.
-       *   cp   == pointer to parent's pointer to the node
+       *   child_node == right child.
        *
        * Will then balance on the basis of the removal of the successor.
        */
-      avl_node* sp ;
-      avl_node* qp ;
+      avl_node down ;
+
+      qassert(child_node == node->child[avl_right]) ;
 
       /* Proceed down to find the successor
        */
-      sp = &stack.sp->node ;    /* So can fix stack on the way back     */
-
-      stack.sp->node = node ;   /* place self on stack                  */
-      stack.sp->dir  = avl_right ;
-      ++stack.sp ;
-      qassert((stack.sp > stack.empty) && (stack.sp <= stack.full)) ;
-
-      qp = &node->child[avl_right] ;
       while (1)
         {
-          avl_node* dp ;
+          down = child_node->child[avl_left] ;
 
-          dp = &down->child[avl_left] ;
-          if (*dp == NULL)
-            break ;                     /* down is the successor        */
+          if (down == NULL)
+            break ;                     /* child_node is the successor  */
 
-          stack.sp->node = down ;       /* place on stack               */
-          stack.sp->dir  = avl_left ;
-          ++stack.sp ;
-          qassert((stack.sp > stack.empty) && (stack.sp <= stack.full)) ;
-
-          down = *dp ;
-          qp = dp ;
+          child_node = down ;
         } ;
 
-      /* Remove the successor, which has no left children.
+      /* Remove the successor, which has no left children, by replacing it
+       * with its right child, if any.
        *
-       * NB: does this before copying the contents of the node being deleted.
+       * The right child must be a leaf.
        *
-       *     So, if the successor is immediately to the right of the node
-       *     being deleted, then that is updated, first.
+       * If the successor is the right child of the node being deleted, the
+       * node being deleted is updated here.
        */
-      *qp = down->child[avl_right] ;
+      down = child_node->child[avl_right] ;
+
+      if (down != NULL)
+        {
+          qassert(child_node->bal == +1) ;
+          qassert(down->bal ==  0) ;
+          qassert( (down->child[avl_left]  == NULL) &&
+                   (down->child[avl_right] == NULL) ) ;
+          qassert(down->link  == node) ;
+          qassert(down->which == avl_right) ;
+
+          down->link  = child_node->link ;
+          down->which = child_node->which ;
+        } ;
+
+      del_parent = child_node->link ;
+      del_which  = child_node->which ;
+
+      qassert(del_parent != NULL) ;
+
+      del_parent->child[del_which] = down ;
 
       /* Transfer the successor, so that it occupies the place of the
-       * node to actually be deleted.
-       *
-       * For this purpose we have kept, for the node to be deleted:
-       *
-       *   cp = pointer to the parent's child pointer
-       *
-       *   sp = pointer to its stack entry
-       *
-       * So that the node to be deleted can be replaced by the node to be
-       * kept.
+       * node to actually be deleted.  Updating the children so they now
+       * point at the replacement node.  The parent is updated, below.
        */
-      *down = *node ;           /* replace contents of node to be kept  */
-      *sp = down ;              /* stack entry must point here, too     */
+      *child_node = *node ;     /* copy the node being removed to the
+                                 * successor node which replaces it.    */
+
+      down = child_node->child[avl_left] ;
+      if (down != NULL)
+        down->link = child_node ;
+
+      down = child_node->child[avl_right] ;
+      if (down != NULL)
+        down->link = child_node ;
+
+      /* The del_parent and del_which now reflect the parentage of the
+       * successor.  If that is the node we are actually deleting, we need
+       * to point at the node that has just replaced the deleted node, and
+       * note that the tree has changed to the right of that.
+       */
+      if (del_parent == node)
+        {
+          del_parent = child_node ;
+          del_which  = avl_right ;
+        } ;
     } ;
 
-  /* To delete the node we now update the pointer in the parent to point at
-   * the selected node down from the node to delete.
+  /* Update the parent node of the node we are deleting, to point the child
+   * which has been promoted to take its place.
    */
-  *cp = down ;
+  if (parent_node == NULL)
+    tree->root = child_node ;
+  else
+    parent_node->child[node->which] = child_node ;
 
   /* Have deleted the node.  Now need to rebalance, as required.
    *
    * We have:
    *
-   *   sp - 1 -> node which as the parent of the node we just deleted, and
-   *             whether just deleted left or right child.
+   *   del_parent   -- the node whose balance has been affected
+   *   del_which    -- which side of the node has been affected
    *
-   *   but if tree is now empty, then stack will be empty.
+   * But if tree is now empty, del_parent == NULL
    */
-  while (stack.sp != stack.empty)
+  while (del_parent != NULL)
     {
       int delta ;
       int bal ;
 
-      --stack.sp ;                      /* pop                  */
-      qassert(stack.sp >= stack.empty) ;
+      delta = (del_which == avl_left) ? +1 : -1 ;
 
-      node  = stack.sp->node ;
-      delta = (stack.sp->dir == avl_left) ? +1 : -1 ;
-
-      bal = node->bal ;
-      qassert((bal >= -1) && (bal <= +1)) ;
+      bal = del_parent->bal ;
 
       /* If the old balance == 0:
        *
@@ -575,62 +626,75 @@ avl_delete(avl_tree tree, avl_key_c key)
        * If the new balance == 0:
        *
        *   the change has rebalanced the node, reducing the height, which
-       *   must be propagated up the tree.
+       *   must be propagated up the tree (unless is now root).
        *
        * Otherwise:
        *
        *   the change has unbalanced the node, in the delta direction, must
-       *   now rebalance and if that succeeds, propagate up the tree, otherwise
+       *   now rebalance and if that balances this node, propagate up the tree, otherwise
        *   stop.
        */
       if (bal == 0)
         {
-          node->bal = delta ;
-          break ;               /* tipped => no height change   */
-        } ;
-
-      bal += delta ;
-
-      if (bal == 0)
-        {
-          node->bal = bal ;
-          continue ;            /* rebalanced => height reduced */
-        } ;
-
-      /* Must now rebalance and then update parent down pointer.
-       */
-      if (delta < 0)
-        node = avl_rebalance_right(node) ;
+          del_parent->bal = delta ;
+          break ;
+        }
       else
-        node = avl_rebalance_left(node) ;
+        {
+          qassert((bal >= -1) && (bal <= +1)) ;
 
-      avl_set_tos_pointer(tree, &stack, node) ;
+          bal += delta ;
 
-      if (node->bal != 0)
-        break ;
+          if (bal == 0)
+            del_parent->bal = bal ;
+          else
+            {
+              /* Must now rebalance and then update parent down pointer.
+               */
+              if (delta < 0)
+                del_parent = avl_rebalance_right(del_parent) ;
+              else
+                del_parent = avl_rebalance_left(del_parent) ;
+
+              avl_set_parent(tree, del_parent) ;
+
+              if (del_parent->bal != 0)
+                break ;
+            } ;
+
+          del_which  = del_parent->which ;
+          del_parent = del_parent->link ;
+        } ;
     } ;
 
   if (avl_debug)
     avl_tree_check(tree) ;      /* check the balance            */
 
-  /* Count off the deleted node and return its value.                   */
-
+  /* Count off the deleted node and return its value.
+   */
   --tree->node_count ;
-  tree->linked = avl_unlinked ; /* no longer complete           */
 
   return value ;
 } ;
 
+/*==============================================================================
+ * AVL Tree Mechanics
+ */
+
 /*------------------------------------------------------------------------------
- * Set the
+ * Set the parent of the given node to point at it.
  */
 static inline void
-avl_set_tos_pointer(avl_tree tree, const avl_stack_t* stack, avl_node node)
+avl_set_parent(avl_tree tree, avl_node node)
 {
-  if (stack->sp == stack->empty)
+  avl_node parent ;
+
+  parent = node->link ;
+
+  if (parent == NULL)
     tree->root = node ;
   else
-    (stack->sp-1)->node->child[(stack->sp-1)->dir] = node ;
+    parent->child[node->which] = node ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -689,8 +753,7 @@ avl_set_tos_pointer(avl_tree tree, const avl_stack_t* stack, avl_node node)
 static avl_node
 avl_rebalance_left(avl_node b)
 {
-  avl_node  d ;
-  avl_node  c ;
+  avl_node  c, d ;
   int bal ;
 
   qassert(b->bal > 0) ;
@@ -707,8 +770,19 @@ avl_rebalance_left(avl_node b)
        */
       qassert(bal <= +1) ;
 
-      b->child[avl_right] = c ;
+      d->link  = b->link ;
+      d->which = b->which ;
+
       d->child[avl_left]  = b ;
+      b->link  = d ;
+      b->which = avl_left ;
+
+      b->child[avl_right] = c ;
+      if (c != NULL)
+        {
+          c->link  = b ;
+          c->which = avl_right ;
+        } ;
 
       bal -= 1 ;                /* case: 'B'  0 -> -1   */
                                 /* case: 'X' +1 ->  0   */
@@ -725,6 +799,9 @@ avl_rebalance_left(avl_node b)
       /* RRL: double rotate RIGHT then LEFT.
        */
       qassert(bal == -1) ;
+
+      c->link  = b->link ;
+      c->which = b->which ;
 
       return avl_rebalance_centre(b, c, d) ;
     } ;
@@ -787,8 +864,7 @@ avl_rebalance_left(avl_node b)
 static avl_node
 avl_rebalance_right(avl_node d)
 {
-  avl_node  b ;
-  avl_node  c ;
+  avl_node  b, c ;
   int bal ;
 
   qassert(d->bal < 0) ;
@@ -805,8 +881,19 @@ avl_rebalance_right(avl_node d)
        */
       qassert(bal >= -1) ;
 
+      b->link  = d->link ;
+      b->which = d->which ;
+
       b->child[avl_right] = d ;
+      d->link  = b ;
+      d->which = avl_right ;
+
       d->child[avl_left]  = c ;
+      if (c != NULL)
+        {
+          c->link  = d ;
+          c->which = avl_left ;
+        } ;
 
       bal += 1 ;                /* case: 'B'  0 -> +1   */
                                 /* case: 'X' -1 ->  0   */
@@ -824,6 +911,9 @@ avl_rebalance_right(avl_node d)
        */
      qassert(bal == +1) ;
 
+     c->link  = d->link ;
+     c->which = d->which ;
+
      return avl_rebalance_centre(b, c, d) ;
     } ;
 } ;
@@ -834,6 +924,7 @@ avl_rebalance_right(avl_node d)
 static avl_node
 avl_rebalance_centre(avl_node b, avl_node c, avl_node d)
 {
+  avl_node x, y ;
   int bal ;
 
   qassert(c != NULL) ;
@@ -843,11 +934,29 @@ avl_rebalance_centre(avl_node b, avl_node c, avl_node d)
                                 /* +1 => case: 'R'      */
   qassert((bal >= -1) && (bal <= +1)) ;
 
-  b->child[avl_right] = c->child[avl_left] ;
-  d->child[avl_left]  = c->child[avl_right] ;
+  x = c->child[avl_left] ;
+  b->child[avl_right] = x ;
+  if (x != NULL)
+    {
+      x->link  = b ;
+      x->which = avl_right ;
+    } ;
+
+  y = c->child[avl_right] ;
+  d->child[avl_left]  = y ;
+  if (y != NULL)
+    {
+      y->link  = d ;
+      y->which = avl_left ;
+    } ;
 
   c->child[avl_left]  = b ;
+  b->link  = c ;
+  b->which = avl_left ;
+
   c->child[avl_right] = d ;
+  d->link  = c ;
+  d->which = avl_right ;
 
   b->bal = (bal > 0) ? -1 : 0 ;
   c->bal = 0 ;
@@ -857,12 +966,311 @@ avl_rebalance_centre(avl_node b, avl_node c, avl_node d)
 } ;
 
 /*==============================================================================
+ * Tree running
+ *
+ * Can "link" the tree to do traversal in almost any order.
+ *
+ * Can also find the first and last, and the first value after a given key.
+ *
+ * Can step to the next or the previous (in key order) value from a given
+ * value.
+ */
+
+/*------------------------------------------------------------------------------
+ * Get the first value -- in key order -- in the tree, if any.
+ *
+ * NB: does not affect the tree linkage.
+ */
+extern avl_value
+avl_get_first(avl_tree tree)
+{
+  avl_node node ;
+
+  if ((tree == NULL) || ((node = tree->root) == NULL))
+    return NULL ;
+
+  while (1)
+    {
+      avl_node down ;
+
+      down = node->child[avl_left] ;
+
+      if (down == NULL)
+        return avl_value_for(tree, node) ;
+
+      node = down ;
+    } ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Get the value immediately before (or equal to) the given key, if any.
+ *
+ * Returns: avl_value as required
+ *          NULL if no value with a key <= the given key.
+ *
+ * NB: if the tree is linked avl_in_reverse, then may use that linkage.
+ *
+ *     Otherwise, may set avl_parent (the standard) linkage.
+ */
+extern avl_value
+avl_get_before(avl_tree tree, avl_key_c key, bool* equal)
+{
+  avl_value value ;
+  avl_node  node ;
+  avl_dir_t which_child ;
+
+  if ((tree == NULL) || ((node = tree->root) == NULL))
+    return NULL ;
+
+  /* Go down tree looking for node or its putative parent.
+   *
+   * The putative parent will be either the value immediately before or
+   * immediately after the key in question.
+   */
+  do
+    {
+      int cmp ;
+
+      value = avl_value_for(tree, node) ;
+      cmp   = tree->params.cmp(key, value) ;
+
+      if (cmp == 0)
+        {
+          *equal = true ;
+          return value ;        /* FOUND -- easy !!             */
+        } ;
+
+      if (cmp < 0)              /* key < node's key             */
+        which_child = avl_left ;
+      else
+        which_child = avl_right ;
+
+      node = node->child[which_child] ;
+    }
+  while (node != NULL) ;
+
+  *equal = false ;
+
+  return (which_child == avl_left) ? avl_get_prev(tree, value)
+                                   : value ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Get the value immediately after (or equal to) the given key, if any.
+ *
+ * Returns: avl_value as required
+ *          NULL if no value with a key >= the given key.
+ *
+ * NB: if the tree is linked avl_in_order, then may use that linkage.
+ *
+ *     Otherwise, may set avl_parent (the standard) linkage.
+ */
+extern avl_value
+avl_get_after(avl_tree tree, avl_key_c key, bool* equal)
+{
+  avl_value value ;
+  avl_node  node ;
+  avl_dir_t which_child ;
+
+  if ((tree == NULL) || ((node = tree->root) == NULL))
+    return NULL ;
+
+  /* Go down tree looking for node or its putative parent.
+   *
+   * The putative parent will be either the value immediately before or
+   * immediately after the key in question.
+   */
+  do
+    {
+      int cmp ;
+
+      value = avl_value_for(tree, node) ;
+      cmp   = tree->params.cmp(key, value) ;
+
+      if (cmp == 0)
+        {
+          *equal = true ;
+          return value ;        /* FOUND -- easy !!             */
+        } ;
+
+      if (cmp < 0)              /* key < node's key             */
+        which_child = avl_left ;
+      else
+        which_child = avl_right ;
+
+      node = node->child[which_child] ;
+    }
+  while (node != NULL) ;
+
+  *equal = false ;
+
+  return (which_child == avl_right) ? avl_get_next(tree, value)
+                                    : value ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Get the last value -- in key order -- in the tree, if any.
+ *
+ * NB: does not affect the tree linkage.
+ */
+extern avl_value
+avl_get_last(avl_tree tree)
+{
+  avl_node node ;
+
+  if ((tree == NULL) || ((node = tree->root) == NULL))
+    return NULL ;
+
+  while (1)
+    {
+      avl_node down ;
+
+      down = node->child[avl_right] ;
+
+      if (down == NULL)
+        return avl_value_for(tree, node) ;
+
+      node = down ;
+    } ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Get the next value, if any -- in key order -- after the given value.
+ *
+ * NB: if the tree is linked avl_in_order, then uses that linkage.
+ *
+ *     Otherwise, sets avl_parent (the standard) linkage if that is not
+ *     already set.
+ */
+extern avl_value
+avl_get_next(avl_tree tree, avl_value value)
+{
+  avl_node node, down ;
+
+  node = avl_node_for(tree, value) ;
+
+  if (tree->link_is != avl_parent)
+    {
+      if (tree->link_is == avl_in_order)
+        return avl_value_for(tree, node->link) ;
+
+      avl_tree_link(tree, avl_parent) ;
+    } ;
+
+  down = node->child[avl_right] ;
+
+  if (down != NULL)
+    {
+      /* Have a right child.  Next value is it, or its left-most child.
+       */
+      do
+        {
+          node = down ;
+          down = node->child[avl_left] ;
+        }
+      while (down != NULL) ;
+    }
+  else
+    {
+      /* Do not have a right child, so back-track up the tree.
+       *
+       * While the node is the right-child of its parent, keep moving up
+       * the tree.  Note that the root node is, by convention, the left child.
+       */
+      avl_dir_t which_child ;
+
+      do
+        {
+          which_child = node->which ;
+          node = node->link ;
+
+          qassert(  (which_child == avl_left) ||
+                  ( (which_child == avl_right) && (node != NULL) )) ;
+        }
+      while (which_child == avl_right) ;
+
+      if (node == NULL)
+        return NULL ;
+    } ;
+
+  return avl_value_for(tree, node) ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Get the previous value, if any -- in key order -- before the given value.
+ *
+ * NB: if the tree is linked avl_in_reverse, then uses that linkage.
+ *
+ *     Otherwise, sets avl_parent (the standard) linkage if that is not
+ *     already set.
+ */
+extern avl_value
+avl_get_prev(avl_tree tree, avl_value value)
+{
+  avl_node node, down ;
+
+  node = avl_node_for(tree, value) ;
+
+  if (tree->link_is != avl_parent)
+    {
+      if (tree->link_is == avl_in_reverse)
+        return avl_value_for(tree, node->link) ;
+
+      avl_tree_link(tree, avl_parent) ;
+    } ;
+
+  down = node->child[avl_left] ;
+
+  if (down != NULL)
+    {
+      /* Have a left child.  Next value is it, or its right-most child.
+       */
+      do
+        {
+          node = down ;
+          down = node->child[avl_right] ;
+        }
+      while (down != NULL) ;
+    }
+  else
+    {
+      /* Do not have a left child, so back-track up the tree.
+       *
+       * While the node is the left-child of its parent, keep moving up
+       * the tree.  Note that the root node is, by convention, the left child.
+       */
+      avl_dir_t which_child ;
+
+      while (1)
+        {
+          which_child = node->which ;
+          node = node->link ;
+
+          qassert(  (which_child == avl_left) ||
+                  ( (which_child == avl_right) && (node != NULL) )) ;
+
+          if (which_child == avl_right)
+            break ;
+
+          if (node == NULL)
+            return NULL ;
+        } ;
+    } ;
+
+  return avl_value_for(tree, node) ;
+} ;
+
+/*==============================================================================
  * Tree linking
  */
-static void avl_link_in_order(avl_tree tree, avl_node node) ;
-static void avl_link_depth_first(avl_tree tree, avl_node node, uint level) ;
-static void avl_link_breadth_first(avl_tree tree, avl_node node, uint level) ;
-static void avl_link_reverse_order(avl_tree tree, avl_node node) ;
+static void avl_link_parents(avl_node node, avl_node parent, avl_dir_t which) ;
+static void avl_link_in_order(avl_tree tree, avl_node node, uint level) ;
+static void avl_link_in_reverse(avl_tree tree, avl_node node, uint level) ;
+static void avl_link_pre_order(avl_tree tree, avl_node node, uint level) ;
+static void avl_link_post_order(avl_tree tree, avl_node node, uint level) ;
+static void avl_link_level_order(avl_tree tree, avl_node node, uint level) ;
+static void avl_link_level_reverse(avl_tree tree, avl_node node, uint level) ;
+static void avl_link_ream_order(avl_tree tree, avl_node node) ;
 
 /*------------------------------------------------------------------------------
  * Link list in the required order, and return first value in that order.
@@ -872,25 +1280,18 @@ static void avl_link_reverse_order(avl_tree tree, avl_node node) ;
  * Inserting or deleting nodes clears the trees link state, so a subsequent
  * link call will remake the required list.
  *
- * NB: any insertions made after the linkage is made will not affect the
- *     linkage, but will not be included in it.
- *
- *     Any deletions made after the linkage may or may not affect it.  However,
- *     while walking the linked list, can delete the current value, and
- *     continue.
- *
- * NB: linking depth_first or breadth_first sets the level on every node, and
- *     sets the height on the tree.  Any change to the tree may invalidate that.
+ * NB: linking in anything except avl_parent or avl_reaming sets the level on
+ *     each node and the height of the tree.  (Height is maximum level + 1.)
  */
 extern avl_value
 avl_tree_link(avl_tree tree, avl_link_t how)
 {
   avl_node node ;
 
-  if (how != tree->linked)
+  if (how != tree->link_is)
     {
       dsl_init(tree->base) ;
-      tree->linked = how ;
+      tree->link_is = how ;
       tree->height = 0 ;
 
       switch (how)
@@ -899,59 +1300,82 @@ avl_tree_link(avl_tree tree, avl_link_t how)
             qassert(false) ;
             fall_through ;
 
-          case avl_unlinked:
+          case avl_parent:
+            avl_link_parents(tree->root, NULL, avl_left) ;
             break ;
 
           case avl_in_order:
+            avl_link_in_order(tree, tree->root, 0) ;
+            break ;
+
+          case avl_in_reverse:
+            avl_link_in_reverse(tree, tree->root, 0) ;
+            break ;
+
+          case avl_pre_order:
+            avl_link_pre_order(tree, tree->root, 0) ;
+            break ;
+
+          case avl_post_order:
+            avl_link_post_order(tree, tree->root, 0) ;
+            break ;
+
+          case avl_level_order:
+            avl_link_level_order(tree, tree->root, 0) ;
+            break ;
+
+          case avl_level_reverse:
+            avl_link_level_reverse(tree, tree->root, 0) ;
+            break ;
+
           case avl_reaming:
-            avl_link_in_order(tree, tree->root) ;
-            break ;
-
-          case avl_depth_first:
-            avl_link_depth_first(tree, tree->root, 0) ;
-            break ;
-
-          case avl_breadth_first:
-            avl_link_breadth_first(tree, tree->root, 0) ;
-            break ;
-
-          case avl_reverse_order:
-            avl_link_reverse_order(tree, tree->root) ;
+            avl_link_ream_order(tree, tree->root) ;
             break ;
         } ;
     } ;
 
   node = dsl_head(tree->base) ;
 
-  return (node != NULL) ? avl_get_value(tree, node) : NULL ;
+  return (node != NULL) ? avl_value_for(tree, node) : NULL ;
 } ;
 
 /*------------------------------------------------------------------------------
- * Add given subtree to tree list, in-order.
+ * Set the node->link in every node to point at its parent.
+ *
+ * For qdebug, check the node->which value.
  */
 static void
-avl_link_in_order(avl_tree tree, avl_node node)
+avl_link_parents(avl_node node, avl_node parent, avl_dir_t which)
 {
   if (node != NULL)
     {
-      avl_link_in_order(tree, node->child[avl_left]) ;
-      dsl_append(tree->base, node, next) ;
-      avl_link_in_order(tree, node->child[avl_right]) ;
+      qassert(node->which == which) ;
+
+      node->link  = parent ;
+      node->which = which ;
+      node->level = 0 ;
+
+      avl_link_parents(node->child[avl_left],  node, avl_left) ;
+      avl_link_parents(node->child[avl_right], node, avl_right) ;
     } ;
 } ;
 
 /*------------------------------------------------------------------------------
- * Add given subtree to tree list, depth first.
+ * Add given subtree to tree list, depth first: in-order.
+ *
+ * In in-order each node follows its left but precedes its right children.
  */
 static void
-avl_link_depth_first(avl_tree tree, avl_node node, uint level)
+avl_link_in_order(avl_tree tree, avl_node node, uint level)
 {
   if (node != NULL)
     {
-      avl_link_depth_first(tree, node->child[avl_left], level + 1) ;
-      avl_link_depth_first(tree, node->child[avl_right], level + 1) ;
-      dsl_append(tree->base, node, next) ;
+      avl_link_in_order(tree, node->child[avl_left],  level + 1) ;
+
       node->level = level ;
+      dsl_append(tree->base, node, link) ;
+
+      avl_link_in_order(tree, node->child[avl_right], level + 1) ;
     }
   else
     {
@@ -961,10 +1385,83 @@ avl_link_depth_first(avl_tree tree, avl_node node, uint level)
 } ;
 
 /*------------------------------------------------------------------------------
- * Add given subtree to tree list, processing each level in turn.
+ * Add given subtree to tree list, depth first: in-order, reversed.
+ *
+ * In in-order each node follows its right but precedes its left children.
  */
 static void
-avl_link_breadth_first(avl_tree tree, avl_node node, uint level)
+avl_link_in_reverse(avl_tree tree, avl_node node, uint level)
+{
+  if (node != NULL)
+    {
+      avl_link_in_reverse(tree, node->child[avl_right],  level + 1) ;
+
+      node->level = level ;
+      dsl_append(tree->base, node, link) ;
+
+      avl_link_in_reverse(tree, node->child[avl_left], level + 1) ;
+    }
+  else
+    {
+      if (level > tree->height)
+        tree->height = level ;  /* height is the maximum level + 1      */
+    } ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Add given subtree to tree list, depth first: pre-order.
+ *
+ * In pre-order each node precedes its left and then its right children.
+ */
+static void
+avl_link_pre_order(avl_tree tree, avl_node node, uint level)
+{
+  if (node != NULL)
+    {
+      node->level = level ;
+      dsl_append(tree->base, node, link) ;
+
+      avl_link_pre_order(tree, node->child[avl_left],  level + 1) ;
+      avl_link_pre_order(tree, node->child[avl_right], level + 1) ;
+    }
+  else
+    {
+      if (level > tree->height)
+        tree->height = level ;  /* height is the maximum level + 1      */
+    } ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Add given subtree to tree list, depth first: post-order.
+ *
+ * In post-order each node follows its left and then its right children.
+ */
+static void
+avl_link_post_order(avl_tree tree, avl_node node, uint level)
+{
+  if (node != NULL)
+    {
+      node->level = level ;
+
+      avl_link_post_order(tree, node->child[avl_left],  level + 1) ;
+      avl_link_post_order(tree, node->child[avl_right], level + 1) ;
+
+      dsl_append(tree->base, node, link) ;
+    }
+  else
+    {
+      if (level > tree->height)
+        tree->height = level ;  /* height is the maximum level + 1      */
+    } ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Add tree to list, starting with level 0 (root), then level 1 and so on.
+ *
+ * In each level, the nodes are left to right across the tree.
+ */
+static void
+avl_link_level_order(avl_tree tree, avl_node node, uint level)
 {
   struct dl_base_pair(avl_node) queue ;
   uint height ;
@@ -973,56 +1470,113 @@ avl_link_breadth_first(avl_tree tree, avl_node node, uint level)
   height = 0 ;
 
   if (node != NULL)
-    node->level = 0 ;           /* root is level 0      */
+    node->level = 0 ;           /* root is level 0                      */
 
   while (node != NULL)
     {
       avl_node child ;
 
-      level = node->level + 1 ;
+      level = node->level + 1 ; /* next level                           */
 
-      if (level > height)       /* If this is leaf, then level is its   */
-        height = level ;        /* height                               */
+      if (level > height)
+        height = level ;        /* height is the maximum level + 1      */
 
-      dsl_append(tree->base, node, next) ;
+      dsl_append(tree->base, node, link) ;
 
       if ((child = node->child[avl_left]) != NULL)
         {
-          dsl_append(queue, child, next) ;
+          dsl_append(queue, child, link) ;
           child->level = level ;
         } ;
 
       if ((child = node->child[avl_right]) != NULL)
         {
-          dsl_append(queue, child, next) ;
+          dsl_append(queue, child, link) ;
           child->level = level ;
         } ;
 
-      node = dsl_pop(&node, queue, next) ;
+      node = dsl_pop(&node, queue, link) ;
     } ;
 
   tree->height = height ;
 } ;
 
 /*------------------------------------------------------------------------------
- * Add given subtree to tree list in reverse order.
+ * Add tree to list, starting with deepest level, then up to level 0 (root).
+ *
+ * In each level, the nodes are left to right across the tree.
  */
 static void
-avl_link_reverse_order(avl_tree tree, avl_node node)
+avl_link_level_reverse(avl_tree tree, avl_node node, uint level)
+{
+  struct dl_base_pair(avl_node) queue ;
+  uint height ;
+
+  dsl_init(queue) ;
+  height = 0 ;
+
+  if (node != NULL)
+    node->level = 0 ;           /* root is level 0                      */
+
+  while (node != NULL)
+    {
+      avl_node child ;
+
+      level = node->level + 1 ; /* next level                           */
+
+      if (level > height)
+        height = level ;        /* height is the maximum level + 1      */
+
+      dsl_push(tree->base, node, link) ;
+
+      if ((child = node->child[avl_right]) != NULL)
+        {
+          dsl_append(queue, child, link) ;
+          child->level = level ;
+        } ;
+
+      if ((child = node->child[avl_left]) != NULL)
+        {
+          dsl_append(queue, child, link) ;
+          child->level = level ;
+        } ;
+
+      node = dsl_pop(&node, queue, link) ;
+    } ;
+
+  tree->height = height ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Add given subtree to tree list, in-order.
+ *
+ * Clear the contents of each node, other than the node-link entry
+ */
+static void
+avl_link_ream_order(avl_tree tree, avl_node node)
 {
   if (node != NULL)
     {
-      avl_link_in_order(tree, node->child[avl_right]) ;
-      dsl_append(tree->base, node, next) ;
-      avl_link_in_order(tree, node->child[avl_left]) ;
+      avl_node right ;
+
+      avl_link_ream_order(tree, node->child[avl_left]) ;
+
+      right = node->child[avl_right] ;
+
+      memset(node, 0, sizeof(avl_node_t)) ;
+
+      dsl_append(tree->base, node, link) ;
+
+      avl_link_ream_order(tree, right) ;
     } ;
 } ;
+
 
 /*==============================================================================
  * Diagnostics
  */
-
-static uint avl_get_node_height(avl_node node) ;
+static uint avl_get_node_height(avl_node node, avl_node parent,
+                                                  avl_dir_t which, bool check) ;
 
 /*------------------------------------------------------------------------------
  * Get the height of the given tree.
@@ -1031,12 +1585,14 @@ static uint avl_get_node_height(avl_node node) ;
  *
  * Returns zero if tree is empty.
  *
- * NB: if avl_debug, checks the balance of every node.
+ * NB: if avl_debug, checks the balance of every node, and if is avl_parent,
+ *     checks the validity of the node->link and done->which.
  */
 static uint
 avl_tree_check(avl_tree tree)
 {
-  return avl_get_node_height(tree->root) ;
+  return avl_get_node_height(tree->root, NULL, avl_left,
+                                                (tree->link_is == avl_parent)) ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -1051,15 +1607,21 @@ avl_tree_check(avl_tree tree)
  * Returns zero if node is NULL.
  */
 static uint
-avl_get_node_height(avl_node node)
+avl_get_node_height(avl_node node, avl_node parent, avl_dir_t which, bool check)
 {
   uint hl, hr ;
 
   if (node == NULL)
     return 0 ;
 
-  hl = avl_get_node_height(node->child[avl_left]) ;
-  hr = avl_get_node_height(node->child[avl_right]) ;
+  if (avl_debug && check)
+    {
+      assert(node->link  == parent) ;
+      assert(node->which == which) ;
+    } ;
+
+  hl = avl_get_node_height(node->child[avl_left],  node, avl_left, check) ;
+  hr = avl_get_node_height(node->child[avl_right], node, avl_right, check) ;
 
   if (avl_debug)
     assert(node->bal == ((int)hr - (int)hl)) ;
@@ -1067,11 +1629,10 @@ avl_get_node_height(avl_node node)
   return ((hl >= hr) ? hl : hr) + 1 ;
 } ;
 
+#if 0
 /*==============================================================================
  * Tree walking -- replaced by tree linking.
  */
-
-#if 0
 
 /*------------------------------------------------------------------------------
  * Start a tree walk.
@@ -1175,7 +1736,7 @@ avl_tree_walk_next(avl_walker walk)
                   --walk->stack.sp ;
 
                   ++walk->count ;
-                  return avl_get_value(walk->tree, walk->stack.sp->node) ;
+                  return avl_value_for(walk->tree, walk->stack.sp->node) ;
                 } ;
 
               /* We step up the right-hand path, and keep going, depending
@@ -1210,7 +1771,7 @@ avl_tree_walk_next(avl_walker walk)
         && (walk->stack.sp <= walk->stack.full) ) ;
 
   ++walk->count ;
-  return avl_get_value(walk->tree, node) ;
+  return avl_value_for(walk->tree, node) ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -1305,7 +1866,7 @@ avl_tree_walk_depth_next(avl_walker walk)
         && (walk->stack.sp <= walk->stack.full) ) ;
 
   ++walk->count ;
-  return avl_get_value(walk->tree, node) ;
+  return avl_value_for(walk->tree, node) ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -1466,7 +2027,7 @@ avl_tree_walk_level_next(avl_walker walk)
         && (walk->stack.sp <= walk->stack.full) ) ;
 
   ++walk->count ;
-  return avl_get_value(walk->tree, node) ;
+  return avl_value_for(walk->tree, node) ;
 } ;
 
 /*------------------------------------------------------------------------------

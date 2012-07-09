@@ -23,14 +23,31 @@
 /*==============================================================================
  * Data structures etc.
  *
- * The red-black tree provided here is designed so that the nodes may be
- * embedded in some other data structure.
+ * The AVL tree provided here is designed so that the nodes may be embedded in
+ * some other data structure.  So, this handles:
  *
- * The avl_node structure contains two pointers and the red flag.  The pointers
- * point to the avl_nodes embedded in the child nodes.
+ *   * avl_node:  which contains the pointers etc for the AVL tree
  *
- * The avl_tree structure points to the root of the tree, and contains:
+ *   * avl_value: some data structure, in which an avl_node is embedded.
  *
+ *     Each avl_tree is expected to contain avl_values of the same type,
+ *     or at least values which contain an avl_node at a fixed offset.
+ *     (Different trees can have different offsets for their avl_nodes.)
+ *
+ * All the external interfaces work in terms of the avl_value.
+ *
+ * The structure is designed to provide an ordered list of values with
+ * *unique* keys.  In addition to finding values by key, can find the first
+ * and last entry, and can step backwards and forwards along the list from
+ * a given entry.
+ *
+ * A tree may be (temporarily) linked to provide depth first and breadth
+ * first walking of the values.
+ *
+ * The location and from of the key is a matter for each tree's comparison
+ * function -- which takes an avl_value and a pointer to a key.
+ *
+ * When a new avl_value is created, the tree's creator function is used.
  */
 
 /*------------------------------------------------------------------------------
@@ -64,17 +81,67 @@
 # endif
 #endif
 
-enum { avl_debug = AVL_DEBUG } ;
+enum { avl_debug = AVL_DEBUG | 1 } ;
 
 /*------------------------------------------------------------------------------
  * Structures and other definitions
  */
+
+/* The avl_value and avl_key are abstract as far as the avl tree is concerned.
+ */
 typedef void* avl_value ;
-typedef void* avl_key ;
 typedef const void* avl_key_c ;
 
-typedef struct avl_node* avl_node ;
+/* The pointer to an avl_tree and the avl_tree parameters.
+ *
+ * The avl_tree parameters include two functions:
+ *
+ *   * new:  is passed the avl_tree in which the new avl_value lives, and its
+ *           avl_key.
+ *
+ *           Returns: a new avl_value
+ *
+ *           The contents of the new avl_value are immaterial.  When the a
+ *           new value is created the enclosed avl_node is initialised and
+ *           then used to insert the avl_value in the tree.
+ *
+ *           The new() may choose to set the avl_value's key, but that is not
+ *           strictly necessary.  But is is, of course, *essential* that the
+ *           key is set before any further tree operations !
+ *
+ *           The avl_tree contains a "parent" pointer, which may be useful.
+ *
+ *   * cmp:  is passed the avl_key being sought and an avl_value whose key
+ *           is to be compared.
+ *
+ *           Returns: -1, 0, +1 as usual, for avl_key cmp avl_value.
+ *
+ *           Note that what the avl_key void* pointer points to and how the
+ *           key is stored for the avl_value are both entirely up to the
+ *           cmp function.
+ */
+typedef struct avl_tree* avl_tree ;
+
+typedef int avl_cmp_func(avl_key_c key, avl_value value) ;
+typedef avl_value avl_new_func(avl_tree tree, avl_key_c key) ;
+
+typedef struct avl_tree_params* avl_tree_params ;
+typedef struct avl_tree_params  avl_tree_params_t ;
+
+typedef const avl_tree_params_t* avl_tree_params_c ;
+
+struct avl_tree_params
+{
+  uint      offset ;            /* offset of node in value      */
+
+  avl_new_func* new ;           /* create new value             */
+  avl_cmp_func* cmp ;           /* compare key and value        */
+} ;
+
+/* The avl_node_t is to be embedded in each tree's particular avl_value.
+ */
 typedef struct avl_node  avl_node_t ;
+typedef struct avl_node* avl_node ;
 
 typedef enum
 {
@@ -85,44 +152,54 @@ typedef enum
 struct avl_node
 {
   avl_node  child[2] ;  /* two children, avl_left and avl_right         */
-  avl_node  next ;      /* when tree has been linked in some order      */
+  avl_node  link ;      /* parent, or next when tree has been linked in
+                         * some order                                   */
+  uint8_t   which ;     /* when link = parent, which child this is      */
   int8_t    bal ;
   uint8_t   level ;     /* set by some linkages                         */
 } ;
 
-typedef int avl_cmp_func(avl_key_c key, avl_value value) ;
-typedef avl_value avl_new_func(avl_key_c key) ;
-
-typedef struct avl_tree* avl_tree ;
-typedef struct avl_tree  avl_tree_t ;
-
+/* The various ways in which the avl_node.link value is used at any
+ * moment.
+ */
 typedef enum
 {
-  avl_unlinked  = 0,            /* tree nodes are not linked    */
-  avl_in_order,                 /* linked in-order              */
-  avl_depth_first,              /* linked depth first           */
-  avl_breadth_first,            /* linked breadth first         */
-  avl_reverse_order,            /* linked in-order, reversed    */
-  avl_reaming,                  /* some order, undefined        */
+  avl_parent    = 0,            /* node link = parent                   */
+
+  avl_in_order,                 /* node link = next, in-order           */
+  avl_in_reverse,               /* node link = next, in-order, reverse  */
+
+  avl_pre_order,                /* node link = next, pre-order          */
+  avl_post_order,               /* node link = next, post-order         */
+
+  avl_level_order,              /* node link = next, root level first   */
+  avl_level_reverse,            /* node link = next, root level last    */
+
+  avl_reaming,                  /* node link = next, in-order           */
 } avl_link_t ;
+
+/* The actual tree structure.
+ */
+typedef struct avl_tree  avl_tree_t ;
 
 struct avl_tree
 {
-  avl_node  root ;              /* address of root node         */
+  avl_node  root ;              /* address of root node                 */
 
-  uint      node_count ;        /* number of nodes in the tree  */
+  uint      node_count ;        /* number of nodes in the tree          */
 
-  uint      offset ;            /* offset of node in value      */
-
-  avl_link_t linked ;           /* how (if at all) linked       */
-  uint8_t   height ;            /* set by some linkages         */
+  avl_link_t link_is ;          /* what node->link contains             */
+  uint      height ;            /* invalid if avl_parent                */
 
   struct dl_base_pair(avl_node) base ;
-                                /* of linked nodes              */
+                                /* of linked nodes                      */
 
-  avl_new_func* new ;           /* create new value             */
-  avl_cmp_func* cmp ;           /* compare key and value        */
+  avl_tree_params_t params ;    /* see above                            */
+
+  void*     parent ;            /* not used by the avl_tree             */
 } ;
+
+#if 0                           /* dropped the tree walker      */
 
 /* Stack structure for "recursing" around tree.
  *
@@ -137,66 +214,45 @@ typedef struct
     avl_dir_t dir ;
   }
     empty[49],                  /* impossibly huge !            */
-    full[1] ;                   /* sentinal                     */
+    full[1] ;                   /* sentinel                     */
 
   struct entry* sp ;
 
 } avl_stack_t ;
-
-#if 0                           /* dropped the tree walker      */
-
-typedef struct
-{
-  avl_tree      tree ;
-
-  uint          count ;
-
-  uint          level ;
-  bool          more ;
-
-  avl_stack_t   stack ;
-} avl_walker_t ;
-
-typedef avl_walker_t* avl_walker ;
 
 #endif
 
 /*==============================================================================
  * Prototypes.
  */
-
-extern avl_tree avl_tree_init_new(avl_tree tree, avl_new_func* new,
-                                                 avl_cmp_func* cmp,
-                                                                  uint offset) ;
+extern avl_tree avl_tree_init_new(avl_tree tree, avl_tree_params_c params,
+                                                                 void* parent) ;
 extern avl_value avl_tree_ream(avl_tree tree, free_keep_b free_structure) ;
 extern avl_tree avl_tree_reset(avl_tree tree, free_keep_b free_structure) ;
 
 Inline uint avl_tree_node_count(avl_tree tree) ;
 
-extern avl_value avl_lookup_add(avl_tree tree, avl_key_c key, bool* add) ;
 extern avl_value avl_lookup(avl_tree tree, avl_key_c key) ;
+extern avl_value avl_lookup_add(avl_tree tree, avl_key_c key, bool* added) ;
 extern avl_value avl_delete(avl_tree tree, avl_key_c key) ;
+
+extern avl_value avl_get_first(avl_tree tree) ;
+extern avl_value avl_get_before(avl_tree tree, avl_key_c key, bool* equal) ;
+extern avl_value avl_get_after(avl_tree tree, avl_key_c key, bool* equal) ;
+extern avl_value avl_get_last(avl_tree tree) ;
+extern avl_value avl_get_next(avl_tree tree, avl_value value) ;
+extern avl_value avl_get_prev(avl_tree tree, avl_value value) ;
 
 extern avl_value avl_tree_link(avl_tree tree, avl_link_t how) ;
 
-Inline avl_node avl_get_node(avl_tree tree, avl_value value) ;
-
-Inline avl_value avl_get_value(avl_tree tree, avl_node node) ;
-Inline avl_value avl_get_child_value(avl_tree tree, avl_value value,
-                                                                avl_dir_t dir) ;
-Inline avl_value avl_get_next_value(avl_tree tree, avl_value value) ;
+Inline avl_value avl_get_child(avl_tree tree, avl_value value, avl_dir_t dir) ;
+Inline avl_value avl_get_next_linked(avl_tree tree, avl_value value) ;
 Inline uint avl_get_level(avl_tree tree, avl_value value) ;
 Inline uint avl_get_height(avl_tree tree) ;
 Inline int avl_get_balance(avl_tree tree, avl_value value) ;
 
-#if 0                   /* Dropped the tree walker              */
-extern uint avl_tree_walk_start(avl_tree tree, avl_walker walk) ;
-extern avl_value avl_tree_walk_next(avl_walker walk) ;
-extern avl_value avl_tree_walk_depth_next(avl_walker walk) ;
-extern avl_value avl_tree_walk_level_next(avl_walker walk) ;
-extern uint avl_tree_walk_depth(avl_walker walk) ;
-extern uint avl_tree_walk_level(avl_walker walk) ;
-#endif
+Inline avl_node avl_node_for(avl_tree tree, avl_value value) ;
+Inline avl_value avl_value_for(avl_tree tree, avl_node node) ;
 
 /*==============================================================================
  * The Inlines
@@ -212,7 +268,7 @@ avl_tree_node_count(avl_tree tree)
 } ;
 
 /*------------------------------------------------------------------------------
- * Get height of tree -- after avl_depth_first or avl_breadth_first
+ * Get height of tree -- after avl_tree_link
  *
  * Empty tree has height == 0, just root has height == 1, etc.
  */
@@ -223,37 +279,21 @@ avl_get_height(avl_tree tree)
 } ;
 
 /*------------------------------------------------------------------------------
- * Given an avl_value, return the enclosed avl_node.
- */
-Inline avl_node
-avl_get_node(avl_tree tree, avl_value value)
-{
-  return (avl_node)((char*)value + tree->offset) ;
-} ;
-
-/*------------------------------------------------------------------------------
- * Given an avl_node, return the enclosing avl_value.
- */
-Inline avl_value
-avl_get_value(avl_tree tree, avl_node node)
-{
-  return (avl_value)((char*)node - tree->offset) ;
-} ;
-
-/*------------------------------------------------------------------------------
  * Step to next avl_value as currently linked.
  */
 Inline avl_value
-avl_get_next_value(avl_tree tree, avl_value value)
+avl_get_next_linked(avl_tree tree, avl_value value)
 {
   if (value != NULL)
     {
       avl_node next ;
 
-      next = avl_get_node(tree, value)->next ;
+      qassert(tree->link_is != avl_parent) ;
+
+      next = avl_node_for(tree, value)->link ;
 
       if (next != NULL)
-        return avl_get_value(tree, next) ;
+        return avl_value_for(tree, next) ;
     } ;
 
   return NULL ;
@@ -263,30 +303,30 @@ avl_get_next_value(avl_tree tree, avl_value value)
  * Return value for left/right child of given value (if any).
  */
 Inline avl_value
-avl_get_child_value(avl_tree tree, avl_value value, avl_dir_t dir)
+avl_get_child(avl_tree tree, avl_value value, avl_dir_t dir)
 {
   if (value != NULL)
     {
       avl_node child ;
 
-      child = avl_get_node(tree, value)->child[dir] ;
+      child = avl_node_for(tree, value)->child[dir] ;
 
       if (child != NULL)
-        return avl_get_value(tree, child) ;
+        return avl_value_for(tree, child) ;
     } ;
 
   return NULL ;
 } ;
 
 /*------------------------------------------------------------------------------
- * Get level for given value -- after avl_depth_first or avl_breadth_first
+ * Get level for given value -- after avl_tree_link
  *
  * Root has level == 0.
  */
 Inline uint
 avl_get_level(avl_tree tree, avl_value value)
 {
-  return (value != NULL) ? avl_get_node(tree, value)->level : 0 ;
+  return (value != NULL) ? avl_node_for(tree, value)->level : 0 ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -295,7 +335,29 @@ avl_get_level(avl_tree tree, avl_value value)
 Inline int
 avl_get_balance(avl_tree tree, avl_value value)
 {
-  return (value != NULL) ? avl_get_node(tree, value)->bal : 0 ;
+  return (value != NULL) ? avl_node_for(tree, value)->bal : 0 ;
+} ;
+
+/*==============================================================================
+ * Switching between node and value -- for *internal* consumption.
+ */
+
+/*------------------------------------------------------------------------------
+ * Return the avl_node for the given avl_value.
+ */
+Inline avl_node
+avl_node_for(avl_tree tree, avl_value value)
+{
+  return (avl_node)((char*)value + tree->params.offset) ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Return the avl_value for the given avl_node.
+ */
+Inline avl_value
+avl_value_for(avl_tree tree, avl_node node)
+{
+  return (avl_value)((char*)node - tree->params.offset) ;
 } ;
 
 #endif /* _ZEBRA_AVL_H */

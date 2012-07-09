@@ -439,7 +439,7 @@ qs_set_str(qstring qs, const char* src)
  * See notes above.
  */
 extern qstring
-qs_set_n(qstring qs, const char* src, usize len)
+qs_set_n(qstring qs, const void* src, usize len)
 {
   qs = qs_new_size(qs, len) ;           /* ensures have body > len      */
 

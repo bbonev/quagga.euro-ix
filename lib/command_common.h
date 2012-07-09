@@ -399,6 +399,30 @@ enum cmd_return_code
 typedef enum cmd_return_code cmd_ret_t ;
 
 /*------------------------------------------------------------------------------
+ * For the construction of vtysh integrated configurations, there are
+ * a number of types of group/section content.
+ */
+enum vtysh_content_type
+{
+  vct_end      = 0,             /* pseudo content type                  */
+  vct_none     = 0,             /* no defined content type              */
+
+  vct_basic,                    /* your common or garden section        */
+
+  vct_access_list,              /* see filter.c                         */
+  vct_prefix_lists,             /* see plist.c                          */
+  vct_prefix_list_s,            /* see plist.c                          */
+  vct_prefix_list_u,            /* see plist.c                          */
+  vct_route_maps,               /* see routemap.c                       */
+  vct_route_map_entry,          /* see routemap.c                       */
+  vct_keychain,                 /* see keychain.c                       */
+
+  vct_unknown,                  /* last value                           */
+} ;
+
+typedef enum vtysh_content_type vtysh_content_t ;
+
+/*------------------------------------------------------------------------------
  * Structure for each node -- root of all commands for the node.
  *
  * See cmd_install_node().
@@ -416,6 +440,7 @@ struct cmd_node
                                  * NULL => no commands in this node     */
 
   bool  config_to_vtysh ;       /* configuration goes to vtysh ?        */
+  vtysh_content_t vtysh_stype ;  /* default type of section for vtysh    */
 
   bool  installed ;             /* set by cmd_install_node()            */
 

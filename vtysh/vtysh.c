@@ -862,15 +862,9 @@ vtysh_show_integrated_config(vty vty)
 {
   cmd_ret_t ret ;
 
-  if (false)
-    {
-      vty_out(vty, "%% %s TBA\n", __func__) ;
-      return CMD_WARNING ;
-    } ;
-
   /* First collect the integrated config.
    */
-  ret = vtysh_config_collect_integrated(vty, true) ;
+  ret = vtysh_config_collect_integrated(vty, true, host.int_config_file) ;
 
   /* Force out any pending output, and if the pager was off, set it on at the
    * default for the terminal.
@@ -898,7 +892,7 @@ vtysh_show_integrated_config(vty vty)
 
   /* Discard the collected configuration & return
    */
-//vtysh_config_reset_integrated() ;
+  vtysh_config_collection_free(vty) ;
 
   return ret ;
 } ;
@@ -912,15 +906,9 @@ vtysh_write_integrated_config(vty vty)
 {
   cmd_ret_t ret ;
 
-  if (false)
-    {
-      vty_out(vty, "%% %s TBA\n", __func__) ;
-      return CMD_WARNING ;
-    } ;
-
   /* First collect the integrated config.
    */
-  ret = vtysh_config_collect_integrated(vty, true) ;
+  ret = vtysh_config_collect_integrated(vty, true, host.int_config_file) ;
 
   /* Send result of collected configuration to the integrated configuration
    * file.
@@ -931,7 +919,7 @@ vtysh_write_integrated_config(vty vty)
 
   /* Discard the collected configuration & return
    */
-//vtysh_config_reset_integrated() ;
+  vtysh_config_collection_free(vty) ;
 
   return ret ;
 } ;

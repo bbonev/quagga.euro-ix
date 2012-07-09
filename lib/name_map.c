@@ -19,7 +19,7 @@
  * Boston, MA 02111-1307, USA.
  */
 
-#include <misc.h>
+#include "misc.h"
 
 #include "name_map.h"
 

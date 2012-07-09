@@ -1503,6 +1503,8 @@ if_config_write (struct vty *vty)
 
       if_data = ifp->info;
 
+      vty_out_vtysh_config_group(vty, "interface %s", ifp->name) ;
+
       vty_out (vty, "interface %s%s", ifp->name,
 	       VTY_NEWLINE);
 
@@ -1555,7 +1557,8 @@ if_config_write (struct vty *vty)
       irdp_config_write (vty, ifp);
 #endif /* IRDP */
 
-      vty_out (vty, "!%s", VTY_NEWLINE);
+      if (!vty_out_vtysh_config_group_end(vty))
+        vty_out (vty, "!\n");
     }
   return 0;
 }

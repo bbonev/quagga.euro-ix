@@ -46,17 +46,18 @@
 #include "vty_log.h"
 #include "network.h"
 #include "vty_vtysh.h"
+#include "vty_vtysh_content.h"
 
 /*==============================================================================
  * Default motd string and debug hello message.
  */
-static const char* default_motd =
+static const char default_motd[] =
 "\n"
 "Hello, this is %P: %D (version %V%q)\n"
 "%C\n"
 "\n" ;
 
-const char* debug_banner =
+const char debug_banner[] =
     QUAGGA_PROGNAME ": %s v"QUAGGA_VERSION " QDEBUG/" QDEBUG_NAME " "
     __DATE__ " " __TIME__ "%s" ;
 
@@ -493,7 +494,7 @@ cmd_host_program_name(void)
 
 /* Names for daemons may have commands for
  */
-static const char* daemon_name_table[] =
+static const char* const daemon_name_table[] =
 {
     [BGPD_ORD]      = "bgpd",
     [ISISD_ORD]     = "isisd",
@@ -515,7 +516,7 @@ static const char* daemon_name_table[] =
 
 /* Names for the daemons in a set of same
  */
-static const char* daemon_bit_name_table[] =
+static const char* const daemon_bit_name_table[] =
 {
     [BGPD_ORD]      = "BGPD",
     [OSPFD_ORD]     = "OSPFD",
@@ -803,25 +804,30 @@ cmd_deamon_list_arg(vty vty, int argc, argv_t argv)
  */
 DEFUN_ATTR (set_vtysh_config_daemon,
             set_vtysh_config_daemon_cmd,
-            "vtysh-config-daemon DAEMON-NAME",
-            "Set vtysh configuration daemon for configuration which follows\n"
-            "The configuration daemon name\n",
+            "vtysh-config-daemon .DAEMON",
+            "Set vtysh configuration daemon(s) for configuration which follows\n"
+            "The configuration daemon name(s)\n",
             CMD_ATTR_DIRECT | CMD_ATTR_FIRST)
 {
+#if 0
   vty_out(vty, "%% #vtysh-config-daemon %s only valid in vtysh-config-write\n",
                                                                       argv[0]) ;
+#endif
   return CMD_WARNING ;
 } ;
 
 DEFUN_ATTR (set_vtysh_config_node,
             set_vtysh_config_node_cmd,
-            "vtysh-config-node NODE-NAME",
+            "vtysh-config-node NODE-NAME [SECTION-TYPE]",
             "Set vtysh configuration node for configuration which follows\n"
-            "The configuration node name\n",
+            "The configuration node name\n"
+            "The default section type\n",
             CMD_ATTR_DIRECT | CMD_ATTR_FIRST)
 {
+#if 0
   vty_out(vty, "%% #vtysh-config-node %s only valid in vtysh-config-write\n",
                                                                       argv[0]) ;
+#endif
   return CMD_WARNING ;
 } ;
 
@@ -1065,7 +1071,8 @@ static cmd_node_t node_table[] =
 
       .parent   = ENABLE_NODE,
 
-      .config_to_vtysh = true
+      .config_to_vtysh = true,
+      .vtysh_stype     = vct_basic,
     },
 
   /*----------------------------------------------------------------------------
@@ -1080,6 +1087,7 @@ static cmd_node_t node_table[] =
       .daemons  = ALL_RDS,
 
       .config_to_vtysh = true,
+      .vtysh_stype     = vct_basic,
     },
 
   [INTERFACE_NODE] =
@@ -1091,6 +1099,7 @@ static cmd_node_t node_table[] =
       .daemons  = INTERFACE_DS,
 
       .config_to_vtysh = true,
+      .vtysh_stype     = vct_basic,
     },
 
   [ACCESS_NODE] =
@@ -1102,6 +1111,7 @@ static cmd_node_t node_table[] =
       .daemons  = ALL_RDS,
 
       .config_to_vtysh = true,
+      .vtysh_stype     = vct_basic,
     },
 
   [ACCESS_IPV6_NODE] =
@@ -1113,6 +1123,7 @@ static cmd_node_t node_table[] =
       .daemons  = ALL_RDS,
 
       .config_to_vtysh = true,
+      .vtysh_stype     = vct_basic,
     },
 
   [KEYCHAIN_NODE] =
@@ -1123,7 +1134,8 @@ static cmd_node_t node_table[] =
 
       .daemons  = RIPD,
 
-      .config_to_vtysh = true
+      .config_to_vtysh = true,
+      .vtysh_stype     = vct_basic,
     },
 
   [KEYCHAIN_KEY_NODE] =
@@ -1136,7 +1148,8 @@ static cmd_node_t node_table[] =
 
       .parent   = KEYCHAIN_NODE,
 
-      .config_to_vtysh = true
+      .config_to_vtysh = true,
+      .vtysh_stype     = vct_basic,
     },
 
   [PREFIX_NODE] =
@@ -1147,7 +1160,8 @@ static cmd_node_t node_table[] =
 
       .daemons  = ALL_RDS,
 
-      .config_to_vtysh = true
+      .config_to_vtysh = true,
+      .vtysh_stype     = vct_basic,
     },
 
   [PREFIX_IPV6_NODE] =
@@ -1158,7 +1172,8 @@ static cmd_node_t node_table[] =
 
       .daemons  = ALL_RDS,
 
-      .config_to_vtysh = true
+      .config_to_vtysh = true,
+      .vtysh_stype     = vct_basic,
     },
 
   [RMAP_NODE] =
@@ -1169,7 +1184,8 @@ static cmd_node_t node_table[] =
 
       .daemons  = RMAP_DS,
 
-      .config_to_vtysh = true
+      .config_to_vtysh = true,
+      .vtysh_stype     = vct_basic,
     },
 
   [SMUX_NODE] =
@@ -1189,7 +1205,8 @@ static cmd_node_t node_table[] =
 
       .daemons  = ALL_RDS,
 
-      .config_to_vtysh = true
+      .config_to_vtysh = true,
+      .vtysh_stype     = vct_basic,
     },
 
   /*----------------------------------------------------------------------------
@@ -1204,6 +1221,7 @@ static cmd_node_t node_table[] =
       .daemons  = BGPD,
 
       .config_to_vtysh = true,
+      .vtysh_stype     = vct_basic,
     },
 
   [BGP_IPV4_NODE] =
@@ -1217,6 +1235,7 @@ static cmd_node_t node_table[] =
       .parent   = BGP_NODE,
 
       .config_to_vtysh = true,
+      .vtysh_stype     = vct_basic,
     },
 
   [BGP_IPV4M_NODE] =
@@ -1230,6 +1249,7 @@ static cmd_node_t node_table[] =
       .parent   = BGP_NODE,
 
       .config_to_vtysh = true,
+      .vtysh_stype     = vct_basic,
     },
 
   [BGP_IPV6_NODE] =
@@ -1242,7 +1262,8 @@ static cmd_node_t node_table[] =
 
       .parent   = BGP_NODE,
 
-      .config_to_vtysh  = true,
+      .config_to_vtysh = true,
+      .vtysh_stype     = vct_basic,
     },
 
   [BGP_IPV6M_NODE] =
@@ -1255,7 +1276,8 @@ static cmd_node_t node_table[] =
 
       .parent   = BGP_NODE,
 
-      .config_to_vtysh  = true,
+      .config_to_vtysh = true,
+      .vtysh_stype     = vct_basic,
     },
 
   [BGP_VPNV4_NODE] =
@@ -1269,6 +1291,7 @@ static cmd_node_t node_table[] =
       .parent   = BGP_NODE,
 
       .config_to_vtysh = true,
+      .vtysh_stype     = vct_basic,
     },
 
   [COMMUNITY_LIST_NODE]=
@@ -1280,6 +1303,7 @@ static cmd_node_t node_table[] =
       .daemons  = BGPD,
 
       .config_to_vtysh = true,
+      .vtysh_stype     = vct_basic,
     },
 
   [AS_LIST_NODE] =
@@ -1291,6 +1315,7 @@ static cmd_node_t node_table[] =
       .daemons  = BGPD,
 
       .config_to_vtysh = true,
+      .vtysh_stype     = vct_basic,
     },
 
   [DUMP_NODE] =
@@ -1302,6 +1327,7 @@ static cmd_node_t node_table[] =
       .daemons  = BGPD,
 
       .config_to_vtysh = true,
+      .vtysh_stype     = vct_basic,
     },
 
   /*----------------------------------------------------------------------------
@@ -1316,6 +1342,7 @@ static cmd_node_t node_table[] =
       .daemons  = ISISD,
 
       .config_to_vtysh = true,
+      .vtysh_stype     = vct_basic,
     },
 
   /*----------------------------------------------------------------------------
@@ -1330,6 +1357,7 @@ static cmd_node_t node_table[] =
       .daemons  = OSPFD,
 
       .config_to_vtysh = true,
+      .vtysh_stype     = vct_basic,
     },
 
   [OSPF6_NODE] =
@@ -1341,6 +1369,7 @@ static cmd_node_t node_table[] =
       .daemons  = OSPF6D,
 
       .config_to_vtysh = true,
+      .vtysh_stype     = vct_basic,
      },
 
   /*----------------------------------------------------------------------------
@@ -1355,6 +1384,7 @@ static cmd_node_t node_table[] =
       .daemons  = RIPD,
 
       .config_to_vtysh = true,
+      .vtysh_stype     = vct_basic,
     },
 
   [RIPNG_NODE] =
@@ -1366,6 +1396,7 @@ static cmd_node_t node_table[] =
       .daemons  = RIPNGD,
 
       .config_to_vtysh = true,
+      .vtysh_stype     = vct_basic,
     },
 
   /*----------------------------------------------------------------------------
@@ -1389,6 +1420,7 @@ static cmd_node_t node_table[] =
       .daemons  = ZEBRA,
 
       .config_to_vtysh = true,
+      .vtysh_stype     = vct_basic,
     },
 
   [IP_NODE] =
@@ -1400,6 +1432,7 @@ static cmd_node_t node_table[] =
       .daemons  = ZEBRA,
 
       .config_to_vtysh = true,
+      .vtysh_stype     = vct_basic,
     },
 
   [TABLE_NODE] =
@@ -1411,6 +1444,7 @@ static cmd_node_t node_table[] =
       .daemons  = ZEBRA,
 
       .config_to_vtysh = true,
+      .vtysh_stype     = vct_basic,
     },
 
   [FORWARDING_NODE] =
@@ -1422,6 +1456,7 @@ static cmd_node_t node_table[] =
       .daemons  = ZEBRA,
 
       .config_to_vtysh = true,
+      .vtysh_stype     = vct_basic,
     },
 #if 0
   /*----------------------------------------------------------------------------
@@ -3486,7 +3521,8 @@ config_write_file_node(vty vty, node_type_t node)
   if (vty->config_to_vtysh)
     {
       if (cn->config_to_vtysh)
-        vty_out (vty, "#vtysh-config-node %s\n", cmd_node_name(node)) ;
+        vty_out (vty, "#vtysh-config-node %s %s\n", cmd_node_name(node),
+                                     vtysh_content_type_name(cn->vtysh_stype)) ;
       else
         return -1 ;
     } ;

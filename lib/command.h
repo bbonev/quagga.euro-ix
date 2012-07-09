@@ -306,7 +306,7 @@ extern char *argv_concat (const char* const* argv, int argc, int shift);
 /*------------------------------------------------------------------------------
  * Global variables
  */
-extern const char *debug_banner ;
+extern const char debug_banner[] ;
 
 extern daemon_set_t deamons_set ;
 extern const char*  daemon_name ;

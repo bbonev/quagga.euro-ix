@@ -75,7 +75,7 @@ dnl Check CC and friends
 dnl --------------------
 AC_LANG([C])
 AC_PROG_CC
-AC_PROG_CC_C99
+dnl AC_PROG_CC_C99 is used if the compiler is not recognised and no CFLAGS
 AC_PROG_CPP
 AM_PROG_CC_C_O
 AC_PROG_EGREP
@@ -190,7 +190,7 @@ if test "x${cflags_specified}" = "x" ; then
         AC_MSG_RESULT([Intel default])
         ;;
     "GCC")
-  	CFLAGS="-O2 -fno-omit-frame-pointer -g -std=c99"
+  	CFLAGS="-std=c99 -g -O2 -fno-omit-frame-pointer"
   	CFLAGS="${CFLAGS} -Wall -Wextra"
     CFLAGS="${CFLAGS} -Wno-missing-field-initializers"
     CFLAGS="${CFLAGS} -Wno-unused-parameter"
@@ -212,11 +212,17 @@ if test "x${cflags_specified}" = "x" ; then
   	;;
     *)
         AC_MSG_RESULT([unknown compiler])
+        AC_PROG_CC_C99
         ;;
   esac
 else
   AC_MSG_RESULT([CFLAGS supplied by user])
 fi
+
+dnl when linking, clang generates spurious warnings about -std=c99 which
+dnl is suppressed 
+
+ACQ_PROG_CC_OPTIONS([-Qunused-arguments], [LDFLAGS])
 
 dnl --------------
 dnl Append DEFINES

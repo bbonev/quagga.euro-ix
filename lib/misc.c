@@ -408,8 +408,8 @@ invalid:
  *                   ==  strtox_range   => out of range for signed long
  */
 extern long
-strtol_xr(const char* restrict str, int* p_tox, char** p_end, long min,
-                                                              long max)
+strtol_xr(const char* restrict str, strtox_t* p_tox, char** p_end, long min,
+                                                                   long max)
 {
   long val ;
 
@@ -437,8 +437,8 @@ strtol_xr(const char* restrict str, int* p_tox, char** p_end, long min,
  *                   ==  strtox_range   => out of range for signed long
  */
 extern ulong
-strtoul_xr(const char* restrict str, int* p_tox, char** p_end, ulong min,
-                                                               ulong max)
+strtoul_xr(const char* restrict str, strtox_t* p_tox, char** p_end, ulong min,
+                                                                    ulong max)
 {
   ulong uval ;
 
@@ -452,4 +452,154 @@ strtoul_xr(const char* restrict str, int* p_tox, char** p_end, ulong min,
 
   *p_tox = strtox_range ;
   return min ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Compare two strings, where any substrings of decimal digits are treated as
+ * numbers, and numbers are less than all other characters.
+ *
+ * That is: "a1b" < "a10b" but "za1b" > "z1b" and "z!1b" > "z1b"
+ *
+ * Leading zeros are ignored, unless the strings are otherwise equal.
+ *
+ * That is: "a01" < "a2" BUT "a01" > "a1"
+ *
+ * The comparison effectively breaks the two stings into alternating substings
+ * of digits and non-digits.  Then the comparison between substrings is:
+ *
+ *   *     digits cmp     digits     -- numeric comparison.
+ *
+ *   *     digits cmp non-digits     -- digits rank smaller
+ *
+ *   * non-digits cmp     digits     -- digits rank smaller
+ *
+ *   * non-digits cmp non-digits     -- string comparison
+ *
+ * If the number of substrings differs, and all substrings match up to the end
+ * of the string with fewer substrings, then the string with more substrings is
+ * the larger.
+ *
+ * If the number of substrings is the same, and all substrings match, then if
+ * we stepped across more leading zeros in one string, then it is the larger.
+ * The first such difference takes precedence, so:
+ *
+ *   "a0001b2" > "a1b00000002"
+ *
+ * For two strings to be equal, they must be exactly the same (including
+ * leading zeros).
+ */
+extern int
+strcmp_mixed(const void* a, const void* b)
+{
+  const uchar* ap ;
+  const uchar* bp ;
+  int  match ;
+
+  ap = a ;
+  bp = b ;
+  match = 0 ;
+
+  while (1)
+    {
+      bool da, db ;
+
+      da = isdigit(*ap) ;
+      db = isdigit(*bp) ;
+
+      if (da || db)
+        {
+          const uchar* as ;
+          const uchar* bs ;
+          uint la, lb ;
+
+          /* One or both are digits.
+           *
+           * If they are not both digits, then: empty < digit < everything else
+           */
+          if (!(da && db))
+            {
+              if (da)
+                return (*bp != '\0') ? -1 : +1 ;
+              else
+                return (*ap != '\0') ? +1 : -1 ;
+            } ;
+
+          /* Before comparing one or more digits in the two strings, we:
+           *
+           *   (a) step past any leading zeros
+           *
+           *   (b) count the number of digits after any leading zeros.
+           *
+           * If the counts of significant digits are not equal, then the longer
+           * number is the larger.
+           *
+           * If the counts of significant digits are equal, then we can compare
+           * the two digit substrings character-wise.  If the substrings are
+           * equal, we continue, with *ap and *bp both pointing at something
+           * which is not a digit.
+           */
+          as = ap ;
+          while ((*ap == '0') && (*(ap+1) == '0'))
+            ++ap ;                /* step past leading zeros      */
+
+          la = 0 ;
+          do
+            ++la ;                /* get significant length       */
+          while (isdigit(ap[la])) ;
+
+          bs = bp ;
+          while ((*bp == '0') && (*(bp+1) == '0'))
+            ++bp ;                /* step past leading zeros      */
+
+          lb = 0 ;
+          do
+            ++lb ;                /* get significant length       */
+          while (isdigit(bp[lb])) ;
+
+          if (la != lb)
+            return (la < lb) ? -1 : +1 ;
+
+          do
+            {
+              if (*ap != *bp)
+                return (*ap < *bp) ? -1 : +1 ;
+
+              ++ap ;
+              ++bp ;
+              --la ;
+            }
+          while (la > 1) ;
+
+          /* The digit strings are equal, ignoring leading zeros.
+           *
+           * If the "match" has not already been set, and if the number of
+           * leading zeros is not the same, set the "match" as the final
+           * result of everything else is equal.
+           */
+          if (match == 0)
+            {
+              la = ap - as ;
+              lb = bp - bs ;
+              if (la != lb)
+                match = (la < lb) ? -1 : +1 ;
+            } ;
+        } ;
+
+      if (*ap != *bp)
+        return (*ap < *bp) ? -1 : +1 ;
+
+      if (*ap == '\0')
+        break ;                         /* *ap == &bp == '\0'   */
+
+      ++ap ;
+      ++bp ;
+    } ;
+
+  /* The comparison has stopped at the end of both strings.
+   *
+   * The result is a match, unless we stepped across more leading zeros in
+   * one of the strings.  Noting that the first instance of that takes
+   * precedence over any further instances.
+   */
+  return match ;
 } ;

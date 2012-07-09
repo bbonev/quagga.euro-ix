@@ -829,8 +829,6 @@ peer_remote_as (struct bgp *bgp, union sockunion *su, as_t *as,
       if (peer_lookup (NULL, su) != NULL)
         return BGP_ERR_PEER_EXISTS ;
 
-      /* TODO: report bug...  if is IPv4 unicast, may implicitly activate  */
-
       /* If this is IPv4 unicast configuration and "no bgp default
          ipv4-unicast" is NOT specified.
        */
@@ -4557,7 +4555,11 @@ bgp_config_write_family_header (struct vty *vty, afi_t afi, safi_t safi,
   if (afi == AFI_IP && safi == SAFI_UNICAST)
     return;
 
+#if 0
+  /* Don't need to group this, since is bgpd daemon specific
+   */
   vty_out_vtysh_config_group(vty, "address-family %u/%u", afi, safi) ;
+#endif
 
   vty_out (vty, "!%s address-family ", VTY_NEWLINE);
 
@@ -4614,7 +4616,11 @@ bgp_config_write_family (struct vty *vty, struct bgp *bgp, afi_t afi,
   if (write)
     {
       vty_out (vty, " exit-address-family%s", VTY_NEWLINE);
+#if 0
+      /* Don't need to group this, since is bgpd daemon specific
+       */
       vty_out_vtysh_config_group_end(vty) ;
+#endif
     } ;
 
   return write;
@@ -4759,8 +4765,12 @@ bgp_config_write (struct vty *vty)
 
       /* AFI_IP/SAFI_UNICAST stuff
        */
+#if 0
+      /* Don't need to group this, since is bgpd daemon specific
+       */
       vty_out_vtysh_config_group(vty, "address-family %u/%u", AFI_IP,
                                                                  SAFI_UNICAST) ;
+#endif
 
       /* BGP flag dampening. */
       if (CHECK_FLAG (bgp->af_flags[AFI_IP][SAFI_UNICAST],
@@ -4796,7 +4806,11 @@ bgp_config_write (struct vty *vty)
       if (bgp_option_check (BGP_OPT_CONFIG_CISCO))
 	vty_out (vty, " no auto-summary%s", VTY_NEWLINE);
 
+#if 0
+      /* Don't need to group this, since is bgpd daemon specific
+       */
       vty_out_vtysh_config_group_end(vty) ;
+#endif
 
       /* IPv4 multicast configuration.  */
       write += bgp_config_write_family (vty, bgp, AFI_IP, SAFI_MULTICAST);

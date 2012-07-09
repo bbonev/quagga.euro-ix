@@ -26,7 +26,7 @@
 
 #include "misc.h"
 
-#include "command_common.h"
+#include "command_local.h"
 #include "vector.h"
 #include "vio_fifo.h"
 #include "qstring.h"
@@ -632,7 +632,8 @@ struct cmd_parsed
    */
   cmd_token_type_t tok_total ;  /* What token types are present         */
 
-  uint          num_tokens ;    /* number of tokens parsed              */
+  uint          num_tokens ;    /* number of tokens parsed, excluding
+                                 * the trailing cmd_tok_eol             */
 
   token_vector  tokens ;        /* vector of token objects              */
 

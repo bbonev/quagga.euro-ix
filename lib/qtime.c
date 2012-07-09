@@ -339,7 +339,11 @@ qt_rand(uint64_t q, uint64_t s)
 extern uint32_t
 qt_random(uint32_t seed)
 {
-  uint32_t x, y ;
+  union
+  {
+    uint32_t x, y, z ;
+  } u ;
+
   uint64_t t ;
 
   t = qt_get_realtime() ;       /* in nano-seconds      */
@@ -347,25 +351,33 @@ qt_random(uint32_t seed)
   seed ^= qt_random_seed ;      /* munge a bit          */
 
   /* Set x by munging the time, the address of x, the current contents of x,
-   * and the "seed".
+   * and the munged "seed".
    */
-  x = qt_rand(t ^ (uint64_t)x ^ (uintptr_t)&x, seed) ;
+  u.x = qt_rand(t ^ (uint64_t)u.x ^ (uintptr_t)&u.x, seed) ;
                   /* munge the address and the contents with the seed   */
 
   /* Set y by munging the time, the address of y, the current contents of y,
-   * and the "seed".
+   * and the munged "seed" inverted.
    */
-  y = qt_rand(t ^ (uint64_t)y ^ (uintptr_t)&y, seed) ;
+  u.y = qt_rand(t ^ (uint64_t)u.y ^ (uintptr_t)&u.y, ~seed) ;
                   /* munge the current real time with the seed          */
+
+  /* Munge x and y together to create result.
+   *
+   * Note that we swap the halves of y before munging, in order to spread
+   * the "more random" part of y down to the ls end of the result.
+   */
+  u.z = u.x ^ ((u.y >> 16) & 0xFFFF) ^ ((u.y & 0xFFFF) << 16) ;
 
   /* Return x and y munged together.
    *
    * Note that we swap the halves of y before munging, in order to spread
    * the "more random" part of y down to the ls end of the result.
    */
-  return x ^ ((y >> 16) & 0xFFFF) ^ ((y & 0xFFFF) << 16) ;
-} ;
+  qt_random_seed ^= u.z ;       /* turn over the store of "randomness"  */
 
+  return u.z ;
+} ;
 
 /*==============================================================================
  * Error handling

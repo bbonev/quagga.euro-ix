@@ -111,7 +111,7 @@ static void bgp_peer_index_symbol_body_free(bgp_peer_index_entry entry) ;
 static const symbol_funcs_t peer_index_symbol_funcs =
 {
   .hash   = (symbol_hash_func*)sockunion_symbol_hash,
-  .cmp    = (symbol_cmp_func*)bgp_peer_index_cmp,
+  .equal  = (symbol_equal_func*)bgp_peer_index_cmp,
   .free   = (symbol_free_func*)bgp_peer_index_symbol_body_free,
 } ;
 
@@ -423,7 +423,7 @@ bgp_peer_index_seek_accept(union sockunion* su, bool* p_found)
 } ;
 
 /*------------------------------------------------------------------------------
- * Comparison function -- symbol_cmp_func
+ * Comparison function -- symbol_equal_func
  */
 static int
 bgp_peer_index_cmp(bgp_peer_index_entry entry, sockunion su)

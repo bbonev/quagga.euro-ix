@@ -1,4 +1,4 @@
-/* VTY IO SHELL -- VTY Shell Command Execution
+/* VTY SHELL -- VTY Shell Command Execution
  * Copyright (C) 1997, 98 Kunihiro Ishiguro
  *
  * Revisions: Copyright (C) 2010 Chris Hall (GMCH), Highwayman
@@ -622,8 +622,8 @@ vty_vtysh_command_loop(vty vtysh, const char* line, bool interactive,
  */
 extern cmd_ret_t
 vty_vtysh_fetch_config(vty vtysh,
-                    void (*collect)(config_collection collection, vio_fifo buf),
-                                        config_collection collection, bool show)
+                    void (*collect)(vty vtysh, vio_fifo buf, const char* name),
+                                                                      bool show)
 {
   vtysh_client_dispatch_t dispatch ;
   cmd_ret_t    ret ;
@@ -664,7 +664,7 @@ vty_vtysh_fetch_config(vty vtysh,
       if (ret == CMD_SUCCESS)
         {
           vio_fifo_step_end_mark(r_obuf) ;
-          collect(collection, r_obuf) ;
+          collect(vtysh, r_obuf, client->name) ;
         } ;
 
       if (show)

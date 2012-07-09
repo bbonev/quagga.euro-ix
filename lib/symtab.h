@@ -89,14 +89,14 @@ typedef struct symbol_walker     symbol_walker_t ;
  * Set of functions for a Symbol Table
  */
 typedef symbol_hash_t symbol_hash_func(const void* name) ;
-typedef int           symbol_cmp_func(const void* body, const void* name) ;
+typedef int           symbol_equal_func(const void* body, const void* name) ;
 typedef void          symbol_free_func(void* body) ;
 
 struct symbol_funcs
 {
-  symbol_hash_func* hash ;      /* function to hash given name          */
-  symbol_cmp_func*  cmp ;       /* function to compare symbol and name  */
-  symbol_free_func* free ;      /* called when symbol is destroyed      */
+  symbol_hash_func*  hash ;     /* function to hash given name          */
+  symbol_equal_func* equal ;    /* function to compare symbol and name  */
+  symbol_free_func*  free ;     /* called when symbol is destroyed      */
 } ;
 
 /*------------------------------------------------------------------------------
@@ -204,8 +204,12 @@ Inline bool symbol_is_set(const symbol sym) ;
 Inline bool symbol_has_references(const symbol sym) ;
 
 extern symbol_hash_t symbol_hash_string(const void* string) ;
+extern symbol_hash_t symbol_hash_string_cont(const void* string,
+                                                              symbol_hash_t h) ;
 extern symbol_hash_t symbol_hash_bytes(const void* bytes, size_t len) ;
-Inline symbol_hash_t symbol_hash_word(symbol_hash_t h) ;
+extern symbol_hash_t symbol_hash_bytes_cont(const void* bytes, size_t len,
+                                                              symbol_hash_t h) ;
+Inline symbol_hash_t symbol_hash_word(uint32_t w) ;
 
 Inline void* symbol_get_body(const symbol sym) ;
 Inline symbol_table symbol_get_table(const symbol sym) ;
@@ -240,8 +244,6 @@ extern vector symbol_table_extract(symbol_table table,
 	                           const void* p_value,
 			           bool most,
 			           symbol_sort_cmp* sort) ;
-
-extern int symbol_mixed_name_cmp(const char* a, const char* b) ;
 
 /*==============================================================================
  * The Inline stuff.
@@ -388,11 +390,16 @@ symbol_nref_set_tag(symbol_nref nref, uintptr_t tag)
  * Standard symbol integer hash function.
  *
  * Simple approach -- treat as seed for random number !
+ *
+ * Given that the number of chain bases is always odd, testing suggests that
+ * it doesn't make much difference how the integer is hashed !  There is
+ * no evidence that jhash() does a better job than this -- and is clearly
+ * slower !
  */
 Inline symbol_hash_t
-symbol_hash_word(symbol_hash_t h)
+symbol_hash_word(uint32_t w)
 {
-  return (h * 2650845021u) + 5 ;        /* See Knuth 3.3.4      */
+  return ((w ^ 3141592653) * 2650845021u) + 5 ; /* See Knuth 3.3.4      */
 } ;
 
 #endif /* _ZEBRA_SYMTAB_H */

@@ -18,13 +18,13 @@
  * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
  * Boston, MA 02111-1307, USA.
  */
-
-#include <zebra.h>
+#include "misc.h"
 
 #include "prefix.h"
 #include "filter.h"
 #include "memory.h"
 #include "command.h"
+#include "command_parse.h"
 #include "sockunion.h"
 #include "buffer.h"
 #include "log.h"
@@ -1800,6 +1800,9 @@ config_write_access (struct vty *vty, afi_t afi)
 
   for (access = master->num.head; access; access = access->next)
     {
+      if (write == 0)
+        vtysh_config_section_start(vty, vct_access_list, "*") ;
+
       if (access->remark)
 	{
 	  vty_out (vty, "%saccess-list %s remark %s%s",
@@ -1827,6 +1830,8 @@ config_write_access (struct vty *vty, afi_t afi)
 
   for (access = master->str.head; access; access = access->next)
     {
+      vty_out_vtysh_config_group(vty, "access-list %s %s", afitoa_lc(afi).str,
+                                                                 access->name) ;
       if (access->remark)
 	{
 	  vty_out (vty, "%saccess-list %s remark %s%s",
@@ -1850,7 +1855,10 @@ config_write_access (struct vty *vty, afi_t afi)
 
 	  write++;
 	}
-    }
+
+      vty_out_vtysh_config_group_end(vty) ;
+    } ;
+
   return write;
 }
 
@@ -1859,6 +1867,81 @@ config_write_access_ipv4 (struct vty *vty)
 {
   return config_write_access (vty, AFI_IP);
 }
+
+/*------------------------------------------------------------------------------
+ * Partial parsing of access-list configuration -- for vtysh integrated
+ *                                                               configurations.
+ *
+ * When constructing an integrated vtysh configuration, the lines created
+ * above -- see config_write_access() -- must be partially parsed in order to
+ * correctly merge the filter lists from two or more daemons into one filter
+ * list.
+ *
+ * Recognises: (ipv6 )?access-list ..name.. remark ....
+ *             (ipv6 )?access-list ..name.. ....
+ *
+ * Sets:       group_name: vX ..name.. 0   -- for remark lines
+ *                         vX ..name.. 1   -- for other lines
+ *
+ *             item_name:  rest of line, concatenated.
+ *
+ * Expects the groups to be handled as mst_sorted and the contents of the
+ * groups to be mst_as_is.
+ */
+extern cmd_ret_t
+access_list_parse_section(vtysh_content_parse cp, cmd_parsed parsed)
+{
+  cmd_token t ;
+  uint      ti, tn ;
+
+  /* Even if the line is blank, there will be at least one token, the eol !
+   */
+  tn = parsed->num_tokens ;
+
+  ti = 0 ;
+  t = cmd_token_get(parsed->tokens, ti) ;
+
+  if (els_cmp_str(t->ot, "ipv6") == 0)
+    {
+      t = cmd_token_get(parsed->tokens, ++ti) ;
+      qs_set_str(cp->new_name, "v6 ") ;
+    }
+  else
+    qs_set_str(cp->new_name, "v4 ") ; ;
+
+  if (els_cmp_str(t->ot, "access-list") != 0)
+    {
+      cp->error_msg = "unknown first token of 'access-list' line" ;
+      return CMD_ERROR ;
+    } ;
+
+  ++ti ;                        /* index of the name token              */
+  if ((ti + 1) >= tn)
+    {
+      cp->error_msg = "unknown form of 'access-list' line" ;
+      return CMD_ERROR  ;       /* expect name + at least one other     */
+    } ;
+
+  t = cmd_token_get(parsed->tokens, ti) ;
+  qs_append_els(cp->new_name, t->ot) ;          /* the name             */
+
+  ++ti ;                        /* index of token after the name        */
+  t = cmd_token_get(parsed->tokens, ti) ;
+  if (els_cmp_str(t->ot, "remark") == 0)
+    qs_append_str(cp->new_name, " 0") ;         /* remark group         */
+  else
+    qs_append_str(cp->new_name, " 1") ;         /* entry group          */
+
+  cp->new_depth = 2 ;
+  cp->new_type  = vct_access_list ;
+
+  cp->result = vcp_line | vcp_section ;
+
+  return CMD_SUCCESS ;
+} ;
+
+/*------------------------------------------------------------------------------
+ */
 
 static void
 access_list_reset_ipv4 (void)

@@ -332,5 +332,6 @@ extern long  strtol_xr(const char* restrict str, strtox_t* p_tox, char** endp,
 extern ulong strtoul_xr(const char* restrict str, strtox_t* p_tox, char** endp,
                                                                    ulong min,
                                                                    ulong max) ;
+extern int strcmp_mixed(const void* a, const void* b) ;
 
 #endif /* _ZEBRA_MISC_H */

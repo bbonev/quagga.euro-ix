@@ -578,19 +578,59 @@ Private bool ssl_del_func(void** p_prev, void* item, size_t link_offset)
  *
  *     Treat as void function.  Does nothing if the sublist is empty.
  *
+ *     sub is a base pair, but need not be a valid list (its head->list.prev
+ *     and tail->list.next will not be NULL, unless is the complete list.)
+ *
+ *     The resulting sub *is* a valid list (its head->list.prev and
+ *     tail->list.next will be NULL).
+ *
  *   ddl_splice_after(after, base, sub, list)
  *                                  -- insert sublist after given item
  *
  *     Treat as void function.  Does nothing if the sublist is empty.
  *
- *     If after == NULL, insert sublist at the end of the current list.
+ *     If after == NULL, insert sublist at the end of the current list
+ *     (ie append).
+ *
+ *     sub is a base pair, but need not be a valid list (its head->list.prev
+ *     and tail->list.next need not be NULL)
+ *
+ *     sub is unchanged by this operation -- but its head->list.prev and
+ *     and tail->list.next may well be.
  *
  *   ddl_splice_before(before, base, sub, list)
  *                                  -- insert sublist before given item
  *
  *     Treat as void function.  Does nothing if the sublist is empty.
  *
- *     If before == NULL, insert sublist at the start of the current list.
+ *     If before == NULL, insert sublist at the start of the current list
+ *     (ie prepend).
+ *
+ *     sub is a base pair, but need not be a valid list (its head->list.prev
+ *     and tail->list.next need not be NULL)
+ *
+ *     sub is unchanged by this operation -- but its head->list.prev and
+ *     and tail->list.next may well be.
+ *
+ *   ddl_append_list(base, sub)     -- append sublist b to list a
+ *
+ *     Treat as void function.
+ *
+ *     sub is a base pair, but need not be a valid list (its head->list.prev
+ *     and tail->list.next need not be NULL)
+ *
+ *     sub is unchanged by this operation -- but its head->list.prev and
+ *     and tail->list.next may well be.
+ *
+ *   ddl_prepend_list(base, sub)    -- prepend sublist b to list a
+ *
+ *     Treat as void function.
+ *
+ *     sub is a base pair, but need not be a valid list (its head->list.prev
+ *     and tail->list.next need not be NULL)
+ *
+ *     sub is unchanged by this operation -- but its head->list.prev and
+ *     and tail->list.next may well be.
  *
  * Note that ddl_del() and ddl_pop() do NOT affect the item->list.next
  * or item->list.prev pointers.
@@ -610,7 +650,9 @@ Private bool ssl_del_func(void** p_prev, void* item, size_t link_offset)
  *
  *   "sub"  to be an r-value of type: struct base_pair(struct item*)*
  *
- *          That is... a variable or field which is a pointer pointer pair.
+ *          That is... a variable or field which is a pointer pointer pair,
+ *          *but* where the head->list.prev and tail->list.next need not be
+ *          NULL and may well not be.
  *
  *------------------------------------------------------------------------------
  * For example:
@@ -812,7 +854,7 @@ Private bool ssl_del_func(void** p_prev, void* item, size_t link_offset)
 #define ddl_splice_after(after, base, sub, list)                        \
   do { if ((sub).head != NULL)                                          \
          {                                                              \
-           if (after != NULL)                                           \
+           if ((after) != NULL)                                         \
              {                                                          \
                (sub).head->list.prev = (after) ;                        \
                (sub).tail->list.next = (after)->list.next ;             \
@@ -823,22 +865,14 @@ Private bool ssl_del_func(void** p_prev, void* item, size_t link_offset)
                (after)->list.next = (sub).head ;                        \
              }                                                          \
            else                                                         \
-             {                                                          \
-               (sub).head->list.prev = (base).tail ;                    \
-               (sub).tail->list.next = NULL ;                           \
-               if ((base).tail != NULL)                                 \
-                 (base).tail->list.next = (sub).head ;                  \
-               else                                                     \
-                 (base).head = (sub).head ;                             \
-               (base).tail = (sub).tail ;                               \
-             } ;                                                        \
+             ddl_append_list(base, sub, list) ;                         \
          }                                                              \
   } while (0)
 
 #define ddl_splice_before(before, base, sub, list)                      \
   do { if ((sub).head != NULL)                                          \
          {                                                              \
-           if (before != NULL)                                          \
+           if ((before) != NULL)                                        \
              {                                                          \
                (sub).tail->list.next = (before) ;                       \
                (sub).head->list.prev = (before)->list.prev ;            \
@@ -849,19 +883,47 @@ Private bool ssl_del_func(void** p_prev, void* item, size_t link_offset)
                (before)->list.prev = (sub).tail ;                       \
              }                                                          \
            else                                                         \
+             ddl_prepend_list(base, sub, list) ;                        \
+         }                                                              \
+  } while (0)
+
+#define ddl_append_list(base, sub, list)                                \
+  do { if ((sub).head != NULL)                                          \
+         {                                                              \
+          (sub).head->list.prev = (base).tail ;                         \
+          (sub).tail->list.next = NULL ;                                \
+           if ((base).head != NULL)                                     \
              {                                                          \
-               (sub).tail->list.next = (base).head ;                    \
-               (sub).head->list.prev = NULL ;                           \
-               if ((base).head != NULL)                                 \
-                 (base).head->list.prev = (sub).tail ;                  \
-               else                                                     \
-                 (base).tail = (sub).tail ;                             \
-               (base).head = (sub).head ;                               \
+               (base).tail->list.next = (sub).head ;                    \
+               (base).tail = (sub).tail ;                               \
+             }                                                          \
+           else                                                         \
+             {                                                          \
+               qassert((base).tail == NULL) ;                           \
+               (base) = (sub) ;                                         \
              } ;                                                        \
          }                                                              \
   } while (0)
 
- /*==============================================================================
+#define ddl_prepend_list(base, sub, list)                               \
+  do { if ((sub).head != NULL)                                          \
+         {                                                              \
+          (sub).head->list.prev = NULL ;                                \
+          (sub).tail->list.next = (base).head ;                         \
+           if ((base).head != NULL)                                     \
+             {                                                          \
+               (base).head->list.prev = (sub).tail ;                    \
+               (base).head = (sub).head ;                               \
+             }                                                          \
+           else                                                         \
+             {                                                          \
+               qassert((base).tail == NULL) ;                           \
+               (base) = (sub) ;                                         \
+             } ;                                                        \
+         }                                                              \
+  } while (0)
+
+/*==============================================================================
   * Double Base, Single Link
   *
   * To delete entry must chase down list to find it.  Can insert at tail, but
@@ -1035,7 +1097,7 @@ Private bool ssl_del_func(void** p_prev, void* item, size_t link_offset)
    dsl_del_func((struct dl_void_base_pair*)(&base), item,                \
                                                    _lu_off(item, next))
 
- #define dsl_del_head(base, list)                                        \
+ #define dsl_del_head(base, next)                                        \
    do { if ((base).head != NULL)                                         \
           {                                                              \
             (base).head = (base).head->next ;                            \
@@ -1044,18 +1106,18 @@ Private bool ssl_del_func(void** p_prev, void* item, size_t link_offset)
           }                                                              \
    } while (0)
 
- #define dsl_pop(dst, base, list)                                        \
+ #define dsl_pop(dst, base, next)                                        \
    ((*(dst) = (base).head) != NULL                                       \
      ? ( ((base).head = (base).head->next) == NULL                       \
            ? ( (base).tail = NULL, *(dst) )                              \
-           :                       *(dst)   )                            \
+           :                       *(dst) )                              \
      : NULL)
 
  #define dsl_head(base) ((base).head)
 
  #define dsl_tail(base) ((base).tail)
 
- #define dsl_next(item, list)                                            \
+ #define dsl_next(item, next)                                            \
    ((item) != NULL ? (item)->next : NULL)
 
 #endif /* _ZEBRA_LIST_UTIL_H */

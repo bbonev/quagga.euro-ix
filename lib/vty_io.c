@@ -779,7 +779,7 @@ uty_vin_pop(vty_io vio)
     {
       /* Closing vin which is not the vin_base.
        */
-      ssl_pop(&vf_pop, vio->vin, vin_next) ;
+      vf_pop = ssl_pop(&vf_pop, vio->vin, vin_next) ;
       --vio->vin_depth ;
 
       /* The current context object is pointed at by the vin we have

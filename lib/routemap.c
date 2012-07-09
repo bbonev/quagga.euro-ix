@@ -1236,20 +1236,16 @@ route_map_config_write (struct vty *vty)
   struct route_map *map;
   struct route_map_index *index;
   struct route_map_rule *rule;
-  int first = 1;
-  int write = 0;
 
   for (map = route_map_master.head; map; map = map->next)
     for (index = map->head; index; index = index->next)
       {
-	if (!first)
-	  vty_out (vty, "!%s", VTY_NEWLINE);
-	else
-	  first = 0;
+        vty_out_vtysh_config_group(vty, "route-map %s %s %u",map->name,
+                                 route_map_type_str (index->type), index->seq) ;
 
-	vty_out (vty, "route-map %s %s %lu\n", map->name,
-	                   route_map_type_str (index->type), (ulong)index->seq);
-	confirm(sizeof(index->seq) <= sizeof(ulong)) ;
+	vty_out (vty, "route-map %s %s %u\n", map->name,
+	                         route_map_type_str (index->type), index->seq) ;
+	confirm(sizeof(index->seq) <= sizeof(uint)) ;
 
 	if (index->description)
 	  vty_out (vty, " description %s\n", index->description);
@@ -1272,9 +1268,11 @@ route_map_config_write (struct vty *vty)
         if (index->exitpolicy == RMAP_NEXT)
           vty_out (vty," on-match next\n");
 
-	write++;
+        if (!vty_out_vtysh_config_group_end(vty))
+          vty_out (vty, "!\n");
       }
-  return write;
+
+  return 0 ;
 }
 
 CMD_INSTALL_TABLE(static, routemap_cmd_table,

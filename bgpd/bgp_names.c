@@ -28,7 +28,7 @@ Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
 /*------------------------------------------------------------------------------
  * Names of FSM status values
  */
-static const char* bgp_fsm_status_map_body[] =
+static const char* const bgp_fsm_status_map_body[] =
 {
   [bgp_fsm_sInitial]      = "Initial",
   [bgp_fsm_sIdle]         = "Idle",
@@ -46,7 +46,7 @@ const map_direct_t bgp_fsm_status_map =
 /*------------------------------------------------------------------------------
  * Names of Peer status values
  */
-const char* bgp_peer_status_map_body[] =
+const char* const bgp_peer_status_map_body[] =
 {
   [bgp_peer_pIdle]         = "Idle",
   [bgp_peer_pEstablished]  = "Established",
@@ -60,7 +60,7 @@ const map_direct_t bgp_peer_status_map =
 /*------------------------------------------------------------------------------
  * BGP message type names.
  */
-static const char* bgp_message_type_map_body[] =
+static const char* const bgp_message_type_map_body[] =
 {
   [BGP_MT_OPEN]               = "OPEN",
   [BGP_MT_UPDATE]             = "UPDATE",
@@ -79,7 +79,7 @@ const map_direct_t bgp_message_type_map =
 /*------------------------------------------------------------------------------
  * Names for notification types and sub-types
  */
-static const char* bgp_notify_msg_map_body[] =
+static const char* const bgp_notify_msg_map_body[] =
 {
   [BGP_NOTIFY_HEADER_ERR]      = "Message Header Error",
   [BGP_NOTIFY_OPEN_ERR]        = "OPEN Message Error",
@@ -95,7 +95,7 @@ const map_direct_t bgp_notify_msg_map =
 
 /* BGP_NOTIFY_HEADER_ERR subtypes
  */
-static const char* bgp_notify_head_msg_map_body[] =
+static const char* const bgp_notify_head_msg_map_body[] =
 {
   [0]                              = "/Unspecific",
   [BGP_NOTIFY_HEADER_NOT_SYNC]     = "/Connection Not Synchronized",
@@ -108,7 +108,7 @@ const map_direct_t bgp_notify_head_msg_map =
 
 /* BGP_NOTIFY_OPEN_ERR subtypes
  */
-static const char* bgp_notify_open_msg_map_body[] =
+static const char* const bgp_notify_open_msg_map_body[] =
 {
   [0]                                = "/Unspecific",
   [BGP_NOTIFY_OPEN_UNSUP_VERSION]    = "/Unsupported Version Number",
@@ -125,7 +125,7 @@ const map_direct_t bgp_notify_open_msg_map =
 
 /* BGP_NOTIFY_UPDATE_ERR subtypes
  */
-static const char* bgp_notify_update_msg_map_body[] =
+static const char* const bgp_notify_update_msg_map_body[] =
 {
   [0]                                 = "/Unspecific",
   [BGP_NOTIFY_UPDATE_MAL_ATTR]        = "/Malformed Attribute List",
@@ -146,7 +146,7 @@ const map_direct_t bgp_notify_update_msg_map =
 
 /* BGP_NOTIFY_CEASE_ERR subtypes
  */
-static const char* bgp_notify_cease_msg_map_body[] =
+static const char* const bgp_notify_cease_msg_map_body[] =
 {
   [0]                                   = "/Unspecific",
   [BGP_NOTIFY_CEASE_MAX_PREFIX]         = "/Maximum Number of Prefixes Reached",
@@ -164,7 +164,7 @@ const map_direct_t bgp_notify_cease_msg_map =
 
 /* BGP_NOTIFY_CAPABILITY_ERR subtypes
  */
-static const char* bgp_notify_capability_msg_map_body[] =
+static const char* const bgp_notify_capability_msg_map_body[] =
 {
   [0]                                     = "/Unspecific",
   [BGP_NOTIFY_CAPABILITY_INVALID_ACTION]  = "/Invalid Action Value",
@@ -181,7 +181,7 @@ const map_direct_t bgp_notify_capability_msg_map =
  * These have no subtypes, so should always be unspecific, but that is not
  * worth remarking on.
  */
-static const char* bgp_notify_unspecific_msg_map_body[] =
+static const char* const bgp_notify_unspecific_msg_map_body[] =
 {
   [0] = "",
 };
@@ -191,7 +191,7 @@ const map_direct_t bgp_notify_unspecific_msg_map =
 
 /* Notification subtypes for unknown type !
  */
-static const char* bgp_notify_unknown_msg_map_body[] = {} ;
+static const char* const bgp_notify_unknown_msg_map_body[] = {} ;
 
 const map_direct_t bgp_notify_unknown_msg_map =
       map_direct_s(bgp_notify_unknown_msg_map_body, "/Unknown(%d)") ;
@@ -199,7 +199,7 @@ const map_direct_t bgp_notify_unknown_msg_map =
 /*------------------------------------------------------------------------------
  * Origin names -- short and long
  */
-const char* bgp_origin_short_map_body[] =
+const char* const bgp_origin_short_map_body[] =
 {
   [BGP_ATT_ORG_IGP]    = "i",
   [BGP_ATT_ORG_EGP]    = "e",
@@ -209,7 +209,7 @@ const char* bgp_origin_short_map_body[] =
 const map_direct_t bgp_origin_short_map =
       map_direct_s(bgp_origin_short_map_body, "X") ;
 
-const char* bgp_origin_long_map_body[] =
+const char* const bgp_origin_long_map_body[] =
 {
   [BGP_ATT_ORG_IGP]    = "IGP",
   [BGP_ATT_ORG_EGP]    = "EGP",
@@ -222,7 +222,7 @@ const map_direct_t bgp_origin_long_map =
 /*------------------------------------------------------------------------------
  * Attribute type names
  */
-const char* bgp_attr_name_map_body[] =
+const char* const bgp_attr_name_map_body[] =
 {
   [BGP_ATTR_ORIGIN]           = "ORIGIN",
   [BGP_ATTR_AS_PATH]          = "AS_PATH",
@@ -251,7 +251,7 @@ const map_direct_t bgp_attr_name_map =
 /*------------------------------------------------------------------------------
  * AFI names
  */
-const char* bgp_afi_name_map_body[] =
+const char* const bgp_afi_name_map_body[] =
 {
   [AFI_IP]                    = "AFI_IP",
   [AFI_IP6]                   = "AFI_IP6",
@@ -263,7 +263,7 @@ const map_direct_t bgp_afi_name_map =
 /*------------------------------------------------------------------------------
  * SAFI names
  */
-const char* bgp_safi_name_map_body[] =
+const char* const bgp_safi_name_map_body[] =
 {
   [SAFI_UNICAST]              = "SAFI_UNICAST",
   [SAFI_MULTICAST]            = "SAFI_MULTICAST",

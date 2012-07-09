@@ -10453,9 +10453,8 @@ community_list_show (struct vty *vty, struct community_list *list)
 static int
 community_list_symbol_cmp(const symbol* a, const symbol* b)
 {
-  return symbol_mixed_name_cmp(
-                        ((struct community_list*)symbol_get_body(*a))->name,
-                        ((struct community_list*)symbol_get_body(*b))->name ) ;
+  return strcmp_mixed(((struct community_list*)(*a)->body)->name,
+                      ((struct community_list*)(*b)->body)->name ) ;
 } ;
 
 DEFUN (show_ip_community_list,

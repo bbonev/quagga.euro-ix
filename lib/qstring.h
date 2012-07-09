@@ -466,7 +466,7 @@ extern void qs_chop(qstring qs, usize clen) ;
 Private void qs_make_to_size(qstring qs, usize len, usize alen) ;
 
 extern qstring qs_set_str(qstring qs, const char* src) ;
-extern qstring qs_set_n(qstring qs, const char* src, usize n) ;
+extern qstring qs_set_n(qstring qs, const void* src, usize n) ;
 extern qstring qs_set(qstring qs, qstring src) ;
 extern qstring qs_set_els(qstring qs, elstring src) ;
 extern qstring qs_set_fill(qstring qs, usize len, const char* src) ;

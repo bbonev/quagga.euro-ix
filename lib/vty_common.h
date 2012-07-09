@@ -41,6 +41,13 @@
  * This allows some things not to be published to "external" code.
  */
 
+/*------------------------------------------------------------------------------
+ * Structure used in the collection of integrated configuration.
+ *
+ * Is carried by the vty structure, so need to have a name for it.
+ */
+typedef struct config_collection* config_collection ;
+
 /*==============================================================================
  * VTY Types and the VTY structure.
  *
@@ -119,8 +126,13 @@ struct vty
 
   /* When outputting configuration for vtysh to process, may wish to add
    * extra information.
+   *
+   * And for construction and output of the integrated configuration, need a
+   * pointer to the collection of same.
    */
   bool  config_to_vtysh ;
+
+  config_collection collection ;
 
   /*----------------------------------------------------------------------------
    * The current cmd_exec environment -- used in command_execute.c et al

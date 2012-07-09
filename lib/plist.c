@@ -273,7 +273,7 @@ static void prefix_list_unset(struct prefix_list* plist) ;
 static const symbol_funcs_t prefix_symbol_funcs =
 {
   .hash   = symbol_hash_string,
-  .cmp    = prefix_list_cmp,
+  .equal  = prefix_list_cmp,
   .free   = prefix_list_free,
 } ;
 
@@ -1799,9 +1799,8 @@ vty_show_prefix_entry (struct vty *vty, struct prefix_list *plist,
 static int
 prefix_symbol_cmp(const symbol* a, const symbol* b)
 {
-  return symbol_mixed_name_cmp(
-                          ((struct prefix_list *)symbol_get_body(*a))->name,
-                          ((struct prefix_list *)symbol_get_body(*b))->name ) ;
+  return strcmp_mixed(((struct prefix_list *)(*a)->body)->name,
+                      ((struct prefix_list *)(*b)->body)->name ) ;
 } ;
 
 /* Show given prefix list in given afi, or all prefix lists in given afi.  */
@@ -3150,7 +3149,7 @@ config_write_prefix_afi (afi_t afi, struct vty *vty)
   if (pm == NULL)
     return 0;
 
-  /* Setting for all prefix-list -- implicitly section 0.
+  /* Setting for all prefix-list
    */
   if (! pm->seqnum_flag)
     vty_out (vty, "no %s prefix-list sequence-number\n"
@@ -3159,14 +3158,15 @@ config_write_prefix_afi (afi_t afi, struct vty *vty)
   /* Extract a vector of all prefix_list symbols, in name order.	*/
   extract = symbol_table_extract(pm->table, NULL, NULL, 0, prefix_symbol_cmp) ;
 
-//cmd_show_config_section(vty, 1) ;
-
   for (VECTOR_ITEMS(extract, sym, i))
     {
       plist = symbol_get_body(sym) ;
       if (!prefix_list_is_empty(plist))
 	{
-	  if (plist->desc)
+          vty_out_vtysh_config_group(vty, "prefix-list %s %s",
+                                       afitoa_lc(plist->afi).str, plist->name) ;
+
+          if (plist->desc)
 	    {
 	      vty_prefix_list_name_print(vty, plist, "") ;
 	      vty_out (vty, " description %s%s", plist->desc, VTY_NEWLINE) ;
@@ -3180,6 +3180,8 @@ config_write_prefix_afi (afi_t afi, struct vty *vty)
 	                                                    false /* stats */) ;
 	      write++ ;
 	    }
+
+	  vty_out_vtysh_config_group_end(vty) ;
 	}
       else
 	{

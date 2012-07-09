@@ -714,7 +714,7 @@ main (int argc, char **argv, char **env)
         fprintf(stderr, "-E/--echo ignored in interactive mode\n") ;
     } ;
 
-   /* Read vtysh configuration file (if any) before connecting to daemons.
+  /* Read vtysh configuration file (if any) before connecting to daemons.
    * (This is the "vtysh.conf" file.)
    *
    * This will ignore all commands except those which apply to the vtysh

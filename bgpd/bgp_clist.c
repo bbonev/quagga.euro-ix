@@ -834,7 +834,7 @@ extcommunity_list_unset (struct community_list_handler *ch,
 static const symbol_funcs_t community_list_symbol_funcs =
 {
   .hash   = symbol_hash_string,
-  .cmp    = (symbol_cmp_func*)community_list_cmp,
+  .equal  = (symbol_equal_func*)community_list_cmp,
   .free   = (symbol_free_func*)community_list_free,
 } ;
 

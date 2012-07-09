@@ -438,7 +438,7 @@ vio_fifo_free_lumps(vio_fifo vff)
         {
           XFREE(MTYPE_VIO_FIFO_LUMP, lump) ;    /* accepts lump == NULL */
 
-          ddl_pop(&lump, vff->base, list) ;
+          lump = ddl_pop(&lump, vff->base, list) ;
         }
       while (lump != NULL) ;
     } ;

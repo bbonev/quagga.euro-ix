@@ -24,6 +24,8 @@
 
 #include "lib/misc.h"
 #include "lib/vty.h"
+#include "lib/qpath.h"
+#include "lib/vty_common.h"
 
 #include <signal.h>
 
@@ -72,7 +74,9 @@ extern bool vtysh_integrated_vtysh_config;
  */
 extern bool vtysh_read_config (vty boot_vty, qpath config_file, bool required,
                                              bool ignore_warnings, bool quiet) ;
-extern cmd_ret_t vtysh_config_collect_integrated(vty vtysh, bool show) ;
+extern cmd_ret_t vtysh_config_collect_integrated(vty vtysh, bool show,
+                                                               qpath existing) ;
+extern void vtysh_config_collection_free(vty vtysh) ;
 extern int vtysh_config_write_config_node(vty vtysh, node_type_t node) ;
 extern void vtysh_config_reset_integrated(void) ;
 

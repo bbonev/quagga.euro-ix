@@ -92,7 +92,7 @@
  * Assuming that, the body may move around, provided symbol_set() is called
  * to keep the symbol up to date.
  *
- * Simple use of
+ * Simple use of TODO .................................................................
  *
  *
  * When the count is reduced to zero the symbol is removed from the symbol
@@ -220,9 +220,19 @@ inline static uint symbol_base_index(symbol_table table, symbol_hash_t hash) ;
  *                 function to calculate symbol_hash_t from a given "name".
  *                 see, for example: symbol_hash_string(), below.
  *
- *     cmp      -- symbol_cmp_func*
+ *     equal    -- symbol_equal_func*
  *
  *                 function to compare name of a given value with a given name.
+ *
+ *                 The comparison function is only used to check for equality,
+ *                 for which 0 must be returned.  The function may return the
+ *                 usual -1 and +1 for less than or greater than, but all that
+ *                 matters is equal or not.
+ *
+ *                 Before calling the equal function, the hashes for the
+ *                 value and the name are compared -- so it is highly likely
+ *                 that the value and name will be the same !  So, a full
+ *                 comparison which checks for equality first will do fine.
  *
  *     free     -- symbol_free_func*
  *
@@ -616,7 +626,7 @@ symbol_lookup(symbol_table table, const void* name, add_b add)
     {
       qassert((this->table == table) && (this->body != NULL)) ;
 
-      if ((this->hash == hash) && (table->func.cmp(this->body, name) == 0))
+      if ((this->hash == hash) && (table->func.equal(this->body, name) == 0))
         return this ;
 
       this = this->next ;
@@ -865,9 +875,24 @@ static u_int32_t crc_table[] ;
 extern symbol_hash_t
 symbol_hash_string(const void* string)
 {
-  uint32_t  h = 0x31415927 ;
-  const u_int8_t* p = string ;
+  return symbol_hash_string_cont(string, 0xA5A5A5A5) ;
+} ;
 
+/*------------------------------------------------------------------------------
+ * Simple hash function for '\0' terminated strings.
+ *
+ * Continue from the given hash value.
+ */
+extern symbol_hash_t
+symbol_hash_string_cont(const void* string, symbol_hash_t h)
+{
+  const uint8_t* p ;
+
+  confirm(sizeof(symbol_hash_t) == 4) ;         /* it's a uint32_t !    */
+
+  h ^= 0x31415927 ;
+
+  p = string ;
   while (*p != '\0')
     h = crc_table[(h & 0xFF) ^ *p++] ^ (h >> 8) ;
 
@@ -878,11 +903,31 @@ symbol_hash_string(const void* string)
  * Simple symbol byte vector hash function.
  */
 extern  symbol_hash_t
-symbol_hash_bytes(const void* bytes, size_t len) {
-  uint32_t  h = (uint32_t)len * 0x31415927 ;
+symbol_hash_bytes(const void* bytes, size_t len)
+{
+  return symbol_hash_bytes_cont(bytes, len, 0xA5A5A5A5) ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Simple symbol byte vector hash function.
+ *
+ * Continue from the given hash value.
+ *
+ * Testing does not suggest that jhash() does a better job than this.
+ */
+extern symbol_hash_t
+symbol_hash_bytes_cont(const void* bytes, size_t len, symbol_hash_t h)
+{
+  const uint8_t* p ;
+  const uint8_t* e ;
+
+  h ^= (uint32_t)(len + 1) * 0x31415927 ;
                                 /* So strings of zeros don't CRC the same ! */
-  const u_int8_t*  p = bytes ;
-  const u_int8_t*  e = p + len ;
+
+  confirm(sizeof(symbol_hash_t) == 4) ;         /* it's a uint32_t !    */
+
+  p = bytes ;
+  e = p + len ;
 
   if ((len & 3) != 0)
     {
@@ -891,6 +936,7 @@ symbol_hash_bytes(const void* bytes, size_t len) {
           h = crc_table[(h & 0xFF) ^ *p++] ^ (h >> 8) ;
           h = crc_table[(h & 0xFF) ^ *p++] ^ (h >> 8) ;
         } ;
+
       if ((len & 1) != 0)
         h = crc_table[(h & 0xFF) ^ *p++] ^ (h >> 8) ;
     } ;
@@ -1336,67 +1382,14 @@ symbol_table_extract(symbol_table table,
 	} ;
     } ;
 
+  /* If we are sorting, then the vector entries are the address of a symbol,
+   * which contains the address of the symbol body.  So, this is more or less
+   * the usual
+   */
   if (sort != NULL)
     vector_sort(extract, (vector_sort_cmp*)sort) ;
 
   return extract ;
-} ;
-
-/*==============================================================================
- * Some common comparison functions for symbol table extracts.
- */
-
-/*------------------------------------------------------------------------------
- * Comparison function to sort names which are a mixture of digits and other
- * characters.
- *
- * Assumes that symbol_get_name() returns address of '\0' terminated string.
- *
- * This comparison treats substrings of digits as numbers, so "a10" is > "a1".
- */
-extern int
-symbol_mixed_name_cmp(const char* a,
-		      const char* b)
-{
-  const char* ap ;
-  const char* bp ;
-  int la, lb ;
-
-  ap = a ;
-  bp = b ;
-
-  while (1) {
-    if (isdigit(*ap) && isdigit(*bp))
-      {
-	char* aq ;	/* Required to stop the compiler whining */
-	char* bq ;
-	ulong na = strtoul(ap, (char** restrict)&aq, 10) ;
-	ulong nb = strtoul(bp, (char** restrict)&bq, 10) ;
-	if (na != nb)
-	  return (na < nb) ? -1 : +1 ;
-	ap = aq ;
-	bp = bq ;
-      }
-    else
-      {
-	if (*ap != *bp)
-	  return (*ap < *bp) ? -1 : +1 ;
-	if (*ap == '\0')
-	  break ;
-	++ap ;
-	++bp ;
-      }
-  } ;
-
-  /* Looks like the names are equal.
-   * But may be different lengths if have number part(s) with leading zeros,
-   */
-
-  la = strlen(a) ;
-  lb = strlen(b) ;
-  if (la != lb)
-    return (la < lb) ? -1 : +1 ;
-  return 0 ;
 } ;
 
 /*==============================================================================

@@ -29,6 +29,7 @@
 
 #include "command_common.h"     /* NB: *not* command.h          */
 #include "vty_common.h"         /* struct vty & VTY types       */
+#include "vty_vtysh_content.h"
 
 #include "thread.h"
 #include "log.h"
@@ -145,9 +146,11 @@ extern int vty_write(struct vty *vty, const void* buf, int n) ;
 extern int vty_out_indent(struct vty *vty, int indent) ;
 extern void vty_out_clear(struct vty *vty) ;
 
+extern void vtysh_config_section_start(vty vty, vtysh_content_t sect,
+                                                             const char* name) ;
 extern void vty_out_vtysh_config_group (struct vty *vty,
                            const char *format, ...)     PRINTF_ATTRIBUTE(2, 3) ;
-extern void vty_out_vtysh_config_group_end (struct vty *vty) ;
+extern bool vty_out_vtysh_config_group_end (struct vty *vty) ;
 
 extern ulong vty_get_long(vty vty, const char* name, const char* str) ;
 extern ulong vty_get_integer_range(vty vty, const char* name, const char* str,

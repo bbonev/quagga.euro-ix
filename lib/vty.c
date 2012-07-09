@@ -42,6 +42,7 @@
 #include "vio_fifo.h"
 #include "log_local.h"
 #include "vty_vtysh.h"
+#include "vty_vtysh_content.h"
 
 #include "list_util.h"
 
@@ -1042,6 +1043,17 @@ vty_out_clear(vty vty)
  */
 
 /*------------------------------------------------------------------------------
+ * Write start of given section if required.
+ */
+extern void
+vtysh_config_section_start(vty vty, vtysh_content_t sect, const char* name)
+{
+  if (vty->config_to_vtysh)
+    vty_out(vty, "#vtysh-config-section %s %s\n",
+                                          vtysh_content_type_name(sect), name) ;
+} ;
+
+/*------------------------------------------------------------------------------
  * If is vty->config_to_vtysh put a #vtysh-config-group xxxxx to the vty.
  *
  * The string constructed from the format and arguments is the name of the
@@ -1072,11 +1084,13 @@ vty_out_vtysh_config_group (struct vty *vty, const char *format, ...)
 /*------------------------------------------------------------------------------
  * If is vty->config_to_vtysh put a #vtysh-config-group-end to the vty.
 */
-extern void
+extern bool
 vty_out_vtysh_config_group_end (struct vty *vty)
 {
   if (vty->config_to_vtysh)
     vty_out(vty, "#vtysh-config-group-end\n") ;
+
+  return vty->config_to_vtysh ;
 } ;
 
 /*==============================================================================
@@ -1292,10 +1306,10 @@ vty_read_config_new(bool ignore_warnings, bool show_warnings)
 } ;
 
 /*------------------------------------------------------------------------------
- * Try to open given configuration file.
+ * Try to open given configuration file for reading.
  *
- * If fails to open main config file, and file does not exist, try to open the
- * back-up version and restore the file.
+ * If fails to open main config file, and file does not exist, if "required",
+ * try to open the back-up version and restore the file.
  *
  * Issues error messages to the given vty by vty_err().
  *
@@ -1914,8 +1928,17 @@ vty_write_config(vty vty, int (*write_config_node)(svty vty, node_type_t node))
 {
   node_type_t node ;
 
+  /* When a daemon is outputting to the vtysh for creating an integrated
+   * configuration, we guarantee to output the daemon name *first*.
+   */
   if (vty->config_to_vtysh)
     vty_out (vty, "#vtysh-config-daemon %s\n", daemon_name) ;
+
+  /* The nodes are output in ascending node number order, starting with the
+   * NULL_NODE.  The vtysh integrated configuration expects to see NULL_NODE
+   * first -- any comment preceding the firat real node lives there.
+   */
+  confirm(MIN_NODE == NULL_NODE) ;
 
   for (node = MIN_NODE ; node <= MAX_NODE ; ++node)
     {

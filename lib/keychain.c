@@ -877,10 +877,14 @@ keychain_config_write (struct vty *vty)
 
   for (ALL_LIST_ELEMENTS_RO (keychain_list, node, keychain))
     {
+      vty_out_vtysh_config_group(vty, "key chain %s", keychain->name) ;
+
       vty_out (vty, "key chain %s%s", keychain->name, VTY_NEWLINE);
 
       for (ALL_LIST_ELEMENTS_RO (keychain->key, knode, key))
 	{
+          vty_out_vtysh_config_group(vty, "key %d", key->index) ;
+
 	  vty_out (vty, " key %d%s", key->index, VTY_NEWLINE);
 
 	  if (key->string)
@@ -920,8 +924,12 @@ keychain_config_write (struct vty *vty)
 		}
 	      vty_out (vty, "%s", VTY_NEWLINE);
 	    }
+
+	  vty_out_vtysh_config_group_end(vty) ;
 	}
-      vty_out (vty, "!%s", VTY_NEWLINE);
+
+      if (!vty_out_vtysh_config_group_end(vty))
+        vty_out (vty, "!\n");
     }
 
   return 0;

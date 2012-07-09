@@ -24,7 +24,8 @@
 #define _QUAGGA_AFI_SAFI_H
 
 #include "misc.h"
-#include "lib/zassert.h"
+#include "name_map.h"
+#include "zassert.h"
 
 /*==============================================================================
  * Generic AFI and SAFI types.
@@ -169,5 +170,11 @@ CONFIRM( (SAFI_RESERVED_3        == qSAFI_Reserved_3)
       && (SAFI_RESERVED_3        == iSAFI_Reserved_3) ) ;
 CONFIRM(SAFI_MPLS_VPN  == qSAFI_MPLS_VPN) ;
 CONFIRM(SAFI_MAX       == qSAFI_count) ;
+
+/*==============================================================================
+ * Functions
+ */
+extern name_str_t afitoa_lc(afi_t) ;
+extern name_str_t afitoa_uc(afi_t) ;
 
 #endif /* _QUAGGA_AFI_SAFI_H */

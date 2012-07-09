@@ -23,7 +23,9 @@
 #ifndef _ZEBRA_FILTER_H
 #define _ZEBRA_FILTER_H
 
+#include "zebra.h"
 #include "if.h"
+#include "vty_vtysh_content.h"
 
 /* Filter type is made by `permit', `deny' and `dynamic'. */
 enum filter_type
@@ -60,9 +62,12 @@ struct access_list
 extern void access_list_cmd_init (void);
 extern void access_list_init (void);
 extern void access_list_reset (void);
-extern void access_list_add_hook (void (*func)(struct access_list *));
-extern void access_list_delete_hook (void (*func)(struct access_list *));
-extern struct access_list *access_list_lookup (afi_t, const char *);
+extern void access_list_add_hook (void (*func)(struct access_list*));
+extern void access_list_delete_hook (void (*func)(struct access_list*));
+extern struct access_list* access_list_lookup (afi_t, const char *);
 extern enum filter_type access_list_apply (struct access_list *, void *);
+
+extern cmd_ret_t access_list_parse_section(vtysh_content_parse cp,
+                                                            cmd_parsed parsed) ;
 
 #endif /* _ZEBRA_FILTER_H */

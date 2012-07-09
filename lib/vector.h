@@ -139,14 +139,13 @@ CONFIRM(IS_POW_OF_2(VECTOR_LIMIT_SLACK_MIN)) ;
 /*==============================================================================
  *  Prototypes.
  */
-
 extern vector vector_init (vector_length_t size);
 Inline void vector_ensure(vector v, vector_index_t i) ;
 extern int vector_set (vector v, void *val);
 extern int vector_set_index (vector v, vector_index_t i, void *val);
 #define vector_unset(v, i) (void)vector_unset_item(v, i)
 extern vector_length_t vector_count (vector v);
-extern void vector_free (vector v);
+extern vector vector_free (vector v);
 extern vector vector_copy (vector v);
 
 extern void *vector_lookup (vector, vector_index_t);
@@ -161,7 +160,7 @@ extern p_vector_item vector_ream(vector v, free_keep_b free_structure) ;
 Inline  void vector_set_min_length(vector v, vector_length_t len) ;
 Private void vector_set_new_min_length(vector v, vector_length_t len) ;
 
-Inline void vector_set_length(vector v, vector_length_t len) ;
+Inline vector vector_set_length(vector v, vector_length_t len) ;
 #define     vector_set_end(v, l) vector_set_length(v, l)
 
 Inline vector_length_t vector_length(vector v) ;
@@ -294,13 +293,15 @@ vector_set_min_length(vector v, vector_length_t len)
  * with NULLs upto any new logical end -- does not allocate any more
  * than is exactly necessary.
  */
-Inline void
+Inline vector
 vector_set_length(vector v, vector_length_t len)
 {
   if (len > v->end)
     vector_set_new_min_length(v, len) ; /* Extend if new length greater */
   else
     v->end = len ;                      /* chop                         */
+
+  return v ;
 } ;
 
 /*------------------------------------------------------------------------------

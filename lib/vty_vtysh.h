@@ -1,4 +1,4 @@
-/* VTY IO SHELL -- VTY Shell I/O -- header
+/* VTY SHELL -- VTY Shell Command Execution -- header
  * Virtual terminal [aka TeletYpe] interface routine.
  * Copyright (C) 1997, 98 Kunihiro Ishiguro
  *
@@ -50,13 +50,6 @@ typedef struct
 
 } vtysh_cmd_call_backs_t ;
 
-/*------------------------------------------------------------------------------
- * Structure used in the collection of integrated configuration.
- *
- * Passes through vty_vtysh_fetch_config(), so we need to have a name for it !
- */
-typedef struct config_collection* config_collection ;
-
 /*==============================================================================
  * Functions
  */
@@ -72,8 +65,8 @@ extern cmd_ret_t vty_vtysh_command_loop(vty vtysh, const char* line,
 extern qstring vty_vtysh_prep_line(vty vtysh, const char* line, ulen len,
                                                                      ulen pos) ;
 extern cmd_ret_t vty_vtysh_fetch_config(vty vtysh,
-                   void (*collect)(config_collection collection, vio_fifo buf),
-                                      config_collection collection, bool show) ;
+                   void (*collect)(vty vtysh, vio_fifo buf, const char* name),
+                                                                    bool show) ;
 
 extern void uty_vtysh_out_prep(vty_io vio, const char* pager_name) ;
 extern void uty_vtysh_out_close_pager(vio_vf vf) ;

@@ -147,11 +147,16 @@ vector_init (vector_length_t limit)
  * NB: it is the caller's responsibility to release any vector item values
  *     *before* doing this.
  */
-void
+extern vector
 vector_free (vector v)
 {
-  XFREE (MTYPE_VECTOR_BODY, v->p_items);
-  XFREE (MTYPE_VECTOR, v);
+  if (v != NULL)
+    {
+      XFREE (MTYPE_VECTOR_BODY, v->p_items);
+      XFREE (MTYPE_VECTOR, v);
+    } ;
+
+  return NULL ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -1015,15 +1020,18 @@ vector_count (vector v)
 
 /*==============================================================================
  * Sorting and Searching vector.
+ *
+ * The comparison functions receive a pointer to the vector entry which
+ * contains a pointer to the vector entry's value.  This is partly so that
+ * the sort can use the standard qsort() on the vector.  It also allows
+ * for items which are equal to be distinguished by the address of their
+ * vector entry -- providing a "stable" sort, if required.
  */
 
 /*------------------------------------------------------------------------------
  * Sort the given vector.
  *
  * Does nothing if vector is NULL !
- *
- * NB: the comparison function receives a pointer to the pointer to the
- *     vector item's value.
  *
  * NB: if there are NULL items in the vector, the comparison function MUST
  *     be ready for them.
