@@ -750,7 +750,7 @@ zread_ipv4_add (struct zserv *client, u_short length)
   u_char nexthop_type;
   struct stream *s;
   unsigned int ifindex;
-  u_char ifname_len;
+  u_char ifname_len, plen;
   safi_t safi;
 
 
@@ -764,15 +764,17 @@ zread_ipv4_add (struct zserv *client, u_short length)
   rib->type = stream_getc (s);
   rib->flags = stream_getc (s);
   message = stream_getc (s);
-  message = stream_getc (s);
   safi = stream_getw (s);
   rib->uptime = time (NULL);
 
   /* IPv4 prefix. */
   memset (&p, 0, sizeof (struct prefix_ipv4));
   p.family = AF_INET;
-  p.prefixlen = stream_getc (s);
-  stream_get (&p.prefix, s, PSIZE (p.prefixlen));
+  plen = stream_getc (s);
+  if (plen > 32)
+    plen = 32 ;
+  p.prefixlen = plen ;
+  stream_get (&p.prefix, s, PSIZE (plen));
 
   /* Nexthop parse. */
   if (CHECK_FLAG (message, ZAPI_MESSAGE_NEXTHOP))
