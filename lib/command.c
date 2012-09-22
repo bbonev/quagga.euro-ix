@@ -818,10 +818,9 @@ DEFUN_ATTR (set_vtysh_config_daemon,
 
 DEFUN_ATTR (set_vtysh_config_node,
             set_vtysh_config_node_cmd,
-            "vtysh-config-node NODE-NAME [SECTION-TYPE]",
+            "vtysh-config-node NODE-NAME",
             "Set vtysh configuration node for configuration which follows\n"
-            "The configuration node name\n"
-            "The default section type\n",
+            "The configuration node name\n",
             CMD_ATTR_DIRECT | CMD_ATTR_FIRST)
 {
 #if 0
@@ -3521,8 +3520,12 @@ config_write_file_node(vty vty, node_type_t node)
   if (vty->config_to_vtysh)
     {
       if (cn->config_to_vtysh)
-        vty_out (vty, "#vtysh-config-node %s %s\n", cmd_node_name(node),
+#if 1
+        vty_out (vty, "#vtysh-config-node %s\n", cmd_node_name(node)) ;
+#else
+        vty_out (vty, "#vtysh-config-node %s\n", cmd_node_name(node),
                                      vtysh_content_type_name(cn->vtysh_stype)) ;
+#endif
       else
         return -1 ;
     } ;

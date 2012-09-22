@@ -1043,10 +1043,16 @@ bgp_connection_write(bgp_connection connection, struct stream* s)
     stream_reset(s) ;
 
   /* If required, enable write mode
+   *
+   * Since this also implies that something has been put into the output buffer,
+   * this is a good moment to clear the KeepAliveTimer
    */
   if (enable_write)
-    qps_enable_mode(connection->qf, qps_write_mnum,
+    {
+      qps_enable_mode(connection->qf, qps_write_mnum,
                                                 bgp_connection_write_action) ;
+      bgp_keepalive_timer_unset(connection) ;
+    } ;
 
   return 1 ;    /* written as far as the write buffer           */
 } ;
@@ -1116,17 +1122,28 @@ bgp_connection_write_action(qps_file qf, void* file_info)
         return ;
     } ;
 
-  /* Buffer is empty -- reset it and disable write mode                 */
+  /* Buffer is empty -- reset it and disable write mode
+   */
   bgp_write_buffer_reset(wb) ;
 
   qps_disable_modes(connection->qf, qps_write_mbit) ;
 
-  /* If waiting to send NOTIFICATION, just did it.                      */
-  /* Otherwise: is writable again -- so add to connection_queue         */
+  /* If waiting to send NOTIFICATION, just did it.
+   *
+   * Otherwise: is writable again -- so add to connection_queue.
+   *
+   *            also, if is sOpenConfirm or sEstablished, this is the right
+   *            moment to restart the KeepAlive timer.
+   */
   if (connection->notification_pending)
     bgp_fsm_notification_sent(connection) ;
   else
-    bgp_connection_queue_add(connection) ;
+    {
+      bgp_connection_queue_add(connection) ;
+      if ( (connection->state == bgp_fsm_sOpenConfirm) ||
+           (connection->state == bgp_fsm_sEstablished) )
+        bgp_keepalive_timer_set(connection) ;
+    } ;
 } ;
 
 /*==============================================================================
@@ -1279,6 +1296,7 @@ bgp_connection_read_action(qps_file qf, void* file_info)
        BGP_CONNECTION_SESSION_UNLOCK(connection) ;  /*->->->->->->->->->*/
     } ;
 
-  /* Ready to read another message                                      */
+  /* Ready to read another message
+   */
   connection->read_pending = 0 ;
 } ;

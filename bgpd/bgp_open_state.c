@@ -123,40 +123,62 @@ bgp_peer_open_state_init_new(bgp_open_state state, bgp_peer peer)
   else
     state->my_as = peer->local_as ;
 
-  /* Choose the appropriate hold time                   */
-  if (peer->config & PEER_CONFIG_TIMER)
-    state->holdtime = peer->holdtime ;
-  else
-    state->holdtime = peer->bgp->default_holdtime ;
+  /* Choose the appropriate hold time -- this follows the peer's configuration
+   * or the default for the bgp instance.
+   *
+   * It is probably true already, but enforces a minimum of 3 seconds for the
+   * hold time (if it is is not zero) -- per RFC4271.
+   */
+  state->holdtime = peer->v_holdtime ;
 
-  /* Set our bgpd_id                                    */
+  if ((state->holdtime < 3) && (state->holdtime != 0))
+    state->holdtime = 3 ;
+
+  /* Choose the appropriate keepalive time -- this follows the peer's
+   * configuration or the default for the bgp instance.
+   *
+   * It is probably true already, but enforces a maximum of holdtime / 3 for
+   * the keepalive time -- noting that holdtime cannot be 1 or 2 !
+   */
+  state->keepalive = peer->v_keepalive ;
+
+  if (state->keepalive > (state->holdtime / 3))
+    state->keepalive = (state->holdtime / 3) ;
+
+  /* Set our bgpd_id
+   */
   state->bgp_id = peer->local_id.s_addr ;
 
-  /* Whether to send capability or not                  */
+  /* Whether to send capability or not
+   */
   state->can_capability = ! CHECK_FLAG(peer->flags, PEER_FLAG_DONT_CAPABILITY) ;
 
-  /* Announce self as AS4 speaker always                */
+  /* Announce self as AS4 speaker if required
+   */
   if (!bm->as2_speaker)
     SET_FLAG(peer->cap, PEER_CAP_AS4_ADV) ;
-  state->can_as4 = CHECK_FLAG(peer->cap, PEER_CAP_AS4_ADV) ? 1 : 0 ;
+
+  state->can_as4 = (peer->cap & PEER_CAP_AS4_ADV) ;
 
   state->my_as2 = (state->my_as > BGP_AS2_MAX ) ? BGP_ASN_TRANS
                                                 : state->my_as ;
 
-  /* Fill in the supported AFI/SAFI                     */
-
+  /* Fill in the supported AFI/SAFI
+   */
   for (afi = qAFI_min ; afi <= qAFI_max ; ++afi)
     for (safi = qSAFI_min ; safi <= qSAFI_max ; ++safi)
       if (peer->afc[afi][safi])
         state->can_mp_ext |= qafx_bit(qafx_num_from_qAFI_qSAFI(afi, safi)) ;
 
-  /* Route refresh -- always                            */
+  /* Route refresh -- always
+   */
   SET_FLAG(peer->cap, PEER_CAP_REFRESH_ADV) ;
   state->can_r_refresh = CHECK_FLAG(peer->cap, PEER_CAP_REFRESH_ADV)
                                         ? (bgp_form_pre | bgp_form_rfc)
                                         : bgp_form_none ;
 
-  /* ORF capability.                                    */
+  /* ORF capability.
+   */
   for (afi = qAFI_min ; afi <= qAFI_max ; ++afi)
     for (safi = qSAFI_min ; safi <= qSAFI_max ; ++safi)
       {
@@ -173,13 +195,15 @@ bgp_peer_open_state_init_new(bgp_open_state state, bgp_peer peer)
                                         ? (bgp_form_pre | bgp_form_rfc)
                                         : bgp_form_none  ;
 
-  /* Dynamic Capabilities       TODO: check requirement */
+  /* Dynamic Capabilities       TODO: check requirement
+   */
   state->can_dynamic = ( CHECK_FLAG(peer->flags, PEER_FLAG_DYNAMIC_CAPABILITY)
                                                                         != 0 ) ;
   if (state->can_dynamic)
     SET_FLAG(peer->cap, PEER_CAP_DYNAMIC_ADV) ;
 
-  /* Graceful restart capability                                            */
+  /* Graceful restart capability
+   */
   if (bgp_flag_check(peer->bgp, BGP_FLAG_GRACEFUL_RESTART))
     {
       SET_FLAG(peer->cap, PEER_CAP_RESTART_ADV) ;
@@ -192,7 +216,8 @@ bgp_peer_open_state_init_new(bgp_open_state state, bgp_peer peer)
       state->restart_time  = 0 ;
     } ;
 
-  /* TODO: check not has restarted and not preserving forwarding state (?)  */
+  /* TODO: check not has restarted and not preserving forwarding state (?)
+   */
   state->can_preserve    = 0 ;        /* cannot preserve forwarding     */
   state->has_preserved   = 0 ;        /* has not preserved forwarding   */
   state->has_restarted   = 0 ;        /* has not restarted              */
@@ -321,7 +346,7 @@ bgp_open_state_afi_safi_cap(bgp_open_state state, unsigned index)
  * NB: for safety, best to have the session locked -- though won't, in fact,
  *     change any of this information after the session is established.
  */
-void
+extern void
 bgp_peer_open_state_receive(bgp_peer peer)
 {
   bgp_session    session   = peer->session;
@@ -331,37 +356,34 @@ bgp_peer_open_state_receive(bgp_peer peer)
   qafx_bit_t qbs ;
   int recv ;
 
-  /* Check neighbor as number. */
+  /* Check neighbor as number.
+   */
   assert(open_recv->my_as == peer->as);
 
-  /* If had to suppress sending of capabilities, note that              */
+  /* If had to suppress sending of capabilities, note that
+   */
   if (session->cap_suppress)
     SET_FLAG (peer->cap, PEER_CAP_SUPPRESSED) ;
-
-  /* holdtime */
-  /* From the rfc: A reasonable maximum time between KEEPALIVE messages
-     would be one third of the Hold Time interval.  KEEPALIVE messages
-     MUST NOT be sent more frequently than one per second.  An
-     implementation MAY adjust the rate at which it sends KEEPALIVE
-     messages as a function of the Hold Time interval. */
 
   /* The BGP Engine sets the session's HoldTimer and KeepaliveTimer intervals
    * to the values negotiated when the OPEN messages were exchanged.
    *
-   * Take copies of that information.
+   * Take copies of that information -- converting back to seconds.
    */
-  peer->v_holdtime  = session->hold_timer_interval ;
-  peer->v_keepalive = session->keepalive_timer_interval ;
+  peer->v_holdtime  = session->hold_timer_interval      / QTIME(1) ;
+  peer->v_keepalive = session->keepalive_timer_interval / QTIME(1) ;
 
-  /* Set remote router-id */
+  /* Set remote router-id
+   */
   peer->remote_id.s_addr = open_recv->bgp_id;
 
-  /* AS4 */
+  /* AS4
+   */
   if (open_recv->can_as4)
     SET_FLAG (peer->cap, PEER_CAP_AS4_RCV);
 
-  /* AFI/SAFI -- as received, or assumed or overridden                  */
-
+  /* AFI/SAFI -- as received, or assumed or overridden
+   */
   if (!open_recv->can_capability || session->cap_override)
     {
       /* There were no capabilities, or are OVERRIDING AFI/SAFI, so force
@@ -393,13 +415,15 @@ bgp_peer_open_state_receive(bgp_peer peer)
           } ;
       } ;
 
-  /* Route refresh. */
+  /* Route refresh.
+   */
   if (open_recv->can_r_refresh & bgp_form_pre)
     SET_FLAG (peer->cap, PEER_CAP_REFRESH_OLD_RCV);
   else if (open_recv->can_r_refresh & bgp_form_rfc)
     SET_FLAG (peer->cap, PEER_CAP_REFRESH_NEW_RCV);
 
-  /* ORF */
+  /* ORF
+   */
   for (afi = qAFI_min ; afi <= qAFI_max ; ++afi)
      for (safi = qSAFI_min ; safi <= qSAFI_max ; ++safi)
        {
@@ -410,7 +434,8 @@ bgp_peer_open_state_receive(bgp_peer peer)
            SET_FLAG (peer->af_cap[afi][safi], PEER_CAP_ORF_PREFIX_RM_RCV);
        }
 
-  /* ORF prefix. */
+  /* ORF prefix.
+   */
   if (open_recv->can_orf_prefix_send)
     {
       if (open_recv->can_orf_prefix & bgp_form_pre)
@@ -426,7 +451,8 @@ bgp_peer_open_state_receive(bgp_peer peer)
         SET_FLAG (peer->cap, PEER_CAP_ORF_PREFIX_RM_RCV);
     }
 
-  /* Dynamic Capabilities */
+  /* Dynamic Capabilities
+   */
   if (open_recv->can_dynamic)
     SET_FLAG (peer->cap, PEER_CAP_DYNAMIC_RCV);
 

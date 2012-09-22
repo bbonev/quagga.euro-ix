@@ -213,7 +213,6 @@ extern int
 bgp_msg_send_open(bgp_connection connection, bgp_open_state open_state)
 {
   struct stream *s = connection->obuf ;
-  uint   length ;
 
   ++connection->session->stats.open_out ;
 
@@ -238,7 +237,7 @@ bgp_msg_send_open(bgp_connection connection, bgp_open_state open_state)
    * Cannot overflow the BGP Message size, and if it did, there is damn all
    * we could do about it !
    */
-  length = bgp_packet_set_size(s) ;
+  bgp_packet_set_size(s) ;
 
   if (BGP_DEBUG (normal, NORMAL))
     {

@@ -89,6 +89,8 @@ typedef qtime_t qtime_tod_t ;   /* qtime_t value, timeofday time-base...  */
 #define TIMESPEC_SECOND  ((int64_t)1000000000)
 #define TIMEVAL_SECOND   ((int64_t)1000000)
 
+#define QTIME_MAX INT64_MAX
+
 /* Macro to convert time in seconds to a qtime_t
  *
  * Note that the time to convert may be a float.

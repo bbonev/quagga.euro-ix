@@ -177,17 +177,17 @@ struct bgp_session
 
   char*             password ;          /* copy of MD5 password           */
 
-  unsigned  idle_hold_timer_interval ;  /* in seconds                     */
-  unsigned  connect_retry_timer_interval ;
-  unsigned  open_hold_timer_interval ;
+  qtime_t   idle_hold_timer_interval ;
+  qtime_t   connect_retry_timer_interval ;
+  qtime_t   open_hold_timer_interval ;
 
   /* These are set by the Routeing Engine before a session is enabled,
    * but are affected by the capabilities received in the OPEN message.
    *
    * When the session is established, the BGP Engine sets these.
    */
-  unsigned  hold_timer_interval ;       /* subject to negotiation         */
-  unsigned  keepalive_timer_interval ;  /* subject to negotiation         */
+  qtime_t   hold_timer_interval ;       /* subject to negotiation         */
+  qtime_t   keepalive_timer_interval ;  /* subject to negotiation         */
 
   bool              as4 ;               /* set by OPEN                    */
   bool              route_refresh_pre ; /* use pre-RFC version            */

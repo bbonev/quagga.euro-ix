@@ -408,7 +408,7 @@ bgp_hold_timer_recharge(bgp_connection connection)
 {
   if (connection->hold_timer_interval != 0)
     qtimer_set_interval(connection->hold_timer,
-                                 QTIME(connection->hold_timer_interval), NULL) ;
+                                        connection->hold_timer_interval, NULL) ;
 } ;
 
 /*==============================================================================
@@ -501,18 +501,21 @@ bgp_fsm_keepalive_received(bgp_connection connection)
  *
  * Deals, via the FSM, with unexpected "update" events -- for example an
  * UPDATE (or ROUTE-REFRESH) before reaching sEstablished !
+ *
+ * Returns:  true <=> OK to process the UPDATE
+ *           false => not in a suitable state to receive an UPDATE
  */
-extern int
+extern bool
 bgp_fsm_pre_update(bgp_connection connection)
 {
   if (connection->state == bgp_fsm_sEstablished)
     {
       bgp_hold_timer_recharge(connection) ;
-      return 0 ;
+      return true ;
     } ;
 
   bgp_fsm_event(connection, bgp_fsm_eReceive_UPDATE_message) ;
-  return -1 ;
+  return false ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -1539,8 +1542,7 @@ bgp_fsm_event(bgp_connection connection, bgp_fsm_event_t event)
  * The BGP FSM Action Functions
  */
 
-static void
-bgp_hold_timer_set(bgp_connection connection, uint secs) ;
+static void bgp_hold_timer_set(bgp_connection connection, qtime_t interval) ;
 
 /*------------------------------------------------------------------------------
  * Null action -- do nothing at all.
@@ -2295,29 +2297,26 @@ static qrand_seq_t jseq = QRAND_SEQ_INIT(314159265) ;
  * If the interval is zero, unset the timer.
  */
 static void
-bgp_timer_set(bgp_connection connection, qtimer timer, uint secs,
+bgp_timer_set(bgp_connection connection, qtimer timer, qtime_t interval,
                                              bool jitter, qtimer_action* action)
 {
-  if (secs == 0)
+  if (interval == 0)
     qtimer_unset(timer) ;
   else
     {
-      qtime_t interval ;
-
       if (jitter)
         {
           /* Jitter as recommended in RFC 4271, Section 10
            *
-           * We expect secs to be relatively small, so we can multiply it by
-           * some number 750..1000 without overflow !
+           * We expect interval to be a relatively small number of seconds, so
+           * we can multiply it by some number 750..1000 without overflow !
+           *
+           * Even if the interval were 1,000,000 seconds, we can still multiply
+           * it by 1000 and be in the qtime_t range.
            */
-          qassert(secs <= (UINT_MAX / 1000)) ;
-
-          secs *= 750 + qrand(jseq, 250 + 1) ;
-          interval = QTIME(secs) / 1000 ;
-        }
-      else
-        interval = QTIME(secs) ;
+          confirm(QTIME(1000000) < (QTIME_MAX / 1000)) ;
+          interval = (interval * (750 + qrand(jseq, 250 + 1))) / 1000 ;
+        } ;
 
       qtimer_set_interval(timer, interval, action) ;
     } ;
@@ -2330,10 +2329,31 @@ bgp_timer_set(bgp_connection connection, qtimer timer, uint secs,
  * Setting 0 will unset the HoldTimer.
  */
 static void
-bgp_hold_timer_set(bgp_connection connection, uint secs)
+bgp_hold_timer_set(bgp_connection connection, qtime_t interval)
 {
-  bgp_timer_set(connection, connection->hold_timer, secs, no_jitter,
+  bgp_timer_set(connection, connection->hold_timer, interval, no_jitter,
                                                         bgp_hold_timer_action) ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Set KeepAliveTimer with given time (with jitter) so will generate a
+ * Keepalive_Timer_expired event -- unless KeepAliveTimer suppressed.
+ */
+extern void
+bgp_keepalive_timer_set(bgp_connection connection)
+{
+  bgp_timer_set(connection, connection->keepalive_timer,
+                             connection->keepalive_timer_interval,
+                                  with_jitter, bgp_keepalive_timer_action) ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Stop the KeepAliveTimer, if it is running.
+ */
+extern void
+bgp_keepalive_timer_unset(bgp_connection connection)
+{
+  qtimer_unset(connection->keepalive_timer) ;
 } ;
 
 /*==============================================================================
@@ -2353,7 +2373,7 @@ static void
 bgp_fsm_state_change(bgp_connection connection, bgp_fsm_state_t new_state)
 {
   bgp_connection sibling ;
-  uint interval ;
+  qtime_t  interval ;
 
   bgp_session    session = connection->session ;
 
@@ -2392,18 +2412,18 @@ bgp_fsm_state_change(bgp_connection connection, bgp_fsm_state_t new_state)
                 && (   (sibling->state == bgp_fsm_sOpenSent)
                     || (sibling->state == bgp_fsm_sOpenConfirm) ) )
             {
-              interval = 0 ;              /* unset the HoldTimer        */
-              connection->comatose = 1 ;  /* so now comatose            */
+              interval = 0 ;                    /* unset the HoldTimer  */
+              connection->comatose = true ;     /* so now comatose      */
             }
           else
             {
               /* increase the IdleHoldTimer interval                    */
               interval *= 2 ;
 
-              if      (interval < 4)      /* enforce this minimum       */
-                interval = 4 ;
-              else if (interval > 120)
-                interval = 120 ;
+              if      (interval < QTIME(2))     /* enforce this minimum */
+                interval = QTIME(2) ;
+              else if (interval > QTIME(120))
+                interval = QTIME(2) ;
 
               session->idle_hold_timer_interval = interval ;
 
@@ -2414,7 +2434,7 @@ bgp_fsm_state_change(bgp_connection connection, bgp_fsm_state_t new_state)
 
               if ((sibling != NULL) && (sibling->comatose))
                 {
-                  sibling->comatose = 0 ;       /* no longer comatose   */
+                  sibling->comatose = false ;   /* no longer comatose   */
 
                   if (sibling->ordinal == bgp_connection_secondary)
                     bgp_connection_enable_accept(sibling) ;
@@ -2554,8 +2574,13 @@ bgp_hold_timer_action(qtimer qtr, void* timer_info, qtime_mono_t when)
 /*------------------------------------------------------------------------------
  * BGP keepalive fire => bgp_fsm_eKeepAlive_timer_expired
  *
- * The timer is recharged here, applying a new "jitter", but that may be
- * overridden by the bgp_event() handling.
+ * The timer is left expired.  RFC4271 says that the timer should be restarted
+ * here, but also restarted when an UPDATE or KEEPALIVE is sent... so, even if
+ * we did restart the timer here, it would only be restarted later !
+ *
+ * [It is possible that the RFC writers thought that it was possible that it
+ *  might take more than a KeepAliveTime to send out a KEEPALIVE, and that
+ *  restarting the timer here, would help... but it's not clear how.]
  */
 static void
 bgp_keepalive_timer_action(qtimer qtr, void* timer_info, qtime_mono_t when)
@@ -2563,10 +2588,6 @@ bgp_keepalive_timer_action(qtimer qtr, void* timer_info, qtime_mono_t when)
   bgp_connection connection = timer_info ;
 
   BGP_FSM_DEBUG(connection, "Timer (keepalive timer expire)") ;
-
-  bgp_timer_set(connection, connection->keepalive_timer,
-                    connection->session->keepalive_timer_interval,
-                                                            with_jitter, NULL) ;
 
   bgp_fsm_event(connection, bgp_fsm_eKeepAlive_timer_expired) ;
 } ;

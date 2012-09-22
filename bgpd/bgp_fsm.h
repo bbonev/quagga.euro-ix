@@ -29,42 +29,23 @@
 
 /* Prototypes. */
 
-extern void
-bgp_fsm_enable_session(bgp_session session) ;
-
-extern void
-bgp_fsm_disable_session(bgp_session session, bgp_notify notification) ;
-
-extern int
-bgp_fsm_pre_update(bgp_connection connection) ;
-
-extern void
-bgp_fsm_open_received(bgp_connection connection) ;
-
-extern void
-bgp_fsm_keepalive_received(bgp_connection connection) ;
-
-extern void
-bgp_fsm_notification_sent(bgp_connection connection) ;
-
-extern void
-bgp_fsm_exception(bgp_connection connection, bgp_session_event_t except,
+extern void bgp_fsm_enable_session(bgp_session session) ;
+extern void bgp_fsm_disable_session(bgp_session session,
                                                       bgp_notify notification) ;
-
-extern void
-bgp_fsm_io_fatal_error(bgp_connection connection, int err) ;
-
-extern void
-bgp_fsm_io_error(bgp_connection connection, int err) ;
-
-extern void
-bgp_fsm_connect_completed(bgp_connection connection, int err,
+extern bool bgp_fsm_pre_update(bgp_connection connection) ;
+extern void bgp_fsm_open_received(bgp_connection connection) ;
+extern void bgp_fsm_keepalive_received(bgp_connection connection) ;
+extern void bgp_fsm_notification_sent(bgp_connection connection) ;
+extern void bgp_fsm_exception(bgp_connection connection,
+                          bgp_session_event_t except, bgp_notify notification) ;
+extern void bgp_fsm_io_fatal_error(bgp_connection connection, int err) ;
+extern void bgp_fsm_io_error(bgp_connection connection, int err) ;
+extern void bgp_fsm_connect_completed(bgp_connection connection, int err,
                                                    union sockunion* su_local,
                                                    union sockunion* su_remote) ;
-
-extern void
-bgp_fsm_notification_exception(bgp_connection connection,
+extern void bgp_fsm_notification_exception(bgp_connection connection,
                                                       bgp_notify notification) ;
-
+extern void bgp_keepalive_timer_set(bgp_connection connection) ;
+extern void bgp_keepalive_timer_unset(bgp_connection connection) ;
 
 #endif /* _QUAGGA_BGP_FSM_H */

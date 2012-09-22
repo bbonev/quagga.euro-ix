@@ -363,12 +363,24 @@ bgp_session_enable(bgp_peer peer)
                         ? XSTRDUP(MTYPE_PEER_PASSWORD, peer->password)
                         : NULL;
 
-  session->idle_hold_timer_interval     = peer->v_start ;
-  session->connect_retry_timer_interval = peer->v_connect ;
+  /* v_start is set to BGP_INIT_START_TIMER when the peer is first created.
+   * It is adjusted when a session drops, so that if sessions going up and
+   * down rapidly, the IdleHoldTime increases, but after a long lasting
+   * session, the IdleHoldTime is reduced.
+   *
+   * v_connect is set by configuration.
+   *
+   * v_holdtime and v_keepalive are set by bgp_peer_reset_idle() to either the
+   * values configured for the peer, or to the bgp instance defaults.  When a
+   * session starts, the negotiated values are set into here -- so that can
+   * be output in (eg) bgp_show_peer().
+   */
+  session->idle_hold_timer_interval     = QTIME(peer->v_start) ;
+  session->connect_retry_timer_interval = QTIME(peer->v_connect) ;
   /* TODO: proper value for open_hold_timer_interval    */
-  session->open_hold_timer_interval     = 4 * 60;
-  session->hold_timer_interval          = peer->v_holdtime ;
-  session->keepalive_timer_interval     = peer->v_keepalive ;
+  session->open_hold_timer_interval     = QTIME(4 * 60) ;
+  session->hold_timer_interval          = QTIME(peer->v_holdtime) ;
+  session->keepalive_timer_interval     = QTIME(peer->v_keepalive) ;
 
   session->as4               = false ;
   session->route_refresh_pre = false ;

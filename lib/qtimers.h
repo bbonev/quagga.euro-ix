@@ -189,12 +189,14 @@ qtimer_set_info(qtimer qtr, void* timer_info)
   qtr->timer_info = timer_info ;
 } ;
 
-
-/* Interval handling ---------------------------------------------------------*/
-
-/* Set the interval field
+/*------------------------------------------------------------------------------
+ * Set interval for the given timer, and set the timer.
+ *
+ * It is assumed that the interval is +ve !
+ *
+ * Sets the timer to go off at the current time + given interval.  So, a
+ * zero interval will set a timer to go off RSN.
  */
-
 Inline void
 qtimer_set_interval(qtimer qtr, qtime_t interval, qtimer_action* action)
 {
@@ -202,13 +204,18 @@ qtimer_set_interval(qtimer qtr, qtime_t interval, qtimer_action* action)
   qtimer_set(qtr, qt_add_monotonic(interval), action) ;
 } ;
 
+/*------------------------------------------------------------------------------
+ * Set timer to go off at the last time it was set to go off plus the current
+ * interval.
+ */
 Inline void
 qtimer_add_interval(qtimer qtr, qtimer_action* action)
 {
   qtimer_add(qtr, qtr->interval, action) ;
 } ;
 
-/* Get the current value of the interval field
+/*------------------------------------------------------------------------------
+ * Get the current value of the interval field
  */
 Inline qtime_t
 qtimer_get_interval(qtimer qtr)

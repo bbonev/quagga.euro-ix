@@ -287,7 +287,8 @@ struct bgp_nlri
 #define BGP_STATUS_MAX                           9
 */
 
-/* BGP finite state machine events.  */
+/* BGP finite state machine events.
+ */
 #define BGP_Start                                1
 #define BGP_Stop                                 2
 #define TCP_connection_open                      3
@@ -304,7 +305,8 @@ struct bgp_nlri
 #define Clearing_Completed                      14
 #define BGP_EVENTS_MAX                          15
 
-/* BGP timers default value.  */
+/* BGP timers default value.
+ */
 #define BGP_INIT_START_TIMER                     5
 #define BGP_ERROR_START_TIMER                   30
 #define BGP_DEFAULT_HOLDTIME                   180

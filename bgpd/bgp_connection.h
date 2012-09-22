@@ -261,8 +261,8 @@ struct bgp_connection
   char*             host ;              /* peer "name" + Connect/Listen   */
   struct zlog*      log ;               /* where to log to                */
 
-  unsigned  hold_timer_interval ;       /* subject to negotiation         */
-  unsigned  keepalive_timer_interval ;  /* subject to negotiation         */
+  qtime_t   hold_timer_interval ;       /* subject to negotiation         */
+  qtime_t   keepalive_timer_interval ;  /* subject to negotiation         */
 
   bool              as4 ;               /* subject to negotiation         */
   bgp_form_t        route_refresh ;     /* subject to negotiation         */

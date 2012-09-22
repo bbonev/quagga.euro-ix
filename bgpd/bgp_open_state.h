@@ -85,7 +85,8 @@ struct bgp_cap_afi_safi
 struct bgp_open_state
 {
   as_t        my_as ;                 /* generic ASN                        */
-  unsigned    holdtime ;              /* in seconds                         */
+  uint        holdtime ;              /* in seconds                         */
+  uint        keepalive ;             /* in seconds                         */
   bgp_id_t    bgp_id ;                /* an IPv4 address -- *network order* */
 
   bool        can_capability ;        /* false => don't do capabilities     */

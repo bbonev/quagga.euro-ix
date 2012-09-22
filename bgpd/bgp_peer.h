@@ -356,27 +356,30 @@ struct peer
 #define PEER_STATUS_EOR_SEND          (1 << 5) /* end-of-rib send to peer */
 #define PEER_STATUS_EOR_RECEIVED      (1 << 6) /* end-of-rib received from peer */
 
-  /* Default attribute value for the peer. */
+  /* Default attribute value for the peer.
+   */
   u_int32_t config;
 #define PEER_CONFIG_WEIGHT            (1 << 0) /* Default weight.       */
 #define PEER_CONFIG_TIMER             (1 << 1) /* keepalive & holdtime  */
 #define PEER_CONFIG_CONNECT           (1 << 2) /* connect               */
 #define PEER_CONFIG_ROUTEADV          (1 << 3) /* route advertise       */
-  u_int32_t weight;
-  u_int32_t holdtime;
-  u_int32_t keepalive;
-  u_int32_t connect;
-  u_int32_t routeadv;
 
-  /* Timer values.                                      */
-  u_int32_t v_start;
-  u_int32_t v_connect;
-  u_int32_t v_holdtime;
-  u_int32_t v_keepalive;
-  u_int32_t v_asorig;
-  u_int32_t v_routeadv;
-  u_int32_t v_pmax_restart;
-  u_int32_t v_gr_restart;
+  uint16_t  weight;
+  uint32_t  holdtime;
+  uint32_t  keepalive;
+  uint32_t  connect;
+  uint32_t  routeadv;
+
+  /* Timer and other values
+   */
+  uint32_t  v_start;
+  uint32_t  v_connect;
+  uint32_t  v_holdtime;
+  uint32_t  v_keepalive;
+  uint32_t  v_asorig;
+  uint32_t  v_routeadv;
+  uint32_t  v_pmax_restart;
+  uint32_t  v_gr_restart;
 
   /* Threads.                                           */
   struct thread *t_withdraw ;

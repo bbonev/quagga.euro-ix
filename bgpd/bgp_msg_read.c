@@ -221,7 +221,7 @@ bgp_msg_header_bad_type(bgp_connection connection, uint8_t type)
  *     The effect is that the reader will not read any more, and will dispatch
  *     to bgp_msg_unknown_receive.
  */
-int
+extern int
 bgp_msg_check_header(bgp_connection connection)
 {
   uint8_t    type ;
@@ -229,7 +229,8 @@ bgp_msg_check_header(bgp_connection connection)
   uint8_t    qt ;
   bgp_size_t min_size ;
 
-  /* Get size and type.                                                 */
+  /* Get size and type.
+   */
   stream_forward_getp (connection->ibuf, BGP_MH_MARKER_L);
   size = stream_getw (connection->ibuf);
   type = stream_getc (connection->ibuf);
@@ -238,8 +239,9 @@ bgp_msg_check_header(bgp_connection connection)
     zlog_debug ("%s rcv message type %d, length (excl. header) %d",
                connection->host, type, size - BGP_MH_HEAD_L);
 
-  /* Marker check                                                       */
-  /* TODO: why did old code only do this on OPEN and KEEPALIVE ?        */
+  /* Marker check
+   * TODO: why did old code only do this on OPEN and KEEPALIVE ?
+   */
   if (memcmp(connection->ibuf->data, bgp_header, BGP_MH_MARKER_L) == 0)
     {
       /* BGP type check and minimum/maximum message length checks.      */
@@ -262,6 +264,7 @@ bgp_msg_check_header(bgp_connection connection)
           else
             bgp_msg_header_bad_len(connection, type, size) ;
 
+          qt   = qBGP_MT_unknown ;          /* force unknown message        */
           size = BGP_MH_HEAD_L ;            /* can stop reading, now        */
         }
     }
@@ -287,29 +290,22 @@ bgp_msg_check_header(bgp_connection connection)
  * Does nothing at all -- the error has already been deal with, this just
  * allows unknown (and invalid) messages to be handled just like OK ones.
  */
-static void bgp_msg_unknown_receive(bgp_connection connection, bgp_size_t body_size)
+static void
+bgp_msg_unknown_receive(bgp_connection connection, bgp_size_t body_size)
 {
   return ;
 } ;
 
 /*==============================================================================
  * BGP OPEN message
- *
- *
- *
  */
-
-static int
-bgp_msg_open_option_parse (bgp_connection connection, bgp_notify notification,
-                                                                    sucker sr) ;
-static int
-bgp_msg_capability_option_parse (bgp_connection connection,
+static int bgp_msg_open_option_parse (bgp_connection connection,
                                            bgp_notify notification, sucker sr) ;
-static int
-bgp_msg_open_error(bgp_notify notification, bgp_nom_subcode_t subcode) ;
-
-static int
-bgp_msg_open_invalid(bgp_notify notification) ;
+static int bgp_msg_capability_option_parse (bgp_connection connection,
+                                           bgp_notify notification, sucker sr) ;
+static int bgp_msg_open_error(bgp_notify notification,
+                                                    bgp_nom_subcode_t subcode) ;
+static int bgp_msg_open_invalid(bgp_notify notification) ;
 
 /*------------------------------------------------------------------------------
  * Receive BGP open packet and parse it into the connection's open_recv
@@ -326,31 +322,36 @@ bgp_msg_open_receive (bgp_connection connection, bgp_size_t body_size)
   bgp_open_state open_recv;
   struct stream* s ;
   struct sucker ssr ;
-  unsigned holdtime ;
+  uint holdtime ;
+  bgp_notify notification ;
 
   ++connection->session->stats.open_in ;
 
-  /* Start with an unspecific OPEN notification                         */
-  bgp_notify notification = bgp_notify_new(BGP_NOMC_OPEN,
-                                                       BGP_NOMS_UNSPECIFIC) ;
+  /* Start with an unspecific OPEN notification
+   */
+  notification = bgp_notify_new(BGP_NOMC_OPEN, BGP_NOMS_UNSPECIFIC) ;
 
-  /* To receive the parsed open message                                 */
+  /* To receive the parsed open message
+   */
   open_recv = connection->open_recv
                               = bgp_open_state_init_new(connection->open_recv) ;
 
-  /* Parse fixed part of the open packet                                */
+  /* Parse fixed part of the open packet
+   */
   s = connection->ibuf ;
 
   version = stream_getc (s);
-  open_recv->my_as2   = stream_getw (s);
-  open_recv->holdtime = stream_getw (s);
-  open_recv->bgp_id   = stream_get_ipv4 (s);
+  open_recv->my_as2    = stream_getw (s);
+  open_recv->holdtime  = stream_getw (s);
+  open_recv->bgp_id    = stream_get_ipv4 (s);
 
-  open_recv->my_as    = open_recv->my_as2 ;
+  open_recv->keepalive = open_recv->holdtime / 3 ; /* RFC4271 suggested
+                                                    * default           */
+  open_recv->my_as     = open_recv->my_as2 ;
+  remote_id.s_addr     = open_recv->bgp_id ;
 
-  remote_id.s_addr = open_recv->bgp_id ;
-
-  /* Receive OPEN message log                                           */
+  /* Receive OPEN message log
+   */
   if (BGP_DEBUG (normal, NORMAL))
     zlog_debug ("%s rcv OPEN, version %d, remote-as (in open) %u,"
                 " holdtime %d, id %s",
@@ -358,7 +359,8 @@ bgp_msg_open_receive (bgp_connection connection, bgp_size_t body_size)
                 open_recv->my_as, open_recv->holdtime,
                 safe_inet_ntoa (remote_id));
 
-  /* Peer BGP version check.                                            */
+  /* Peer BGP version check.
+   */
   if (version != BGP_VERSION_4)
     {
       if (BGP_DEBUG (normal, NORMAL))
@@ -371,8 +373,10 @@ bgp_msg_open_receive (bgp_connection connection, bgp_size_t body_size)
       goto reject ;
     }
 
-  /* Remote bgp_id may not be multicast, or the same as here            */
-  if (IN_MULTICAST(ntohl(open_recv->bgp_id)) ||
+  /* Remote bgp_id must be valid unicast and must not be the same as here
+   */
+  if (IPV4_NET0 (ntohl(open_recv->bgp_id)) ||
+      IPV4_CLASS_DE (ntohl(open_recv->bgp_id)) ||
            (open_recv->bgp_id == connection->session->open_send->bgp_id))
     {
       zlog_debug ("%s rcv OPEN, multicast or our id %s",
@@ -382,21 +386,21 @@ bgp_msg_open_receive (bgp_connection connection, bgp_size_t body_size)
     } ;
 
   /* From the rfc: Upon receipt of an OPEN message, a BGP speaker MUST
-     calculate the value of the Hold Timer by using the smaller of its
-     configured Hold Time and the Hold Time received in the OPEN message.
-     The Hold Time MUST be either zero or at least three seconds.  An
-     implementation may reject connections on the basis of the Hold Time.
-
-     See below where sets keepalive to hold / 3 !!
-  */
-  if (open_recv->holdtime < 3 && open_recv->holdtime != 0)
+   * calculate the value of the Hold Timer by using the smaller of its
+   * configured Hold Time and the Hold Time received in the OPEN message.
+   * The Hold Time MUST be either zero or at least three seconds.  An
+   * implementation may reject connections on the basis of the Hold Time.
+   *
+   *  See below where sets keepalive to hold / 3 !!
+   */
+  if ((open_recv->holdtime < 3) && (open_recv->holdtime != 0))
     {
       bgp_msg_open_error(notification, BGP_NOMS_O_H_TIME) ;
       goto reject ;
     } ;
 
-  /* Open option part parse                                             */
-
+  /* Open option part parse
+   */
   optlen = stream_getc(s) ;
 
   if (BGP_DEBUG (normal, NORMAL))
@@ -417,9 +421,10 @@ bgp_msg_open_receive (bgp_connection connection, bgp_size_t body_size)
   if (ret < 0)
     goto reject ;
 
-  /* Now worry about the AS number                                      */
-
-  /* ASN == 0 is odd for AS2, error for AS4             */
+  /* Now worry about the AS number
+   *
+   * ASN == 0 is an error !
+   */
   if (open_recv->my_as == 0)
     {
       if (open_recv->can_as4)
@@ -437,7 +442,8 @@ bgp_msg_open_receive (bgp_connection connection, bgp_size_t body_size)
         } ;
     } ;
 
-  /* ASN = BGP_AS_TRANS is odd for AS2, error for AS4   */
+  /* ASN = BGP_AS_TRANS is odd for AS2, error for AS4
+   */
   if (open_recv->my_as == BGP_ASN_TRANS)
     {
       if (open_recv->can_as4)
@@ -455,7 +461,8 @@ bgp_msg_open_receive (bgp_connection connection, bgp_size_t body_size)
         } ;
     } ;
 
-  /* Worry about my_as2 for AS4 speaker, if as2 != as4  */
+  /* Worry about my_as2 for AS4 speaker, if as2 != as4
+   */
   if ((open_recv->can_as4) && (open_recv->my_as != open_recv->my_as2))
     {
       if (open_recv->my_as2 == BGP_ASN_TRANS)
@@ -476,7 +483,8 @@ bgp_msg_open_receive (bgp_connection connection, bgp_size_t body_size)
         } ;
     } ;
 
-  /* Finally -- require the AS to be the configured AS  */
+  /* Finally -- require the AS to be the configured AS
+   */
   if (open_recv->my_as != connection->session->as_peer)
     {
       if (BGP_DEBUG (normal, NORMAL))
@@ -498,15 +506,57 @@ bgp_msg_open_receive (bgp_connection connection, bgp_size_t body_size)
    */
   bgp_notify_free(notification) ;       /* No further use for this      */
 
-  holdtime = connection->session->open_send->holdtime ;
+  holdtime   = connection->session->open_send->holdtime ;
 
   if (holdtime > open_recv->holdtime)
     holdtime = open_recv->holdtime ;    /* use smaller of theirs & ours */
   if (holdtime < 3)
     holdtime = 0 ;                      /* no slip ups                  */
 
-  connection->hold_timer_interval       = holdtime ;
-  connection->keepalive_timer_interval  = holdtime / 3 ;
+  connection->hold_timer_interval = QTIME(holdtime) ;
+
+  /* The keepalive may be set by configuration or by default.
+   *
+   * We calculate the "received value" as holdtime / 3 (rounding down) as
+   * per RFC4271 (though that does not specify rounding down).
+   *
+   * If the "received value" is >= the configured value, then we use the
+   * configured value.
+   *
+   * Otherwise, we use the received holdtime / 3 -- at QTIME resolution.
+   *
+   * There is then an horrible looking kludge: RFC4271 specifies that the
+   * minimum KeepAliveTime is 1 second (where it is not turned off altogether).
+   * That interacts with the jitter which SHOULD be applied to the
+   * KeepAliveTimer.  So... in the one case where this matters, where there
+   * is a HoldTime of 3 or a configured KeepAliveTime of 1, we set the
+   * KeepAliveTimer to 1.33...4 seconds -- so that after maximum jitter of -25%,
+   * that is still at least 1 second (to within some nano-second or so).
+   * Running a HoldTime this small is a bit mad -- but even with this kludge,
+   * will send out 2 KEEPALIVEs within the HoldTime.
+   *
+   * NB: result is 0 iff holdtime == 0, and otherwsi is >= 1.33...
+   */
+  if (holdtime == 0)
+    connection->keepalive_timer_interval = 0 ;
+  else
+    {
+      uint    keepalive ;
+      qtime_t min_keepalive ;
+
+      min_keepalive = ((QTIME(1) * 4) + 2) / 3 ;
+
+      keepalive = connection->session->open_send->keepalive ;
+                        /* Value as configured or set by default        */
+
+      if (keepalive <= open_recv->keepalive)
+        connection->keepalive_timer_interval = QTIME(keepalive) ;
+      else
+        connection->keepalive_timer_interval = QTIME(holdtime) / 3 ;
+
+      if (connection->keepalive_timer_interval < min_keepalive)
+        connection->keepalive_timer_interval = min_keepalive ;
+    } ;
 
   connection->as4            = open_recv->can_as4 ;
   connection->route_refresh  = open_recv->can_r_refresh ;
@@ -1366,8 +1416,18 @@ bgp_msg_capability_as4 (bgp_connection connection, sucker sr)
 static void
 bgp_msg_update_receive (bgp_connection connection, bgp_size_t body_size)
 {
-  /* Must be prepared to receive "update" like messages                 */
-  if (bgp_fsm_pre_update(connection) != 0)
+  /* Must be prepared to receive "update" like messages
+   */
+  if (bgp_fsm_pre_update(connection))
+    {
+      ++connection->session->stats.update_in ;
+      connection->session->stats.update_time = bgp_clock() ;
+
+      /* PRO TEM: pass raw update message across to Routing Engine          */
+      /* TODO: decode update messages in the BGP Engine.                    */
+      bgp_session_update_recv(connection->session, connection->ibuf, body_size);
+    }
+  else
     {
       plog_err(connection->log,
                 "%s [Error] Update message received while in %s State",
@@ -1375,14 +1435,7 @@ bgp_msg_update_receive (bgp_connection connection, bgp_size_t body_size)
                   map_direct(bgp_fsm_status_map, connection->state).str) ;
       return ;
     } ;
-
-  ++connection->session->stats.update_in ;
-  connection->session->stats.update_time = bgp_clock() ;
-
-  /* PRO TEM: pass raw update message across to Routing Engine          */
-  /* TODO: decode update messages in the BGP Engine.                    */
-  bgp_session_update_recv(connection->session, connection->ibuf, body_size);
-}
+} ;
 
 /*==============================================================================
  * BGP KEEPALIVE message

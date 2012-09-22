@@ -314,11 +314,7 @@ bgp_session_has_established(bgp_session session)
   /* Clear last notification data -- Routing Engine private field       */
   bgp_notify_unset(&(peer->session->notification));
 
-  /* Clear start timer value to default. */
-  /* TODO: figure out where to increase the IdleHoldTimer               */
-  peer->v_start = BGP_INIT_START_TIMER;
-
-  /* Increment established count. */
+  /* Increment established count.                                       */
   peer->established++;
 
   /* bgp log-neighbor-changes of neighbor Up */
@@ -391,7 +387,8 @@ bgp_session_has_established(bgp_session session)
             || CHECK_FLAG (peer->af_cap[afi][safi], PEER_CAP_ORF_PREFIX_SM_OLD_RCV))
           SET_FLAG (peer->af_sflags[afi][safi], PEER_STATUS_ORF_WAIT_REFRESH);
 
-  /* Reset uptime, send current table.                          */
+  /* Reset uptime, send current table.
+   */
   peer->uptime = bgp_clock ();
 
   bgp_announce_route_all (peer);
@@ -427,11 +424,40 @@ bgp_session_has_stopped(bgp_session session, bgp_notify notification)
 
   if (session->state == bgp_session_sEstablished)
     {
-      /* This code has been moved from where it was, in bgp_write       */
-      /* TODO: not clear whether v_start handling is still correct      */
+      time_t  up_for ;
+      uint    max_v_start ;
+
+      up_for = bgp_clock() - peer->uptime ;
+
+      /* We double the IdleHoldTime and then apply a maximum value, where that
+       * maximum depends on how long has been up for:
+       *
+       *   < 2 mins -- maximum new IdleHoldTime = 120 secs -- maximum allowed
+       *   < 3 mins --                          =  64 secs (2^6)
+       *   < 4 mins,                            =  32
+       *   < 5 mins,                            =  16
+       *   < 6 mins,                            =   8
+       *   < 7 mins,                            =   4
+       *   < 8 mins                             =   2      (2^1)
+       *  >= 8 mins                             =   1 sec
+       *
+       * NB: setting peer->v_start to zero turns off this process altogether !
+       */
+      if      (up_for < (2 * 60))
+        max_v_start = 120 ;
+      else if (up_for < (8 * 60))
+        {
+          qassert((2 <= (up_for / 60)) && ((up_for / 60) <= 7)) ;
+
+          max_v_start = 1 << (8 - (up_for / 60)) ;
+        }
+      else
+        max_v_start = 1 ;
+
       peer->v_start *= 2;
-      if (peer->v_start >= (60 * 2))
-        peer->v_start = (60 * 2);
+
+      if (peer->v_start > max_v_start)
+        peer->v_start = max_v_start ;
     } ;
 
   if (notification == NULL)
@@ -777,13 +803,13 @@ bgp_peer_create (union sockunion *su, struct bgp *bgp, as_t local_as,
     {
       peer->ttl        = MAXTTL ;
       peer->v_routeadv = BGP_DEFAULT_IBGP_ROUTEADV;
-
     }
   else  /* BGP_PEER_EBGP or BGP_PEER_CONFED     */
     {
       peer->ttl        = 1 ;
       peer->v_routeadv = BGP_DEFAULT_EBGP_ROUTEADV;
     } ;
+
   peer->gtsm = false ;
 
   SET_FLAG(peer->sflags, PEER_STATUS_REAL_PEER) ;

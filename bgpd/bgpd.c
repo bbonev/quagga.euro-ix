@@ -2921,7 +2921,7 @@ peer_timers_set (struct peer *peer, u_int32_t keepalive, u_int32_t holdtime)
   /* Set value to the configuration. */
   SET_FLAG (peer->config, PEER_CONFIG_TIMER);
   peer->holdtime = holdtime;
-  peer->keepalive = (keepalive < holdtime / 3 ? keepalive : holdtime / 3);
+  peer->keepalive = (keepalive < (holdtime / 3)) ? keepalive : (holdtime / 3);
 
   if (! CHECK_FLAG (peer->sflags, PEER_STATUS_GROUP))
     return 0;
