@@ -61,7 +61,7 @@ struct option longopts[] =
   { "vty_addr",    required_argument, NULL, 'A'},
   { "vty_port",    required_argument, NULL, 'P'},
   { "version",     no_argument,       NULL, 'v'},
-  { "rib_hold",	   required_argument, NULL, 'r'},
+  { "rib_hold",    required_argument, NULL, 'r'},
   { 0 }
 };
 
@@ -87,18 +87,18 @@ usage (const char *progname, int status)
   else
     {
       printf ("Usage : %s [OPTION...]\n\n"\
-	      "Daemon which manages kernel routing table management and "\
-	      "redistribution between different routing protocols.\n\n"\
-	      "-b, --batch        Runs in batch mode\n"\
-	      "-d, --daemon       Runs in daemon mode\n"\
-	      "-f, --config_file  Set configuration file name\n"\
-	      "-A, --vty_addr     Set vty's bind address\n"\
-	      "-P, --vty_port     Set vty's port number\n"\
-	      "-r, --rib_hold	  Set rib-queue hold time\n"\
+              "Daemon which manages kernel routing table management and "\
+              "redistribution between different routing protocols.\n\n"\
+              "-b, --batch        Runs in batch mode\n"\
+              "-d, --daemon       Runs in daemon mode\n"\
+              "-f, --config_file  Set configuration file name\n"\
+              "-A, --vty_addr     Set vty's bind address\n"\
+              "-P, --vty_port     Set vty's port number\n"\
+              "-r, --rib_hold     Set rib-queue hold time\n"\
               "-v, --version      Print program version\n"\
-	      "-h, --help         Display this help and exit\n"\
-	      "\n"\
-	      "Report bugs to %s\n", progname, ZEBRA_BUG_ADDRESS);
+              "-h, --help         Display this help and exit\n"\
+              "\n"\
+              "Report bugs to %s\n", progname, ZEBRA_BUG_ADDRESS);
     }
 
   exit (status);
@@ -222,7 +222,7 @@ main (int argc, char **argv)
   host_init(argv[0]) ;
 
   zlog_default = openzlog (cmd_host_program_name(), ZLOG_ZEBRA,
-			   LOG_CONS|LOG_NDELAY|LOG_PID, LOG_DAEMON);
+                           LOG_CONS|LOG_NDELAY|LOG_PID, LOG_DAEMON);
 
   while (1)
     {
@@ -231,47 +231,47 @@ main (int argc, char **argv)
       opt = getopt_long (argc, argv, "bdf:hA:P:r:v", longopts, 0);
 
       if (opt == EOF)
-	break;
+        break;
 
       switch (opt)
-	{
-	case 0:
-	  break;
-	case 'b':
-	  batch_mode = 1;
-	case 'd':
-	  daemon_mode = 1;
-	  break;
-	case 'f':
-	  config_file = optarg;
-	  break;
-	case 'A':
-	  vty_addr = optarg;
-	  break;
-	case 'P':
-	  /* Deal with atoi() returning 0 on failure, and zebra not
-	     listening on zebra port... */
-	  if (strcmp(optarg, "0") == 0)
-	    {
-	      vty_port = 0;
-	      break;
-	    }
-	  vty_port = atoi (optarg);
-	  break;
-	case 'r':
-	  rib_process_hold_time = atoi(optarg);
-	  break;
-	case 'v':
-	  cmd_print_version (cmd_host_program_name());
-	  exit (0);
-	  break;
-	case 'h':
-	  usage (cmd_host_program_name(), 0);
-	  break;
-	default:
-	  usage (cmd_host_program_name(), 1);
-	  break;
-	}
+        {
+        case 0:
+          break;
+        case 'b':
+          batch_mode = 1;
+        case 'd':
+          daemon_mode = 1;
+          break;
+        case 'f':
+          config_file = optarg;
+          break;
+        case 'A':
+          vty_addr = optarg;
+          break;
+        case 'P':
+          /* Deal with atoi() returning 0 on failure, and zebra not
+             listening on zebra port... */
+          if (strcmp(optarg, "0") == 0)
+            {
+              vty_port = 0;
+              break;
+            }
+          vty_port = atoi (optarg);
+          break;
+        case 'r':
+          rib_process_hold_time = atoi(optarg);
+          break;
+        case 'v':
+          cmd_print_version (cmd_host_program_name());
+          exit (0);
+          break;
+        case 'h':
+          usage (cmd_host_program_name(), 0);
+          break;
+        default:
+          usage (cmd_host_program_name(), 1);
+          break;
+        }
     }
 
   /* port and conf file mandatory */

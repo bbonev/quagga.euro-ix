@@ -45,22 +45,22 @@ DEFUN (show_debugging_zebra,
   if (IS_ZEBRA_DEBUG_PACKET)
     {
       if (IS_ZEBRA_DEBUG_SEND && IS_ZEBRA_DEBUG_RECV)
-	{
-	  vty_out (vty, "  Zebra packet%s debugging is on%s",
-		   IS_ZEBRA_DEBUG_DETAIL ? " detail" : "",
-		   VTY_NEWLINE);
-	}
+        {
+          vty_out (vty, "  Zebra packet%s debugging is on%s",
+                   IS_ZEBRA_DEBUG_DETAIL ? " detail" : "",
+                   VTY_NEWLINE);
+        }
       else
-	{
-	  if (IS_ZEBRA_DEBUG_SEND)
-	    vty_out (vty, "  Zebra packet send%s debugging is on%s",
-		     IS_ZEBRA_DEBUG_DETAIL ? " detail" : "",
-		     VTY_NEWLINE);
-	  else
-	    vty_out (vty, "  Zebra packet receive%s debugging is on%s",
-		     IS_ZEBRA_DEBUG_DETAIL ? " detail" : "",
-		     VTY_NEWLINE);
-	}
+        {
+          if (IS_ZEBRA_DEBUG_SEND)
+            vty_out (vty, "  Zebra packet send%s debugging is on%s",
+                     IS_ZEBRA_DEBUG_DETAIL ? " detail" : "",
+                     VTY_NEWLINE);
+          else
+            vty_out (vty, "  Zebra packet receive%s debugging is on%s",
+                     IS_ZEBRA_DEBUG_DETAIL ? " detail" : "",
+                     VTY_NEWLINE);
+        }
     }
 
   if (IS_ZEBRA_DEBUG_KERNEL)
@@ -260,24 +260,24 @@ config_write_debug (struct vty *vty)
   if (IS_ZEBRA_DEBUG_PACKET)
     {
       if (IS_ZEBRA_DEBUG_SEND && IS_ZEBRA_DEBUG_RECV)
-	{
-	  vty_out (vty, "debug zebra packet%s%s",
-		   IS_ZEBRA_DEBUG_DETAIL ? " detail" : "",
-		   VTY_NEWLINE);
-	  write++;
-	}
+        {
+          vty_out (vty, "debug zebra packet%s%s",
+                   IS_ZEBRA_DEBUG_DETAIL ? " detail" : "",
+                   VTY_NEWLINE);
+          write++;
+        }
       else
-	{
-	  if (IS_ZEBRA_DEBUG_SEND)
-	    vty_out (vty, "debug zebra packet send%s%s",
-		     IS_ZEBRA_DEBUG_DETAIL ? " detail" : "",
-		     VTY_NEWLINE);
-	  else
-	    vty_out (vty, "debug zebra packet recv%s%s",
-		     IS_ZEBRA_DEBUG_DETAIL ? " detail" : "",
-		     VTY_NEWLINE);
-	  write++;
-	}
+        {
+          if (IS_ZEBRA_DEBUG_SEND)
+            vty_out (vty, "debug zebra packet send%s%s",
+                     IS_ZEBRA_DEBUG_DETAIL ? " detail" : "",
+                     VTY_NEWLINE);
+          else
+            vty_out (vty, "debug zebra packet recv%s%s",
+                     IS_ZEBRA_DEBUG_DETAIL ? " detail" : "",
+                     VTY_NEWLINE);
+          write++;
+        }
     }
   if (IS_ZEBRA_DEBUG_KERNEL)
     {

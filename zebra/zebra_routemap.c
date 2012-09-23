@@ -34,7 +34,7 @@
 /* Add zebra route map rule */
 static int
 zebra_route_match_add(struct vty *vty, struct route_map_index *index,
-		      const char *command, const char *arg)
+                      const char *command, const char *arg)
 {
   int ret;
 
@@ -42,14 +42,14 @@ zebra_route_match_add(struct vty *vty, struct route_map_index *index,
   if (ret)
     {
       switch (ret)
-	{
-	case RMAP_RULE_MISSING:
-	  vty_out (vty, "%% Can't find rule.%s", VTY_NEWLINE);
-	  return CMD_WARNING;
-	case RMAP_COMPILE_ERROR:
-	  vty_out (vty, "%% Argument is malformed.%s", VTY_NEWLINE);
-	  return CMD_WARNING;
-	}
+        {
+        case RMAP_RULE_MISSING:
+          vty_out (vty, "%% Can't find rule.%s", VTY_NEWLINE);
+          return CMD_WARNING;
+        case RMAP_COMPILE_ERROR:
+          vty_out (vty, "%% Argument is malformed.%s", VTY_NEWLINE);
+          return CMD_WARNING;
+        }
     }
   return CMD_SUCCESS;
 }
@@ -57,7 +57,7 @@ zebra_route_match_add(struct vty *vty, struct route_map_index *index,
 /* Delete zebra route map rule. */
 static int
 zebra_route_match_delete (struct vty *vty, struct route_map_index *index,
-			const char *command, const char *arg)
+                        const char *command, const char *arg)
 {
   int ret;
 
@@ -65,14 +65,14 @@ zebra_route_match_delete (struct vty *vty, struct route_map_index *index,
   if (ret)
     {
       switch (ret)
-	{
-	case RMAP_RULE_MISSING:
-	  vty_out (vty, "%% Can't find rule.%s", VTY_NEWLINE);
-	  return CMD_WARNING;
-	case RMAP_COMPILE_ERROR:
-	  vty_out (vty, "%% Argument is malformed.%s", VTY_NEWLINE);
-	  return CMD_WARNING;
-	}
+        {
+        case RMAP_RULE_MISSING:
+          vty_out (vty, "%% Can't find rule.%s", VTY_NEWLINE);
+          return CMD_WARNING;
+        case RMAP_COMPILE_ERROR:
+          vty_out (vty, "%% Argument is malformed.%s", VTY_NEWLINE);
+          return CMD_WARNING;
+        }
     }
   return CMD_SUCCESS;
 }
@@ -80,7 +80,7 @@ zebra_route_match_delete (struct vty *vty, struct route_map_index *index,
 /* Add zebra route map rule. */
 static int
 zebra_route_set_add (struct vty *vty, struct route_map_index *index,
-		   const char *command, const char *arg)
+                   const char *command, const char *arg)
 {
   int ret;
 
@@ -88,14 +88,14 @@ zebra_route_set_add (struct vty *vty, struct route_map_index *index,
   if (ret)
     {
       switch (ret)
-	{
-	case RMAP_RULE_MISSING:
-	  vty_out (vty, "%% Can't find rule.%s", VTY_NEWLINE);
-	  return CMD_WARNING;
-	case RMAP_COMPILE_ERROR:
-	  vty_out (vty, "%% Argument is malformed.%s", VTY_NEWLINE);
-	  return CMD_WARNING;
-	}
+        {
+        case RMAP_RULE_MISSING:
+          vty_out (vty, "%% Can't find rule.%s", VTY_NEWLINE);
+          return CMD_WARNING;
+        case RMAP_COMPILE_ERROR:
+          vty_out (vty, "%% Argument is malformed.%s", VTY_NEWLINE);
+          return CMD_WARNING;
+        }
     }
   return CMD_SUCCESS;
 }
@@ -103,7 +103,7 @@ zebra_route_set_add (struct vty *vty, struct route_map_index *index,
 /* Delete zebra route map rule. */
 static int
 zebra_route_set_delete (struct vty *vty, struct route_map_index *index,
-		      const char *command, const char *arg)
+                      const char *command, const char *arg)
 {
   int ret;
 
@@ -111,14 +111,14 @@ zebra_route_set_delete (struct vty *vty, struct route_map_index *index,
   if (ret)
     {
       switch (ret)
-	{
-	case RMAP_RULE_MISSING:
-	  vty_out (vty, "%% Can't find rule.%s", VTY_NEWLINE);
-	  return CMD_WARNING;
-	case RMAP_COMPILE_ERROR:
-	  vty_out (vty, "%% Argument is malformed.%s", VTY_NEWLINE);
-	  return CMD_WARNING;
-	}
+        {
+        case RMAP_RULE_MISSING:
+          vty_out (vty, "%% Can't find rule.%s", VTY_NEWLINE);
+          return CMD_WARNING;
+        case RMAP_COMPILE_ERROR:
+          vty_out (vty, "%% Argument is malformed.%s", VTY_NEWLINE);
+          return CMD_WARNING;
+        }
     }
   return CMD_SUCCESS;
 }
@@ -128,7 +128,7 @@ zebra_route_set_delete (struct vty *vty, struct route_map_index *index,
 /* Match function return 1 if match is success else return zero. */
 static route_map_result_t
 route_match_interface (void *rule, struct prefix *prefix,
-		       route_map_object_t type, void *object)
+                       route_map_object_t type, void *object)
 {
   struct nexthop *nexthop;
   char *ifname = rule;
@@ -137,15 +137,15 @@ route_match_interface (void *rule, struct prefix *prefix,
   if (type == RMAP_ZEBRA)
     {
       if (strcasecmp(ifname, "any") == 0)
-	return RMAP_MATCH;
+        return RMAP_MATCH;
       ifindex = ifname2ifindex(ifname);
       if (ifindex == 0)
-	return RMAP_NOMATCH;
+        return RMAP_NOMATCH;
       nexthop = object;
       if (!nexthop)
-	return RMAP_NOMATCH;
+        return RMAP_NOMATCH;
       if (nexthop->ifindex == ifindex)
-	return RMAP_MATCH;
+        return RMAP_MATCH;
     }
   return RMAP_NOMATCH;
 }
@@ -410,7 +410,7 @@ ALIAS (no_set_src,
 /* Match function return 1 if match is success else return zero. */
 static route_map_result_t
 route_match_ip_next_hop (void *rule, struct prefix *prefix,
-			route_map_object_t type, void *object)
+                        route_map_object_t type, void *object)
 {
   struct access_list *alist;
   struct nexthop *nexthop;
@@ -425,7 +425,7 @@ route_match_ip_next_hop (void *rule, struct prefix *prefix,
       case NEXTHOP_TYPE_IPV4_IFINDEX:
       case NEXTHOP_TYPE_IPV4_IFNAME:
         if (nexthop->rtype != NEXTHOP_TYPE_IPV4)
-		return RMAP_NOMATCH;
+                return RMAP_NOMATCH;
         p.family = AF_INET;
         p.prefix = nexthop->rgate.ipv4;
         p.prefixlen = IPV4_MAX_BITLEN;
@@ -440,10 +440,10 @@ route_match_ip_next_hop (void *rule, struct prefix *prefix,
       }
       alist = access_list_lookup (AFI_IP, (char *) rule);
       if (alist == NULL)
-	return RMAP_NOMATCH;
+        return RMAP_NOMATCH;
 
       return (access_list_apply (alist, &p) == FILTER_DENY ?
-	      RMAP_NOMATCH : RMAP_MATCH);
+              RMAP_NOMATCH : RMAP_MATCH);
     }
   return RMAP_NOMATCH;
 }
@@ -491,7 +491,7 @@ route_match_ip_next_hop_prefix_list (void *rule, struct prefix *prefix,
       case NEXTHOP_TYPE_IPV4_IFINDEX:
       case NEXTHOP_TYPE_IPV4_IFNAME:
         if (nexthop->rtype != NEXTHOP_TYPE_IPV4)
-		return RMAP_NOMATCH;
+                return RMAP_NOMATCH;
         p.family = AF_INET;
         p.prefix = nexthop->rgate.ipv4;
         p.prefixlen = IPV4_MAX_BITLEN;
@@ -540,7 +540,7 @@ static struct route_map_rule_cmd route_match_ip_next_hop_prefix_list_cmd =
    zero. */
 static route_map_result_t
 route_match_ip_address (void *rule, struct prefix *prefix,
-			route_map_object_t type, void *object)
+                        route_map_object_t type, void *object)
 {
   struct access_list *alist;
 
@@ -548,10 +548,10 @@ route_match_ip_address (void *rule, struct prefix *prefix,
     {
       alist = access_list_lookup (AFI_IP, (char *) rule);
       if (alist == NULL)
-	return RMAP_NOMATCH;
+        return RMAP_NOMATCH;
 
       return (access_list_apply (alist, prefix) == FILTER_DENY ?
-	      RMAP_NOMATCH : RMAP_MATCH);
+              RMAP_NOMATCH : RMAP_MATCH);
     }
   return RMAP_NOMATCH;
 }
@@ -584,7 +584,7 @@ static struct route_map_rule_cmd route_match_ip_address_cmd =
 
 static route_map_result_t
 route_match_ip_address_prefix_list (void *rule, struct prefix *prefix,
-				    route_map_object_t type, void *object)
+                                    route_map_object_t type, void *object)
 {
   struct prefix_list *plist;
 
@@ -592,10 +592,10 @@ route_match_ip_address_prefix_list (void *rule, struct prefix *prefix,
     {
       plist = prefix_list_lookup (AFI_IP, (char *) rule);
       if (plist == NULL)
-	return RMAP_NOMATCH;
+        return RMAP_NOMATCH;
 
       return (prefix_list_apply (plist, prefix) == PREFIX_DENY ?
-	      RMAP_NOMATCH : RMAP_MATCH);
+              RMAP_NOMATCH : RMAP_MATCH);
     }
   return RMAP_NOMATCH;
 }
@@ -626,7 +626,7 @@ static struct route_map_rule_cmd route_match_ip_address_prefix_list_cmd =
 /* Set src. */
 static route_map_result_t
 route_set_src (void *rule, struct prefix *prefix,
-		  route_map_object_t type, void *object)
+                  route_map_object_t type, void *object)
 {
   if (type == RMAP_ZEBRA)
     {

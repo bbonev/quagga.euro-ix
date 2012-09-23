@@ -97,7 +97,7 @@ if_ioctl_ipv6 (u_long request, caddr_t buffer)
       if (zserv_privs.change(ZPRIVS_LOWER))
         zlog (NULL, LOG_ERR, "Can't lower privileges");
       zlog_err("Cannot create IPv6 datagram socket: %s",
-	       safe_strerror(save_errno));
+               safe_strerror(save_errno));
       exit (1);
     }
 
@@ -302,7 +302,7 @@ if_set_prefix (struct interface *ifp, struct connected *ifc)
       memcpy (&ifreq.ifr_broadaddr, &broad, sizeof (struct sockaddr_in));
       ret = if_ioctl (SIOCSIFBRDADDR, (caddr_t) &ifreq);
       if (ret < 0)
-	return ret;
+        return ret;
     }
 
   mask.sin_family = p->family;

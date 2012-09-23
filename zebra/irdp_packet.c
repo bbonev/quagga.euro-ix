@@ -18,17 +18,17 @@
  * You should have received a copy of the GNU General Public License
  * along with GNU Zebra; see the file COPYING.  If not, write to the Free
  * Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
- * 02111-1307, USA.  
+ * 02111-1307, USA.
  */
 
-/* 
+/*
  * This work includes work with the following copywrite:
  *
  * Copyright (C) 1997, 2000 Kunihiro Ishiguro
  *
  */
 
-/* 
+/*
  * Thanks to Jens Låås at Swedish University of Agricultural Sciences
  * for reviewing and tests.
  */
@@ -73,9 +73,9 @@ extern struct zebra_t zebrad;
 extern struct thread *t_irdp_raw;
 
 static void
-parse_irdp_packet(char *p, 
-		  int len, 
-		  struct interface *ifp)
+parse_irdp_packet(char *p,
+                  int len,
+                  struct interface *ifp)
 {
   struct ip *ip = (struct ip *)p ;
   struct icmphdr *icmp;
@@ -85,17 +85,17 @@ parse_irdp_packet(char *p,
   struct irdp_interface *irdp;
 
   zi = ifp->info;
-  if (!zi) 
+  if (!zi)
     return;
 
   irdp = &zi->irdp;
-  if (!irdp) 
+  if (!irdp)
     return;
 
   ip_hlen = ip->ip_hl << 2;
-  
+
   sockopt_iphdrincl_swab_systoh (ip);
-  
+
   iplen = ip->ip_len;
   datalen = len - ip_hlen;
   src = ip->ip_src;
@@ -106,39 +106,39 @@ parse_irdp_packet(char *p,
       return;
     }
 
-  if (iplen < ICMP_MINLEN) 
+  if (iplen < ICMP_MINLEN)
     {
       zlog_err ("IRDP: RX ICMP packet too short from %s\n",
-  	      inet_ntoa (src));
+              inet_ntoa (src));
       return;
     }
-    
+
   /* XXX: RAW doesnt receive link-layer, surely? ??? */
   /* Check so we don't checksum packets longer than oure RX_BUF - (ethlen +
    len of IP-header) 14+20 */
-  if (iplen > IRDP_RX_BUF-34) 
+  if (iplen > IRDP_RX_BUF-34)
     {
       zlog_err ("IRDP: RX ICMP packet too long from %s\n",
-	        inet_ntoa (src));
+                inet_ntoa (src));
       return;
     }
 
   icmp = (struct icmphdr *) (p+ip_hlen);
 
-  /* check icmp checksum */    
-  if (in_cksum (icmp, datalen) != icmp->checksum) 
+  /* check icmp checksum */
+  if (in_cksum (icmp, datalen) != icmp->checksum)
     {
       zlog_warn ("IRDP: RX ICMP packet from %s. Bad checksum, silently ignored",
                  inet_ntoa (src));
       return;
     }
-  
+
   /* Handle just only IRDP */
   if (!(icmp->type == ICMP_ROUTERADVERT
         || icmp->type == ICMP_ROUTERSOLICIT))
     return;
-  
-  if (icmp->code != 0) 
+
+  if (icmp->code != 0)
     {
       zlog_warn ("IRDP: RX packet type %d from %s. Bad ICMP type code,"
                  " silently ignored",
@@ -163,28 +163,29 @@ parse_irdp_packet(char *p,
       return;
     }
 
-  switch (icmp->type) 
+  switch (icmp->type)
     {
     case ICMP_ROUTERADVERT:
       break;
 
     case ICMP_ROUTERSOLICIT:
 
-      if(irdp->flags & IF_DEBUG_MESSAGES) 
-	zlog_debug ("IRDP: RX Solicit on %s from %s\n",
-		    ifp->name,
-		    inet_ntoa (src));
+      if(irdp->flags & IF_DEBUG_MESSAGES)
+        zlog_debug ("IRDP: RX Solicit on %s from %s\n",
+                    ifp->name,
+                    inet_ntoa (src));
 
       process_solicit(ifp);
       break;
 
     default:
       zlog_warn ("IRDP: RX type %d from %s. Bad ICMP type, silently ignored",
-		 icmp->type,
-		 inet_ntoa (src));
+                 icmp->type,
+                 inet_ntoa (src));
     }
 }
-
+
+
 static int
 irdp_recvmsg (int sock, u_char *buf, int size, int *ifindex)
 {
@@ -222,7 +223,8 @@ irdp_recvmsg (int sock, u_char *buf, int size, int *ifindex)
 
   return ret;
 }
-
+
+
 int irdp_read_raw(struct thread *r)
 {
   struct interface *ifp;
@@ -230,12 +232,12 @@ int irdp_read_raw(struct thread *r)
   struct irdp_interface *irdp;
   char buf[IRDP_RX_BUF];
   int ret, ifindex = 0;
-  
+
   int irdp_sock = THREAD_FD (r);
   t_irdp_raw = thread_add_read (zebrad.master, irdp_read_raw, NULL, irdp_sock);
-  
+
   ret = irdp_recvmsg (irdp_sock, (u_char *) buf, IRDP_RX_BUF,  &ifindex);
- 
+
   if (ret < 0) zlog_warn ("IRDP: RX Error length = %d", ret);
 
   ifp = if_lookup_by_index(ifindex);
@@ -249,7 +251,7 @@ int irdp_read_raw(struct thread *r)
 
   if(! (irdp->flags & IF_ACTIVE)) {
 
-    if(irdp->flags & IF_DEBUG_MISC) 
+    if(irdp->flags & IF_DEBUG_MISC)
       zlog_debug("IRDP: RX ICMP for disabled interface %s\n", ifp->name);
     return 0;
   }
@@ -264,13 +266,14 @@ int irdp_read_raw(struct thread *r)
 
   return ret;
 }
-
-void 
-send_packet(struct interface *ifp, 
-	    struct stream *s,
-	    u_int32_t dst,
-	    struct prefix *p,
-	    u_int32_t ttl)
+
+
+void
+send_packet(struct interface *ifp,
+            struct stream *s,
+            u_int32_t dst,
+            struct prefix *p,
+            u_int32_t ttl)
 {
   static struct sockaddr_in sockdst = {AF_INET};
   struct ip *ip;
@@ -283,15 +286,15 @@ send_packet(struct interface *ifp,
   struct in_pktinfo *pktinfo;
   u_long src;
   int on;
- 
+
   if (!(ifp->flags & IFF_UP))
     return;
 
-  if (!p) 
+  if (!p)
     src = ntohl(p->u.prefix4.s_addr);
-  else 
+  else
     src = 0; /* Is filled in */
-  
+
   ip = (struct ip *) buf;
   ip->ip_hl = sizeof(struct ip) >> 2;
   ip->ip_v = IPVERSION;
@@ -312,22 +315,22 @@ send_packet(struct interface *ifp,
 
   on = 1;
   if (setsockopt(irdp_sock, IPPROTO_IP, IP_HDRINCL,
-		 (char *) &on, sizeof(on)) < 0)
+                 (char *) &on, sizeof(on)) < 0)
     zlog_warn("sendto %s", safe_strerror (errno));
 
 
   if(dst == INADDR_BROADCAST ) {
     on = 1;
     if (setsockopt(irdp_sock, SOL_SOCKET, SO_BROADCAST,
-		   (char *) &on, sizeof(on)) < 0)
+                   (char *) &on, sizeof(on)) < 0)
       zlog_warn("sendto %s", safe_strerror (errno));
   }
 
   if(dst !=  INADDR_BROADCAST) {
-      on = 0; 
-      if( setsockopt(irdp_sock,IPPROTO_IP, IP_MULTICAST_LOOP, 
-		     (char *)&on,sizeof(on)) < 0)
-	zlog_warn("sendto %s", safe_strerror (errno));
+      on = 0;
+      if( setsockopt(irdp_sock,IPPROTO_IP, IP_MULTICAST_LOOP,
+                     (char *)&on,sizeof(on)) < 0)
+        zlog_warn("sendto %s", safe_strerror (errno));
   }
 
   memset(&sockdst,0,sizeof(sockdst));
@@ -342,9 +345,9 @@ send_packet(struct interface *ifp,
   pktinfo->ipi_ifindex = ifp->ifindex;
   pktinfo->ipi_spec_dst.s_addr = src;
   pktinfo->ipi_addr.s_addr = src;
- 
+
   iovector.iov_base = (void *) buf;
-  iovector.iov_len = ip->ip_len; 
+  iovector.iov_len = ip->ip_len;
   msg = (struct msghdr *) msgbuf;
   msg->msg_name = &sockdst;
   msg->msg_namelen = sizeof(sockdst);
@@ -352,9 +355,9 @@ send_packet(struct interface *ifp,
   msg->msg_iovlen = 1;
   msg->msg_control = cmsg;
   msg->msg_controllen = cmsg->cmsg_len;
- 
+
   sockopt_iphdrincl_swab_htosys (ip);
-  
+
   if (sendmsg(irdp_sock, msg, 0) < 0) {
     zlog_warn("sendto %s", safe_strerror (errno));
   }

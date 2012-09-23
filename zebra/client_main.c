@@ -19,7 +19,7 @@
  * You should have received a copy of the GNU General Public License
  * along with GNU Zebra; see the file COPYING.  If not, write to the Free
  * Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
- * 02111-1307, USA.  
+ * 02111-1307, USA.
  */
 
 #include <zebra.h>
@@ -43,7 +43,7 @@ int sock;
 /* IPv4 route add and delete test. */
 void
 zebra_test_ipv4 (int command, int type, char *prefix, char *gateway,
-		 u_char distance)
+                 u_char distance)
 {
   struct zapi_ipv4 api;
   struct prefix_ipv4 p;
@@ -67,7 +67,7 @@ zebra_test_ipv4 (int command, int type, char *prefix, char *gateway,
       SET_FLAG (api.message, ZAPI_MESSAGE_DISTANCE);
       api.distance = distance;
     }
-  
+
 
   switch (command)
     {
@@ -106,11 +106,11 @@ usage_exit ()
   exit (1);
 }
 
-struct zebra_info 
+struct zebra_info
 {
   char *str;
   int type;
-} zebra_type[] = 
+} zebra_type[] =
 {
   { "static", ZEBRA_ROUTE_STATIC },
   { "rip",    ZEBRA_ROUTE_RIP },
@@ -139,51 +139,51 @@ zebra_sim (FILE *fp)
       distance = 0;
 
       if (*buf == '#')
-	continue;
+        continue;
 
       type = ZEBRA_ROUTE_STATIC;
 
       ret = sscanf (buf, "%s %s %s %s %s\n", command, str, prefix, gateway,
-		    distance_str);
+                    distance_str);
 
       if (ret == 5)
-	{
-	  distance = atoi (distance_str);
-	}
+        {
+          distance = atoi (distance_str);
+        }
       else
-	{
-	  ret = sscanf (buf, "%s %s %s %s\n", command, str, prefix, gateway);
+        {
+          ret = sscanf (buf, "%s %s %s %s\n", command, str, prefix, gateway);
 
-	  if (ret != 4)
-	    continue;
-	}
+          if (ret != 4)
+            continue;
+        }
 
       for (i = 0; i < 10; i++)
-	{
-	  if (!zebra_type[i].str)
-	    break;
-	  if (strcmp (zebra_type[i].str, str) == 0)
-	    {
-	      type = zebra_type[i].type;
-	      break;
-	    }
-	}
-      
+        {
+          if (!zebra_type[i].str)
+            break;
+          if (strcmp (zebra_type[i].str, str) == 0)
+            {
+              type = zebra_type[i].type;
+              break;
+            }
+        }
+
       if (strcmp (command, "add") == 0)
-	{
-	  zebra_test_ipv4 (ZEBRA_IPV4_ROUTE_ADD, type, prefix, gateway,
-			   distance);
-	  printf ("%s", buf);
-	  continue;
-	}
+        {
+          zebra_test_ipv4 (ZEBRA_IPV4_ROUTE_ADD, type, prefix, gateway,
+                           distance);
+          printf ("%s", buf);
+          continue;
+        }
 
       if (strcmp (command, "del") == 0)
-	{
-	  zebra_test_ipv4 (ZEBRA_IPV4_ROUTE_DELETE, type, prefix, gateway,
-			   distance);
-	  printf ("%s", buf);
-	  continue;
-	}
+        {
+          zebra_test_ipv4 (ZEBRA_IPV4_ROUTE_DELETE, type, prefix, gateway,
+                           distance);
+          printf ("%s", buf);
+          continue;
+        }
     }
 }
 

@@ -95,9 +95,9 @@ irdp_get_prefix(struct interface *ifp)
 /* Join to the add/leave multicast group. */
 static int
 if_group (struct interface *ifp,
-	  int sock,
-	  u_int32_t group,
-	  int add_leave)
+          int sock,
+          u_int32_t group,
+          int add_leave)
 {
   struct ip_mreq m;
   struct prefix *p;
@@ -110,18 +110,18 @@ if_group (struct interface *ifp,
 
   if(!p) {
         zlog_warn ("IRDP: can't get address for %s", ifp->name);
-	return 1;
+        return 1;
   }
 
   m.imr_interface = p->u.prefix4;
 
   ret = setsockopt (sock, IPPROTO_IP, add_leave,
-		    (char *) &m, sizeof (struct ip_mreq));
+                    (char *) &m, sizeof (struct ip_mreq));
   if (ret < 0)
     zlog_warn ("IRDP: %s can't setsockopt %s: %s",
-	       add_leave == IP_ADD_MEMBERSHIP? "join group":"leave group",
-	       inet_2a(group, b1),
-	       safe_strerror (errno));
+               add_leave == IP_ADD_MEMBERSHIP? "join group":"leave group",
+               inet_2a(group, b1),
+               safe_strerror (errno));
 
   return ret;
 }
@@ -141,8 +141,8 @@ if_add_group (struct interface *ifp)
 
   if(irdp->flags & IF_DEBUG_MISC )
     zlog_debug("IRDP: Adding group %s for %s",
-	       inet_2a(htonl(INADDR_ALLRTRS_GROUP), b1),
-	       ifp->name);
+               inet_2a(htonl(INADDR_ALLRTRS_GROUP), b1),
+               ifp->name);
   return 0;
 }
 
@@ -160,8 +160,8 @@ if_drop_group (struct interface *ifp)
 
   if(irdp->flags & IF_DEBUG_MISC)
     zlog_debug("IRDP: Leaving group %s for %s",
-	       inet_2a(htonl(INADDR_ALLRTRS_GROUP), b1),
-	       ifp->name);
+               inet_2a(htonl(INADDR_ALLRTRS_GROUP), b1),
+               ifp->name);
   return 0;
 }
 
@@ -204,7 +204,7 @@ irdp_if_start(struct interface *ifp, int multicast, int set_defaults)
   }
   if ((irdp_sock < 0) && ((irdp_sock = irdp_sock_init()) < 0)) {
     zlog_warn("IRDP: Cannot activate interface %s (cannot create "
-	      "IRDP socket)", ifp->name);
+              "IRDP socket)", ifp->name);
     return;
   }
   irdp->flags |= IF_ACTIVE;
@@ -254,18 +254,18 @@ irdp_if_start(struct interface *ifp, int multicast, int set_defaults)
 
   if(irdp->irdp_sent < MAX_INITIAL_ADVERTISEMENTS &&
      timer > MAX_INITIAL_ADVERT_INTERVAL )
-	  timer= MAX_INITIAL_ADVERT_INTERVAL;
+          timer= MAX_INITIAL_ADVERT_INTERVAL;
 
 
   if(irdp->flags & IF_DEBUG_MISC)
     zlog_debug("IRDP: Init timer for %s set to %u",
-	       ifp->name,
-	       timer);
+               ifp->name,
+               timer);
 
   irdp->t_advertise = thread_add_timer(zebrad.master,
-				       irdp_send_thread,
-				       ifp,
-				       timer);
+                                       irdp_send_thread,
+                                       ifp,
+                                       timer);
 }
 
 static void
@@ -356,7 +356,7 @@ void irdp_config_write (struct vty *vty, struct interface *ifp)
       vty_out (vty, " ip irdp multicast%s",  VTY_NEWLINE);
 
     vty_out (vty, " ip irdp preference %ld%s",
-	     irdp->Preference, VTY_NEWLINE);
+             irdp->Preference, VTY_NEWLINE);
 
     for (ALL_LIST_ELEMENTS_RO (irdp->AdvPrefList, node, adv))
       vty_out (vty, " ip irdp address %s preference %d%s",
@@ -365,13 +365,13 @@ void irdp_config_write (struct vty *vty, struct interface *ifp)
                     VTY_NEWLINE);
 
     vty_out (vty, " ip irdp holdtime %d%s",
-	     irdp->Lifetime, VTY_NEWLINE);
+             irdp->Lifetime, VTY_NEWLINE);
 
     vty_out (vty, " ip irdp minadvertinterval %ld%s",
-	     irdp->MinAdvertInterval, VTY_NEWLINE);
+             irdp->MinAdvertInterval, VTY_NEWLINE);
 
     vty_out (vty, " ip irdp maxadvertinterval %ld%s",
-	     irdp->MaxAdvertInterval, VTY_NEWLINE);
+             irdp->MaxAdvertInterval, VTY_NEWLINE);
 
   }
 }
@@ -387,7 +387,7 @@ DEFUN (ip_irdp_multicast,
 
   ifp = (struct interface *) vty->index;
   if(!ifp) {
-	  return CMD_WARNING;
+          return CMD_WARNING;
   }
 
   irdp_if_start(ifp, TRUE, TRUE);
@@ -404,7 +404,7 @@ DEFUN (ip_irdp_broadcast,
 
   ifp = (struct interface *) vty->index;
   if(!ifp) {
-	  return CMD_WARNING;
+          return CMD_WARNING;
   }
 
   irdp_if_start(ifp, FALSE, TRUE);
@@ -422,7 +422,7 @@ DEFUN (no_ip_irdp,
 
   ifp = (struct interface *) vty->index;
   if(!ifp) {
-	  return CMD_WARNING;
+          return CMD_WARNING;
   }
 
   irdp_if_stop(ifp);
@@ -439,7 +439,7 @@ DEFUN (ip_irdp_shutdown,
 
   ifp = (struct interface *) vty->index;
   if(!ifp) {
-	  return CMD_WARNING;
+          return CMD_WARNING;
   }
 
   irdp_if_shutdown(ifp);
@@ -457,7 +457,7 @@ DEFUN (no_ip_irdp_shutdown,
 
   ifp = (struct interface *) vty->index;
   if(!ifp) {
-	  return CMD_WARNING;
+          return CMD_WARNING;
   }
 
   irdp_if_no_shutdown(ifp);
@@ -477,7 +477,7 @@ DEFUN (ip_irdp_holdtime,
   struct irdp_interface *irdp;
   ifp = (struct interface *) vty->index;
   if(!ifp) {
-	  return CMD_WARNING;
+          return CMD_WARNING;
   }
 
   zi=ifp->info;
@@ -500,7 +500,7 @@ DEFUN (ip_irdp_minadvertinterval,
   struct irdp_interface *irdp;
   ifp = (struct interface *) vty->index;
   if(!ifp) {
-	  return CMD_WARNING;
+          return CMD_WARNING;
   }
 
   zi=ifp->info;
@@ -513,10 +513,10 @@ DEFUN (ip_irdp_minadvertinterval,
   }
 
   vty_out (vty, "ICMP warning maxadvertinterval is greater or equal than minadvertinterval%s",
-	     VTY_NEWLINE);
+             VTY_NEWLINE);
 
   vty_out (vty, "Please correct!%s",
-	     VTY_NEWLINE);
+             VTY_NEWLINE);
   return CMD_WARNING;
 }
 
@@ -533,7 +533,7 @@ DEFUN (ip_irdp_maxadvertinterval,
   struct irdp_interface *irdp;
   ifp = (struct interface *) vty->index;
   if(!ifp) {
-	  return CMD_WARNING;
+          return CMD_WARNING;
   }
 
   zi=ifp->info;
@@ -547,10 +547,10 @@ DEFUN (ip_irdp_maxadvertinterval,
   }
 
   vty_out (vty, "ICMP warning maxadvertinterval is greater or equal than minadvertinterval%s",
-	     VTY_NEWLINE);
+             VTY_NEWLINE);
 
   vty_out (vty, "Please correct!%s",
-	     VTY_NEWLINE);
+             VTY_NEWLINE);
   return CMD_WARNING;
 }
 
@@ -572,7 +572,7 @@ DEFUN (ip_irdp_preference,
   struct irdp_interface *irdp;
   ifp = (struct interface *) vty->index;
   if(!ifp) {
-	  return CMD_WARNING;
+          return CMD_WARNING;
   }
 
   zi=ifp->info;
@@ -602,7 +602,7 @@ DEFUN (ip_irdp_address_preference,
 
   ifp = (struct interface *) vty->index;
   if(!ifp) {
-	  return CMD_WARNING;
+          return CMD_WARNING;
   }
 
   zi=ifp->info;
@@ -646,7 +646,7 @@ DEFUN (no_ip_irdp_address_preference,
 
   ifp = (struct interface *) vty->index;
   if(!ifp) {
-	  return CMD_WARNING;
+          return CMD_WARNING;
   }
 
   zi=ifp->info;
@@ -679,7 +679,7 @@ DEFUN (ip_irdp_debug_messages,
   struct irdp_interface *irdp;
   ifp = (struct interface *) vty->index;
   if(!ifp) {
-	  return CMD_WARNING;
+          return CMD_WARNING;
   }
 
   zi=ifp->info;
@@ -701,7 +701,7 @@ DEFUN (ip_irdp_debug_misc,
   struct irdp_interface *irdp;
   ifp = (struct interface *) vty->index;
   if(!ifp) {
-	  return CMD_WARNING;
+          return CMD_WARNING;
   }
 
   zi=ifp->info;
@@ -723,7 +723,7 @@ DEFUN (ip_irdp_debug_packet,
   struct irdp_interface *irdp;
   ifp = (struct interface *) vty->index;
   if(!ifp) {
-	  return CMD_WARNING;
+          return CMD_WARNING;
   }
 
   zi=ifp->info;
@@ -746,7 +746,7 @@ DEFUN (ip_irdp_debug_disable,
   struct irdp_interface *irdp;
   ifp = (struct interface *) vty->index;
   if(!ifp) {
-	  return CMD_WARNING;
+          return CMD_WARNING;
   }
 
   zi=ifp->info;

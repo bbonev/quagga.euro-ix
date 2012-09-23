@@ -76,20 +76,20 @@ proc_route_read (void)
       u_char zebra_flags = 0;
 
       n = sscanf (buf, "%s %s %s %x %d %d %d %s %d %d %d",
-		  iface, dest, gate, &flags, &refcnt, &use, &metric,
-		  mask, &mtu, &window, &rtt);
+                  iface, dest, gate, &flags, &refcnt, &use, &metric,
+                  mask, &mtu, &window, &rtt);
       if (n != 11)
-	{
-	  zlog_warn ("can't read all of routing information\n");
-	  continue;
-	}
+        {
+          zlog_warn ("can't read all of routing information\n");
+          continue;
+        }
       if (! (flags & RTF_UP))
-	continue;
+        continue;
       if (! (flags & RTF_GATEWAY))
-	continue;
+        continue;
 
       if (flags & RTF_DYNAMIC)
-	zebra_flags |= ZEBRA_FLAG_SELFROUTE;
+        zebra_flags |= ZEBRA_FLAG_SELFROUTE;
 
       p.family = AF_INET;
       sscanf (dest, "%lX", (unsigned long *)&p.prefix);
@@ -116,7 +116,7 @@ proc_ipv6_route_read ()
   if (fp == NULL)
     {
       zlog_warn ("Can't open %s : %s", _PATH_PROCNET_ROUTE6,
-		safe_strerror (errno));
+                safe_strerror (errno));
       return -1;
     }
 
@@ -135,22 +135,22 @@ proc_ipv6_route_read ()
       /* Linux 2.1.x write this information at net/ipv6/route.c
          rt6_info_node () */
       n = sscanf (buf, "%32s %02x %32s %02x %32s %08x %08x %08x %08x %s",
-		  dest, &dest_plen, src, &src_plen, gate,
-		  &metric, &use, &refcnt, &flags, iface);
+                  dest, &dest_plen, src, &src_plen, gate,
+                  &metric, &use, &refcnt, &flags, iface);
 
       if (n != 10)
-	{
-	  /* zlog_warn ("can't read all of routing information %d\n%s\n", n, buf); */
-	  continue;
-	}
+        {
+          /* zlog_warn ("can't read all of routing information %d\n%s\n", n, buf); */
+          continue;
+        }
 
       if (! (flags & RTF_UP))
-	continue;
+        continue;
       if (! (flags & RTF_GATEWAY))
-	continue;
+        continue;
 
       if (flags & RTF_DYNAMIC)
-	zebra_flags |= ZEBRA_FLAG_SELFROUTE;
+        zebra_flags |= ZEBRA_FLAG_SELFROUTE;
 
       p.family = AF_INET6;
       str2in6_addr (dest, &p.prefix);
@@ -158,7 +158,7 @@ proc_ipv6_route_read ()
       p.prefixlen = dest_plen;
 
       rib_add_ipv6 (ZEBRA_ROUTE_KERNEL, zebra_flags, &p, &gateway, 0, 0,
-		    metric, 0);
+                    metric, 0);
     }
 
   fclose (fp);

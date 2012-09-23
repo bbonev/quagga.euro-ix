@@ -17,7 +17,7 @@
  * You should have received a copy of the GNU General Public License
  * along with GNU Zebra; see the file COPYING.  If not, write to the Free
  * Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
- * 02111-1307, USA.  
+ * 02111-1307, USA.
  */
 
 /* This is compiled and linked if found to be required at "configure" time.   */
@@ -58,16 +58,16 @@ interface_list_ioctl (int af)
 
   if (zserv_privs.change(ZPRIVS_RAISE))
     zlog (NULL, LOG_ERR, "Can't raise privileges");
-  
+
   sock = socket (af, SOCK_DGRAM, 0);
   if (sock < 0)
     {
       zlog_warn ("Can't make %s socket stream: %s",
                  (af == AF_INET ? "AF_INET" : "AF_INET6"), safe_strerror (errno));
-                 
+
       if (zserv_privs.change(ZPRIVS_LOWER))
         zlog (NULL, LOG_ERR, "Can't lower privileges");
-        
+
       return -1;
     }
 
@@ -76,10 +76,10 @@ calculate_lifc_len:     /* must hold privileges to enter here */
   lifn.lifn_flags = LIFC_NOXMIT; /* we want NOXMIT interfaces too */
   ret = ioctl (sock, SIOCGLIFNUM, &lifn);
   save_errno = errno;
-  
+
   if (zserv_privs.change(ZPRIVS_LOWER))
     zlog (NULL, LOG_ERR, "Can't lower privileges");
- 
+
   if (ret < 0)
     {
       zlog_warn ("interface_list_ioctl: SIOCGLIFNUM failed %s",
@@ -116,7 +116,7 @@ calculate_lifc_len:     /* must hold privileges to enter here */
 
   if (zserv_privs.change(ZPRIVS_RAISE))
     zlog (NULL, LOG_ERR, "Can't raise privileges");
-    
+
   ret = ioctl (sock, SIOCGLIFCONF, &lifconf);
 
   if (ret < 0)
@@ -134,7 +134,7 @@ calculate_lifc_len:     /* must hold privileges to enter here */
 
   if (zserv_privs.change(ZPRIVS_LOWER))
     zlog (NULL, LOG_ERR, "Can't lower privileges");
-    
+
   /* Allocate interface. */
   lifreq = lifconf.lifc_req;
 
@@ -150,7 +150,7 @@ calculate_lifc_len:     /* must hold privileges to enter here */
        */
       unsigned int normallen = 0;
       uint64_t lifflags;
-      
+
       /* We should exclude ~IFF_UP interfaces, as we'll find out about them
        * coming up later through RTM_NEWADDR message on the route socket.
        */
@@ -161,13 +161,13 @@ calculate_lifc_len:     /* must hold privileges to enter here */
           lifreq++;
           continue;
         }
-      
+
       /* Find the normalised name */
       while ( (normallen < sizeof(lifreq->lifr_name))
              && ( *(lifreq->lifr_name + normallen) != '\0')
              && ( *(lifreq->lifr_name + normallen) != ':') )
         normallen++;
-      
+
       ifp = if_get_by_name_len(lifreq->lifr_name, normallen);
 
       if (lifreq->lifr_addr.ss_family == AF_INET)
@@ -182,11 +182,11 @@ calculate_lifc_len:     /* must hold privileges to enter here */
           continue;
 #endif /* HAVE_IPV6 */
         }
-        
+
       if_add_update (ifp);
 
       interface_info_ioctl (ifp);
-      
+
       /* If a logical interface pass the full name so it can be
        * as a label on the address
        */
@@ -195,10 +195,10 @@ calculate_lifc_len:     /* must hold privileges to enter here */
                      lifreq->lifr_name);
       else
         if_get_addr (ifp, (struct sockaddr *) &lifreq->lifr_addr, NULL);
-        
+
       /* Poke the interface flags. Lets IFF_UP mangling kick in */
       if_flags_update (ifp, ifp->flags);
-      
+
       lifreq++;
     }
 
@@ -287,7 +287,7 @@ if_get_addr (struct interface *ifp, struct sockaddr *addr, const char *label)
   if (af == AF_INET)
     {
       ret = if_ioctl (SIOCGLIFNETMASK, (caddr_t) & lifreq);
-      
+
       if (ret < 0)
         {
           if (errno != EADDRNOTAVAIL)
@@ -302,7 +302,7 @@ if_get_addr (struct interface *ifp, struct sockaddr *addr, const char *label)
 
       prefixlen = ip_masklen (SIN (&mask)->sin_addr);
       if (!dest_pnt && (if_ioctl (SIOCGLIFBRDADDR, (caddr_t) & lifreq) >= 0))
-	{
+        {
           memcpy (&dest, &lifreq.lifr_broadaddr, sizeof (struct sockaddr_in));
           dest_pnt = (char *) &SIN (&dest)->sin_addr;
         }
@@ -311,17 +311,17 @@ if_get_addr (struct interface *ifp, struct sockaddr *addr, const char *label)
   else if (af == AF_INET6)
     {
       if (if_ioctl_ipv6 (SIOCGLIFSUBNET, (caddr_t) & lifreq) < 0)
-	{
-	  if (ifp->flags & IFF_POINTOPOINT)
-	    prefixlen = IPV6_MAX_BITLEN;
-	  else
-	    zlog_warn ("SIOCGLIFSUBNET (%s) fail: %s",
-		       ifp->name, safe_strerror (errno));
-	}
+        {
+          if (ifp->flags & IFF_POINTOPOINT)
+            prefixlen = IPV6_MAX_BITLEN;
+          else
+            zlog_warn ("SIOCGLIFSUBNET (%s) fail: %s",
+                       ifp->name, safe_strerror (errno));
+        }
       else
-	{
-	  prefixlen = lifreq.lifr_addrlen;
-	}
+        {
+          prefixlen = lifreq.lifr_addrlen;
+        }
     }
 #endif /* HAVE_IPV6 */
 

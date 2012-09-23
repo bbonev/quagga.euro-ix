@@ -16,7 +16,7 @@
  * You should have received a copy of the GNU General Public License
  * along with GNU Zebra; see the file COPYING.  If not, write to the Free
  * Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
- * 02111-1307, USA.  
+ * 02111-1307, USA.
  */
 
 /* This is compiled and linked if found to be required at "configure" time.
@@ -79,61 +79,61 @@ interface_name_cut (char *buf, char **name)
 static int
 ifstat_dev_fields (int version, char *buf, struct interface *ifp)
 {
-  switch (version) 
+  switch (version)
     {
     case 3:
       sscanf(buf,
-	     "%ld %ld %ld %ld %ld %ld %ld %ld %ld %ld %ld %ld %ld %ld %ld %ld",
-	     &ifp->stats.rx_bytes,
-	     &ifp->stats.rx_packets,
-	     &ifp->stats.rx_errors,
-	     &ifp->stats.rx_dropped,
-	     &ifp->stats.rx_fifo_errors,
-	     &ifp->stats.rx_frame_errors,
-	     &ifp->stats.rx_compressed,
-	     &ifp->stats.rx_multicast,
+             "%ld %ld %ld %ld %ld %ld %ld %ld %ld %ld %ld %ld %ld %ld %ld %ld",
+             &ifp->stats.rx_bytes,
+             &ifp->stats.rx_packets,
+             &ifp->stats.rx_errors,
+             &ifp->stats.rx_dropped,
+             &ifp->stats.rx_fifo_errors,
+             &ifp->stats.rx_frame_errors,
+             &ifp->stats.rx_compressed,
+             &ifp->stats.rx_multicast,
 
-	     &ifp->stats.tx_bytes,
-	     &ifp->stats.tx_packets,
-	     &ifp->stats.tx_errors,
-	     &ifp->stats.tx_dropped,
-	     &ifp->stats.tx_fifo_errors,
-	     &ifp->stats.collisions,
-	     &ifp->stats.tx_carrier_errors,
-	     &ifp->stats.tx_compressed);
+             &ifp->stats.tx_bytes,
+             &ifp->stats.tx_packets,
+             &ifp->stats.tx_errors,
+             &ifp->stats.tx_dropped,
+             &ifp->stats.tx_fifo_errors,
+             &ifp->stats.collisions,
+             &ifp->stats.tx_carrier_errors,
+             &ifp->stats.tx_compressed);
       break;
     case 2:
       sscanf(buf, "%ld %ld %ld %ld %ld %ld %ld %ld %ld %ld %ld %ld %ld",
-	     &ifp->stats.rx_bytes,
-	     &ifp->stats.rx_packets,
-	     &ifp->stats.rx_errors,
-	     &ifp->stats.rx_dropped,
-	     &ifp->stats.rx_fifo_errors,
-	     &ifp->stats.rx_frame_errors,
+             &ifp->stats.rx_bytes,
+             &ifp->stats.rx_packets,
+             &ifp->stats.rx_errors,
+             &ifp->stats.rx_dropped,
+             &ifp->stats.rx_fifo_errors,
+             &ifp->stats.rx_frame_errors,
 
-	     &ifp->stats.tx_bytes,
-	     &ifp->stats.tx_packets,
-	     &ifp->stats.tx_errors,
-	     &ifp->stats.tx_dropped,
-	     &ifp->stats.tx_fifo_errors,
-	     &ifp->stats.collisions,
-	     &ifp->stats.tx_carrier_errors);
+             &ifp->stats.tx_bytes,
+             &ifp->stats.tx_packets,
+             &ifp->stats.tx_errors,
+             &ifp->stats.tx_dropped,
+             &ifp->stats.tx_fifo_errors,
+             &ifp->stats.collisions,
+             &ifp->stats.tx_carrier_errors);
       ifp->stats.rx_multicast = 0;
       break;
     case 1:
       sscanf(buf, "%ld %ld %ld %ld %ld %ld %ld %ld %ld %ld %ld",
-	     &ifp->stats.rx_packets,
-	     &ifp->stats.rx_errors,
-	     &ifp->stats.rx_dropped,
-	     &ifp->stats.rx_fifo_errors,
-	     &ifp->stats.rx_frame_errors,
+             &ifp->stats.rx_packets,
+             &ifp->stats.rx_errors,
+             &ifp->stats.rx_dropped,
+             &ifp->stats.rx_fifo_errors,
+             &ifp->stats.rx_frame_errors,
 
-	     &ifp->stats.tx_packets,
-	     &ifp->stats.tx_errors,
-	     &ifp->stats.tx_dropped,
-	     &ifp->stats.tx_fifo_errors,
-	     &ifp->stats.collisions,
-	     &ifp->stats.tx_carrier_errors);
+             &ifp->stats.tx_packets,
+             &ifp->stats.tx_errors,
+             &ifp->stats.tx_dropped,
+             &ifp->stats.tx_fifo_errors,
+             &ifp->stats.collisions,
+             &ifp->stats.tx_carrier_errors);
       ifp->stats.rx_bytes = 0;
       ifp->stats.tx_bytes = 0;
       ifp->stats.rx_multicast = 0;
@@ -158,7 +158,7 @@ ifstat_update_proc (void)       /* declared in interface.h      */
   if (fp == NULL)
     {
       zlog_warn ("Can't open proc file %s: %s",
-		 _PATH_PROC_NET_DEV, safe_strerror (errno));
+                 _PATH_PROC_NET_DEV, safe_strerror (errno));
       return;
     }
 
@@ -199,7 +199,7 @@ interface_list_proc ()          /* declared in interface.h      */
   if (fp == NULL)
     {
       zlog_warn ("Can't open proc file %s: %s",
-		 _PATH_PROC_NET_DEV, safe_strerror (errno));
+                 _PATH_PROC_NET_DEV, safe_strerror (errno));
       return -1;
     }
 
@@ -218,7 +218,8 @@ interface_list_proc ()          /* declared in interface.h      */
   fclose(fp);
   return 0;
 }
-
+
+
 #if defined(HAVE_IPV6) && defined(HAVE_PROC_NET_IF_INET6)
 
 #ifndef _PATH_PROC_NET_IF_INET6
@@ -242,17 +243,17 @@ ifaddr_proc_ipv6 ()             /* declared in interface.h      */
   if (fp == NULL)
     {
       zlog_warn ("Can't open proc file %s: %s",
-		 _PATH_PROC_NET_IF_INET6, safe_strerror (errno));
+                 _PATH_PROC_NET_IF_INET6, safe_strerror (errno));
       return -1;
     }
-  
+
   /* Get interface's IPv6 address. */
   while (fgets (buf, PROCBUFSIZ, fp) != NULL)
     {
-      n = sscanf (buf, "%32s %02x %02x %02x %02x %20s", 
-		  addr, &ifindex, &plen, &scope, &status, ifname);
+      n = sscanf (buf, "%32s %02x %02x %02x %02x %20s",
+                  addr, &ifindex, &plen, &scope, &status, ifname);
       if (n != 6)
-	continue;
+        continue;
 
       ifp = if_get_by_name (ifname);
 

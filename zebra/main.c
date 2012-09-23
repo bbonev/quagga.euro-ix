@@ -123,29 +123,29 @@ usage (const char *progname, int status)
   else
     {
       printf ("Usage : %s [OPTION...]\n\n"\
-	      "Daemon which manages kernel routing table management and "\
-	      "redistribution between different routing protocols.\n\n"\
-	      "-b, --batch        Runs in batch mode\n"\
-	      "-d, --daemon       Runs in daemon mode\n"\
-	      "-f, --config_file  Set configuration file name\n"\
-	      "-i, --pid_file     Set process identifier file name\n"\
-	      "-z, --socket       Set path of zebra socket\n"\
-	      "-k, --keep_kernel  Don't delete old routes which installed by "\
-				  "zebra.\n"\
-	      "-C, --dryrun       Check configuration for validity and exit\n"\
-	      "-A, --vty_addr     Set vty's bind address\n"\
-	      "-P, --vty_port     Set vty's port number\n"\
-	      "-r, --retain       When program terminates, retain added route "\
-				  "by zebra.\n"\
-	      "-u, --user         User to run as\n"\
-	      "-g, --group	  Group to run as\n", progname);
+              "Daemon which manages kernel routing table management and "\
+              "redistribution between different routing protocols.\n\n"\
+              "-b, --batch        Runs in batch mode\n"\
+              "-d, --daemon       Runs in daemon mode\n"\
+              "-f, --config_file  Set configuration file name\n"\
+              "-i, --pid_file     Set process identifier file name\n"\
+              "-z, --socket       Set path of zebra socket\n"\
+              "-k, --keep_kernel  Don't delete old routes which installed by "\
+                                  "zebra.\n"\
+              "-C, --dryrun       Check configuration for validity and exit\n"\
+              "-A, --vty_addr     Set vty's bind address\n"\
+              "-P, --vty_port     Set vty's port number\n"\
+              "-r, --retain       When program terminates, retain added route "\
+                                  "by zebra.\n"\
+              "-u, --user         User to run as\n"\
+              "-g, --group        Group to run as\n", progname);
 #ifdef HAVE_NETLINK
       printf ("-s, --nl-bufsize   Set netlink receive buffer size\n");
 #endif /* HAVE_NETLINK */
       printf ("-v, --version      Print program version\n"\
-	      "-h, --help         Display this help and exit\n"\
-	      "\n"\
-	      "Report bugs to %s\n", ZEBRA_BUG_ADDRESS);
+              "-h, --help         Display this help and exit\n"\
+              "\n"\
+              "Report bugs to %s\n", ZEBRA_BUG_ADDRESS);
     }
 
   exit (status);
@@ -222,7 +222,7 @@ main (int argc, char **argv)
   host_init(argv[0]) ;
 
   zlog_default = openzlog (cmd_host_program_name(), ZLOG_ZEBRA,
-			   LOG_CONS|LOG_NDELAY|LOG_PID, LOG_DAEMON);
+                           LOG_CONS|LOG_NDELAY|LOG_PID, LOG_DAEMON);
 
   while (1)
     {
@@ -235,72 +235,72 @@ main (int argc, char **argv)
 #endif /* HAVE_NETLINK */
 
       if (opt == EOF)
-	break;
+        break;
 
       switch (opt)
-	{
-	case 0:
-	  break;
-	case 'b':
-	  batch_mode = 1;
-	case 'd':
-	  daemon_mode = 1;
-	  break;
-	case 'k':
-	  keep_kernel_mode = 1;
-	  break;
-	case 'C':
-	  dryrun = 1;
-	  break;
-	case 'f':
-	  config_file = optarg;
-	  break;
-	case 'A':
-	  vty_addr = optarg;
-	  break;
+        {
+        case 0:
+          break;
+        case 'b':
+          batch_mode = 1;
+        case 'd':
+          daemon_mode = 1;
+          break;
+        case 'k':
+          keep_kernel_mode = 1;
+          break;
+        case 'C':
+          dryrun = 1;
+          break;
+        case 'f':
+          config_file = optarg;
+          break;
+        case 'A':
+          vty_addr = optarg;
+          break;
         case 'i':
           pid_file = optarg;
           break;
-	case 'z':
-	  zserv_path = optarg;
-	  break;
-	case 'P':
-	  /* Deal with atoi() returning 0 on failure, and zebra not
-	     listening on zebra port... */
-	  if (strcmp(optarg, "0") == 0)
-	    {
-	      vty_port = 0;
-	      break;
-	    }
-	  vty_port = atoi (optarg);
-	  if (vty_port <= 0 || vty_port > 0xffff)
-	    vty_port = ZEBRA_VTY_PORT;
-	  break;
-	case 'r':
-	  retain_mode = 1;
-	  break;
+        case 'z':
+          zserv_path = optarg;
+          break;
+        case 'P':
+          /* Deal with atoi() returning 0 on failure, and zebra not
+             listening on zebra port... */
+          if (strcmp(optarg, "0") == 0)
+            {
+              vty_port = 0;
+              break;
+            }
+          vty_port = atoi (optarg);
+          if (vty_port <= 0 || vty_port > 0xffff)
+            vty_port = ZEBRA_VTY_PORT;
+          break;
+        case 'r':
+          retain_mode = 1;
+          break;
 #ifdef HAVE_NETLINK
-	case 's':
-	  nl_rcvbufsize = atoi (optarg);
-	  break;
+        case 's':
+          nl_rcvbufsize = atoi (optarg);
+          break;
 #endif /* HAVE_NETLINK */
-	case 'u':
-	  zserv_privs.user = optarg;
-	  break;
-	case 'g':
-	  zserv_privs.group = optarg;
-	  break;
-	case 'v':
-	  cmd_print_version (cmd_host_program_name());
-	  exit (0);
-	  break;
-	case 'h':
-	  usage (cmd_host_program_name(), 0);
-	  break;
-	default:
-	  usage (cmd_host_program_name(), 1);
-	  break;
-	}
+        case 'u':
+          zserv_privs.user = optarg;
+          break;
+        case 'g':
+          zserv_privs.group = optarg;
+          break;
+        case 'v':
+          cmd_print_version (cmd_host_program_name());
+          exit (0);
+          break;
+        case 'h':
+          usage (cmd_host_program_name(), 0);
+          break;
+        default:
+          usage (cmd_host_program_name(), 1);
+          break;
+        }
     }
 
   /* Make master thread emulator.       */

@@ -62,174 +62,174 @@
 
 /* device to read IP routing table from */
 #ifndef _PATH_GETMSG_ROUTE
-#define _PATH_GETMSG_ROUTE	"/dev/ip"
+#define _PATH_GETMSG_ROUTE      "/dev/ip"
 #endif /* _PATH_GETMSG_ROUTE */
 
-#define RT_BUFSIZ		8192
+#define RT_BUFSIZ               8192
 
 static void
 handle_route_entry (mib2_ipRouteEntry_t *routeEntry)
 {
-	struct prefix_ipv4	prefix;
- 	struct in_addr		tmpaddr, gateway;
-	u_char			zebra_flags = 0;
+        struct prefix_ipv4      prefix;
+        struct in_addr          tmpaddr, gateway;
+        u_char                  zebra_flags = 0;
 
-	if (routeEntry->ipRouteInfo.re_ire_type & IRE_CACHETABLE)
-		return;
+        if (routeEntry->ipRouteInfo.re_ire_type & IRE_CACHETABLE)
+                return;
 
-	if (routeEntry->ipRouteInfo.re_ire_type & IRE_HOST_REDIRECT)
-		zebra_flags |= ZEBRA_FLAG_SELFROUTE;
+        if (routeEntry->ipRouteInfo.re_ire_type & IRE_HOST_REDIRECT)
+                zebra_flags |= ZEBRA_FLAG_SELFROUTE;
 
-	prefix.family = AF_INET;
+        prefix.family = AF_INET;
 
-	tmpaddr.s_addr = routeEntry->ipRouteDest;
-	prefix.prefix = tmpaddr;
+        tmpaddr.s_addr = routeEntry->ipRouteDest;
+        prefix.prefix = tmpaddr;
 
-	tmpaddr.s_addr = routeEntry->ipRouteMask;
-	prefix.prefixlen = ip_masklen (tmpaddr);
+        tmpaddr.s_addr = routeEntry->ipRouteMask;
+        prefix.prefixlen = ip_masklen (tmpaddr);
 
-	gateway.s_addr = routeEntry->ipRouteNextHop;
+        gateway.s_addr = routeEntry->ipRouteNextHop;
 
-	rib_add_ipv4 (ZEBRA_ROUTE_KERNEL, zebra_flags, &prefix,
-		      &gateway, NULL, 0, 0, 0, 0, SAFI_UNICAST);
+        rib_add_ipv4 (ZEBRA_ROUTE_KERNEL, zebra_flags, &prefix,
+                      &gateway, NULL, 0, 0, 0, 0, SAFI_UNICAST);
 }
 
 void
 route_read (void)
 {
-	char 			storage[RT_BUFSIZ];
+        char                    storage[RT_BUFSIZ];
 
-	struct T_optmgmt_req	*TLIreq = (struct T_optmgmt_req *) storage;
-	struct T_optmgmt_ack	*TLIack = (struct T_optmgmt_ack *) storage;
-	struct T_error_ack	*TLIerr = (struct T_error_ack *) storage;
+        struct T_optmgmt_req    *TLIreq = (struct T_optmgmt_req *) storage;
+        struct T_optmgmt_ack    *TLIack = (struct T_optmgmt_ack *) storage;
+        struct T_error_ack      *TLIerr = (struct T_error_ack *) storage;
 
-	struct opthdr		*MIB2hdr;
+        struct opthdr           *MIB2hdr;
 
-	mib2_ipRouteEntry_t	*routeEntry, *lastRouteEntry;
+        mib2_ipRouteEntry_t     *routeEntry, *lastRouteEntry;
 
-	struct strbuf		msgdata;
-	int			flags, dev, retval, process;
+        struct strbuf           msgdata;
+        int                     flags, dev, retval, process;
 
-	if ((dev = open (_PATH_GETMSG_ROUTE, O_RDWR)) == -1) {
-		zlog_warn ("can't open %s: %s", _PATH_GETMSG_ROUTE,
-			safe_strerror (errno));
-		return;
-	}
+        if ((dev = open (_PATH_GETMSG_ROUTE, O_RDWR)) == -1) {
+                zlog_warn ("can't open %s: %s", _PATH_GETMSG_ROUTE,
+                        safe_strerror (errno));
+                return;
+        }
 
-	TLIreq->PRIM_type = T_OPTMGMT_REQ;
-	TLIreq->OPT_offset = sizeof (struct T_optmgmt_req);
-	TLIreq->OPT_length = sizeof (struct opthdr);
-	TLIreq->MGMT_flags = T_CURRENT;
+        TLIreq->PRIM_type = T_OPTMGMT_REQ;
+        TLIreq->OPT_offset = sizeof (struct T_optmgmt_req);
+        TLIreq->OPT_length = sizeof (struct opthdr);
+        TLIreq->MGMT_flags = T_CURRENT;
 
-	MIB2hdr = (struct opthdr *) &TLIreq[1];
+        MIB2hdr = (struct opthdr *) &TLIreq[1];
 
-	MIB2hdr->level = MIB2_IP;
-	MIB2hdr->name = 0;
-	MIB2hdr->len = 0;
+        MIB2hdr->level = MIB2_IP;
+        MIB2hdr->name = 0;
+        MIB2hdr->len = 0;
 
-	msgdata.buf = storage;
-	msgdata.len = sizeof (struct T_optmgmt_req) + sizeof (struct opthdr);
+        msgdata.buf = storage;
+        msgdata.len = sizeof (struct T_optmgmt_req) + sizeof (struct opthdr);
 
-	flags = 0;
+        flags = 0;
 
-	if (putmsg (dev, &msgdata, NULL, flags) == -1) {
-		zlog_warn ("putmsg failed: %s", safe_strerror (errno));
-		goto exit;
-	}
+        if (putmsg (dev, &msgdata, NULL, flags) == -1) {
+                zlog_warn ("putmsg failed: %s", safe_strerror (errno));
+                goto exit;
+        }
 
-	MIB2hdr = (struct opthdr *) &TLIack[1];
-	msgdata.maxlen = sizeof (storage);
+        MIB2hdr = (struct opthdr *) &TLIack[1];
+        msgdata.maxlen = sizeof (storage);
 
-	while (1) {
-		flags = 0;
-		retval = getmsg (dev, &msgdata, NULL, &flags);
+        while (1) {
+                flags = 0;
+                retval = getmsg (dev, &msgdata, NULL, &flags);
 
-		if (retval == -1) {
-			zlog_warn ("getmsg(ctl) failed: %s", safe_strerror (errno));
-			goto exit;
-		}
+                if (retval == -1) {
+                        zlog_warn ("getmsg(ctl) failed: %s", safe_strerror (errno));
+                        goto exit;
+                }
 
-		/* This is normal loop termination */
-		if (retval == 0 &&
-			msgdata.len >= sizeof (struct T_optmgmt_ack) &&
-			TLIack->PRIM_type == T_OPTMGMT_ACK &&
-			TLIack->MGMT_flags == T_SUCCESS &&
-			MIB2hdr->len == 0)
-			break;
+                /* This is normal loop termination */
+                if (retval == 0 &&
+                        msgdata.len >= sizeof (struct T_optmgmt_ack) &&
+                        TLIack->PRIM_type == T_OPTMGMT_ACK &&
+                        TLIack->MGMT_flags == T_SUCCESS &&
+                        MIB2hdr->len == 0)
+                        break;
 
-		if (msgdata.len >= sizeof (struct T_error_ack) &&
-			TLIerr->PRIM_type == T_ERROR_ACK) {
-			zlog_warn ("getmsg(ctl) returned T_ERROR_ACK: %s",
-				safe_strerror ((TLIerr->TLI_error == TSYSERR)
-				? TLIerr->UNIX_error : EPROTO));
-			break;
-		}
+                if (msgdata.len >= sizeof (struct T_error_ack) &&
+                        TLIerr->PRIM_type == T_ERROR_ACK) {
+                        zlog_warn ("getmsg(ctl) returned T_ERROR_ACK: %s",
+                                safe_strerror ((TLIerr->TLI_error == TSYSERR)
+                                ? TLIerr->UNIX_error : EPROTO));
+                        break;
+                }
 
-		/* should dump more debugging info to the log statement,
-		   like what GateD does in this instance, but not
-		   critical yet. */
-		if (retval != MOREDATA ||
-			msgdata.len < sizeof (struct T_optmgmt_ack) ||
-			TLIack->PRIM_type != T_OPTMGMT_ACK ||
-			TLIack->MGMT_flags != T_SUCCESS) {
-			errno = ENOMSG;
-			zlog_warn ("getmsg(ctl) returned bizarreness");
-			break;
-		}
+                /* should dump more debugging info to the log statement,
+                   like what GateD does in this instance, but not
+                   critical yet. */
+                if (retval != MOREDATA ||
+                        msgdata.len < sizeof (struct T_optmgmt_ack) ||
+                        TLIack->PRIM_type != T_OPTMGMT_ACK ||
+                        TLIack->MGMT_flags != T_SUCCESS) {
+                        errno = ENOMSG;
+                        zlog_warn ("getmsg(ctl) returned bizarreness");
+                        break;
+                }
 
-		/* MIB2_IP_21 is the the pseudo-MIB2 ipRouteTable
-		   entry, see <inet/mib2.h>. "This isn't the MIB data
-		   you're looking for." */
-		process = (MIB2hdr->level == MIB2_IP &&
-			MIB2hdr->name == MIB2_IP_21) ? 1 : 0;
+                /* MIB2_IP_21 is the the pseudo-MIB2 ipRouteTable
+                   entry, see <inet/mib2.h>. "This isn't the MIB data
+                   you're looking for." */
+                process = (MIB2hdr->level == MIB2_IP &&
+                        MIB2hdr->name == MIB2_IP_21) ? 1 : 0;
 
-		/* getmsg writes the data buffer out completely, not
-		   to the closest smaller multiple. Unless reassembling
-		   data structures across buffer boundaries is your idea
-		   of a good time, set maxlen to the closest smaller
-		   multiple of the size of the datastructure you're
-		   retrieving. */
-		msgdata.maxlen = sizeof (storage) - (sizeof (storage)
-			% sizeof (mib2_ipRouteEntry_t));
+                /* getmsg writes the data buffer out completely, not
+                   to the closest smaller multiple. Unless reassembling
+                   data structures across buffer boundaries is your idea
+                   of a good time, set maxlen to the closest smaller
+                   multiple of the size of the datastructure you're
+                   retrieving. */
+                msgdata.maxlen = sizeof (storage) - (sizeof (storage)
+                        % sizeof (mib2_ipRouteEntry_t));
 
-		msgdata.len = 0;
-		flags = 0;
+                msgdata.len = 0;
+                flags = 0;
 
-		do {
-			retval = getmsg (dev, NULL, &msgdata, &flags);
+                do {
+                        retval = getmsg (dev, NULL, &msgdata, &flags);
 
-			if (retval == -1) {
-				zlog_warn ("getmsg(data) failed: %s",
-					safe_strerror (errno));
-				goto exit;
-			}
+                        if (retval == -1) {
+                                zlog_warn ("getmsg(data) failed: %s",
+                                        safe_strerror (errno));
+                                goto exit;
+                        }
 
-			if (!(retval == 0 || retval == MOREDATA)) {
-				zlog_warn ("getmsg(data) returned %d", retval);
-				goto exit;
-			}
+                        if (!(retval == 0 || retval == MOREDATA)) {
+                                zlog_warn ("getmsg(data) returned %d", retval);
+                                goto exit;
+                        }
 
-			if (process) {
-				if (msgdata.len %
-					sizeof (mib2_ipRouteEntry_t) != 0) {
-					zlog_warn ("getmsg(data) returned "
+                        if (process) {
+                                if (msgdata.len %
+                                        sizeof (mib2_ipRouteEntry_t) != 0) {
+                                        zlog_warn ("getmsg(data) returned "
 "msgdata.len = %d (%% sizeof (mib2_ipRouteEntry_t) != 0)", msgdata.len);
-					goto exit;
-				}
+                                        goto exit;
+                                }
 
-				routeEntry = (mib2_ipRouteEntry_t *)
-					msgdata.buf;
-				lastRouteEntry = (mib2_ipRouteEntry_t *)
-					(msgdata.buf + msgdata.len);
-				do {
-					handle_route_entry (routeEntry);
-				} while (++routeEntry < lastRouteEntry);
-			}
-		} while (retval == MOREDATA);
-	}
+                                routeEntry = (mib2_ipRouteEntry_t *)
+                                        msgdata.buf;
+                                lastRouteEntry = (mib2_ipRouteEntry_t *)
+                                        (msgdata.buf + msgdata.len);
+                                do {
+                                        handle_route_entry (routeEntry);
+                                } while (++routeEntry < lastRouteEntry);
+                        }
+                } while (retval == MOREDATA);
+        }
 
 exit:
-	close (dev);
+        close (dev);
 }
 
 #endif /* VTYSH_EXTRACT_PL */

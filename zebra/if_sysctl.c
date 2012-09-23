@@ -17,7 +17,7 @@
  * You should have received a copy of the GNU General Public License
  * along with GNU Zebra; see the file COPYING.  If not, write to the Free
  * Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
- * 02111-1307, USA.  
+ * 02111-1307, USA.
  */
 
 /* This is compiled and linked if found to be required at "configure" time.   */
@@ -56,17 +56,17 @@ ifstat_update_sysctl (void)
 
 #define MIBSIZ 6
   int mib[MIBSIZ] =
-  { 
+  {
     CTL_NET,
     PF_ROUTE,
     0,
     0, /*  AF_INET & AF_INET6 */
     NET_RT_IFLIST,
-    0 
+    0
   };
 
   /* Query buffer size. */
-  if (sysctl (mib, MIBSIZ, NULL, &bufsiz, NULL, 0) < 0) 
+  if (sysctl (mib, MIBSIZ, NULL, &bufsiz, NULL, 0) < 0)
     {
       zlog_warn ("sysctl() error by %s", safe_strerror (errno));
       return;
@@ -76,22 +76,22 @@ ifstat_update_sysctl (void)
   ref = buf = XMALLOC (MTYPE_TMP, bufsiz);
 
   /* Fetch interface informations into allocated buffer. */
-  if (sysctl (mib, MIBSIZ, buf, &bufsiz, NULL, 0) < 0) 
+  if (sysctl (mib, MIBSIZ, buf, &bufsiz, NULL, 0) < 0)
     {
       zlog (NULL, LOG_WARNING, "sysctl error by %s", safe_strerror (errno));
       return;
     }
 
   /* Parse both interfaces and addresses. */
-  for (end = buf + bufsiz; buf < end; buf += ifm->ifm_msglen) 
+  for (end = buf + bufsiz; buf < end; buf += ifm->ifm_msglen)
     {
       ifm = (struct if_msghdr *) buf;
       if (ifm->ifm_type == RTM_IFINFO)
-	{
-	  ifp = if_lookup_by_index (ifm->ifm_index);
-	  if (ifp)
-	    ifp->stats = ifm->ifm_data;
-	}
+        {
+          ifp = if_lookup_by_index (ifm->ifm_index);
+          if (ifp)
+            ifp->stats = ifm->ifm_data;
+        }
     }
 
   /* Free sysctl buffer. */
@@ -110,17 +110,17 @@ interface_list ()
 
 #define MIBSIZ 6
   int mib[MIBSIZ] =
-  { 
+  {
     CTL_NET,
     PF_ROUTE,
     0,
     0, /*  AF_INET & AF_INET6 */
     NET_RT_IFLIST,
-    0 
+    0
   };
 
   /* Query buffer size. */
-  if (sysctl (mib, MIBSIZ, NULL, &bufsiz, NULL, 0) < 0) 
+  if (sysctl (mib, MIBSIZ, NULL, &bufsiz, NULL, 0) < 0)
     {
       zlog (NULL, LOG_WARNING, "sysctl() error by %s", safe_strerror (errno));
       return;
@@ -130,31 +130,31 @@ interface_list ()
   ref = buf = XMALLOC (MTYPE_TMP, bufsiz);
 
   /* Fetch interface informations into allocated buffer. */
-  if (sysctl (mib, MIBSIZ, buf, &bufsiz, NULL, 0) < 0) 
+  if (sysctl (mib, MIBSIZ, buf, &bufsiz, NULL, 0) < 0)
     {
       zlog (NULL, LOG_WARNING, "sysctl error by %s", safe_strerror (errno));
       return;
     }
 
   /* Parse both interfaces and addresses. */
-  for (end = buf + bufsiz; buf < end; buf += ifm->ifm_msglen) 
+  for (end = buf + bufsiz; buf < end; buf += ifm->ifm_msglen)
     {
       ifm = (struct if_msghdr *) buf;
 
-      switch (ifm->ifm_type) 
-	{
-	case RTM_IFINFO:
-	  ifm_read (ifm);
-	  break;
-	case RTM_NEWADDR:
-	  ifam_read ((struct ifa_msghdr *) ifm);
-	  break;
-	default:
-	  zlog_info ("interfaces_list(): unexpected message type");
-	  XFREE (MTYPE_TMP, ref);
-	  return;
-	  break;
-	}
+      switch (ifm->ifm_type)
+        {
+        case RTM_IFINFO:
+          ifm_read (ifm);
+          break;
+        case RTM_NEWADDR:
+          ifam_read ((struct ifa_msghdr *) ifm);
+          break;
+        default:
+          zlog_info ("interfaces_list(): unexpected message type");
+          XFREE (MTYPE_TMP, ref);
+          return;
+          break;
+        }
     }
 
   /* Free sysctl buffer. */

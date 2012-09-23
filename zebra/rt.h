@@ -17,7 +17,7 @@
  * You should have received a copy of the GNU General Public License
  * along with GNU Zebra; see the file COPYING.  If not, write to the Free
  * Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
- * 02111-1307, USA.  
+ * 02111-1307, USA.
  */
 
 #ifndef _ZEBRA_RT_H
@@ -46,7 +46,7 @@ extern int kernel_address_delete_ipv4 (struct interface *, struct connected *);
 extern int kernel_add_ipv6 (struct prefix *, struct rib *);
 extern int kernel_delete_ipv6 (struct prefix *, struct rib *);
 extern int kernel_delete_ipv6_old (struct prefix_ipv6 *dest, struct in6_addr *gate,
-			    	  unsigned int index, int flags, int table);
+                                  unsigned int index, int flags, int table);
 
 #endif /* HAVE_IPV6 */
 

@@ -21,6 +21,6 @@ void zebra_interface_up_update (struct interface *a)
 #pragma weak zebra_interface_delete_update = zebra_interface_up_update
 
 void zebra_interface_address_add_update (struct interface *a,
-					 	struct connected *b)
+                                                struct connected *b)
 { return; }
 #pragma weak zebra_interface_address_delete_update = zebra_interface_address_add_update

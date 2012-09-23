@@ -91,13 +91,13 @@ oid ipfw_oid [] = { IPFWMIB };
 
 /* Hook functions. */
 static u_char * ipFwNumber (struct variable *, oid [], size_t *,
-		     int, size_t *, WriteMethod **);
+                     int, size_t *, WriteMethod **);
 static u_char * ipFwTable (struct variable *, oid [], size_t *,
-			   int, size_t *, WriteMethod **);
+                           int, size_t *, WriteMethod **);
 static u_char * ipCidrNumber (struct variable *, oid [], size_t *,
-			      int, size_t *, WriteMethod **);
+                              int, size_t *, WriteMethod **);
 static u_char * ipCidrTable (struct variable *, oid [], size_t *,
-			     int, size_t *, WriteMethod **);
+                             int, size_t *, WriteMethod **);
 
 struct variable zebra_variables[] =
   {
@@ -139,7 +139,7 @@ struct variable zebra_variables[] =
 
 static u_char *
 ipFwNumber (struct variable *v, oid objid[], size_t *objid_len,
-	    int exact, size_t *val_len, WriteMethod **write_method)
+            int exact, size_t *val_len, WriteMethod **write_method)
 {
   static int result;
   struct route_table *table;
@@ -164,7 +164,7 @@ ipFwNumber (struct variable *v, oid objid[], size_t *objid_len,
 
 static u_char *
 ipCidrNumber (struct variable *v, oid objid[], size_t *objid_len,
-	      int exact, size_t *val_len, WriteMethod **write_method)
+              int exact, size_t *val_len, WriteMethod **write_method)
 {
   static int result;
   struct route_table *table;
@@ -301,7 +301,7 @@ check_replace(struct route_node *np2, struct rib *rib2,
 
 static void
 get_fwtable_route_node(struct variable *v, oid objid[], size_t *objid_len,
-		       int exact, struct route_node **np, struct rib **rib)
+                       int exact, struct route_node **np, struct rib **rib)
 {
   struct in_addr dest;
   struct route_table *table;
@@ -355,7 +355,7 @@ get_fwtable_route_node(struct variable *v, oid objid[], size_t *objid_len,
 
   if (*objid_len > (unsigned) v->namelen + 6)
     oid2in_addr (objid + v->namelen + 6, MIN(4, *objid_len - v->namelen - 6),
-		 &nexthop);
+                 &nexthop);
 
   /* Apply GETNEXT on not exact search */
 
@@ -372,18 +372,18 @@ get_fwtable_route_node(struct variable *v, oid objid[], size_t *objid_len,
       if (policy) /* Not supported (yet?) */
         return;
       for (*np = route_top (table); *np; *np = route_next (*np))
-	{
-	  if (!in_addr_cmp(&(*np)->p.u.prefix, (u_char *)&dest))
-	    {
-	      for (*rib = (*np)->info; *rib; *rib = (*rib)->next)
-	        {
-		  if (!in_addr_cmp((u_char *)&(*rib)->nexthop->gate.ipv4,
-				   (u_char *)&nexthop))
-		    if (proto == proto_trans((*rib)->type))
-		      return;
-		}
-	    }
-	}
+        {
+          if (!in_addr_cmp(&(*np)->p.u.prefix, (u_char *)&dest))
+            {
+              for (*rib = (*np)->info; *rib; *rib = (*rib)->next)
+                {
+                  if (!in_addr_cmp((u_char *)&(*rib)->nexthop->gate.ipv4,
+                                   (u_char *)&nexthop))
+                    if (proto == proto_trans((*rib)->type))
+                      return;
+                }
+            }
+        }
       return;
     }
 
@@ -395,26 +395,26 @@ get_fwtable_route_node(struct variable *v, oid objid[], size_t *objid_len,
       /* Check destination first */
       if (in_addr_cmp(&np2->p.u.prefix, (u_char *)&dest) > 0)
         for (rib2 = np2->info; rib2; rib2 = rib2->next)
-	  check_replace(np2, rib2, np, rib);
+          check_replace(np2, rib2, np, rib);
 
       if (in_addr_cmp(&np2->p.u.prefix, (u_char *)&dest) == 0)
         { /* have to look at each rib individually */
           for (rib2 = np2->info; rib2; rib2 = rib2->next)
-	    {
-	      int proto2, policy2;
+            {
+              int proto2, policy2;
 
-	      proto2 = proto_trans(rib2->type);
-	      policy2 = 0;
+              proto2 = proto_trans(rib2->type);
+              policy2 = 0;
 
-	      if ((policy < policy2)
-		  || ((policy == policy2) && (proto < proto2))
-		  || ((policy == policy2) && (proto == proto2)
-		      && (in_addr_cmp((u_char *)&rib2->nexthop->gate.ipv4,
-				      (u_char *) &nexthop) >= 0)
-		      ))
-		check_replace(np2, rib2, np, rib);
-	    }
-	}
+              if ((policy < policy2)
+                  || ((policy == policy2) && (proto < proto2))
+                  || ((policy == policy2) && (proto == proto2)
+                      && (in_addr_cmp((u_char *)&rib2->nexthop->gate.ipv4,
+                                      (u_char *) &nexthop) >= 0)
+                      ))
+                check_replace(np2, rib2, np, rib);
+            }
+        }
     }
 
   if (!*rib)
@@ -437,9 +437,9 @@ get_fwtable_route_node(struct variable *v, oid objid[], size_t *objid_len,
     nexthop = (*rib)->nexthop;
     if (nexthop)
       {
-	pnt = (u_char *) &nexthop->gate.ipv4;
-	for (i = 0; i < 4; i++)
-	  objid[i + v->namelen + 6] = *pnt++;
+        pnt = (u_char *) &nexthop->gate.ipv4;
+        for (i = 0; i < 4; i++)
+          objid[i + v->namelen + 6] = *pnt++;
       }
   }
 
@@ -448,7 +448,7 @@ get_fwtable_route_node(struct variable *v, oid objid[], size_t *objid_len,
 
 static u_char *
 ipFwTable (struct variable *v, oid objid[], size_t *objid_len,
-	   int exact, size_t *val_len, WriteMethod **write_method)
+           int exact, size_t *val_len, WriteMethod **write_method)
 {
   struct route_node *np;
   struct rib *rib;
@@ -491,7 +491,7 @@ ipFwTable (struct variable *v, oid objid[], size_t *objid_len,
       break;
     case IPFORWARDTYPE:
       if (nexthop->type == NEXTHOP_TYPE_IFINDEX
-	  || nexthop->type == NEXTHOP_TYPE_IFNAME)
+          || nexthop->type == NEXTHOP_TYPE_IFNAME)
         result = 3;
       else
         result = 4;
@@ -553,7 +553,7 @@ ipFwTable (struct variable *v, oid objid[], size_t *objid_len,
 
 static u_char *
 ipCidrTable (struct variable *v, oid objid[], size_t *objid_len,
-	     int exact, size_t *val_len, WriteMethod **write_method)
+             int exact, size_t *val_len, WriteMethod **write_method)
 {
   switch (v->magic)
     {

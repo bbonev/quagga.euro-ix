@@ -152,7 +152,7 @@ extern void irdp_advert_off(struct interface *ifp);
 extern void process_solicit (struct interface *ifp);
 extern int irdp_read_raw(struct thread *r);
 extern void send_packet(struct interface *ifp, struct stream *s,
-			u_int32_t dst, struct prefix *p, u_int32_t ttl);
+                        u_int32_t dst, struct prefix *p, u_int32_t ttl);
 
 
 #endif /* _IRDP_H */

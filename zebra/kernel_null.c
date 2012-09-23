@@ -23,8 +23,8 @@ int kernel_address_add_ipv4 (struct interface *a, struct connected *b)
 {
   zlog_debug ("%s", __func__);
   SET_FLAG (b->conf, ZEBRA_IFC_REAL);
-  connected_add_ipv4 (a, 0, &b->address->u.prefix4, b->address->prefixlen, 
-                      (b->destination ? &b->destination->u.prefix4 : NULL), 
+  connected_add_ipv4 (a, 0, &b->address->u.prefix4, b->address->prefixlen,
+                      (b->destination ? &b->destination->u.prefix4 : NULL),
                       NULL);
   return 0;
 }
@@ -32,7 +32,7 @@ int kernel_address_add_ipv4 (struct interface *a, struct connected *b)
 int kernel_address_delete_ipv4 (struct interface *a, struct connected *b)
 {
   zlog_debug ("%s", __func__);
-  connected_delete_ipv4 (a, 0, &b->address->u.prefix4, b->address->prefixlen, 
+  connected_delete_ipv4 (a, 0, &b->address->u.prefix4, b->address->prefixlen,
                          (b->destination ? &b->destination->u.prefix4 : NULL));
   return 0;
 }

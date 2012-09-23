@@ -108,64 +108,64 @@ kernel_rtm_ipv4 (int cmd, struct prefix *p, struct rib *rib, int family)
        * other than ADD and DELETE?
        */
       if ((cmd == RTM_ADD
-	   && CHECK_FLAG (nexthop->flags, NEXTHOP_FLAG_ACTIVE))
-	  || (cmd == RTM_DELETE
-	      && CHECK_FLAG (nexthop->flags, NEXTHOP_FLAG_FIB)
-	      ))
-	{
-	  if (CHECK_FLAG (nexthop->flags, NEXTHOP_FLAG_RECURSIVE))
-	    {
-	      if (nexthop->rtype == NEXTHOP_TYPE_IPV4 ||
-		  nexthop->rtype == NEXTHOP_TYPE_IPV4_IFINDEX)
-		{
-		  sin_gate.sin_addr = nexthop->rgate.ipv4;
-		  gate = 1;
-		}
-	      if (nexthop->rtype == NEXTHOP_TYPE_IFINDEX
-		  || nexthop->rtype == NEXTHOP_TYPE_IFNAME
-		  || nexthop->rtype == NEXTHOP_TYPE_IPV4_IFINDEX)
-		ifindex = nexthop->rifindex;
-	    }
-	  else
-	    {
-	      if (nexthop->type == NEXTHOP_TYPE_IPV4 ||
-		  nexthop->type == NEXTHOP_TYPE_IPV4_IFINDEX)
-		{
-		  sin_gate.sin_addr = nexthop->gate.ipv4;
-		  gate = 1;
-		}
-	      if (nexthop->type == NEXTHOP_TYPE_IFINDEX
-		  || nexthop->type == NEXTHOP_TYPE_IFNAME
-		  || nexthop->type == NEXTHOP_TYPE_IPV4_IFINDEX)
-		ifindex = nexthop->ifindex;
-	      if (nexthop->type == NEXTHOP_TYPE_BLACKHOLE)
-		{
-		  struct in_addr loopback;
-		  loopback.s_addr = htonl (INADDR_LOOPBACK);
-		  sin_gate.sin_addr = loopback;
-		  gate = 1;
-		}
-	    }
+           && CHECK_FLAG (nexthop->flags, NEXTHOP_FLAG_ACTIVE))
+          || (cmd == RTM_DELETE
+              && CHECK_FLAG (nexthop->flags, NEXTHOP_FLAG_FIB)
+              ))
+        {
+          if (CHECK_FLAG (nexthop->flags, NEXTHOP_FLAG_RECURSIVE))
+            {
+              if (nexthop->rtype == NEXTHOP_TYPE_IPV4 ||
+                  nexthop->rtype == NEXTHOP_TYPE_IPV4_IFINDEX)
+                {
+                  sin_gate.sin_addr = nexthop->rgate.ipv4;
+                  gate = 1;
+                }
+              if (nexthop->rtype == NEXTHOP_TYPE_IFINDEX
+                  || nexthop->rtype == NEXTHOP_TYPE_IFNAME
+                  || nexthop->rtype == NEXTHOP_TYPE_IPV4_IFINDEX)
+                ifindex = nexthop->rifindex;
+            }
+          else
+            {
+              if (nexthop->type == NEXTHOP_TYPE_IPV4 ||
+                  nexthop->type == NEXTHOP_TYPE_IPV4_IFINDEX)
+                {
+                  sin_gate.sin_addr = nexthop->gate.ipv4;
+                  gate = 1;
+                }
+              if (nexthop->type == NEXTHOP_TYPE_IFINDEX
+                  || nexthop->type == NEXTHOP_TYPE_IFNAME
+                  || nexthop->type == NEXTHOP_TYPE_IPV4_IFINDEX)
+                ifindex = nexthop->ifindex;
+              if (nexthop->type == NEXTHOP_TYPE_BLACKHOLE)
+                {
+                  struct in_addr loopback;
+                  loopback.s_addr = htonl (INADDR_LOOPBACK);
+                  sin_gate.sin_addr = loopback;
+                  gate = 1;
+                }
+            }
 
-	  if (gate && p->prefixlen == 32)
-	    mask = NULL;
-	  else
-	    {
-	      masklen2ip (p->prefixlen, &sin_mask.sin_addr);
-	      sin_mask.sin_family = AF_INET;
+          if (gate && p->prefixlen == 32)
+            mask = NULL;
+          else
+            {
+              masklen2ip (p->prefixlen, &sin_mask.sin_addr);
+              sin_mask.sin_family = AF_INET;
 #ifdef HAVE_STRUCT_SOCKADDR_IN_SIN_LEN
-	      sin_mask.sin_len = sin_masklen (sin_mask.sin_addr);
+              sin_mask.sin_len = sin_masklen (sin_mask.sin_addr);
 #endif /* HAVE_STRUCT_SOCKADDR_IN_SIN_LEN */
-	      mask = &sin_mask;
-	    }
+              mask = &sin_mask;
+            }
 
-	  error = rtm_write (cmd,
-			     (union sockunion *)&sin_dest,
-			     (union sockunion *)mask,
-			     gate ? (union sockunion *)&sin_gate : NULL,
-			     ifindex,
-			     rib->flags,
-			     rib->metric);
+          error = rtm_write (cmd,
+                             (union sockunion *)&sin_dest,
+                             (union sockunion *)mask,
+                             gate ? (union sockunion *)&sin_gate : NULL,
+                             ifindex,
+                             rib->flags,
+                             rib->metric);
 
            if (IS_ZEBRA_DEBUG_RIB)
            {
@@ -290,7 +290,7 @@ sin6_masklen (struct in6_addr mask)
 /* Interface between zebra message and rtm message. */
 static int
 kernel_rtm_ipv6 (int message, struct prefix_ipv6 *dest,
-		 struct in6_addr *gate, int index, int flags)
+                 struct in6_addr *gate, int index, int flags)
 {
   struct sockaddr_in6 *mask;
   struct sockaddr_in6 sin_dest, sin_mask, sin_gate;
@@ -340,18 +340,18 @@ kernel_rtm_ipv6 (int message, struct prefix_ipv6 *dest,
     }
 
   return rtm_write (message,
-		    (union sockunion *) &sin_dest,
-		    (union sockunion *) mask,
-		    gate ? (union sockunion *)&sin_gate : NULL,
-		    index,
-		    flags,
-		    0);
+                    (union sockunion *) &sin_dest,
+                    (union sockunion *) mask,
+                    gate ? (union sockunion *)&sin_gate : NULL,
+                    index,
+                    flags,
+                    0);
 }
 
 /* Interface between zebra message and rtm message. */
 static int
 kernel_rtm_ipv6_multipath (int cmd, struct prefix *p, struct rib *rib,
-			   int family)
+                           int family)
 {
   struct sockaddr_in6 *mask;
   struct sockaddr_in6 sin_dest, sin_mask, sin_gate;
@@ -382,87 +382,87 @@ kernel_rtm_ipv6_multipath (int cmd, struct prefix *p, struct rib *rib,
       gate = 0;
 
       if ((cmd == RTM_ADD
-	   && CHECK_FLAG (nexthop->flags, NEXTHOP_FLAG_ACTIVE))
-	  || (cmd == RTM_DELETE
+           && CHECK_FLAG (nexthop->flags, NEXTHOP_FLAG_ACTIVE))
+          || (cmd == RTM_DELETE
 #if 0
-	      && CHECK_FLAG (nexthop->flags, NEXTHOP_FLAG_FIB)
+              && CHECK_FLAG (nexthop->flags, NEXTHOP_FLAG_FIB)
 #endif
-	      ))
-	{
-	  if (CHECK_FLAG (nexthop->flags, NEXTHOP_FLAG_RECURSIVE))
-	    {
-	      if (nexthop->rtype == NEXTHOP_TYPE_IPV6
-		  || nexthop->rtype == NEXTHOP_TYPE_IPV6_IFNAME
-		  || nexthop->rtype == NEXTHOP_TYPE_IPV6_IFINDEX)
-		{
-		  sin_gate.sin6_addr = nexthop->rgate.ipv6;
-		  gate = 1;
-		}
-	      if (nexthop->rtype == NEXTHOP_TYPE_IFINDEX
-		  || nexthop->rtype == NEXTHOP_TYPE_IFNAME
-		  || nexthop->rtype == NEXTHOP_TYPE_IPV6_IFNAME
-		  || nexthop->rtype == NEXTHOP_TYPE_IPV6_IFINDEX)
-		ifindex = nexthop->rifindex;
-	    }
-	  else
-	    {
-	      if (nexthop->type == NEXTHOP_TYPE_IPV6
-		  || nexthop->type == NEXTHOP_TYPE_IPV6_IFNAME
-		  || nexthop->type == NEXTHOP_TYPE_IPV6_IFINDEX)
-		{
-		  sin_gate.sin6_addr = nexthop->gate.ipv6;
-		  gate = 1;
-		}
-	      if (nexthop->type == NEXTHOP_TYPE_IFINDEX
-		  || nexthop->type == NEXTHOP_TYPE_IFNAME
-		  || nexthop->type == NEXTHOP_TYPE_IPV6_IFNAME
-		  || nexthop->type == NEXTHOP_TYPE_IPV6_IFINDEX)
-		ifindex = nexthop->ifindex;
-	    }
+              ))
+        {
+          if (CHECK_FLAG (nexthop->flags, NEXTHOP_FLAG_RECURSIVE))
+            {
+              if (nexthop->rtype == NEXTHOP_TYPE_IPV6
+                  || nexthop->rtype == NEXTHOP_TYPE_IPV6_IFNAME
+                  || nexthop->rtype == NEXTHOP_TYPE_IPV6_IFINDEX)
+                {
+                  sin_gate.sin6_addr = nexthop->rgate.ipv6;
+                  gate = 1;
+                }
+              if (nexthop->rtype == NEXTHOP_TYPE_IFINDEX
+                  || nexthop->rtype == NEXTHOP_TYPE_IFNAME
+                  || nexthop->rtype == NEXTHOP_TYPE_IPV6_IFNAME
+                  || nexthop->rtype == NEXTHOP_TYPE_IPV6_IFINDEX)
+                ifindex = nexthop->rifindex;
+            }
+          else
+            {
+              if (nexthop->type == NEXTHOP_TYPE_IPV6
+                  || nexthop->type == NEXTHOP_TYPE_IPV6_IFNAME
+                  || nexthop->type == NEXTHOP_TYPE_IPV6_IFINDEX)
+                {
+                  sin_gate.sin6_addr = nexthop->gate.ipv6;
+                  gate = 1;
+                }
+              if (nexthop->type == NEXTHOP_TYPE_IFINDEX
+                  || nexthop->type == NEXTHOP_TYPE_IFNAME
+                  || nexthop->type == NEXTHOP_TYPE_IPV6_IFNAME
+                  || nexthop->type == NEXTHOP_TYPE_IPV6_IFINDEX)
+                ifindex = nexthop->ifindex;
+            }
 
-	  if (cmd == RTM_ADD)
-	    SET_FLAG (nexthop->flags, NEXTHOP_FLAG_FIB);
-	}
+          if (cmd == RTM_ADD)
+            SET_FLAG (nexthop->flags, NEXTHOP_FLAG_FIB);
+        }
 
       /* Under kame set interface index to link local address. */
 #ifdef KAME
 
 #define SET_IN6_LINKLOCAL_IFINDEX(a, i) \
       do { \
-	(a).s6_addr[2] = ((i) >> 8) & 0xff; \
-	(a).s6_addr[3] = (i) & 0xff; \
+        (a).s6_addr[2] = ((i) >> 8) & 0xff; \
+        (a).s6_addr[3] = (i) & 0xff; \
       } while (0)
 
       if (gate && IN6_IS_ADDR_LINKLOCAL(&sin_gate.sin6_addr))
-	SET_IN6_LINKLOCAL_IFINDEX (sin_gate.sin6_addr, ifindex);
+        SET_IN6_LINKLOCAL_IFINDEX (sin_gate.sin6_addr, ifindex);
 #endif /* KAME */
 
       if (gate && p->prefixlen == 128)
-	mask = NULL;
+        mask = NULL;
       else
-	{
-	  masklen2ip6 (p->prefixlen, &sin_mask.sin6_addr);
-	  sin_mask.sin6_family = AF_INET6;
+        {
+          masklen2ip6 (p->prefixlen, &sin_mask.sin6_addr);
+          sin_mask.sin6_family = AF_INET6;
 #ifdef SIN6_LEN
-	  sin_mask.sin6_len = sin6_masklen (sin_mask.sin6_addr);
+          sin_mask.sin6_len = sin6_masklen (sin_mask.sin6_addr);
 #endif /* SIN6_LEN */
-	  mask = &sin_mask;
-	}
+          mask = &sin_mask;
+        }
 
       error = rtm_write (cmd,
-			(union sockunion *) &sin_dest,
-			(union sockunion *) mask,
-			gate ? (union sockunion *)&sin_gate : NULL,
-			ifindex,
-			rib->flags,
-			rib->metric);
+                        (union sockunion *) &sin_dest,
+                        (union sockunion *) mask,
+                        gate ? (union sockunion *)&sin_gate : NULL,
+                        ifindex,
+                        rib->flags,
+                        rib->metric);
 
 #if 0
       if (error)
-	{
-	  zlog_info ("kernel_rtm_ipv6_multipath(): nexthop %d add error=%d.",
-	    nexthop_num, error);
-	}
+        {
+          zlog_info ("kernel_rtm_ipv6_multipath(): nexthop %d add error=%d.",
+            nexthop_num, error);
+        }
 #endif
 
       nexthop_num++;
@@ -472,7 +472,7 @@ kernel_rtm_ipv6_multipath (int cmd, struct prefix *p, struct rib *rib,
   if (nexthop_num == 0)
     {
       if (IS_ZEBRA_DEBUG_KERNEL)
-	zlog_debug ("kernel_rtm_ipv6_multipath(): No useful nexthop.");
+        zlog_debug ("kernel_rtm_ipv6_multipath(): No useful nexthop.");
       return 0;
     }
 
@@ -510,7 +510,7 @@ kernel_delete_ipv6 (struct prefix *p, struct rib *rib)
 /* Delete IPv6 route from the kernel. */
 int
 kernel_delete_ipv6_old (struct prefix_ipv6 *dest, struct in6_addr *gate,
- 		        unsigned int index, int flags, int table)
+                        unsigned int index, int flags, int table)
 {
   int route;
 

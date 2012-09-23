@@ -17,7 +17,7 @@
  * You should have received a copy of the GNU General Public License
  * along with GNU Zebra; see the file COPYING.  If not, write to the Free
  * Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
- * 02111-1307, USA.  
+ * 02111-1307, USA.
  */
 
 #ifndef _ZEBRA_REDISTRIBUTE_H
@@ -42,9 +42,9 @@ extern void zebra_interface_add_update (struct interface *);
 extern void zebra_interface_delete_update (struct interface *);
 
 extern void zebra_interface_address_add_update (struct interface *,
-					 	struct connected *);
+                                                struct connected *);
 extern void zebra_interface_address_delete_update (struct interface *,
-						   struct connected *c);
+                                                   struct connected *c);
 
 extern int zebra_check_addr (struct prefix *);
 

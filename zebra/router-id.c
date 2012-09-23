@@ -185,7 +185,7 @@ router_id_write (struct vty *vty)
 {
   if (rid_user_assigned.u.prefix4.s_addr)
     vty_out (vty, "router-id %s%s", inet_ntoa (rid_user_assigned.u.prefix4),
-	     VTY_NEWLINE);
+             VTY_NEWLINE);
 }
 
 DEFUN (router_id,

@@ -181,7 +181,7 @@ static const struct message rtm_flag_str[] =
   {RTF_STATIC,    "STATIC"},
   {RTF_BLACKHOLE, "BLACKHOLE"},
 #ifdef RTF_PRIVATE
-  {RTF_PRIVATE,	  "PRIVATE"},
+  {RTF_PRIVATE,   "PRIVATE"},
 #endif /* RTF_PRIVATE */
   {RTF_PROTO1,    "PROTO1"},
   {RTF_PROTO2,    "PROTO2"},
@@ -245,10 +245,10 @@ rtm_flag_dump (int flag)
   for (mes = rtm_flag_str; mes->key != 0; mes++)
     {
       if (mes->key & flag)
-	{
-	  strlcat (buf, mes->str, BUFSIZ);
-	  strlcat (buf, " ", BUFSIZ);
-	}
+        {
+          strlcat (buf, mes->str, BUFSIZ);
+          strlcat (buf, " ", BUFSIZ);
+        }
     }
   zlog_debug ("Kernel: %s", buf);
 }
@@ -276,8 +276,8 @@ ifan_read (struct if_announcemsghdr *ifan)
 
       /* Create Interface */
       ifp = if_get_by_name_len(ifan->ifan_name,
-			       strnlen(ifan->ifan_name,
-				       sizeof(ifan->ifan_name)));
+                               strnlen(ifan->ifan_name,
+                                       sizeof(ifan->ifan_name)));
       ifp->ifindex = ifan->ifan_index;
 
       if_add_update (ifp);
@@ -331,7 +331,7 @@ ifm_read (struct if_msghdr *ifm)
   if (ifm->ifm_msglen < sizeof(struct if_msghdr))
     {
       zlog_err ("ifm_read: ifm->ifm_msglen %d too short\n",
-		ifm->ifm_msglen);
+                ifm->ifm_msglen);
       return -1;
     }
 
@@ -350,7 +350,7 @@ ifm_read (struct if_msghdr *ifm)
    * is 12 bytes larger than the 32 bit version.
    */
   if (((struct sockaddr *) cp)->sa_family == AF_UNSPEC)
-  	cp = cp + 12;
+        cp = cp + 12;
 #endif
 
   RTA_ADDR_GET (NULL, RTA_DST, ifm->ifm_addrs, cp);
@@ -412,11 +412,11 @@ ifm_read (struct if_msghdr *ifm)
        * RTA_IFP) is required.
        */
       if (!ifnlen)
-	{
-	  zlog_warn ("Interface index %d (new) missing ifname\n",
-		     ifm->ifm_index);
-	  return -1;
-	}
+        {
+          zlog_warn ("Interface index %d (new) missing ifname\n",
+                     ifm->ifm_index);
+          return -1;
+        }
 
 #ifndef RTM_IFANNOUNCE
       /* Down->Down interface should be ignored here.
@@ -428,11 +428,11 @@ ifm_read (struct if_msghdr *ifm)
 
       if (ifp == NULL)
         {
-	  /* Interface that zebra was not previously aware of, so create. */
-	  ifp = if_create (ifname, ifnlen);
-	  if (IS_ZEBRA_DEBUG_KERNEL)
-	    zlog_debug ("%s: creating ifp for ifindex %d",
-	                __func__, ifm->ifm_index);
+          /* Interface that zebra was not previously aware of, so create. */
+          ifp = if_create (ifname, ifnlen);
+          if (IS_ZEBRA_DEBUG_KERNEL)
+            zlog_debug ("%s: creating ifp for ifindex %d",
+                        __func__, ifm->ifm_index);
         }
 
       if (IS_ZEBRA_DEBUG_KERNEL)
@@ -464,7 +464,7 @@ ifm_read (struct if_msghdr *ifm)
        * a nonzero ifnlen from RTA_NAME_GET() means sdl is valid
        */
       if (ifnlen)
-	memcpy (&ifp->sdl, sdl, sizeof (struct sockaddr_dl));
+        memcpy (&ifp->sdl, sdl, sizeof (struct sockaddr_dl));
 
       if_add_update (ifp);
     }
@@ -532,11 +532,11 @@ ifm_read (struct if_msghdr *ifm)
 /* Address read from struct ifa_msghdr. */
 static void
 ifam_read_mesg (struct ifa_msghdr *ifm,
-		union sockunion *addr,
-		union sockunion *mask,
-		union sockunion *brd,
-		char *ifname,
-		short *ifnlen)
+                union sockunion *addr,
+                union sockunion *mask,
+                union sockunion *brd,
+                char *ifname,
+                short *ifnlen)
 {
   caddr_t pnt, end;
   union sockunion dst;
@@ -566,53 +566,53 @@ ifam_read_mesg (struct ifa_msghdr *ifm,
     {
       switch (sockunion_family(addr))
         {
-	case AF_INET:
-	  {
-	    char buf[4][INET_ADDRSTRLEN];
-	    zlog_debug ("%s: ifindex %d, ifname %s, ifam_addrs 0x%x, "
-			"ifam_flags 0x%x, addr %s/%d broad %s dst %s "
-			"gateway %s",
-			__func__, ifm->ifam_index,
-			(ifnlen ? ifname : "(nil)"), ifm->ifam_addrs,
-			ifm->ifam_flags,
-			inet_ntop(AF_INET,&addr->sin.sin_addr,
-			          buf[0],sizeof(buf[0])),
-			ip_masklen(mask->sin.sin_addr),
-			inet_ntop(AF_INET,&brd->sin.sin_addr,
-			          buf[1],sizeof(buf[1])),
-			inet_ntop(AF_INET,&dst.sin.sin_addr,
-			          buf[2],sizeof(buf[2])),
-			inet_ntop(AF_INET,&gateway.sin.sin_addr,
-			          buf[3],sizeof(buf[3])));
-	  }
-	  break;
+        case AF_INET:
+          {
+            char buf[4][INET_ADDRSTRLEN];
+            zlog_debug ("%s: ifindex %d, ifname %s, ifam_addrs 0x%x, "
+                        "ifam_flags 0x%x, addr %s/%d broad %s dst %s "
+                        "gateway %s",
+                        __func__, ifm->ifam_index,
+                        (ifnlen ? ifname : "(nil)"), ifm->ifam_addrs,
+                        ifm->ifam_flags,
+                        inet_ntop(AF_INET,&addr->sin.sin_addr,
+                                  buf[0],sizeof(buf[0])),
+                        ip_masklen(mask->sin.sin_addr),
+                        inet_ntop(AF_INET,&brd->sin.sin_addr,
+                                  buf[1],sizeof(buf[1])),
+                        inet_ntop(AF_INET,&dst.sin.sin_addr,
+                                  buf[2],sizeof(buf[2])),
+                        inet_ntop(AF_INET,&gateway.sin.sin_addr,
+                                  buf[3],sizeof(buf[3])));
+          }
+          break;
 #ifdef HAVE_IPV6
-	case AF_INET6:
-	  {
-	    char buf[4][INET6_ADDRSTRLEN];
-	    zlog_debug ("%s: ifindex %d, ifname %s, ifam_addrs 0x%x, "
-			"ifam_flags 0x%x, addr %s/%u broad %s dst %s "
-			"gateway %s",
-			__func__, ifm->ifam_index,
-			(ifnlen ? ifname : "(nil)"), ifm->ifam_addrs,
-			ifm->ifam_flags,
-			inet_ntop(AF_INET6,&addr->sin6.sin6_addr,
-			          buf[0],sizeof(buf[0])),
-			ip6_masklen(&mask->sin6.sin6_addr),
-			inet_ntop(AF_INET6,&brd->sin6.sin6_addr,
-			          buf[1],sizeof(buf[1])),
-			inet_ntop(AF_INET6,&dst.sin6.sin6_addr,
-			          buf[2],sizeof(buf[2])),
-			inet_ntop(AF_INET6,&gateway.sin6.sin6_addr,
-			          buf[3],sizeof(buf[3])));
-	  }
-	  break;
+        case AF_INET6:
+          {
+            char buf[4][INET6_ADDRSTRLEN];
+            zlog_debug ("%s: ifindex %d, ifname %s, ifam_addrs 0x%x, "
+                        "ifam_flags 0x%x, addr %s/%u broad %s dst %s "
+                        "gateway %s",
+                        __func__, ifm->ifam_index,
+                        (ifnlen ? ifname : "(nil)"), ifm->ifam_addrs,
+                        ifm->ifam_flags,
+                        inet_ntop(AF_INET6,&addr->sin6.sin6_addr,
+                                  buf[0],sizeof(buf[0])),
+                        ip6_masklen(&mask->sin6.sin6_addr),
+                        inet_ntop(AF_INET6,&brd->sin6.sin6_addr,
+                                  buf[1],sizeof(buf[1])),
+                        inet_ntop(AF_INET6,&dst.sin6.sin6_addr,
+                                  buf[2],sizeof(buf[2])),
+                        inet_ntop(AF_INET6,&gateway.sin6.sin6_addr,
+                                  buf[3],sizeof(buf[3])));
+          }
+          break;
 #endif /* HAVE_IPV6 */
         default:
-	  zlog_debug ("%s: ifindex %d, ifname %s, ifam_addrs 0x%x",
-		      __func__, ifm->ifam_index,
-		      (ifnlen ? ifname : "(nil)"), ifm->ifam_addrs);
-	  break;
+          zlog_debug ("%s: ifindex %d, ifname %s, ifam_addrs 0x%x",
+                      __func__, ifm->ifam_index,
+                      (ifnlen ? ifname : "(nil)"), ifm->ifam_addrs);
+          break;
         }
     }
 
@@ -667,32 +667,32 @@ ifam_read (struct ifa_msghdr *ifam)
     {
     case AF_INET:
       if (ifam->ifam_type == RTM_NEWADDR)
-	connected_add_ipv4 (ifp, flags, &addr.sin.sin_addr,
-			    ip_masklen (mask.sin.sin_addr),
-			    &brd.sin.sin_addr,
-			    (isalias ? ifname : NULL));
+        connected_add_ipv4 (ifp, flags, &addr.sin.sin_addr,
+                            ip_masklen (mask.sin.sin_addr),
+                            &brd.sin.sin_addr,
+                            (isalias ? ifname : NULL));
       else
-	connected_delete_ipv4 (ifp, flags, &addr.sin.sin_addr,
-			       ip_masklen (mask.sin.sin_addr),
-			       &brd.sin.sin_addr);
+        connected_delete_ipv4 (ifp, flags, &addr.sin.sin_addr,
+                               ip_masklen (mask.sin.sin_addr),
+                               &brd.sin.sin_addr);
       break;
 #ifdef HAVE_IPV6
     case AF_INET6:
       /* Unset interface index from link-local address when IPv6 stack
-	 is KAME. */
+         is KAME. */
       if (IN6_IS_ADDR_LINKLOCAL (&addr.sin6.sin6_addr))
-	SET_IN6_LINKLOCAL_IFINDEX (addr.sin6.sin6_addr, 0);
+        SET_IN6_LINKLOCAL_IFINDEX (addr.sin6.sin6_addr, 0);
 
       if (ifam->ifam_type == RTM_NEWADDR)
-	connected_add_ipv6 (ifp, flags, &addr.sin6.sin6_addr,
-			    ip6_masklen (&mask.sin6.sin6_addr),
-			    &brd.sin6.sin6_addr,
-			    (isalias ? ifname : NULL));
+        connected_add_ipv6 (ifp, flags, &addr.sin6.sin6_addr,
+                            ip6_masklen (&mask.sin6.sin6_addr),
+                            &brd.sin6.sin6_addr,
+                            (isalias ? ifname : NULL));
       else
-	connected_delete_ipv6 (ifp,
-			       &addr.sin6.sin6_addr,
-			       ip6_masklen (&mask.sin6.sin6_addr),
-			       &brd.sin6.sin6_addr);
+        connected_delete_ipv6 (ifp,
+                               &addr.sin6.sin6_addr,
+                               ip6_masklen (&mask.sin6.sin6_addr),
+                               &brd.sin6.sin6_addr);
       break;
 #endif /* HAVE_IPV6 */
     default:
@@ -726,11 +726,11 @@ ifam_read (struct ifa_msghdr *ifam)
 /* Interface function for reading kernel routing table information. */
 static int
 rtm_read_mesg (struct rt_msghdr *rtm,
-	       union sockunion *dest,
-	       union sockunion *mask,
-	       union sockunion *gate,
-	       char *ifname,
-	       short *ifnlen)
+               union sockunion *dest,
+               union sockunion *mask,
+               union sockunion *gate,
+               char *ifname,
+               short *ifnlen)
 {
   caddr_t pnt, end;
 
@@ -741,8 +741,8 @@ rtm_read_mesg (struct rt_msghdr *rtm,
   /* rt_msghdr version check. */
   if (rtm->rtm_version != RTM_VERSION)
       zlog (NULL, LOG_WARNING,
-	      "Routing message version different %d should be %d."
-	      "This may cause problem\n", rtm->rtm_version, RTM_VERSION);
+              "Routing message version different %d should be %d."
+              "This may cause problem\n", rtm->rtm_version, RTM_VERSION);
 
   /* Be sure structure is cleared */
   memset (dest, 0, sizeof (union sockunion));
@@ -791,11 +791,11 @@ rtm_read (struct rt_msghdr *rtm)
     zlog_debug ("%s: got rtm of type %d (%s)", __func__, rtm->rtm_type,
       lookup (rtm_type_str, rtm->rtm_type));
 
-#ifdef RTF_CLONED	/*bsdi, netbsd 1.6*/
+#ifdef RTF_CLONED       /*bsdi, netbsd 1.6*/
   if (flags & RTF_CLONED)
     return;
 #endif
-#ifdef RTF_WASCLONED	/*freebsd*/
+#ifdef RTF_WASCLONED    /*freebsd*/
   if (flags & RTF_WASCLONED)
     return;
 #endif
@@ -827,9 +827,9 @@ rtm_read (struct rt_msghdr *rtm)
       p.family = AF_INET;
       p.prefix = dest.sin.sin_addr;
       if (flags & RTF_HOST)
-	p.prefixlen = IPV4_MAX_PREFIXLEN;
+        p.prefixlen = IPV4_MAX_PREFIXLEN;
       else
-	p.prefixlen = ip_masklen (mask.sin.sin_addr);
+        p.prefixlen = ip_masklen (mask.sin.sin_addr);
 
       /* Catch self originated messages and match them against our current RIB.
        * At the same time, ignore unconfirmed messages, they should be tracked
@@ -911,11 +911,11 @@ rtm_read (struct rt_msghdr *rtm)
       if (rtm->rtm_type == RTM_GET
           || rtm->rtm_type == RTM_ADD
           || rtm->rtm_type == RTM_CHANGE)
-	rib_add_ipv4 (ZEBRA_ROUTE_KERNEL, zebra_flags,
-		      &p, &gate.sin.sin_addr, NULL, 0, 0, 0, 0, SAFI_UNICAST);
+        rib_add_ipv4 (ZEBRA_ROUTE_KERNEL, zebra_flags,
+                      &p, &gate.sin.sin_addr, NULL, 0, 0, 0, 0, SAFI_UNICAST);
       else
-	rib_delete_ipv4 (ZEBRA_ROUTE_KERNEL, zebra_flags,
-		      &p, &gate.sin.sin_addr, 0, 0, SAFI_UNICAST);
+        rib_delete_ipv4 (ZEBRA_ROUTE_KERNEL, zebra_flags,
+                      &p, &gate.sin.sin_addr, 0, 0, SAFI_UNICAST);
     }
 #ifdef HAVE_IPV6
   if (dest.sa.sa_family == AF_INET6)
@@ -931,16 +931,16 @@ rtm_read (struct rt_msghdr *rtm)
       p.family = AF_INET6;
       p.prefix = dest.sin6.sin6_addr;
       if (flags & RTF_HOST)
-	p.prefixlen = IPV6_MAX_PREFIXLEN;
+        p.prefixlen = IPV6_MAX_PREFIXLEN;
       else
-	p.prefixlen = ip6_masklen (&mask.sin6.sin6_addr);
+        p.prefixlen = ip6_masklen (&mask.sin6.sin6_addr);
 
 #ifdef KAME
       if (IN6_IS_ADDR_LINKLOCAL (&gate.sin6.sin6_addr))
-	{
-	  ifindex = IN6_LINKLOCAL_IFINDEX (gate.sin6.sin6_addr);
-	  SET_IN6_LINKLOCAL_IFINDEX (gate.sin6.sin6_addr, 0);
-	}
+        {
+          ifindex = IN6_LINKLOCAL_IFINDEX (gate.sin6.sin6_addr);
+          SET_IN6_LINKLOCAL_IFINDEX (gate.sin6.sin6_addr, 0);
+        }
 #endif /* KAME */
 
       /* CHANGE: delete the old prefix, we have no further information
@@ -953,11 +953,11 @@ rtm_read (struct rt_msghdr *rtm)
       if (rtm->rtm_type == RTM_GET
           || rtm->rtm_type == RTM_ADD
           || rtm->rtm_type == RTM_CHANGE)
-	rib_add_ipv6 (ZEBRA_ROUTE_KERNEL, zebra_flags,
-		      &p, &gate.sin6.sin6_addr, ifindex, 0, 0, 0, SAFI_UNICAST);
+        rib_add_ipv6 (ZEBRA_ROUTE_KERNEL, zebra_flags,
+                      &p, &gate.sin6.sin6_addr, ifindex, 0, 0, 0, SAFI_UNICAST);
       else
-	rib_delete_ipv6 (ZEBRA_ROUTE_KERNEL, zebra_flags,
-			 &p, &gate.sin6.sin6_addr, ifindex, 0, SAFI_UNICAST);
+        rib_delete_ipv6 (ZEBRA_ROUTE_KERNEL, zebra_flags,
+                         &p, &gate.sin6.sin6_addr, ifindex, 0, SAFI_UNICAST);
     }
 #endif /* HAVE_IPV6 */
 }
@@ -968,12 +968,12 @@ rtm_read (struct rt_msghdr *rtm)
  */
 int
 rtm_write (int message,
-	   union sockunion *dest,
-	   union sockunion *mask,
-	   union sockunion *gate,
-	   unsigned int index,
-	   int zebra_flags,
-	   int metric)
+           union sockunion *dest,
+           union sockunion *mask,
+           union sockunion *gate,
+           unsigned int index,
+           int zebra_flags,
+           int metric)
 {
   int ret;
   caddr_t pnt;
@@ -1087,11 +1087,11 @@ rtm_write (int message,
   if (ret != msg.rtm.rtm_msglen)
     {
       if (errno == EEXIST)
-	return ZEBRA_ERR_RTEXIST;
+        return ZEBRA_ERR_RTEXIST;
       if (errno == ENETUNREACH)
-	return ZEBRA_ERR_RTUNREACH;
+        return ZEBRA_ERR_RTUNREACH;
       if (errno == ESRCH)
-	return ZEBRA_ERR_RTNOEXIST;
+        return ZEBRA_ERR_RTNOEXIST;
 
       zlog_warn ("%s: write : %s (%d)", __func__, safe_strerror (errno), errno);
       return ZEBRA_ERR_KERNEL;
@@ -1116,9 +1116,9 @@ rtmsg_debug (struct rt_msghdr *rtm)
 /* This is pretty gross, better suggestions welcome -- mhandler */
 #ifndef RTAX_MAX
 #ifdef RTA_NUMBITS
-#define RTAX_MAX	RTA_NUMBITS
+#define RTAX_MAX        RTA_NUMBITS
 #else
-#define RTAX_MAX	8
+#define RTAX_MAX        8
 #endif /* RTA_NUMBITS */
 #endif /* RTAX_MAX */
 
@@ -1181,7 +1181,7 @@ kernel_read (struct thread *thread)
   if (nbytes <= 0)
     {
       if (nbytes < 0 && errno != EWOULDBLOCK && errno != EAGAIN)
-	zlog_warn ("routing socket error: %s", safe_strerror (errno));
+        zlog_warn ("routing socket error: %s", safe_strerror (errno));
       return 0;
     }
 
@@ -1199,7 +1199,7 @@ kernel_read (struct thread *thread)
   if (rtm->rtm_msglen != nbytes)
     {
       zlog_warn ("kernel_read: rtm->rtm_msglen %d, nbytes %d, type %d\n",
-		 rtm->rtm_msglen, nbytes, rtm->rtm_type);
+                 rtm->rtm_msglen, nbytes, rtm->rtm_type);
       return -1;
     }
 

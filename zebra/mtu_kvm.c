@@ -75,22 +75,22 @@ if_kvm_get_mtu (struct interface *ifp)
   while(ifnetaddr != 0)
     {
       if (kvm_read (kvmd, ifnetaddr, (char *)&ifnet, sizeof ifnet) < 0)
-	{
-	  kvm_close (kvmd);
-	  return ;
-	}
+        {
+          kvm_close (kvmd);
+          return ;
+        }
 
       if (kvm_read (kvmd, (u_long)ifnet.if_name, ifname, IFNAMSIZ) < 0)
-	{
-	  kvm_close (kvmd);
-	  return ;
-	}
+        {
+          kvm_close (kvmd);
+          return ;
+        }
 
       len = snprintf (tname, INTERFACE_NAMSIZ + 1,
-		      "%s%d", ifname, ifnet.if_unit);
+                      "%s%d", ifname, ifnet.if_unit);
 
       if (strncmp (tname, ifp->name, len) == 0)
-	break;
+        break;
 
       ifnetaddr = (u_long)ifnet.if_next;
     }

@@ -18,17 +18,17 @@
  * You should have received a copy of the GNU General Public License
  * along with GNU Zebra; see the file COPYING.  If not, write to the Free
  * Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
- * 02111-1307, USA.  
+ * 02111-1307, USA.
  */
 
-/* 
+/*
  * This work includes work with the following copywrite:
  *
  * Copyright (C) 1997, 2000 Kunihiro Ishiguro
  *
  */
 
-/* 
+/*
  * Thanks to Jens L��s at Swedish University of Agricultural Sciences
  * for reviewing and tests.
  */
@@ -98,16 +98,16 @@ irdp_sock_init (void)
     zlog_warn ("IRDP: can't create irdp socket %s", safe_strerror(save_errno));
     return sock;
   };
-  
+
   i = 1;
-  ret = setsockopt (sock, IPPROTO_IP, IP_TTL, 
+  ret = setsockopt (sock, IPPROTO_IP, IP_TTL,
                         (void *) &i, sizeof (i));
   if (ret < 0) {
     zlog_warn ("IRDP: can't do irdp sockopt %s", safe_strerror(errno));
     close(sock);
     return ret;
   };
-  
+
   ret = setsockopt_pktinfo (AF_INET, sock, 1);
   if (ret < 0) {
     zlog_warn ("IRDP: can't do irdp sockopt %s", safe_strerror(errno));
@@ -115,7 +115,7 @@ irdp_sock_init (void)
     return ret;
   };
 
-  t_irdp_raw = thread_add_read (zebrad.master, irdp_read_raw, NULL, sock); 
+  t_irdp_raw = thread_add_read (zebrad.master, irdp_read_raw, NULL, sock);
 
   return sock;
 }
@@ -128,10 +128,10 @@ get_pref(struct irdp_interface *irdp, struct prefix *p)
   struct Adv *adv;
 
   /* Use default preference or use the override pref */
-  
+
   if( irdp->AdvPrefList == NULL )
     return irdp->Preference;
-  
+
   for (ALL_LIST_ELEMENTS_RO (irdp->AdvPrefList, node, adv))
     if( p->u.prefix4.s_addr == adv->ip.s_addr )
       return adv->pref;
@@ -141,9 +141,9 @@ get_pref(struct irdp_interface *irdp, struct prefix *p)
 
 /* Make ICMP Router Advertisement Message. */
 static int
-make_advertisement_packet (struct interface *ifp, 
-			   struct prefix *p,
-			   struct stream *s)
+make_advertisement_packet (struct interface *ifp,
+                           struct prefix *p,
+                           struct stream *s)
 {
   struct zebra_if *zi=ifp->info;
   struct irdp_interface *irdp=&zi->irdp;
@@ -154,14 +154,14 @@ make_advertisement_packet (struct interface *ifp,
   pref =  get_pref(irdp, p);
 
   stream_putc (s, ICMP_ROUTERADVERT); /* Type. */
-  stream_putc (s, 0);		/* Code. */
-  stream_putw (s, 0);		/* Checksum. */
-  stream_putc (s, 1);		/* Num address. */
-  stream_putc (s, 2);		/* Address Entry Size. */
+  stream_putc (s, 0);           /* Code. */
+  stream_putw (s, 0);           /* Checksum. */
+  stream_putc (s, 1);           /* Num address. */
+  stream_putc (s, 2);           /* Address Entry Size. */
 
-  if(irdp->flags & IF_SHUTDOWN)  
+  if(irdp->flags & IF_SHUTDOWN)
     stream_putw (s, 0);
-  else 
+  else
     stream_putw (s, irdp->Lifetime);
 
   stream_putl (s, htonl(p->u.prefix4.s_addr)); /* Router address. */
@@ -183,20 +183,20 @@ irdp_send(struct interface *ifp, struct prefix *p, struct stream *s)
   u_int32_t dst;
   u_int32_t ttl=1;
 
-  if (! (ifp->flags & IFF_UP)) return; 
+  if (! (ifp->flags & IFF_UP)) return;
 
-  if (irdp->flags & IF_BROADCAST) 
+  if (irdp->flags & IF_BROADCAST)
     dst =INADDR_BROADCAST ;
-  else 
+  else
     dst = htonl(INADDR_ALLHOSTS_GROUP);
 
-  if(irdp->flags & IF_DEBUG_MESSAGES) 
-    zlog_debug("IRDP: TX Advert on %s %s/%d Holdtime=%d Preference=%d", 
-	      ifp->name,
-	      inet_ntoa(p->u.prefix4), 
-	      p->prefixlen,
-	      irdp->flags & IF_SHUTDOWN? 0 : irdp->Lifetime,
-	      get_pref(irdp, p));
+  if(irdp->flags & IF_DEBUG_MESSAGES)
+    zlog_debug("IRDP: TX Advert on %s %s/%d Holdtime=%d Preference=%d",
+              ifp->name,
+              inet_ntoa(p->u.prefix4),
+              p->prefixlen,
+              irdp->flags & IF_SHUTDOWN? 0 : irdp->Lifetime,
+              get_pref(irdp, p));
 
   send_packet (ifp, s, dst, p, ttl);
 }
@@ -222,14 +222,14 @@ int irdp_send_thread(struct thread *t_advert)
 
   irdp->flags &= ~IF_SOLICIT;
 
-  if(ifp->connected) 
+  if(ifp->connected)
     for (ALL_LIST_ELEMENTS (ifp->connected, node, nnode, ifc))
       {
         p = ifc->address;
-        
+
         if (p->family != AF_INET)
           continue;
-        
+
         irdp_advertisement(ifp, p);
         irdp->irdp_sent++;
       }
@@ -239,8 +239,8 @@ int irdp_send_thread(struct thread *t_advert)
   timer = irdp->MinAdvertInterval + timer;
 
   if(irdp->irdp_sent <  MAX_INITIAL_ADVERTISEMENTS &&
-     timer > MAX_INITIAL_ADVERT_INTERVAL ) 
-	  timer= MAX_INITIAL_ADVERT_INTERVAL;
+     timer > MAX_INITIAL_ADVERT_INTERVAL )
+          timer= MAX_INITIAL_ADVERT_INTERVAL;
 
   if(irdp->flags & IF_DEBUG_MISC)
     zlog_debug("IRDP: New timer for %s set to %u\n", ifp->name, timer);
@@ -260,17 +260,17 @@ void irdp_advert_off(struct interface *ifp)
 
   if(irdp->t_advertise)  thread_cancel(irdp->t_advertise);
   irdp->t_advertise = NULL;
-  
-  if(ifp->connected) 
+
+  if(ifp->connected)
     for (ALL_LIST_ELEMENTS (ifp->connected, node, nnode, ifc))
       {
         p = ifc->address;
 
-        /* Output some packets with Lifetime 0 
+        /* Output some packets with Lifetime 0
            we should add a wait...
         */
 
-        for(i=0; i< IRDP_LAST_ADVERT_MESSAGES; i++) 
+        for(i=0; i< IRDP_LAST_ADVERT_MESSAGES; i++)
           {
             irdp->irdp_sent++;
             irdp_advertisement(ifp, p);
@@ -285,7 +285,7 @@ void process_solicit (struct interface *ifp)
   struct irdp_interface *irdp=&zi->irdp;
   u_int32_t timer;
 
-  /* When SOLICIT is active we reject further incoming solicits 
+  /* When SOLICIT is active we reject further incoming solicits
      this keeps down the answering rate so we don't have think
      about DoS attacks here. */
 
@@ -297,10 +297,10 @@ void process_solicit (struct interface *ifp)
 
   timer =  (random () % MAX_RESPONSE_DELAY) + 1;
 
-  irdp->t_advertise = thread_add_timer(zebrad.master, 
-				       irdp_send_thread, 
-				       ifp, 
-				       timer);
+  irdp->t_advertise = thread_add_timer(zebrad.master,
+                                       irdp_send_thread,
+                                       ifp,
+                                       timer);
 }
 
 void irdp_finish()
@@ -312,21 +312,21 @@ void irdp_finish()
   struct irdp_interface *irdp;
 
   zlog_info("IRDP: Received shutdown notification.");
-  
+
   for (ALL_LIST_ELEMENTS (iflist, node, nnode, ifp))
     {
       zi = ifp->info;
-      
-      if (!zi) 
+
+      if (!zi)
         continue;
       irdp = &zi->irdp;
-      if (!irdp) 
+      if (!irdp)
         continue;
 
-      if (irdp->flags & IF_ACTIVE ) 
+      if (irdp->flags & IF_ACTIVE )
         {
-	  irdp->flags |= IF_SHUTDOWN;
-	  irdp_advert_off(ifp);
+          irdp->flags |= IF_SHUTDOWN;
+          irdp_advert_off(ifp);
         }
     }
 }

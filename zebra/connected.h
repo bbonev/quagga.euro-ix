@@ -17,7 +17,7 @@
  * You should have received a copy of the GNU General Public License
  * along with GNU Zebra; see the file COPYING.  If not, write to the Free
  * Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
- * 02111-1307, USA.  
+ * 02111-1307, USA.
  */
 
 #ifndef _ZEBRA_CONNECTED_H
@@ -27,13 +27,13 @@ extern struct connected *
 connected_check (struct interface *ifp, struct prefix *p);
 
 extern void
-connected_add_ipv4 (struct interface *ifp, int flags, struct in_addr *addr, 
-		    u_char prefixlen, struct in_addr *broad, 
-		    const char *label);
+connected_add_ipv4 (struct interface *ifp, int flags, struct in_addr *addr,
+                    u_char prefixlen, struct in_addr *broad,
+                    const char *label);
 
 extern void
 connected_delete_ipv4 (struct interface *ifp, int flags, struct in_addr *addr,
-		       u_char prefixlen, struct in_addr *broad);
+                       u_char prefixlen, struct in_addr *broad);
 
 extern void connected_up_ipv4 (struct interface *, struct connected *);
 extern void connected_down_ipv4 (struct interface *, struct connected *);
@@ -41,11 +41,11 @@ extern void connected_down_ipv4 (struct interface *, struct connected *);
 #ifdef HAVE_IPV6
 extern void
 connected_add_ipv6 (struct interface *ifp, int flags, struct in6_addr *address,
-		    u_char prefixlen, struct in6_addr *broad,
-		    const char *label);
+                    u_char prefixlen, struct in6_addr *broad,
+                    const char *label);
 extern void
 connected_delete_ipv6 (struct interface *ifp, struct in6_addr *address,
-		       u_char prefixlen, struct in6_addr *broad);
+                       u_char prefixlen, struct in6_addr *broad);
 
 extern void connected_up_ipv6 (struct interface *, struct connected *);
 extern void connected_down_ipv6 (struct interface *ifp, struct connected *);

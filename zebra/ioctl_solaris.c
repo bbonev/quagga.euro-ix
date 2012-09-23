@@ -99,7 +99,7 @@ if_ioctl_ipv6 (u_long request, caddr_t buffer)
       if (zserv_privs.change(ZPRIVS_LOWER))
         zlog (NULL, LOG_ERR, "Can't lower privileges");
       zlog_err("Cannot create IPv6 datagram socket: %s",
-	       safe_strerror(save_errno));
+               safe_strerror(save_errno));
       exit (1);
     }
 
