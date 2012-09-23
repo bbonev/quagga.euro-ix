@@ -36,7 +36,7 @@ static struct test_segment {
     "ipaddr",
     "rt 1.2.3.4:257",
     { ECOMMUNITY_ENCODE_IP, ECOMMUNITY_ROUTE_TARGET,
-      0x1,0x2,0x3,0x4,	0x1,0x1 },
+      0x1,0x2,0x3,0x4,  0x1,0x1 },
     8,
     { "rt 1.2.3.4:257" }
   },
@@ -44,7 +44,7 @@ static struct test_segment {
     "ipaddr-so",
     "soo 1.2.3.4:257",
     { ECOMMUNITY_ENCODE_IP, ECOMMUNITY_SITE_ORIGIN,
-      0x1,0x2,0x3,0x4,	0x1,0x1},
+      0x1,0x2,0x3,0x4,  0x1,0x1},
     8,
     { "soo 1.2.3.4:257" }
   },
@@ -52,7 +52,7 @@ static struct test_segment {
     "asn",
     "rt 23456:987654321",
     { ECOMMUNITY_ENCODE_AS, ECOMMUNITY_SITE_ORIGIN,
-      0x5b,0xa0,	0x3a,0xde,0x68,0xb1 },
+      0x5b,0xa0,        0x3a,0xde,0x68,0xb1 },
     8,
     { "soo 23456:987654321" }
   },
@@ -60,7 +60,7 @@ static struct test_segment {
     "asn4",
     "rt 168450976:4321",
     { ECOMMUNITY_ENCODE_AS4, ECOMMUNITY_SITE_ORIGIN,
-      0xa,0xa,0x5b,0xa0,	0x10,0xe1 },
+      0xa,0xa,0x5b,0xa0,        0x10,0xe1 },
     8,
     { "soo 168450976:4321" }
   },

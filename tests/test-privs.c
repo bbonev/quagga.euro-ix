@@ -94,25 +94,25 @@ main (int argc, char **argv)
       opt = getopt_long (argc, argv, "hu:g:", longopts, 0);
 
       if (opt == EOF)
-	break;
+        break;
 
       switch (opt)
-	{
-	case 0:
-	  break;
+        {
+        case 0:
+          break;
         case 'u':
           test_privs.user = optarg;
           break;
         case 'g':
           test_privs.group = optarg;
           break;
-	case 'h':
-	  usage (cmd_host_program_name(), 0);
-	  break;
-	default:
-	  usage (cmd_host_program_name(), 1);
-	  break;
-	}
+        case 'h':
+          usage (cmd_host_program_name(), 0);
+          break;
+        default:
+          usage (cmd_host_program_name(), 1);
+          break;
+        }
     }
 
   /* Library inits. */

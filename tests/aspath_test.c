@@ -440,9 +440,9 @@ static struct aspath_tests {
   const struct test_segment *segment;
   const char *shouldbe;  /* String it should evaluate to */
   const enum as4 { AS4_DATA, AS2_DATA }
-          as4; 	/* whether data should be as4 or not (ie as2) */
-  const int result;	/* expected result for bgp_attr_parse */
-  const int cap;	/* capabilities to set for peer */
+          as4;  /* whether data should be as4 or not (ie as2) */
+  const int result;     /* expected result for bgp_attr_parse */
+  const int cap;        /* capabilities to set for peer */
   const char attrheader [1024];
   size_t len;
 } aspath_tests [] =
