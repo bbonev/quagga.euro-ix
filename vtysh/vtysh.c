@@ -1007,7 +1007,7 @@ vtysh_show_history(vty vty)
  */
 static int
 execute_command (const char *command, int argc, const char *arg1,
-		 const char *arg2)
+                 const char *arg2)
 {
   int ret;
   pid_t pid;
@@ -1026,17 +1026,17 @@ execute_command (const char *command, int argc, const char *arg1,
     {
       /* This is child process. */
       switch (argc)
-	{
-	case 0:
-	  ret = execlp (command, command, (const char *)NULL);
-	  break;
-	case 1:
-	  ret = execlp (command, command, arg1, (const char *)NULL);
-	  break;
-	case 2:
-	  ret = execlp (command, command, arg1, arg2, (const char *)NULL);
-	  break;
-	}
+        {
+        case 0:
+          ret = execlp (command, command, (const char *)NULL);
+          break;
+        case 1:
+          ret = execlp (command, command, arg1, (const char *)NULL);
+          break;
+        case 2:
+          ret = execlp (command, command, arg1, arg2, (const char *)NULL);
+          break;
+        }
 
       /* When execlp succeeds, this part is not executed.
        */
