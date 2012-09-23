@@ -147,13 +147,13 @@ distribute_list_set (const char *ifname, enum distribute_type type,
   if (type == DISTRIBUTE_IN)
     {
       if (dist->list[DISTRIBUTE_IN])
-	free (dist->list[DISTRIBUTE_IN]);
+        free (dist->list[DISTRIBUTE_IN]);
       dist->list[DISTRIBUTE_IN] = strdup (alist_name);
     }
   if (type == DISTRIBUTE_OUT)
     {
       if (dist->list[DISTRIBUTE_OUT])
-	free (dist->list[DISTRIBUTE_OUT]);
+        free (dist->list[DISTRIBUTE_OUT]);
       dist->list[DISTRIBUTE_OUT] = strdup (alist_name);
     }
 
@@ -167,7 +167,7 @@ distribute_list_set (const char *ifname, enum distribute_type type,
    return 1. */
 static int
 distribute_list_unset (const char *ifname, enum distribute_type type,
-		       const char *alist_name)
+                       const char *alist_name)
 {
   struct distribute *dist;
 
@@ -178,9 +178,9 @@ distribute_list_unset (const char *ifname, enum distribute_type type,
   if (type == DISTRIBUTE_IN)
     {
       if (!dist->list[DISTRIBUTE_IN])
-	return 0;
+        return 0;
       if (strcmp (dist->list[DISTRIBUTE_IN], alist_name) != 0)
-	return 0;
+        return 0;
 
       free (dist->list[DISTRIBUTE_IN]);
       dist->list[DISTRIBUTE_IN] = NULL;
@@ -189,9 +189,9 @@ distribute_list_unset (const char *ifname, enum distribute_type type,
   if (type == DISTRIBUTE_OUT)
     {
       if (!dist->list[DISTRIBUTE_OUT])
-	return 0;
+        return 0;
       if (strcmp (dist->list[DISTRIBUTE_OUT], alist_name) != 0)
-	return 0;
+        return 0;
 
       free (dist->list[DISTRIBUTE_OUT]);
       dist->list[DISTRIBUTE_OUT] = NULL;
@@ -216,7 +216,7 @@ distribute_list_unset (const char *ifname, enum distribute_type type,
 /* Set access-list name to the distribute list. */
 static struct distribute *
 distribute_list_prefix_set (const char *ifname, enum distribute_type type,
-			    const char *plist_name)
+                            const char *plist_name)
 {
   struct distribute *dist;
 
@@ -225,13 +225,13 @@ distribute_list_prefix_set (const char *ifname, enum distribute_type type,
   if (type == DISTRIBUTE_IN)
     {
       if (dist->prefix[DISTRIBUTE_IN])
-	free (dist->prefix[DISTRIBUTE_IN]);
+        free (dist->prefix[DISTRIBUTE_IN]);
       dist->prefix[DISTRIBUTE_IN] = strdup (plist_name);
     }
   if (type == DISTRIBUTE_OUT)
     {
       if (dist->prefix[DISTRIBUTE_OUT])
-	free (dist->prefix[DISTRIBUTE_OUT]);
+        free (dist->prefix[DISTRIBUTE_OUT]);
       dist->prefix[DISTRIBUTE_OUT] = strdup (plist_name);
     }
 
@@ -245,7 +245,7 @@ distribute_list_prefix_set (const char *ifname, enum distribute_type type,
    return 1. */
 static int
 distribute_list_prefix_unset (const char *ifname, enum distribute_type type,
-			      const char *plist_name)
+                              const char *plist_name)
 {
   struct distribute *dist;
 
@@ -256,9 +256,9 @@ distribute_list_prefix_unset (const char *ifname, enum distribute_type type,
   if (type == DISTRIBUTE_IN)
     {
       if (!dist->prefix[DISTRIBUTE_IN])
-	return 0;
+        return 0;
       if (strcmp (dist->prefix[DISTRIBUTE_IN], plist_name) != 0)
-	return 0;
+        return 0;
 
       free (dist->prefix[DISTRIBUTE_IN]);
       dist->prefix[DISTRIBUTE_IN] = NULL;
@@ -267,9 +267,9 @@ distribute_list_prefix_unset (const char *ifname, enum distribute_type type,
   if (type == DISTRIBUTE_OUT)
     {
       if (!dist->prefix[DISTRIBUTE_OUT])
-	return 0;
+        return 0;
       if (strcmp (dist->prefix[DISTRIBUTE_OUT], plist_name) != 0)
-	return 0;
+        return 0;
 
       free (dist->prefix[DISTRIBUTE_OUT]);
       dist->prefix[DISTRIBUTE_OUT] = NULL;
@@ -309,7 +309,7 @@ DEFUN (distribute_list_all,
   else
     {
       vty_out (vty, "distribute list direction must be [in|out]%s",
-	       VTY_NEWLINE);
+               VTY_NEWLINE);
       return CMD_WARNING;
     }
 
@@ -347,7 +347,7 @@ DEFUN (no_distribute_list_all,
   else
     {
       vty_out (vty, "distribute list direction must be [in|out]%s",
-	       VTY_NEWLINE);
+               VTY_NEWLINE);
       return CMD_WARNING;
     }
 
@@ -466,7 +466,7 @@ DEFUN (distribute_list_prefix_all,
   else
     {
       vty_out (vty, "distribute list direction must be [in|out]%s",
-	       VTY_NEWLINE);
+               VTY_NEWLINE);
       return CMD_WARNING;
     }
 
@@ -506,7 +506,7 @@ DEFUN (no_distribute_list_prefix_all,
   else
     {
       vty_out (vty, "distribute list direction must be [in|out]%s",
-	       VTY_NEWLINE);
+               VTY_NEWLINE);
       return CMD_WARNING;
     }
 
@@ -548,7 +548,7 @@ DEFUN (distribute_list_prefix, distribute_list_prefix_cmd,
   else
     {
       vty_out (vty, "distribute list direction must be [in|out]%s",
-	       VTY_NEWLINE);
+               VTY_NEWLINE);
       return CMD_WARNING;
     }
 
@@ -588,7 +588,7 @@ DEFUN (no_distribute_list_prefix, no_distribute_list_prefix_cmd,
   else
     {
       vty_out (vty, "distribute list direction must be [in|out]%s",
-	       VTY_NEWLINE);
+               VTY_NEWLINE);
       return CMD_WARNING;
     }
 
@@ -624,11 +624,11 @@ config_show_distribute (struct vty *vty)
     {
       vty_out (vty, "  Outgoing update filter list for all interface is");
       if (dist->list[DISTRIBUTE_OUT])
-	vty_out (vty, " %s", dist->list[DISTRIBUTE_OUT]);
+        vty_out (vty, " %s", dist->list[DISTRIBUTE_OUT]);
       if (dist->prefix[DISTRIBUTE_OUT])
-	vty_out (vty, "%s (prefix-list) %s",
-		 dist->list[DISTRIBUTE_OUT] ? "," : "",
-		 dist->prefix[DISTRIBUTE_OUT]);
+        vty_out (vty, "%s (prefix-list) %s",
+                 dist->list[DISTRIBUTE_OUT] ? "," : "",
+                 dist->prefix[DISTRIBUTE_OUT]);
       vty_out (vty, "%s", VTY_NEWLINE);
     }
   else
@@ -637,19 +637,19 @@ config_show_distribute (struct vty *vty)
   for (i = 0; i < disthash->size; i++)
     for (mp = disthash->index[i]; mp; mp = mp->next)
       {
-	dist = mp->data;
-	if (dist->ifname)
-	  if (dist->list[DISTRIBUTE_OUT] || dist->prefix[DISTRIBUTE_OUT])
-	    {
-	      vty_out (vty, "    %s filtered by", dist->ifname);
-	      if (dist->list[DISTRIBUTE_OUT])
-		vty_out (vty, " %s", dist->list[DISTRIBUTE_OUT]);
-	      if (dist->prefix[DISTRIBUTE_OUT])
-		vty_out (vty, "%s (prefix-list) %s",
-			 dist->list[DISTRIBUTE_OUT] ? "," : "",
-			 dist->prefix[DISTRIBUTE_OUT]);
-	      vty_out (vty, "%s", VTY_NEWLINE);
-	    }
+        dist = mp->data;
+        if (dist->ifname)
+          if (dist->list[DISTRIBUTE_OUT] || dist->prefix[DISTRIBUTE_OUT])
+            {
+              vty_out (vty, "    %s filtered by", dist->ifname);
+              if (dist->list[DISTRIBUTE_OUT])
+                vty_out (vty, " %s", dist->list[DISTRIBUTE_OUT]);
+              if (dist->prefix[DISTRIBUTE_OUT])
+                vty_out (vty, "%s (prefix-list) %s",
+                         dist->list[DISTRIBUTE_OUT] ? "," : "",
+                         dist->prefix[DISTRIBUTE_OUT]);
+              vty_out (vty, "%s", VTY_NEWLINE);
+            }
       }
 
 
@@ -659,11 +659,11 @@ config_show_distribute (struct vty *vty)
     {
       vty_out (vty, "  Incoming update filter list for all interface is");
       if (dist->list[DISTRIBUTE_IN])
-	vty_out (vty, " %s", dist->list[DISTRIBUTE_IN]);
+        vty_out (vty, " %s", dist->list[DISTRIBUTE_IN]);
       if (dist->prefix[DISTRIBUTE_IN])
-	vty_out (vty, "%s (prefix-list) %s",
-		 dist->list[DISTRIBUTE_IN] ? "," : "",
-		 dist->prefix[DISTRIBUTE_IN]);
+        vty_out (vty, "%s (prefix-list) %s",
+                 dist->list[DISTRIBUTE_IN] ? "," : "",
+                 dist->prefix[DISTRIBUTE_IN]);
       vty_out (vty, "%s", VTY_NEWLINE);
     }
   else
@@ -672,19 +672,19 @@ config_show_distribute (struct vty *vty)
   for (i = 0; i < disthash->size; i++)
     for (mp = disthash->index[i]; mp; mp = mp->next)
       {
-	dist = mp->data;
-	if (dist->ifname)
-	  if (dist->list[DISTRIBUTE_IN] || dist->prefix[DISTRIBUTE_IN])
-	    {
-	      vty_out (vty, "    %s filtered by", dist->ifname);
-	      if (dist->list[DISTRIBUTE_IN])
-		vty_out (vty, " %s", dist->list[DISTRIBUTE_IN]);
-	      if (dist->prefix[DISTRIBUTE_IN])
-		vty_out (vty, "%s (prefix-list) %s",
-			 dist->list[DISTRIBUTE_IN] ? "," : "",
-			 dist->prefix[DISTRIBUTE_IN]);
-	      vty_out (vty, "%s", VTY_NEWLINE);
-	    }
+        dist = mp->data;
+        if (dist->ifname)
+          if (dist->list[DISTRIBUTE_IN] || dist->prefix[DISTRIBUTE_IN])
+            {
+              vty_out (vty, "    %s filtered by", dist->ifname);
+              if (dist->list[DISTRIBUTE_IN])
+                vty_out (vty, " %s", dist->list[DISTRIBUTE_IN]);
+              if (dist->prefix[DISTRIBUTE_IN])
+                vty_out (vty, "%s (prefix-list) %s",
+                         dist->list[DISTRIBUTE_IN] ? "," : "",
+                         dist->prefix[DISTRIBUTE_IN]);
+              vty_out (vty, "%s", VTY_NEWLINE);
+            }
       }
   return 0;
 }
@@ -700,46 +700,46 @@ config_write_distribute (struct vty *vty)
   for (i = 0; i < disthash->size; i++)
     for (mp = disthash->index[i]; mp; mp = mp->next)
       {
-	struct distribute *dist;
+        struct distribute *dist;
 
-	dist = mp->data;
+        dist = mp->data;
 
-	if (dist->list[DISTRIBUTE_IN])
-	  {
-	    vty_out (vty, " distribute-list %s in %s%s",
-		     dist->list[DISTRIBUTE_IN],
-		     dist->ifname ? dist->ifname : "",
-		     VTY_NEWLINE);
-	    write++;
-	  }
+        if (dist->list[DISTRIBUTE_IN])
+          {
+            vty_out (vty, " distribute-list %s in %s%s",
+                     dist->list[DISTRIBUTE_IN],
+                     dist->ifname ? dist->ifname : "",
+                     VTY_NEWLINE);
+            write++;
+          }
 
-	if (dist->list[DISTRIBUTE_OUT])
-	  {
-	    vty_out (vty, " distribute-list %s out %s%s",
+        if (dist->list[DISTRIBUTE_OUT])
+          {
+            vty_out (vty, " distribute-list %s out %s%s",
 
-		     dist->list[DISTRIBUTE_OUT],
-		     dist->ifname ? dist->ifname : "",
-		     VTY_NEWLINE);
-	    write++;
-	  }
+                     dist->list[DISTRIBUTE_OUT],
+                     dist->ifname ? dist->ifname : "",
+                     VTY_NEWLINE);
+            write++;
+          }
 
-	if (dist->prefix[DISTRIBUTE_IN])
-	  {
-	    vty_out (vty, " distribute-list prefix %s in %s%s",
-		     dist->prefix[DISTRIBUTE_IN],
-		     dist->ifname ? dist->ifname : "",
-		     VTY_NEWLINE);
-	    write++;
-	  }
+        if (dist->prefix[DISTRIBUTE_IN])
+          {
+            vty_out (vty, " distribute-list prefix %s in %s%s",
+                     dist->prefix[DISTRIBUTE_IN],
+                     dist->ifname ? dist->ifname : "",
+                     VTY_NEWLINE);
+            write++;
+          }
 
-	if (dist->prefix[DISTRIBUTE_OUT])
-	  {
-	    vty_out (vty, " distribute-list prefix %s out %s%s",
-		     dist->prefix[DISTRIBUTE_OUT],
-		     dist->ifname ? dist->ifname : "",
-		     VTY_NEWLINE);
-	    write++;
-	  }
+        if (dist->prefix[DISTRIBUTE_OUT])
+          {
+            vty_out (vty, " distribute-list prefix %s out %s%s",
+                     dist->prefix[DISTRIBUTE_OUT],
+                     dist->ifname ? dist->ifname : "",
+                     VTY_NEWLINE);
+            write++;
+          }
       }
   return write;
 }

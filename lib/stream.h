@@ -89,9 +89,9 @@
  *
  * A stream therefore can be thought of like this:
  *
- * 	---------------------------------------------------
- * 	|XXXXXXXXXXXXXXXXXXXXXXXX                         |
- * 	---------------------------------------------------
+ *      ---------------------------------------------------
+ *      |XXXXXXXXXXXXXXXXXXXXXXXX                         |
+ *      ---------------------------------------------------
  *               ^               ^                        ^
  *               getp            endp                     size
  *
@@ -113,8 +113,8 @@ struct stream
    * Use the appropriate functions/macros
    */
   size_t getp;          /* next get position                    */
-  size_t endp;		/* last valid data position             */
-  size_t size;		/* size of data segment                 */
+  size_t endp;          /* last valid data position             */
+  size_t size;          /* size of data segment                 */
 
   size_t startp ;       /* not used by stream itself            */
 

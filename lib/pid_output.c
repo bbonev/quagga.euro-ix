@@ -49,7 +49,7 @@ pid_output (const char *path)
   /* XXX Why do we continue instead of exiting?  This seems incompatible
      with the behavior of the fcntl version below. */
   zlog_warn("Can't fopen pid lock file %s (%s), continuing",
-	    path, errtoa(errno, 0).str);
+            path, errtoa(errno, 0).str);
   umask(oldumask);
   return -1;
 }

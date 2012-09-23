@@ -830,13 +830,13 @@ Private bool ssl_del_func(void** p_prev, void* item, size_t link_offset)
 #define ddl_slice(base, sub, list)                                      \
   do { if ((sub).head != NULL)                                          \
          {                                                              \
-	    if ((sub).head->list.prev != NULL)                          \
+            if ((sub).head->list.prev != NULL)                          \
               (sub).head->list.prev->list.next = (sub).tail->list.next ; \
             else                                                        \
-	      {                                                         \
+              {                                                         \
                 qassert((sub).head == (base).head) ;                    \
                 (base).head = (sub).tail->list.next ;                   \
-	      } ;                                                       \
+              } ;                                                       \
                                                                         \
             if ((sub).tail->list.next != NULL)                          \
               (sub).tail->list.next->list.prev = (sub).head->list.prev ; \

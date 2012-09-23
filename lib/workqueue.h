@@ -36,8 +36,8 @@ typedef enum
   WQ_ERROR,             /* Error, run error handler if provided */
   WQ_RETRY_NOW,         /* retry immediately */
   WQ_RETRY_LATER,       /* retry later, cease processing work queue */
-  WQ_REQUEUE,		/* requeue item, continue processing work queue */
-  WQ_QUEUE_BLOCKED,	/* Queue cant be processed at this time.
+  WQ_REQUEUE,           /* requeue item, continue processing work queue */
+  WQ_QUEUE_BLOCKED,     /* Queue cant be processed at this time.
                          * Similar to WQ_RETRY_LATER, but doesn't penalise
                          * the particular item.. */
 } wq_item_status;
@@ -61,7 +61,7 @@ struct work_queue_item
   struct work_queue_item* next ;        /* the queue itself             */
   struct work_queue_item* prev ;
 
-  unsigned short ran;			/* # of times item has been run */
+  unsigned short ran;                   /* # of times item has been run */
 } ;
 
 /* work_queue_item structures are malloced.  That guarantees maximum alignment.
@@ -74,7 +74,7 @@ typedef struct work_queue_item work_queue_item_t ;
 CONFIRM(offsetof(work_queue_item_t, args) == 0) ;
                                         /* so guaranteed max alignment  */
 
-#define WQ_UNPLUGGED	(1 << 0) /* available for draining */
+#define WQ_UNPLUGGED    (1 << 0) /* available for draining */
 
 typedef struct work_queue* work_queue ;
 
@@ -117,7 +117,7 @@ struct work_queue
     /* max number of retries to make for item that errors */
     unsigned int max_retries;
 
-    unsigned int hold;	/* hold time for first run, in ms */
+    unsigned int hold;  /* hold time for first run, in ms */
   } spec;
 
   /* remaining fields should be opaque to users */
@@ -131,10 +131,10 @@ struct work_queue
     unsigned int best;
     unsigned int granularity;
     unsigned long total;
-  } cycles;	/* cycle counts */
+  } cycles;     /* cycle counts */
 
   /* private state */
-  u_int16_t flags;		/* user set flag */
+  u_int16_t flags;              /* user set flag */
 };
 
 /* User API */

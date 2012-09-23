@@ -65,7 +65,7 @@ keychain_lookup (const char *name)
   for (ALL_LIST_ELEMENTS_RO (keychain_list, node, keychain))
     {
       if (strcmp (keychain->name, name) == 0)
-	return keychain;
+        return keychain;
     }
   return NULL;
 }
@@ -131,7 +131,7 @@ key_lookup (const struct keychain *keychain, u_int32_t index)
   for (ALL_LIST_ELEMENTS_RO (keychain->key, node, key))
     {
       if (key->index == index)
-	return key;
+        return key;
     }
   return NULL;
 }
@@ -148,14 +148,14 @@ key_lookup_for_accept (const struct keychain *keychain, u_int32_t index)
   for (ALL_LIST_ELEMENTS_RO (keychain->key, node, key))
     {
       if (key->index >= index)
-	{
-	  if (key->accept.start == 0)
-	    return key;
+        {
+          if (key->accept.start == 0)
+            return key;
 
-	  if (key->accept.start <= now)
-	    if (key->accept.end >= now || key->accept.end == -1)
-	      return key;
-	}
+          if (key->accept.start <= now)
+            if (key->accept.end >= now || key->accept.end == -1)
+              return key;
+        }
     }
   return NULL;
 }
@@ -172,10 +172,10 @@ key_match_for_accept (const struct keychain *keychain, const char *auth_str)
   for (ALL_LIST_ELEMENTS_RO (keychain->key, node, key))
     {
       if (key->accept.start == 0 ||
-	  (key->accept.start <= now &&
-	   (key->accept.end >= now || key->accept.end == -1)))
-	if (strncmp (key->string, auth_str, 16) == 0)
-	  return key;
+          (key->accept.start <= now &&
+           (key->accept.end >= now || key->accept.end == -1)))
+        if (strncmp (key->string, auth_str, 16) == 0)
+          return key;
     }
   return NULL;
 }
@@ -192,11 +192,11 @@ key_lookup_for_send (const struct keychain *keychain)
   for (ALL_LIST_ELEMENTS_RO (keychain->key, node, key))
     {
       if (key->send.start == 0)
-	return key;
+        return key;
 
       if (key->send.start <= now)
-	if (key->send.end >= now || key->send.end == -1)
-	  return key;
+        if (key->send.end >= now || key->send.end == -1)
+          return key;
     }
   return NULL;
 }
@@ -359,7 +359,7 @@ DEFUN (no_key_string,
    given string is malformed. */
 static time_t
 key_str2time (const char *time_str, const char *day_str, const char *month_str,
-	      const char *year_str)
+              const char *year_str)
 {
   int i = 0;
   char *colon;
@@ -433,10 +433,10 @@ key_str2time (const char *time_str, const char *day_str, const char *month_str,
   if (strlen (month_str) >= 3)
     for (i = 0; month_name[i]; i++)
       if (strncmp (month_str, month_name[i], strlen (month_str)) == 0)
-	{
-	  month = i;
-	  break;
-	}
+        {
+          month = i;
+          break;
+        }
   if (! month_name[i])
     return -1;
 
@@ -459,10 +459,10 @@ key_str2time (const char *time_str, const char *day_str, const char *month_str,
 
 static int
 key_lifetime_set (struct vty *vty, struct key_range *krange,
-		  const char *stime_str, const char *sday_str,
-		  const char *smonth_str, const char *syear_str,
-		  const char *etime_str, const char *eday_str,
-		  const char *emonth_str, const char *eyear_str)
+                  const char *stime_str, const char *sday_str,
+                  const char *smonth_str, const char *syear_str,
+                  const char *etime_str, const char *eday_str,
+                  const char *emonth_str, const char *eyear_str)
 {
   time_t time_start;
   time_t time_end;
@@ -495,9 +495,9 @@ key_lifetime_set (struct vty *vty, struct key_range *krange,
 
 static int
 key_lifetime_duration_set (struct vty *vty, struct key_range *krange,
-			   const char *stime_str, const char *sday_str,
-			   const char *smonth_str, const char *syear_str,
-			   const char *duration_str)
+                           const char *stime_str, const char *sday_str,
+                           const char *smonth_str, const char *syear_str,
+                           const char *duration_str)
 {
   time_t time_start;
   u_int32_t duration;
@@ -519,8 +519,8 @@ key_lifetime_duration_set (struct vty *vty, struct key_range *krange,
 
 static int
 key_lifetime_infinite_set (struct vty *vty, struct key_range *krange,
-			   const char *stime_str, const char *sday_str,
-			   const char *smonth_str, const char *syear_str)
+                           const char *stime_str, const char *sday_str,
+                           const char *smonth_str, const char *syear_str)
 {
   time_t time_start;
 
@@ -555,7 +555,7 @@ DEFUN (accept_lifetime_day_month_day_month,
   key = vty->index_sub;
 
   return key_lifetime_set (vty, &key->accept, argv[0], argv[1], argv[2],
-			   argv[3], argv[4], argv[5], argv[6], argv[7]);
+                           argv[3], argv[4], argv[5], argv[6], argv[7]);
 }
 
 DEFUN (accept_lifetime_day_month_month_day,
@@ -576,7 +576,7 @@ DEFUN (accept_lifetime_day_month_month_day,
   key = vty->index_sub;
 
   return key_lifetime_set (vty, &key->accept, argv[0], argv[1], argv[2],
-			   argv[3], argv[4], argv[6], argv[5], argv[7]);
+                           argv[3], argv[4], argv[6], argv[5], argv[7]);
 }
 
 DEFUN (accept_lifetime_month_day_day_month,
@@ -597,7 +597,7 @@ DEFUN (accept_lifetime_month_day_day_month,
   key = vty->index_sub;
 
   return key_lifetime_set (vty, &key->accept, argv[0], argv[2], argv[1],
-			   argv[3], argv[4], argv[5], argv[6], argv[7]);
+                           argv[3], argv[4], argv[5], argv[6], argv[7]);
 }
 
 DEFUN (accept_lifetime_month_day_month_day,
@@ -618,7 +618,7 @@ DEFUN (accept_lifetime_month_day_month_day,
   key = vty->index_sub;
 
   return key_lifetime_set (vty, &key->accept, argv[0], argv[2], argv[1],
-			   argv[3], argv[4], argv[6], argv[5], argv[7]);
+                           argv[3], argv[4], argv[6], argv[5], argv[7]);
 }
 
 DEFUN (accept_lifetime_infinite_day_month,
@@ -636,7 +636,7 @@ DEFUN (accept_lifetime_infinite_day_month,
   key = vty->index_sub;
 
   return key_lifetime_infinite_set (vty, &key->accept, argv[0], argv[1],
-				    argv[2], argv[3]);
+                                    argv[2], argv[3]);
 }
 
 DEFUN (accept_lifetime_infinite_month_day,
@@ -654,7 +654,7 @@ DEFUN (accept_lifetime_infinite_month_day,
   key = vty->index_sub;
 
   return key_lifetime_infinite_set (vty, &key->accept, argv[0], argv[2],
-				    argv[1], argv[3]);
+                                    argv[1], argv[3]);
 }
 
 DEFUN (accept_lifetime_duration_day_month,
@@ -673,7 +673,7 @@ DEFUN (accept_lifetime_duration_day_month,
   key = vty->index_sub;
 
   return key_lifetime_duration_set (vty, &key->accept, argv[0], argv[1],
-				    argv[2], argv[3], argv[4]);
+                                    argv[2], argv[3], argv[4]);
 }
 
 DEFUN (accept_lifetime_duration_month_day,
@@ -692,7 +692,7 @@ DEFUN (accept_lifetime_duration_month_day,
   key = vty->index_sub;
 
   return key_lifetime_duration_set (vty, &key->accept, argv[0], argv[2],
-				    argv[1], argv[3], argv[4]);
+                                    argv[1], argv[3], argv[4]);
 }
 
 DEFUN (send_lifetime_day_month_day_month,
@@ -713,7 +713,7 @@ DEFUN (send_lifetime_day_month_day_month,
   key = vty->index_sub;
 
   return key_lifetime_set (vty, &key->send, argv[0], argv[1], argv[2], argv[3],
-			   argv[4], argv[5], argv[6], argv[7]);
+                           argv[4], argv[5], argv[6], argv[7]);
 }
 
 DEFUN (send_lifetime_day_month_month_day,
@@ -734,7 +734,7 @@ DEFUN (send_lifetime_day_month_month_day,
   key = vty->index_sub;
 
   return key_lifetime_set (vty, &key->send, argv[0], argv[1], argv[2], argv[3],
-			   argv[4], argv[6], argv[5], argv[7]);
+                           argv[4], argv[6], argv[5], argv[7]);
 }
 
 DEFUN (send_lifetime_month_day_day_month,
@@ -755,7 +755,7 @@ DEFUN (send_lifetime_month_day_day_month,
   key = vty->index_sub;
 
   return key_lifetime_set (vty, &key->send, argv[0], argv[2], argv[1], argv[3],
-			   argv[4], argv[5], argv[6], argv[7]);
+                           argv[4], argv[5], argv[6], argv[7]);
 }
 
 DEFUN (send_lifetime_month_day_month_day,
@@ -776,7 +776,7 @@ DEFUN (send_lifetime_month_day_month_day,
   key = vty->index_sub;
 
   return key_lifetime_set (vty, &key->send, argv[0], argv[2], argv[1], argv[3],
-			   argv[4], argv[6], argv[5], argv[7]);
+                           argv[4], argv[6], argv[5], argv[7]);
 }
 
 DEFUN (send_lifetime_infinite_day_month,
@@ -794,7 +794,7 @@ DEFUN (send_lifetime_infinite_day_month,
   key = vty->index_sub;
 
   return key_lifetime_infinite_set (vty, &key->send, argv[0], argv[1], argv[2],
-				    argv[3]);
+                                    argv[3]);
 }
 
 DEFUN (send_lifetime_infinite_month_day,
@@ -812,7 +812,7 @@ DEFUN (send_lifetime_infinite_month_day,
   key = vty->index_sub;
 
   return key_lifetime_infinite_set (vty, &key->send, argv[0], argv[2], argv[1],
-				    argv[3]);
+                                    argv[3]);
 }
 
 DEFUN (send_lifetime_duration_day_month,
@@ -831,7 +831,7 @@ DEFUN (send_lifetime_duration_day_month,
   key = vty->index_sub;
 
   return key_lifetime_duration_set (vty, &key->send, argv[0], argv[1], argv[2],
-				    argv[3], argv[4]);
+                                    argv[3], argv[4]);
 }
 
 DEFUN (send_lifetime_duration_month_day,
@@ -850,7 +850,7 @@ DEFUN (send_lifetime_duration_month_day,
   key = vty->index_sub;
 
   return key_lifetime_duration_set (vty, &key->send, argv[0], argv[2], argv[1],
-				    argv[3], argv[4]);
+                                    argv[3], argv[4]);
 }
 
 static int
@@ -882,51 +882,51 @@ keychain_config_write (struct vty *vty)
       vty_out (vty, "key chain %s%s", keychain->name, VTY_NEWLINE);
 
       for (ALL_LIST_ELEMENTS_RO (keychain->key, knode, key))
-	{
+        {
           vty_out_vtysh_config_group(vty, "key %d", key->index) ;
 
-	  vty_out (vty, " key %d%s", key->index, VTY_NEWLINE);
+          vty_out (vty, " key %d%s", key->index, VTY_NEWLINE);
 
-	  if (key->string)
-	    vty_out (vty, "  key-string %s%s", key->string, VTY_NEWLINE);
+          if (key->string)
+            vty_out (vty, "  key-string %s%s", key->string, VTY_NEWLINE);
 
-	  if (key->accept.start)
-	    {
-	      keychain_strftime (buf, BUFSIZ, &key->accept.start);
-	      vty_out (vty, "  accept-lifetime %s", buf);
+          if (key->accept.start)
+            {
+              keychain_strftime (buf, BUFSIZ, &key->accept.start);
+              vty_out (vty, "  accept-lifetime %s", buf);
 
-	      if (key->accept.end == -1)
-		vty_out (vty, " infinite");
-	      else if (key->accept.duration)
-		vty_out (vty, " duration %ld",
-			 (long)(key->accept.end - key->accept.start));
-	      else
-		{
-		  keychain_strftime (buf, BUFSIZ, &key->accept.end);
-		  vty_out (vty, " %s", buf);
-		}
-	      vty_out (vty, "%s", VTY_NEWLINE);
-	    }
+              if (key->accept.end == -1)
+                vty_out (vty, " infinite");
+              else if (key->accept.duration)
+                vty_out (vty, " duration %ld",
+                         (long)(key->accept.end - key->accept.start));
+              else
+                {
+                  keychain_strftime (buf, BUFSIZ, &key->accept.end);
+                  vty_out (vty, " %s", buf);
+                }
+              vty_out (vty, "%s", VTY_NEWLINE);
+            }
 
-	  if (key->send.start)
-	    {
-	      keychain_strftime (buf, BUFSIZ, &key->send.start);
-	      vty_out (vty, "  send-lifetime %s", buf);
+          if (key->send.start)
+            {
+              keychain_strftime (buf, BUFSIZ, &key->send.start);
+              vty_out (vty, "  send-lifetime %s", buf);
 
-	      if (key->send.end == -1)
-		vty_out (vty, " infinite");
-	      else if (key->send.duration)
-		vty_out (vty, " duration %ld", (long)(key->send.end - key->send.start));
-	      else
-		{
-		  keychain_strftime (buf, BUFSIZ, &key->send.end);
-		  vty_out (vty, " %s", buf);
-		}
-	      vty_out (vty, "%s", VTY_NEWLINE);
-	    }
+              if (key->send.end == -1)
+                vty_out (vty, " infinite");
+              else if (key->send.duration)
+                vty_out (vty, " duration %ld", (long)(key->send.end - key->send.start));
+              else
+                {
+                  keychain_strftime (buf, BUFSIZ, &key->send.end);
+                  vty_out (vty, " %s", buf);
+                }
+              vty_out (vty, "%s", VTY_NEWLINE);
+            }
 
-	  vty_out_vtysh_config_group_end(vty) ;
-	}
+          vty_out_vtysh_config_group_end(vty) ;
+        }
 
       if (!vty_out_vtysh_config_group_end(vty))
         vty_out (vty, "!\n");

@@ -181,10 +181,10 @@ extern vector_length_t vector_condense(vector v) ;
 
 extern void vector_insert_item(vector v, vector_index_t i, p_vector_item p_v) ;
 extern void vector_insert_item_here(vector v, vector_index_t i, int rider,
-							  p_vector_item p_v) ;
+                                                          p_vector_item p_v) ;
 extern void vector_move_item(vector v, vector_index_t dst, vector_index_t src) ;
 extern void vector_move_item_here(vector v, vector_index_t dst, int rider,
-							   vector_index_t src) ;
+                                                           vector_index_t src) ;
 extern p_vector_item vector_delete_item(vector v, vector_index_t i) ;
 extern void vector_reverse(vector v) ;
 extern void vector_part_reverse(vector v, vector_index_t i, vector_length_t n) ;
@@ -199,7 +199,7 @@ extern void vector_delete(vector v, vector_index_t i, vector_length_t n) ;
 
 typedef int vector_bsearch_cmp(const cvp* pp_val, const cvp* item) ;
 vector_index_t vector_bsearch(vector v, vector_bsearch_cmp* cmp,
-					      const void* p_val, int* result) ;
+                                              const void* p_val, int* result) ;
 typedef int vector_sort_cmp(const cvp* a, const cvp* b) ;
 void vector_sort(vector v, vector_sort_cmp* cmp) ;
 

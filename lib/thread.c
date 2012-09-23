@@ -97,14 +97,14 @@ static long
 timeval_cmp (struct timeval a, struct timeval b)
 {
   return (a.tv_sec == b.tv_sec
-	  ? a.tv_usec - b.tv_usec : a.tv_sec - b.tv_sec);
+          ? a.tv_usec - b.tv_usec : a.tv_sec - b.tv_sec);
 }
 
 static unsigned long
 timeval_elapsed (struct timeval a, struct timeval b)
 {
   return (((a.tv_sec - b.tv_sec) * TIMER_SECOND_MICRO)
-	  + (a.tv_usec - b.tv_usec));
+          + (a.tv_usec - b.tv_usec));
 }
 
 #ifndef HAVE_CLOCK_MONOTONIC
@@ -241,7 +241,7 @@ cpu_record_hash_key (struct cpu_thread_history *a)
 
 static int
 cpu_record_hash_cmp (const struct cpu_thread_history *a,
-		     const struct cpu_thread_history *b)
+                     const struct cpu_thread_history *b)
 {
   return a->func == b->func;
 }
@@ -300,31 +300,31 @@ cpu_record_hash_free (void *a)
 
 static void
 vty_out_cpu_thread_history(struct vty* vty,
-			   const struct cpu_thread_history *a)
+                           const struct cpu_thread_history *a)
 {
 #ifdef HAVE_RUSAGE
   vty_out(vty, "%7ld.%03ld %9d %8ld %9ld %8ld %9ld",
-	  a->cpu.total/1000, a->cpu.total%1000, a->total_calls,
-	  a->cpu.total/a->total_calls, a->cpu.max,
-	  a->real.total/a->total_calls, a->real.max);
+          a->cpu.total/1000, a->cpu.total%1000, a->total_calls,
+          a->cpu.total/a->total_calls, a->cpu.max,
+          a->real.total/a->total_calls, a->real.max);
 #else
   vty_out(vty, "%7ld.%03ld %9d %8ld %9ld",
-	  a->real.total/1000, a->real.total%1000, a->total_calls,
-	  a->real.total/a->total_calls, a->real.max);
+          a->real.total/1000, a->real.total%1000, a->total_calls,
+          a->real.total/a->total_calls, a->real.max);
 #endif
   vty_out(vty, " %c%c%c%c%c%c %s%s",
-	  a->types & (1 << THREAD_READ) ? 'R':' ',
-	  a->types & (1 << THREAD_WRITE) ? 'W':' ',
-	  a->types & (1 << THREAD_TIMER) ? 'T':' ',
-	  a->types & (1 << THREAD_EVENT) ? 'E':' ',
-	  a->types & (1 << THREAD_EXECUTE) ? 'X':' ',
-	  a->types & (1 << THREAD_BACKGROUND) ? 'B' : ' ',
-	  a->funcname, VTY_NEWLINE);
+          a->types & (1 << THREAD_READ) ? 'R':' ',
+          a->types & (1 << THREAD_WRITE) ? 'W':' ',
+          a->types & (1 << THREAD_TIMER) ? 'T':' ',
+          a->types & (1 << THREAD_EVENT) ? 'E':' ',
+          a->types & (1 << THREAD_EXECUTE) ? 'X':' ',
+          a->types & (1 << THREAD_BACKGROUND) ? 'B' : ' ',
+          a->funcname, VTY_NEWLINE);
 }
 
 static void
 cpu_record_hash_print(struct hash_backet *bucket,
-		      void *args[])
+                      void *args[])
 {
   struct cpu_thread_history *totals = args[0];
   struct vty *vty = args[1];
@@ -360,7 +360,7 @@ cpu_record_print(struct vty *vty, thread_type filter)
 
 #ifdef HAVE_RUSAGE
   vty_out(vty, "%21s %18s %18s%s",
-  	  "", "CPU (user+system):", "Real (wall-clock):", VTY_NEWLINE);
+          "", "CPU (user+system):", "Real (wall-clock):", VTY_NEWLINE);
 #endif
   vty_out(vty, "Runtime(ms)   Invoked Avg uSec Max uSecs");
 #ifdef HAVE_RUSAGE
@@ -370,8 +370,8 @@ cpu_record_print(struct vty *vty, thread_type filter)
 
   LOCK
   hash_iterate(cpu_record,
-	       (void(*)(struct hash_backet*,void*))cpu_record_hash_print,
-	       args);
+               (void(*)(struct hash_backet*,void*))cpu_record_hash_print,
+               args);
 
   if (tmp.total_calls > 0)
     vty_out_cpu_thread_history(vty, &tmp);
@@ -394,45 +394,45 @@ DEFUN_CALL(show_thread_cpu,
     {
       filter = 0;
       while (argv[0][i] != '\0')
-	{
-	  switch ( argv[0][i] )
-	    {
-	    case 'r':
-	    case 'R':
-	      filter |= (1 << THREAD_READ);
-	      break;
-	    case 'w':
-	    case 'W':
-	      filter |= (1 << THREAD_WRITE);
-	      break;
-	    case 't':
-	    case 'T':
-	      filter |= (1 << THREAD_TIMER);
-	      break;
-	    case 'e':
-	    case 'E':
-	      filter |= (1 << THREAD_EVENT);
-	      break;
-	    case 'x':
-	    case 'X':
-	      filter |= (1 << THREAD_EXECUTE);
-	      break;
-	    case 'b':
-	    case 'B':
-	      filter |= (1 << THREAD_BACKGROUND);
-	      break;
-	    default:
-	      break;
-	    }
-	  ++i;
-	}
+        {
+          switch ( argv[0][i] )
+            {
+            case 'r':
+            case 'R':
+              filter |= (1 << THREAD_READ);
+              break;
+            case 'w':
+            case 'W':
+              filter |= (1 << THREAD_WRITE);
+              break;
+            case 't':
+            case 'T':
+              filter |= (1 << THREAD_TIMER);
+              break;
+            case 'e':
+            case 'E':
+              filter |= (1 << THREAD_EVENT);
+              break;
+            case 'x':
+            case 'X':
+              filter |= (1 << THREAD_EXECUTE);
+              break;
+            case 'b':
+            case 'B':
+              filter |= (1 << THREAD_BACKGROUND);
+              break;
+            default:
+              break;
+            }
+          ++i;
+        }
       if (filter == 0)
-	{
-	  vty_out(vty, "Invalid filter \"%s\" specified,"
+        {
+          vty_out(vty, "Invalid filter \"%s\" specified,"
                   " must contain at least one of 'RWTEXB'%s",
-		  argv[0], VTY_NEWLINE);
-	  return CMD_WARNING;
-	}
+                  argv[0], VTY_NEWLINE);
+          return CMD_WARNING;
+        }
     }
 
   cpu_record_print(vty, filter);
@@ -526,7 +526,7 @@ static void
 thread_list_debug (struct thread_list *list)
 {
   printf ("count [%d] head [%p] tail [%p]\n",
-	  list->count, list->head, list->tail);
+          list->count, list->head, list->tail);
 }
 
 /* Debug print for thread_master. */
@@ -555,7 +555,7 @@ struct thread_master *
 thread_master_create ()
 {
   return (struct thread_master *) XCALLOC (MTYPE_THREAD_MASTER,
-					   sizeof (struct thread_master));
+                                           sizeof (struct thread_master));
 }
 
 /* Add a new thread to the list.  */
@@ -575,8 +575,8 @@ thread_list_add (struct thread_list *list, struct thread *thread)
 /* Add a new thread just before the point.  */
 static void
 thread_list_add_before (struct thread_list *list,
-			struct thread *point,
-			struct thread *thread)
+                        struct thread *point,
+                        struct thread *thread)
 {
   thread->next = point;
   thread->prev = point->prev;
@@ -720,7 +720,7 @@ thread_get_hist(struct thread* thread, const char* funcname)
 /* Get new thread.              */
 static struct thread *
 thread_get (struct thread_master *m, u_char type,
-	    int (*func) (struct thread *), void *arg, const char* funcname)
+            int (*func) (struct thread *), void *arg, const char* funcname)
 {
   struct thread *thread;
 
@@ -748,7 +748,7 @@ thread_get (struct thread_master *m, u_char type,
 /* Add new read thread. */
 struct thread *
 funcname_thread_add_read (struct thread_master *m,
-		 int (*func) (struct thread *), void *arg, int fd, const char* funcname)
+                 int (*func) (struct thread *), void *arg, int fd, const char* funcname)
 {
   struct thread *thread;
 
@@ -771,7 +771,7 @@ funcname_thread_add_read (struct thread_master *m,
 /* Add new write thread. */
 struct thread *
 funcname_thread_add_write (struct thread_master *m,
-		 int (*func) (struct thread *), void *arg, int fd, const char* funcname)
+                 int (*func) (struct thread *), void *arg, int fd, const char* funcname)
 {
   struct thread *thread;
 
@@ -979,8 +979,8 @@ funcname_thread_add_timer_timeval(struct thread_master *m,
  */
 struct thread *
 funcname_thread_add_timer (struct thread_master *m,
-		           int (*func) (struct thread *),
-		           void *arg, long timer, const char* funcname)
+                           int (*func) (struct thread *),
+                           void *arg, long timer, const char* funcname)
 {
   struct timeval trel;
 
@@ -1051,8 +1051,8 @@ funcname_thread_add_background (struct thread_master *m,
 /* Add simple event thread. */
 struct thread *
 funcname_thread_add_event (struct thread_master *m,
-		  int (*func) (struct thread *), void *arg, int val,
-		                                           const char* funcname)
+                  int (*func) (struct thread *), void *arg, int val,
+                                                           const char* funcname)
 {
   struct thread *thread;
 
@@ -1146,7 +1146,7 @@ thread_cancel_event (struct thread_master *m, void *arg)
 
 static struct thread *
 thread_run (struct thread_master *m, struct thread *thread,
-	    struct thread *fetch)
+            struct thread *fetch)
 {
   *fetch = *thread;
   thread->type = THREAD_UNUSED;
@@ -1296,7 +1296,7 @@ thread_fetch (struct thread_master *m, struct thread *fetch)
 
       /* Check foreground timers.  Historically, they have had higher
          priority than I/O threads, so let's push them onto the ready
-	 list in front of the I/O threads. */
+         list in front of the I/O threads. */
       quagga_get_relative (NULL);
       thread_timer_process (&m->timer, &relative_time);
 
@@ -1312,8 +1312,8 @@ thread_fetch (struct thread_master *m, struct thread *fetch)
 #if 0
       /* If any threads were made ready above (I/O or foreground timer),
          perhaps we should avoid adding background timers to the ready
-	 list at this time.  If this is code is uncommented, then background
-	 timer threads will not run unless there is nothing else to do. */
+         list at this time.  If this is code is uncommented, then background
+         timer threads will not run unless there is nothing else to do. */
       if ((thread = thread_trim_head (&m->ready)) != NULL)
         return thread_run (m, thread, fetch);
 #endif
@@ -1393,7 +1393,7 @@ thread_consumed_time (RUSAGE_T *now, RUSAGE_T *start, unsigned long *cputime)
 #ifdef HAVE_RUSAGE
   /* This is 'user + sys' time.  */
   *cputime = timeval_elapsed (now->cpu.ru_utime, start->cpu.ru_utime) +
-	     timeval_elapsed (now->cpu.ru_stime, start->cpu.ru_stime);
+             timeval_elapsed (now->cpu.ru_stime, start->cpu.ru_stime);
 #else
   *cputime = 0;
 #endif /* HAVE_RUSAGE */
@@ -1414,7 +1414,7 @@ thread_should_yield (struct thread *thread)
 {
   quagga_get_relative (NULL);
   return (timeval_elapsed(relative_time, thread->ru.real) >
-  	  THREAD_YIELD_TIME_SLOT);
+          THREAD_YIELD_TIME_SLOT);
 }
 
 void
@@ -1478,9 +1478,9 @@ thread_call (struct thread *thread)
        * to fix.
        */
       zlog_warn ("SLOW THREAD: task %s (%lx) ran for %lums (cpu time %lums)",
-		 (thread->hist != NULL) ? thread->hist->funcname : "??",
-		 (unsigned long) thread->func,
-		 realtime/1000, cputime/1000);
+                 (thread->hist != NULL) ? thread->hist->funcname : "??",
+                 (unsigned long) thread->func,
+                 realtime/1000, cputime/1000);
     }
 #endif /* CONSUMED_TIME_CHECK */
 
@@ -1492,7 +1492,7 @@ funcname_thread_execute (struct thread_master *m,
                 int (*func)(struct thread *),
                 void *arg,
                 int val,
-		const char* funcname)
+                const char* funcname)
 {
   struct thread dummy;
 

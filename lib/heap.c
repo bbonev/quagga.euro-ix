@@ -239,14 +239,14 @@ heap_pop_item(heap h)
   p_vector_item p_v ;
   p_vector_item p_x ;
 
-  p_v = vector_pop_item(h->v) ;   /* extract last item, if any 	          */
+  p_v = vector_pop_item(h->v) ;   /* extract last item, if any            */
   if ((p_v == NULL) || (h->v->end == 0))
     return p_v ;                  /* done if empty or last was also first */
 
-  p_x = h->v->p_items[0] ;        /* this is what we are popping	  */
+  p_x = h->v->p_items[0] ;        /* this is what we are popping          */
 
-  heap_bubble_down(h, 0, p_v) ;	  /* reposition what was the last item	  */
-				  /* updating any backlink		  */
+  heap_bubble_down(h, 0, p_v) ;   /* reposition what was the last item    */
+                                  /* updating any backlink                */
   return p_x ;
 } ;
 
@@ -294,7 +294,7 @@ heap_delete_item(heap h, p_vector_item p_v)
 
   i = heap_find_item(h, p_v) ;    /* index of item to be deleted              */
 
-  p_x = vector_pop_item(h->v) ;   /* extract last item, if any 	              */
+  p_x = vector_pop_item(h->v) ;   /* extract last item, if any                */
 
   if (i < h->v->end)              /* if not deleting the last item...         */
     heap_bubble(h, i, p_x) ;      /* ...reinsert what was last, at the delete */
@@ -483,16 +483,16 @@ heap_bubble_up(heap h, vector_index_t i, p_vector_item p_v)
       p_p = ha[ip] ;                    /* get parent                   */
 
       if (h->cmp((const cvp*)&p_v, (const cvp*)&p_p) >= 0)
-	break ;				/* stop when value >= parent	*/
+        break ;                         /* stop when value >= parent    */
 
-      ha[i] = p_p ;		        /* move parent down...		*/
-      heap_set_backlink(h, p_p, i) ;	/* ...updating any backlink	*/
+      ha[i] = p_p ;                     /* move parent down...          */
+      heap_set_backlink(h, p_p, i) ;    /* ...updating any backlink     */
 
-      i = ip ;				/* move up the heap		*/
+      i = ip ;                          /* move up the heap             */
     } ;
 
-  ha[i] = p_v ;		                /* place in new position...	*/
-  heap_set_backlink(h, p_v, i) ;	/* ...updating any backlink	*/
+  ha[i] = p_v ;                         /* place in new position...     */
+  heap_set_backlink(h, p_v, i) ;        /* ...updating any backlink     */
 } ;
 
 /*------------------------------------------------------------------------------
@@ -529,27 +529,27 @@ heap_bubble_down(heap h, vector_index_t i, p_vector_item p_v)
     {
       ic = heap_down(i) ;
       if (ic >= e)
-	break ;                        /* Quit if run out of heap !     */
+        break ;                        /* Quit if run out of heap !     */
       p_c = ha[ic] ;                   /* get left hand child           */
 
       is = ic + 1 ;
       if (is < e)                      /* is there a right hand child ? */
-	{
-	  p_s = ha[is] ;               /* get right hand child          */
-	  if (h->cmp((const cvp*)&p_s, (const cvp*)&p_c) < 0)
-	    {
-	      ic  = is ;               /* select smaller sibling        */
-	      p_c = p_s ;
-	    } ;
-	} ;
+        {
+          p_s = ha[is] ;               /* get right hand child          */
+          if (h->cmp((const cvp*)&p_s, (const cvp*)&p_c) < 0)
+            {
+              ic  = is ;               /* select smaller sibling        */
+              p_c = p_s ;
+            } ;
+        } ;
 
       if (h->cmp((const cvp*)&p_v, (const cvp*)&p_c) <= 0)
         break ;                        /* stop when <= both children    */
 
       ha[i] = p_c ;                    /* move smaller child up         */
-      heap_set_backlink(h, p_c, i) ;   /* ...updating any backlink	*/
+      heap_set_backlink(h, p_c, i) ;   /* ...updating any backlink      */
 
-      i = ic ;                         /* move down the heap		*/
+      i = ic ;                         /* move down the heap            */
     } ;
 
   ha[i] = p_v ;                         /* place in new position...     */
@@ -569,8 +569,8 @@ heap_find_item(heap h, p_vector_item p_v)
   else
     {
       for (i = 0 ; i < h->v->end ; ++i)
-	if (h->v->p_items[i] == p_v)
-	  return i ;
+        if (h->v->p_items[i] == p_v)
+          return i ;
     } ;
 
   assert((i < h->v->end) && (h->v->p_items[i] == p_v)) ;

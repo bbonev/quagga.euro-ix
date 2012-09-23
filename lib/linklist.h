@@ -16,7 +16,7 @@
  * You should have received a copy of the GNU General Public License
  * along with GNU Zebra; see the file COPYING.  If not, write to the Free
  * Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
- * 02111-1307, USA.  
+ * 02111-1307, USA.
  */
 
 #ifndef _ZEBRA_LINKLIST_H
@@ -25,16 +25,16 @@
 /* listnodes must always contain data to be valid. Adding an empty node
  * to a list is invalid
  */
-struct listnode 
+struct listnode
 {
   struct listnode *next;
   struct listnode *prev;
-  
+
   /* private member, use getdata() to retrieve, do not access directly */
   void *data;
 };
 
-struct list 
+struct list
 {
   struct listnode *head;
   struct listnode *tail;
@@ -83,7 +83,7 @@ extern void list_add_node_prev (struct list *, struct listnode *, void *);
 extern void list_add_node_next (struct list *, struct listnode *, void *);
 extern void list_add_list (struct list *, struct list *);
 
-/* List iteration macro. 
+/* List iteration macro.
  * Usage: for (ALL_LIST_ELEMENTS (...) { ... }
  * It is safe to delete the listnode using this macro.
  */
@@ -107,7 +107,7 @@ extern void list_add_list (struct list *, struct list *);
 /* these *do not* cleanup list nodes and referenced data, as the functions
  * do - these macros simply {de,at}tach a listnode from/to a list.
  */
- 
+
 /* List node attach macro.  */
 #define LISTNODE_ATTACH(L,N) \
   do { \

@@ -319,10 +319,10 @@ work_queue_run (struct thread *thread)
     if (item->ran > wq->spec.max_retries)
       {
         /* run error handler, if any */
-	if (wq->spec.errorfunc != NULL)
-	  wq->spec.errorfunc (wq, item);
-	work_queue_item_remove (wq, item);
-	continue;
+        if (wq->spec.errorfunc != NULL)
+          wq->spec.errorfunc (wq, item);
+        work_queue_item_remove (wq, item);
+        continue;
       }
 
     /* run and take care of items that want to be retried immediately */
@@ -344,29 +344,29 @@ work_queue_run (struct thread *thread)
           item->ran--;
         }
       case WQ_RETRY_LATER:
-	{
-	  goto stats;
-	}
+        {
+          goto stats;
+        }
       case WQ_REQUEUE:
-	{
-	  item->ran--;
-	  next = work_queue_item_requeue (wq, item);
-	  break;
-	}
+        {
+          item->ran--;
+          next = work_queue_item_requeue (wq, item);
+          break;
+        }
       case WQ_RETRY_NOW:
         /* a RETRY_NOW that gets here has exceeded max_tries, same as ERROR */
       case WQ_ERROR:
-	{
-	  if (wq->spec.errorfunc != NULL)
-	    wq->spec.errorfunc (wq, item);
-	}
-	/* fall through here is deliberate */
+        {
+          if (wq->spec.errorfunc != NULL)
+            wq->spec.errorfunc (wq, item);
+        }
+        /* fall through here is deliberate */
       case WQ_SUCCESS:
       default:
-	{
-	  work_queue_item_remove (wq, item);
-	  break;
-	}
+        {
+          work_queue_item_remove (wq, item);
+          break;
+        }
       }
 
     /* completed cycle */

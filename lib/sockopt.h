@@ -66,7 +66,7 @@ extern int setsockopt_tcp_signature(int sock_fd, union sockunion *su,
 #if defined (SUNOS_5)
 #define SOPT_SIZE_CMSG_RECVIF_IPV4()  (sizeof (uint_t))
 #else
-#define SOPT_SIZE_CMSG_RECVIF_IPV4()	(sizeof (struct sockaddr_dl))
+#define SOPT_SIZE_CMSG_RECVIF_IPV4()    (sizeof (struct sockaddr_dl))
 #endif /* SUNOS_5 */
 #endif /* IP_RECVIF */
 
@@ -85,10 +85,10 @@ extern int setsockopt_tcp_signature(int sock_fd, union sockunion *su,
 
 extern int setsockopt_ipv4_tos(int sock_fd, int tos);
 extern int setsockopt_ipv4_multicast_if(int sock,
-			             unsigned int ifindex);
+                                     unsigned int ifindex);
 extern int setsockopt_ipv4_multicast(int sock, int optname,
                                      unsigned int mcast_addr,
-			             unsigned int ifindex);
+                                     unsigned int ifindex);
 
 /* Ask for, and get, ifindex, by whatever method is supported.
  */

@@ -11,7 +11,7 @@
 
  Note that these are not terribly efficient, since they make more than one
  pass over the argument strings.  At some point, they should be optimized.
- 
+
  The implementation of strndup is copied from glibc-2.3.5:
     Copyright (C) 1996, 1997, 1998, 2001, 2002 Free Software Foundation, Inc.
 */
@@ -37,7 +37,7 @@ snprintf(char *str, size_t size, const char *format, ...)
 
 #ifndef HAVE_STRLCPY
 /**
- * Like strncpy but does not 0 fill the buffer and always null 
+ * Like strncpy but does not 0 fill the buffer and always null
  * terminates.
  *
  * @param bufsize is the size of the destination buffer.
@@ -47,21 +47,21 @@ snprintf(char *str, size_t size, const char *format, ...)
 size_t
 strlcpy(char *d, const char *s, size_t bufsize)
 {
-	size_t len = strlen(s);
-	size_t ret = len;
-	if (bufsize > 0) {
-		if (len >= bufsize)
-			len = bufsize-1;
-		memcpy(d, s, len);
-		d[len] = 0;
-	}
-	return ret;
+        size_t len = strlen(s);
+        size_t ret = len;
+        if (bufsize > 0) {
+                if (len >= bufsize)
+                        len = bufsize-1;
+                memcpy(d, s, len);
+                d[len] = 0;
+        }
+        return ret;
 }
 #endif
 
 #ifndef HAVE_STRLCAT
 /**
- * Like strncat() but does not 0 fill the buffer and always null 
+ * Like strncat() but does not 0 fill the buffer and always null
  * terminates.
  *
  * @param bufsize length of the buffer, which should be one more than
@@ -70,17 +70,17 @@ strlcpy(char *d, const char *s, size_t bufsize)
 size_t
 strlcat(char *d, const char *s, size_t bufsize)
 {
-	size_t len1 = strlen(d);
-	size_t len2 = strlen(s);
-	size_t ret = len1 + len2;
+        size_t len1 = strlen(d);
+        size_t len2 = strlen(s);
+        size_t ret = len1 + len2;
 
-	if (len1 < bufsize - 1) {
-		if (len2 >= bufsize - len1)
-			len2 = bufsize - len1 - 1;
-		memcpy(d+len1, s, len2);
-		d[len1+len2] = 0;
-	}
-	return ret;
+        if (len1 < bufsize - 1) {
+                if (len2 >= bufsize - len1)
+                        len2 = bufsize - len1 - 1;
+                memcpy(d+len1, s, len2);
+                d[len1+len2] = 0;
+        }
+        return ret;
 }
 #endif
 

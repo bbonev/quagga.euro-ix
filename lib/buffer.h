@@ -82,7 +82,7 @@ typedef enum
 /* Try to write this data to the file descriptor.  Any data that cannot
    be written immediately is added to the buffer queue. */
 extern buffer_status_t buffer_write(struct buffer *, int fd,
-				    const void *, size_t);
+                                    const void *, size_t);
 
 /* This function attempts to flush some (but perhaps not all) of
    the queued data to the given file descriptor. */
@@ -108,6 +108,6 @@ extern buffer_status_t buffer_flush_all (struct buffer *, int fd);
    is too complicated to retry the write later).
 */
 extern buffer_status_t buffer_flush_window (struct buffer *, int fd, int width,
-					    int height, int erase, int no_more);
+                                            int height, int erase, int no_more);
 
 #endif /* _ZEBRA_BUFFER_H */

@@ -1087,7 +1087,7 @@ stream_fifo_pop (struct stream_fifo *fifo)
       fifo->head = s->next;
 
       if (fifo->head == NULL)
-	fifo->tail = NULL;
+        fifo->tail = NULL;
 
       fifo->count--;
     }

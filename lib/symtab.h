@@ -109,11 +109,11 @@ struct symbol_table
   void*    parent ;             /* to identify the table.               */
 
   symbol*  bases ;              /* ref:array of chain bases             */
-  uint	   base_count ;         /* number of chain bases                */
+  uint     base_count ;         /* number of chain bases                */
 
-  uint	   entry_count ;        /* number of entries in the table       */
+  uint     entry_count ;        /* number of entries in the table       */
   uint     max_index ;          /* maximum index in the table           */
-  uint	   extend_thresh ;      /* when to extend the hash table        */
+  uint     extend_thresh ;      /* when to extend the hash table        */
 
   float    density ;            /* entries per chain base               */
 
@@ -161,7 +161,7 @@ struct symbol_nref
   symbol      sym ;         /* Address of symbol referred to (if any).
                              * (In "bookmark" this points to self.)     */
 
-  void*	      parent ;      /* In "bookmark" points to symbol           */
+  void*       parent ;      /* In "bookmark" points to symbol           */
   uintptr_t   tag ;
 
   symbol_nref next ;         /* fellow references to the symbol ...     */
@@ -240,10 +240,10 @@ extern symbol symbol_walk_next(symbol_walker walk) ;
 typedef int symbol_select_cmp(const symbol sym, const void* name) ;
 typedef int symbol_sort_cmp(const symbol* a, const symbol* b) ;
 extern vector symbol_table_extract(symbol_table table,
-	                           symbol_select_cmp* select,
-	                           const void* p_value,
-			           bool most,
-			           symbol_sort_cmp* sort) ;
+                                   symbol_select_cmp* select,
+                                   const void* p_value,
+                                   bool most,
+                                   symbol_sort_cmp* sort) ;
 
 /*==============================================================================
  * The Inline stuff.

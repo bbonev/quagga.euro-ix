@@ -3392,8 +3392,8 @@ config_write_host(vty vty)
     {
       uty_out (vio, "log file %s", qpath_string(host.logfile));
       if (zlog_get_maxlvl(NULL, ZLOG_DEST_FILE) != zlog_get_default_lvl(NULL))
-	uty_out (vio, " %s",
-		 zlog_priority[zlog_get_maxlvl(NULL, ZLOG_DEST_FILE)]);
+        uty_out (vio, " %s",
+                 zlog_priority[zlog_get_maxlvl(NULL, ZLOG_DEST_FILE)]);
       uty_out (vio, "\n");
     }
 
@@ -3401,8 +3401,8 @@ config_write_host(vty vty)
     {
       uty_out (vio, "log stdout");
       if (zlog_get_maxlvl(NULL, ZLOG_DEST_STDOUT) != zlog_get_default_lvl(NULL))
-	uty_out (vio, " %s",
-		 zlog_priority[zlog_get_maxlvl(NULL, ZLOG_DEST_STDOUT)]);
+        uty_out (vio, " %s",
+                 zlog_priority[zlog_get_maxlvl(NULL, ZLOG_DEST_STDOUT)]);
       uty_out (vio, "\n");
     }
 
@@ -3410,14 +3410,14 @@ config_write_host(vty vty)
     uty_out(vio,"no log monitor%s",VTY_NEWLINE);
   else if (zlog_get_maxlvl(NULL, ZLOG_DEST_MONITOR) != zlog_get_default_lvl(NULL))
     uty_out(vio,"log monitor %s\n",
-	    zlog_priority[zlog_get_maxlvl(NULL, ZLOG_DEST_MONITOR)]);
+            zlog_priority[zlog_get_maxlvl(NULL, ZLOG_DEST_MONITOR)]);
 
   if (zlog_get_maxlvl(NULL, ZLOG_DEST_SYSLOG) != ZLOG_DISABLED)
     {
       uty_out (vio, "log syslog");
       if (zlog_get_maxlvl(NULL, ZLOG_DEST_SYSLOG) != zlog_get_default_lvl(NULL))
-	uty_out (vio, " %s",
-		 zlog_priority[zlog_get_maxlvl(NULL, ZLOG_DEST_SYSLOG)]);
+        uty_out (vio, " %s",
+                 zlog_priority[zlog_get_maxlvl(NULL, ZLOG_DEST_SYSLOG)]);
       uty_out (vio, "\n");
     }
 

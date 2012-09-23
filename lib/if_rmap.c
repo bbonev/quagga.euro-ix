@@ -135,14 +135,14 @@ if_rmap_set (const char *ifname, enum if_rmap_type type,
   if (type == IF_RMAP_IN)
     {
       if (if_rmap->routemap[IF_RMAP_IN])
-	XFREE (MTYPE_IF_RMAP_NAME, if_rmap->routemap[IF_RMAP_IN]);
+        XFREE (MTYPE_IF_RMAP_NAME, if_rmap->routemap[IF_RMAP_IN]);
       if_rmap->routemap[IF_RMAP_IN]
         = XSTRDUP (MTYPE_IF_RMAP_NAME, routemap_name);
     }
   if (type == IF_RMAP_OUT)
     {
       if (if_rmap->routemap[IF_RMAP_OUT])
-	XFREE (MTYPE_IF_RMAP_NAME, if_rmap->routemap[IF_RMAP_OUT]);
+        XFREE (MTYPE_IF_RMAP_NAME, if_rmap->routemap[IF_RMAP_OUT]);
       if_rmap->routemap[IF_RMAP_OUT]
         = XSTRDUP (MTYPE_IF_RMAP_NAME, routemap_name);
     }
@@ -166,9 +166,9 @@ if_rmap_unset (const char *ifname, enum if_rmap_type type,
   if (type == IF_RMAP_IN)
     {
       if (!if_rmap->routemap[IF_RMAP_IN])
-	return 0;
+        return 0;
       if (strcmp (if_rmap->routemap[IF_RMAP_IN], routemap_name) != 0)
-	return 0;
+        return 0;
 
       XFREE (MTYPE_IF_RMAP_NAME, if_rmap->routemap[IF_RMAP_IN]);
       if_rmap->routemap[IF_RMAP_IN] = NULL;
@@ -177,9 +177,9 @@ if_rmap_unset (const char *ifname, enum if_rmap_type type,
   if (type == IF_RMAP_OUT)
     {
       if (!if_rmap->routemap[IF_RMAP_OUT])
-	return 0;
+        return 0;
       if (strcmp (if_rmap->routemap[IF_RMAP_OUT], routemap_name) != 0)
-	return 0;
+        return 0;
 
       XFREE (MTYPE_IF_RMAP_NAME, if_rmap->routemap[IF_RMAP_OUT]);
       if_rmap->routemap[IF_RMAP_OUT] = NULL;
@@ -286,27 +286,27 @@ config_write_if_rmap (struct vty *vty)
   for (i = 0; i < ifrmaphash->size; i++)
     for (mp = ifrmaphash->index[i]; mp; mp = mp->next)
       {
-	struct if_rmap *if_rmap;
+        struct if_rmap *if_rmap;
 
-	if_rmap = mp->data;
+        if_rmap = mp->data;
 
-	if (if_rmap->routemap[IF_RMAP_IN])
-	  {
-	    vty_out (vty, " route-map %s in %s%s",
-		     if_rmap->routemap[IF_RMAP_IN],
-		     if_rmap->ifname,
-		     VTY_NEWLINE);
-	    write++;
-	  }
+        if (if_rmap->routemap[IF_RMAP_IN])
+          {
+            vty_out (vty, " route-map %s in %s%s",
+                     if_rmap->routemap[IF_RMAP_IN],
+                     if_rmap->ifname,
+                     VTY_NEWLINE);
+            write++;
+          }
 
-	if (if_rmap->routemap[IF_RMAP_OUT])
-	  {
-	    vty_out (vty, " route-map %s out %s%s",
-		     if_rmap->routemap[IF_RMAP_OUT],
-		     if_rmap->ifname,
-		     VTY_NEWLINE);
-	    write++;
-	  }
+        if (if_rmap->routemap[IF_RMAP_OUT])
+          {
+            vty_out (vty, " route-map %s out %s%s",
+                     if_rmap->routemap[IF_RMAP_OUT],
+                     if_rmap->ifname,
+                     VTY_NEWLINE);
+            write++;
+          }
       }
   return write;
 }

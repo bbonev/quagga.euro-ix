@@ -2507,7 +2507,7 @@ vty_config_write (struct vty *vty)
   /* exec-timeout */
   if (host.vty_timeout_val != VTY_TIMEOUT_DEFAULT)
     uty_out (vio, " exec-timeout %ld %ld\n", host.vty_timeout_val / 60,
-                          	             host.vty_timeout_val % 60);
+                                             host.vty_timeout_val % 60);
 
   /* login */
   if (host.no_password_check)

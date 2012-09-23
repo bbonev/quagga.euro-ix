@@ -68,7 +68,7 @@ static struct route_map_list route_map_master = { NULL, NULL, NULL, NULL };
 
 static void
 route_map_rule_delete (struct route_map_rule_list *,
-		       struct route_map_rule *);
+                       struct route_map_rule *);
 
 static void
 route_map_index_delete (struct route_map_index *, int);
@@ -219,8 +219,8 @@ vty_show_route_map_entry (struct vty *vty, struct route_map *map)
 
       /* Description */
       if (index->description)
-	vty_out (vty, "  Description:%s    %s%s", VTY_NEWLINE,
-		 index->description, VTY_NEWLINE);
+        vty_out (vty, "  Description:%s    %s%s", VTY_NEWLINE,
+                 index->description, VTY_NEWLINE);
 
       /* Match clauses */
       vty_out (vty, "  Match clauses:%s", VTY_NEWLINE);
@@ -285,7 +285,7 @@ vty_show_route_map (struct vty *vty, const char *name)
   else
     {
       for (map = route_map_master.head; map; map = map->next)
-	vty_show_route_map_entry (vty, map);
+        vty_show_route_map_entry (vty, map);
     }
   return CMD_SUCCESS;
 }
@@ -335,7 +335,7 @@ route_map_index_delete (struct route_map_index *index, int notify)
     /* Execute event hook. */
   if (route_map_master.event_hook && notify)
     (*route_map_master.event_hook) (RMAP_EVENT_INDEX_DELETED,
-				    index->map->name);
+                                    index->map->name);
 
   XFREE (MTYPE_ROUTE_MAP_INDEX, index);
 }
@@ -393,14 +393,14 @@ route_map_index_add (struct route_map *map, enum route_map_type type,
       index->next = point;
       index->prev = point->prev;
       if (point->prev)
-	point->prev->next = index;
+        point->prev->next = index;
       point->prev = index;
     }
 
   /* Execute event hook. */
   if (route_map_master.event_hook)
     (*route_map_master.event_hook) (RMAP_EVENT_INDEX_ADDED,
-				    map->name);
+                                    map->name);
 
   return index;
 }
@@ -458,7 +458,7 @@ route_map_lookup_match (const char *name)
   for (i = 0; i < vector_active (route_match_vec); i++)
     if ((rule = vector_slot (route_match_vec, i)) != NULL)
       if (strcmp (rule->str, name) == 0)
-	return rule;
+        return rule;
   return NULL;
 }
 
@@ -472,14 +472,14 @@ route_map_lookup_set (const char *name)
   for (i = 0; i < vector_active (route_set_vec); i++)
     if ((rule = vector_slot (route_set_vec, i)) != NULL)
       if (strcmp (rule->str, name) == 0)
-	return rule;
+        return rule;
   return NULL;
 }
 
 /* Add match and set rule to rule list. */
 static void
 route_map_rule_add (struct route_map_rule_list *list,
-		    struct route_map_rule *rule)
+                    struct route_map_rule *rule)
 {
   rule->next = NULL;
   rule->prev = list->tail;
@@ -493,7 +493,7 @@ route_map_rule_add (struct route_map_rule_list *list,
 /* Delete rule from rule list. */
 static void
 route_map_rule_delete (struct route_map_rule_list *list,
-		       struct route_map_rule *rule)
+                       struct route_map_rule *rule)
 {
   if (rule->cmd->func_free)
     (*rule->cmd->func_free) (rule->value);
@@ -520,16 +520,16 @@ rulecmp (const char *dst, const char *src)
   if (dst == NULL)
     {
       if (src ==  NULL)
-	return 0;
+        return 0;
       else
-	return 1;
+        return 1;
     }
   else
     {
       if (src == NULL)
-	return 1;
+        return 1;
       else
-	return strcmp (dst, src);
+        return strcmp (dst, src);
     }
   return 1;
 }
@@ -555,7 +555,7 @@ route_map_add_match (struct route_map_index *index, const char *match_name,
     {
       compile= (*cmd->func_compile)(match_arg);
       if (compile == NULL)
-	return RMAP_COMPILE_ERROR;
+        return RMAP_COMPILE_ERROR;
     }
   else
     compile = NULL;
@@ -565,10 +565,10 @@ route_map_add_match (struct route_map_index *index, const char *match_name,
     {
       next = rule->next;
       if (rule->cmd == cmd)
-	{
-	  route_map_rule_delete (&index->match_list, rule);
-	  replaced = 1;
-	}
+        {
+          route_map_rule_delete (&index->match_list, rule);
+          replaced = 1;
+        }
     }
 
   /* Add new route map match rule. */
@@ -586,9 +586,9 @@ route_map_add_match (struct route_map_index *index, const char *match_name,
   /* Execute event hook. */
   if (route_map_master.event_hook)
     (*route_map_master.event_hook) (replaced ?
-				    RMAP_EVENT_MATCH_REPLACED:
-				    RMAP_EVENT_MATCH_ADDED,
-				    index->map->name);
+                                    RMAP_EVENT_MATCH_REPLACED:
+                                    RMAP_EVENT_MATCH_ADDED,
+                                    index->map->name);
 
   return 0;
 }
@@ -607,14 +607,14 @@ route_map_delete_match (struct route_map_index *index, const char *match_name,
 
   for (rule = index->match_list.head; rule; rule = rule->next)
     if (rule->cmd == cmd &&
-	(rulecmp (rule->rule_str, match_arg) == 0 || match_arg == NULL))
+        (rulecmp (rule->rule_str, match_arg) == 0 || match_arg == NULL))
       {
-	route_map_rule_delete (&index->match_list, rule);
-	/* Execute event hook. */
-	if (route_map_master.event_hook)
-	  (*route_map_master.event_hook) (RMAP_EVENT_MATCH_DELETED,
-					  index->map->name);
-	return 0;
+        route_map_rule_delete (&index->match_list, rule);
+        /* Execute event hook. */
+        if (route_map_master.event_hook)
+          (*route_map_master.event_hook) (RMAP_EVENT_MATCH_DELETED,
+                                          index->map->name);
+        return 0;
       }
   /* Can't find matched rule. */
   return 1;
@@ -640,7 +640,7 @@ route_map_add_set (struct route_map_index *index, const char *set_name,
     {
       compile= (*cmd->func_compile)(set_arg);
       if (compile == NULL)
-	return RMAP_COMPILE_ERROR;
+        return RMAP_COMPILE_ERROR;
     }
   else
     compile = NULL;
@@ -652,10 +652,10 @@ route_map_add_set (struct route_map_index *index, const char *set_name,
     {
       next = rule->next;
       if (rule->cmd == cmd)
-	{
-	  route_map_rule_delete (&index->set_list, rule);
-	  replaced = 1;
-	}
+        {
+          route_map_rule_delete (&index->set_list, rule);
+          replaced = 1;
+        }
     }
 
   /* Add new route map match rule. */
@@ -673,9 +673,9 @@ route_map_add_set (struct route_map_index *index, const char *set_name,
   /* Execute event hook. */
   if (route_map_master.event_hook)
     (*route_map_master.event_hook) (replaced ?
-				    RMAP_EVENT_SET_REPLACED:
-				    RMAP_EVENT_SET_ADDED,
-				    index->map->name);
+                                    RMAP_EVENT_SET_REPLACED:
+                                    RMAP_EVENT_SET_ADDED,
+                                    index->map->name);
   return 0;
 }
 
@@ -696,10 +696,10 @@ route_map_delete_set (struct route_map_index *index, const char *set_name,
          (rulecmp (rule->rule_str, set_arg) == 0 || set_arg == NULL))
       {
         route_map_rule_delete (&index->set_list, rule);
-	/* Execute event hook. */
-	if (route_map_master.event_hook)
-	  (*route_map_master.event_hook) (RMAP_EVENT_SET_DELETED,
-					  index->map->name);
+        /* Execute event hook. */
+        if (route_map_master.event_hook)
+          (*route_map_master.event_hook) (RMAP_EVENT_SET_DELETED,
+                                          index->map->name);
         return 0;
       }
   /* Can't find matched rule. */
@@ -960,7 +960,7 @@ DEFUN (no_route_map_all,
   if (map == NULL)
     {
       vty_out (vty, "%% Could not find route-map %s%s",
-	       argv[0], VTY_NEWLINE);
+               argv[0], VTY_NEWLINE);
       return CMD_WARNING;
     }
 
@@ -1002,7 +1002,7 @@ DEFUN (no_route_map,
   if (map == NULL)
     {
       vty_out (vty, "%% Could not find route-map %s%s",
-	       argv[0], VTY_NEWLINE);
+               argv[0], VTY_NEWLINE);
       return CMD_WARNING;
     }
 
@@ -1011,7 +1011,7 @@ DEFUN (no_route_map,
   if (index == NULL)
     {
       vty_out (vty, "%% Could not find route-map entry %s %s%s",
-	       argv[0], argv[2], VTY_NEWLINE);
+               argv[0], argv[2], VTY_NEWLINE);
       return CMD_WARNING;
     }
 
@@ -1077,17 +1077,17 @@ DEFUN (rmap_onmatch_goto,
         d = index->seq + 1;
 
       if (d <= index->seq)
-	{
-	  /* Can't allow you to do that, Dave */
-	  vty_out (vty, "can't jump backwards in route-maps%s",
-		   VTY_NEWLINE);
-	  return CMD_WARNING;
-	}
+        {
+          /* Can't allow you to do that, Dave */
+          vty_out (vty, "can't jump backwards in route-maps%s",
+                   VTY_NEWLINE);
+          return CMD_WARNING;
+        }
       else
-	{
-	  index->exitpolicy = RMAP_GOTO;
-	  index->goto_seq = d;
-	}
+        {
+          index->exitpolicy = RMAP_GOTO;
+          index->goto_seq = d;
+        }
     }
   return CMD_SUCCESS;
 }
@@ -1205,7 +1205,7 @@ DEFUN (rmap_description,
   if (index)
     {
       if (index->description)
-	XFREE (MTYPE_TMP, index->description);
+        XFREE (MTYPE_TMP, index->description);
       index->description = argv_concat (argv, argc, 0);
     }
   return CMD_SUCCESS;
@@ -1223,7 +1223,7 @@ DEFUN (no_rmap_description,
   if (index)
     {
       if (index->description)
-	XFREE (MTYPE_TMP, index->description);
+        XFREE (MTYPE_TMP, index->description);
       index->description = NULL;
     }
   return CMD_SUCCESS;
@@ -1243,20 +1243,20 @@ route_map_config_write (struct vty *vty)
         vty_out_vtysh_config_group(vty, "route-map %s %s %u",map->name,
                                  route_map_type_str (index->type), index->seq) ;
 
-	vty_out (vty, "route-map %s %s %u\n", map->name,
-	                         route_map_type_str (index->type), index->seq) ;
-	confirm(sizeof(index->seq) <= sizeof(uint)) ;
+        vty_out (vty, "route-map %s %s %u\n", map->name,
+                                 route_map_type_str (index->type), index->seq) ;
+        confirm(sizeof(index->seq) <= sizeof(uint)) ;
 
-	if (index->description)
-	  vty_out (vty, " description %s\n", index->description);
+        if (index->description)
+          vty_out (vty, " description %s\n", index->description);
 
-	for (rule = index->match_list.head; rule; rule = rule->next)
-	  vty_out (vty, " match %s %s\n", rule->cmd->str,
-	                                  rule->rule_str ? rule->rule_str : "");
+        for (rule = index->match_list.head; rule; rule = rule->next)
+          vty_out (vty, " match %s %s\n", rule->cmd->str,
+                                          rule->rule_str ? rule->rule_str : "");
 
-	for (rule = index->set_list.head; rule; rule = rule->next)
-	  vty_out (vty, " set %s %s\n", rule->cmd->str,
-	                                  rule->rule_str ? rule->rule_str : "");
+        for (rule = index->set_list.head; rule; rule = rule->next)
+          vty_out (vty, " set %s %s\n", rule->cmd->str,
+                                          rule->rule_str ? rule->rule_str : "");
 
         if (index->nextrm)
           vty_out (vty, " call %s\n", index->nextrm);

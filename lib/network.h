@@ -34,6 +34,6 @@ int read_nb(int fd, void* buf, size_t nbyte) ;
 int write_nb(int fd, const void* buf, size_t nbyte) ;
 
 #define ERRNO_IO_RETRY(EN) \
-	(((EN) == EAGAIN) || ((EN) == EWOULDBLOCK) || ((EN) == EINTR))
+        (((EN) == EAGAIN) || ((EN) == EWOULDBLOCK) || ((EN) == EINTR))
 
 #endif /* _ZEBRA_NETWORK_H */

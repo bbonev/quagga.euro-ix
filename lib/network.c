@@ -71,7 +71,7 @@ readn (int fd, void* buf, int nbytes)
         }
 
       else if (nread == 0)
-	break;
+        break;
 
       else if (errno != EINTR)
         return -1 ;
@@ -336,7 +336,7 @@ set_nonblocking(int fd)
       int err = errno ;
 
       zlog_warn("%s: fcntl(%d, F_GETFL) failed: %s", __func__,
-      		                                       fd, errtoa(err, 0).str) ;
+                                                       fd, errtoa(err, 0).str) ;
       errno = err ;
       return -1;
     } ;
@@ -350,7 +350,7 @@ set_nonblocking(int fd)
           int err = errno ;
 
           zlog_warn("%s: fcntl(%d, F_SETFL, 0x%x) failed: %s", __func__,
-      		                                fd, flags, errtoa(err, 0).str) ;
+                                                fd, flags, errtoa(err, 0).str) ;
           errno = err ;
           return -1;
         } ;

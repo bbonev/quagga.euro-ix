@@ -34,15 +34,15 @@
 
 /* Here is some guidance on logging levels to use:
  *
- * LOG_DEBUG	- For all messages that are enabled by optional debugging
- *		  features, typically preceded by "if (IS...DEBUG...)"
- * LOG_INFO	- Information that may be of interest, but everything seems
- *		  to be working properly.
- * LOG_NOTICE	- Only for message pertaining to daemon startup or shutdown.
- * LOG_WARNING	- Warning conditions: unexpected events, but the daemon believes
- *		  it can continue to operate correctly.
- * LOG_ERR	- Error situations indicating malfunctions.  Probably require
- *		  attention.
+ * LOG_DEBUG    - For all messages that are enabled by optional debugging
+ *                features, typically preceded by "if (IS...DEBUG...)"
+ * LOG_INFO     - Information that may be of interest, but everything seems
+ *                to be working properly.
+ * LOG_NOTICE   - Only for message pertaining to daemon startup or shutdown.
+ * LOG_WARNING  - Warning conditions: unexpected events, but the daemon believes
+ *                it can continue to operate correctly.
+ * LOG_ERR      - Error situations indicating malfunctions.  Probably require
+ *                attention.
  *
  * Note: LOG_CRIT, LOG_ALERT, and LOG_EMERG are currently not used anywhere,
  * please use LOG_ERR instead.
@@ -62,7 +62,7 @@ extern struct zlog* zlog_default;
  * zlog opening etc.
  */
 extern struct zlog* openzlog (const char *progname, zlog_proto_t protocol,
-		              int syslog_options, int syslog_facility);
+                              int syslog_options, int syslog_facility);
 extern void closezlog (struct zlog *zl);
 extern void zlog_set_level(struct zlog *zl, zlog_dest_t, int log_level);
 extern int zlog_rotate (struct zlog *);

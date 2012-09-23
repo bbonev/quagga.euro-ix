@@ -117,9 +117,9 @@ oid_compare (oid *o1, int o1_len, oid *o2, int o2_len)
   for (i = 0; i < min (o1_len, o2_len); i++)
     {
       if (o1[i] < o2[i])
-	return -1;
+        return -1;
       else if (o1[i] > o2[i])
-	return 1;
+        return 1;
     }
   if (o1_len < o2_len)
     return -1;
@@ -137,9 +137,9 @@ oid_compare_part (oid *o1, int o1_len, oid *o2, int o2_len)
   for (i = 0; i < min (o1_len, o2_len); i++)
     {
       if (o1[i] < o2[i])
-	return -1;
+        return -1;
       else if (o1[i] > o2[i])
-	return 1;
+        return 1;
     }
   if (o1_len < o2_len)
     return -1;
@@ -198,23 +198,23 @@ smux_socket (void)
     {
       if (res->ai_family != AF_INET
 #ifdef HAVE_IPV6
-	  && res->ai_family != AF_INET6
+          && res->ai_family != AF_INET6
 #endif /* HAVE_IPV6 */
-	  )
-	continue;
+          )
+        continue;
 
       sock = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
       if (sock < 0)
-	continue;
+        continue;
       setsockopt_reuseaddr (sock);
       setsockopt_reuseport (sock);
       ret = connect (sock, res->ai_addr, res->ai_addrlen);
       if (ret < 0)
-	{
-	  close(sock);
-	  sock = -1;
-	  continue;
-	}
+        {
+          close(sock);
+          sock = -1;
+          continue;
+        }
       break;
     }
   freeaddrinfo(res0);
@@ -259,7 +259,7 @@ smux_socket (void)
 
 static void
 smux_getresp_send (oid objid[], size_t objid_len, long reqid, long errstat,
-		   long errindex, u_char val_type, void *arg, size_t arg_len)
+                   long errindex, u_char val_type, void *arg, size_t arg_len)
 {
   u_char buf[BUFSIZ];
   u_char *ptr, *h1, *h1e, *h2, *h2e;
@@ -281,31 +281,31 @@ smux_getresp_send (oid objid[], size_t objid_len, long reqid, long errstat,
   h1e = ptr;
 
   ptr = asn_build_int (ptr, &len,
-		       (u_char) (ASN_UNIVERSAL | ASN_PRIMITIVE | ASN_INTEGER),
-		       &reqid, sizeof (reqid));
+                       (u_char) (ASN_UNIVERSAL | ASN_PRIMITIVE | ASN_INTEGER),
+                       &reqid, sizeof (reqid));
 
   if (debug_smux)
     zlog_debug ("SMUX GETRSP errstat: %ld", errstat);
 
   ptr = asn_build_int (ptr, &len,
-		       (u_char) (ASN_UNIVERSAL | ASN_PRIMITIVE | ASN_INTEGER),
-		       &errstat, sizeof (errstat));
+                       (u_char) (ASN_UNIVERSAL | ASN_PRIMITIVE | ASN_INTEGER),
+                       &errstat, sizeof (errstat));
   if (debug_smux)
     zlog_debug ("SMUX GETRSP errindex: %ld", errindex);
 
   ptr = asn_build_int (ptr, &len,
-		       (u_char) (ASN_UNIVERSAL | ASN_PRIMITIVE | ASN_INTEGER),
-		       &errindex, sizeof (errindex));
+                       (u_char) (ASN_UNIVERSAL | ASN_PRIMITIVE | ASN_INTEGER),
+                       &errindex, sizeof (errindex));
 
   h2 = ptr;
   /* Place holder h2 for one variable */
   ptr = asn_build_sequence (ptr, &len,
-			   (u_char)(ASN_SEQUENCE | ASN_CONSTRUCTOR),
-			   0);
+                           (u_char)(ASN_SEQUENCE | ASN_CONSTRUCTOR),
+                           0);
   h2e = ptr;
 
   ptr = snmp_build_var_op (ptr, objid, &objid_len,
-			   val_type, arg_len, arg, &len);
+                           val_type, arg_len, arg, &len);
 
   /* Now variable size is known, fill in size */
   asn_build_sequence(h2,&length,(u_char)(ASN_SEQUENCE|ASN_CONSTRUCTOR),ptr-h2e);
@@ -340,13 +340,13 @@ smux_var (u_char *ptr, size_t len, oid objid[], size_t *objid_len,
     {
       zlog_debug ("SMUX var parse: type %d len %zd", type, len);
       zlog_debug ("SMUX var parse: type must be %d",
-		 (ASN_SEQUENCE | ASN_CONSTRUCTOR));
+                 (ASN_SEQUENCE | ASN_CONSTRUCTOR));
     }
 
   /* Parse var option. */
   *objid_len = MAX_OID_LEN;
   ptr = snmp_parse_var_op(ptr, objid, objid_len, &val_type,
-			  &val_len, &val, &len);
+                          &val_len, &val, &len);
 
   if (var_val_len)
     *var_val_len = val_len;
@@ -465,12 +465,12 @@ smux_set (oid *reqid, size_t *reqid_len,
                     zlog_debug ("SMUX function call index is %d", v->magic);
 
                   statP = (*v->findVar) (v, suffix, &suffix_len, 1,
-					 &val_len, &write_method);
+                                         &val_len, &write_method);
 
                   if (write_method)
                     {
                       return (*write_method)(action, val, val_type, val_len,
-					     statP, suffix, suffix_len, v);
+                                             statP, suffix, suffix_len, v);
                     }
                   else
                     {
@@ -490,7 +490,7 @@ smux_set (oid *reqid, size_t *reqid_len,
 
 static int
 smux_get (oid *reqid, size_t *reqid_len, int exact,
-	  u_char *val_type,void **val, size_t *val_len)
+          u_char *val_type,void **val, size_t *val_len)
 {
   int j;
   struct subtree *subtree;
@@ -506,57 +506,57 @@ smux_get (oid *reqid, size_t *reqid_len, int exact,
   for (ALL_LIST_ELEMENTS (treelist, node, nnode,subtree))
     {
       subresult = oid_compare_part (reqid, *reqid_len,
-				    subtree->name, subtree->name_len);
+                                    subtree->name, subtree->name_len);
 
       /* Subtree matched. */
       if (subresult == 0)
-	{
-	  /* Prepare suffix. */
-	  suffix = reqid + subtree->name_len;
-	  suffix_len = *reqid_len - subtree->name_len;
-	  result = subresult;
+        {
+          /* Prepare suffix. */
+          suffix = reqid + subtree->name_len;
+          suffix_len = *reqid_len - subtree->name_len;
+          result = subresult;
 
-	  /* Check variables. */
-	  for (j = 0; j < subtree->variables_num; j++)
-	    {
-	      v = &subtree->variables[j];
+          /* Check variables. */
+          for (j = 0; j < subtree->variables_num; j++)
+            {
+              v = &subtree->variables[j];
 
-	      /* Always check suffix */
-	      result = oid_compare_part (suffix, suffix_len,
-					 v->name, v->namelen);
+              /* Always check suffix */
+              result = oid_compare_part (suffix, suffix_len,
+                                         v->name, v->namelen);
 
-	      /* This is exact match so result must be zero. */
-	      if (result == 0)
-		{
-		  if (debug_smux)
-		    zlog_debug ("SMUX function call index is %d", v->magic);
+              /* This is exact match so result must be zero. */
+              if (result == 0)
+                {
+                  if (debug_smux)
+                    zlog_debug ("SMUX function call index is %d", v->magic);
 
-		  *val = (*v->findVar) (v, suffix, &suffix_len, exact,
-					val_len, &write_method);
+                  *val = (*v->findVar) (v, suffix, &suffix_len, exact,
+                                        val_len, &write_method);
 
-		  /* There is no instance. */
-		  if (*val == NULL)
-		    return SNMP_NOSUCHINSTANCE;
+                  /* There is no instance. */
+                  if (*val == NULL)
+                    return SNMP_NOSUCHINSTANCE;
 
-		  /* Call is suceed. */
-		  *val_type = v->type;
+                  /* Call is suceed. */
+                  *val_type = v->type;
 
-		  return 0;
-		}
+                  return 0;
+                }
 
-	      /* If above execution is failed or oid is small (so
+              /* If above execution is failed or oid is small (so
                  there is no further match). */
-	      if (result < 0)
-		return SNMP_ERR_NOSUCHNAME;
-	    }
-	}
+              if (result < 0)
+                return SNMP_ERR_NOSUCHNAME;
+            }
+        }
     }
   return SNMP_ERR_NOSUCHNAME;
 }
 
 static int
 smux_getnext (oid *reqid, size_t *reqid_len, int exact,
-	      u_char *val_type,void **val, size_t *val_len)
+              u_char *val_type,void **val, size_t *val_len)
 {
   int j;
   oid save[MAX_OID_LEN];
@@ -579,7 +579,7 @@ smux_getnext (oid *reqid, size_t *reqid_len, int exact,
   for (ALL_LIST_ELEMENTS (treelist, node, nnode, subtree))
     {
       subresult = oid_compare_part (reqid, *reqid_len,
-				    subtree->name, subtree->name_len);
+                                    subtree->name, subtree->name_len);
 
       /* If request is in the tree. The agent has to make sure we
          only receive requests we have registered for. */
@@ -593,45 +593,45 @@ smux_getnext (oid *reqid, size_t *reqid_len, int exact,
          back later with the very same request. --jochen */
 
       if (subresult <= 0)
-	{
-	  /* Prepare suffix. */
-	  suffix = reqid + subtree->name_len;
-	  suffix_len = *reqid_len - subtree->name_len;
-	  if (subresult < 0)
-	    {
-	      oid_copy(reqid, subtree->name, subtree->name_len);
-	      *reqid_len = subtree->name_len;
-	    }
-	  for (j = 0; j < subtree->variables_num; j++)
-	    {
-	      result = subresult;
-	      v = &subtree->variables[j];
+        {
+          /* Prepare suffix. */
+          suffix = reqid + subtree->name_len;
+          suffix_len = *reqid_len - subtree->name_len;
+          if (subresult < 0)
+            {
+              oid_copy(reqid, subtree->name, subtree->name_len);
+              *reqid_len = subtree->name_len;
+            }
+          for (j = 0; j < subtree->variables_num; j++)
+            {
+              result = subresult;
+              v = &subtree->variables[j];
 
-	      /* Next then check result >= 0. */
-	      if (result == 0)
-		result = oid_compare_part (suffix, suffix_len,
-					   v->name, v->namelen);
+              /* Next then check result >= 0. */
+              if (result == 0)
+                result = oid_compare_part (suffix, suffix_len,
+                                           v->name, v->namelen);
 
-	      if (result <= 0)
-		{
-		  if (debug_smux)
-		    zlog_debug ("SMUX function call index is %d", v->magic);
-		  if(result<0)
-		    {
-		      oid_copy(suffix, v->name, v->namelen);
-		      suffix_len = v->namelen;
-		    }
-		  *val = (*v->findVar) (v, suffix, &suffix_len, exact,
-					val_len, &write_method);
-		  *reqid_len = suffix_len + subtree->name_len;
-		  if (*val)
-		    {
-		      *val_type = v->type;
-		      return 0;
-		    }
-		}
-	    }
-	}
+              if (result <= 0)
+                {
+                  if (debug_smux)
+                    zlog_debug ("SMUX function call index is %d", v->magic);
+                  if(result<0)
+                    {
+                      oid_copy(suffix, v->name, v->namelen);
+                      suffix_len = v->namelen;
+                    }
+                  *val = (*v->findVar) (v, suffix, &suffix_len, exact,
+                                        val_len, &write_method);
+                  *reqid_len = suffix_len + subtree->name_len;
+                  if (*val)
+                    {
+                      *val_type = v->type;
+                      return 0;
+                    }
+                }
+            }
+        }
     }
   memcpy (reqid, save, savelen * sizeof(oid));
   *reqid_len = savelen;
@@ -833,32 +833,32 @@ process_rest: /* see note below: YYY */
     case SMUX_CLOSE:
       /* Close SMUX connection. */
       if (debug_smux)
-	zlog_debug ("SMUX_CLOSE");
+        zlog_debug ("SMUX_CLOSE");
       smux_parse_close (ptr, len);
       return -1;
       break;
     case SMUX_RRSP:
       /* This is response for register message. */
       if (debug_smux)
-	zlog_debug ("SMUX_RRSP");
+        zlog_debug ("SMUX_RRSP");
       smux_parse_rrsp (ptr, len);
       break;
     case SMUX_GET:
       /* Exact request for object id. */
       if (debug_smux)
-	zlog_debug ("SMUX_GET");
+        zlog_debug ("SMUX_GET");
       smux_parse_get (ptr, len, 1);
       break;
     case SMUX_GETNEXT:
       /* Next request for object id. */
       if (debug_smux)
-	zlog_debug ("SMUX_GETNEXT");
+        zlog_debug ("SMUX_GETNEXT");
       smux_parse_get (ptr, len, 0);
       break;
     case SMUX_SET:
       /* SMUX_SET is supported with some limitations. */
       if (debug_smux)
-	zlog_debug ("SMUX_SET");
+        zlog_debug ("SMUX_SET");
 
       /* save the data for future SMUX_SOUT */
       memcpy (sout_save_buff, ptr, len);
@@ -954,27 +954,27 @@ smux_open (int sock)
   /* SMUX Open. */
   version = 0;
   ptr = asn_build_int (ptr, &len,
-		       (u_char)(ASN_UNIVERSAL | ASN_PRIMITIVE | ASN_INTEGER),
-		       &version, sizeof (version));
+                       (u_char)(ASN_UNIVERSAL | ASN_PRIMITIVE | ASN_INTEGER),
+                       &version, sizeof (version));
 
   /* SMUX connection oid. */
   ptr = asn_build_objid (ptr, &len,
-			 (u_char)
-			 (ASN_UNIVERSAL | ASN_PRIMITIVE | ASN_OBJECT_ID),
-			 smux_oid, smux_oid_len);
+                         (u_char)
+                         (ASN_UNIVERSAL | ASN_PRIMITIVE | ASN_OBJECT_ID),
+                         smux_oid, smux_oid_len);
 
   /* SMUX connection description. */
   ptr = asn_build_string (ptr, &len,
-			  (u_char)
-			  (ASN_UNIVERSAL | ASN_PRIMITIVE | ASN_OCTET_STR),
-			  progname, strlen ((void*)progname));
-			  (const u_char *) progname, strlen (progname));
+                          (u_char)
+                          (ASN_UNIVERSAL | ASN_PRIMITIVE | ASN_OCTET_STR),
+                          progname, strlen ((void*)progname));
+                          (const u_char *) progname, strlen (progname));
 
   /* SMUX connection password. */
   ptr = asn_build_string (ptr, &len,
-			  (u_char)
-			  (ASN_UNIVERSAL | ASN_PRIMITIVE | ASN_OCTET_STR),
-			  (u_char *)smux_passwd, strlen (smux_passwd));
+                          (u_char)
+                          (ASN_UNIVERSAL | ASN_PRIMITIVE | ASN_OCTET_STR),
+                          (u_char *)smux_passwd, strlen (smux_passwd));
 
   /* Fill in real SMUX header.  We exclude ASN header size (2). */
   len = BUFSIZ;
@@ -985,9 +985,9 @@ smux_open (int sock)
 
 int
 smux_trap (const oid *name, size_t namelen,
-	   const oid *iname, size_t inamelen,
-	   const struct trap_object *trapobj, size_t trapobjlen,
-	   unsigned int tick, u_char sptrap)
+           const oid *iname, size_t inamelen,
+           const struct trap_object *trapobj, size_t trapobjlen,
+           unsigned int tick, u_char sptrap)
 {
   unsigned int i;
   u_char buf[BUFSIZ];
@@ -1010,40 +1010,40 @@ smux_trap (const oid *name, size_t namelen,
 
   /* Sub agent enterprise oid. */
   ptr = asn_build_objid (ptr, &len,
-			 (u_char)
-			 (ASN_UNIVERSAL | ASN_PRIMITIVE | ASN_OBJECT_ID),
-			 smux_oid, smux_oid_len);
+                         (u_char)
+                         (ASN_UNIVERSAL | ASN_PRIMITIVE | ASN_OBJECT_ID),
+                         smux_oid, smux_oid_len);
 
   /* IP address. */
   addr.s_addr = 0;
   ptr = asn_build_string (ptr, &len,
-			  (u_char)
-			  (ASN_UNIVERSAL | ASN_PRIMITIVE | ASN_IPADDRESS),
-			  (u_char *)&addr, sizeof (addr));
+                          (u_char)
+                          (ASN_UNIVERSAL | ASN_PRIMITIVE | ASN_IPADDRESS),
+                          (u_char *)&addr, sizeof (addr));
 
   /* Generic trap integer. */
   val = SNMP_TRAP_ENTERPRISESPECIFIC;
   ptr = asn_build_int (ptr, &len,
-		       (u_char)(ASN_UNIVERSAL | ASN_PRIMITIVE | ASN_INTEGER),
-		       (long *)&val, sizeof (val));
+                       (u_char)(ASN_UNIVERSAL | ASN_PRIMITIVE | ASN_INTEGER),
+                       (long *)&val, sizeof (val));
 
   /* Specific trap integer. */
   val = sptrap;
   ptr = asn_build_int (ptr, &len,
-		       (u_char)(ASN_UNIVERSAL | ASN_PRIMITIVE | ASN_INTEGER),
-		       (long *)&val, sizeof (val));
+                       (u_char)(ASN_UNIVERSAL | ASN_PRIMITIVE | ASN_INTEGER),
+                       (long *)&val, sizeof (val));
 
   /* Timeticks timestamp. */
   val = 0;
   ptr = asn_build_unsigned_int (ptr, &len,
-				(u_char)(ASN_UNIVERSAL | ASN_PRIMITIVE | ASN_TIMETICKS),
-				&val, sizeof (val));
+                                (u_char)(ASN_UNIVERSAL | ASN_PRIMITIVE | ASN_TIMETICKS),
+                                &val, sizeof (val));
 
   /* Variables. */
   h1 = ptr;
   ptr = asn_build_sequence (ptr, &len,
-			    (u_char) (ASN_SEQUENCE | ASN_CONSTRUCTOR),
-			    0);
+                            (u_char) (ASN_SEQUENCE | ASN_CONSTRUCTOR),
+                            0);
 
 
   /* Iteration for each objects. */
@@ -1090,17 +1090,17 @@ smux_trap (const oid *name, size_t namelen,
       ret = smux_get (oid, &oid_len, 1, &val_type, &val, &val_len);
 
       if (debug_smux)
-	zlog_debug ("smux_get result %d", ret);
+        zlog_debug ("smux_get result %d", ret);
 
       if (ret == 0)
-	ptr = snmp_build_var_op (ptr, oid, &oid_len,
-				 val_type, val_len, val, &len);
+        ptr = snmp_build_var_op (ptr, oid, &oid_len,
+                                 val_type, val_len, val, &len);
     }
 
   /* Now variable size is known, fill in size */
   asn_build_sequence(h1, &length,
-		     (u_char) (ASN_SEQUENCE | ASN_CONSTRUCTOR),
-		     ptr - h1e);
+                     (u_char) (ASN_SEQUENCE | ASN_CONSTRUCTOR),
+                     ptr - h1e);
 
   /* Fill in size of whole sequence */
   len = BUFSIZ;
@@ -1133,21 +1133,21 @@ smux_register (int sock)
 
       /* Register MIB tree. */
       ptr = asn_build_objid (ptr, &len,
-			    (u_char)
-			    (ASN_UNIVERSAL | ASN_PRIMITIVE | ASN_OBJECT_ID),
-			    subtree->name, subtree->name_len);
+                            (u_char)
+                            (ASN_UNIVERSAL | ASN_PRIMITIVE | ASN_OBJECT_ID),
+                            subtree->name, subtree->name_len);
 
       /* Priority. */
       priority = -1;
       ptr = asn_build_int (ptr, &len,
-		          (u_char)(ASN_UNIVERSAL | ASN_PRIMITIVE | ASN_INTEGER),
-		          &priority, sizeof (priority));
+                          (u_char)(ASN_UNIVERSAL | ASN_PRIMITIVE | ASN_INTEGER),
+                          &priority, sizeof (priority));
 
       /* Operation. */
       operation = 2; /* Register R/W */
       ptr = asn_build_int (ptr, &len,
-		          (u_char)(ASN_UNIVERSAL | ASN_PRIMITIVE | ASN_INTEGER),
-		          &operation, sizeof (operation));
+                          (u_char)(ASN_UNIVERSAL | ASN_PRIMITIVE | ASN_INTEGER),
+                          &operation, sizeof (operation));
 
       if (debug_smux)
         {
@@ -1182,7 +1182,7 @@ smux_connect (struct thread *t)
   if (smux_sock < 0)
     {
       if (++fail < SMUX_MAX_FAILURE)
-	smux_event (SMUX_CONNECT, 0);
+        smux_event (SMUX_CONNECT, 0);
       return 0;
     }
 
@@ -1194,7 +1194,7 @@ smux_connect (struct thread *t)
       close (smux_sock);
       smux_sock = -1;
       if (++fail < SMUX_MAX_FAILURE)
-	smux_event (SMUX_CONNECT, 0);
+        smux_event (SMUX_CONNECT, 0);
       return -1;
     }
 
@@ -1206,7 +1206,7 @@ smux_connect (struct thread *t)
       close (smux_sock);
       smux_sock = -1;
       if (++fail < SMUX_MAX_FAILURE)
-	smux_event (SMUX_CONNECT, 0);
+        smux_event (SMUX_CONNECT, 0);
       return -1;
     }
 
@@ -1278,19 +1278,19 @@ smux_str2oid (const char *str, oid *oid, size_t *oid_len)
   while (1)
     {
       if (! isdigit (*str))
-	return -1;
+        return -1;
 
       while (isdigit (*str))
-	{
-	  val *= 10;
-	  val += (*str - '0');
-	  str++;
-	}
+        {
+          val *= 10;
+          val += (*str - '0');
+          str++;
+        }
 
       if (*str == '\0')
-	break;
+        break;
       if (*str != '.')
-	return -1;
+        return -1;
 
       oid[len++] = val;
       val = 0;
@@ -1354,7 +1354,7 @@ smux_peer_oid (struct vty *vty, const char *oid_str, const char *passwd_str)
 
 int
 smux_header_generic (struct variable *v, oid *name, size_t *length, int exact,
-		     size_t *var_len, WriteMethod **write_method)
+                     size_t *var_len, WriteMethod **write_method)
 {
   oid fulloid[MAX_OID_LEN];
   int ret;
@@ -1366,7 +1366,7 @@ smux_header_generic (struct variable *v, oid *name, size_t *length, int exact,
 
   /* Check single instance. */
   if ((exact && (ret != 0)) || (!exact && (ret >= 0)))
-	return MATCH_FAILED;
+        return MATCH_FAILED;
 
   /* In case of getnext, fill in full instance. */
   memcpy (name, fulloid, (v->namelen + 1) * sizeof (oid));
@@ -1468,10 +1468,10 @@ config_write_smux (struct vty *vty)
     {
       vty_out (vty, "smux peer ");
       for (i = 0; i < smux_oid_len; i++)
-	{
-	  vty_out (vty, "%s%d", first ? "" : ".", (int) smux_oid[i]);
-	  first = 0;
-	}
+        {
+          vty_out (vty, "%s%d", first ? "" : ".", (int) smux_oid[i]);
+          first = 0;
+        }
       vty_out (vty, " %s%s", smux_passwd, VTY_NEWLINE);
     }
   return 0;
@@ -1481,7 +1481,7 @@ config_write_smux (struct vty *vty)
 void
 smux_register_mib (const char *descr, struct variable *var,
                    size_t width, int num,
-		   oid name[], size_t namelen)
+                   oid name[], size_t namelen)
 {
   struct subtree *tree;
 
@@ -1500,7 +1500,7 @@ static int
 smux_tree_cmp(struct subtree *tree1, struct subtree *tree2)
 {
   return oid_compare(tree1->name, tree1->name_len,
-		     tree2->name, tree2->name_len);
+                     tree2->name, tree2->name_len);
 }
 
 CMD_INSTALL_TABLE(static, smux_cmd_table,

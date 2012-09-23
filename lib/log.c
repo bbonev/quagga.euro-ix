@@ -668,22 +668,22 @@ open_crashlog(void)
       size_t ilen;
 
       for (p = zlog_default->ident, ilen = 0; *p; p++)
-	ilen++;
+        ilen++;
       {
-	char buf[sizeof(CRASHLOG_PREFIX)+ilen+sizeof(CRASHLOG_SUFFIX)+3];
-	char *s = buf;
+        char buf[sizeof(CRASHLOG_PREFIX)+ilen+sizeof(CRASHLOG_SUFFIX)+3];
+        char *s = buf;
 #define LOC s,buf+sizeof(buf)-s
-	s = str_append(LOC, CRASHLOG_PREFIX);
-	s = str_append(LOC, zlog_default->ident);
-	s = str_append(LOC, ".");
-	s = str_append(LOC, CRASHLOG_SUFFIX);
+        s = str_append(LOC, CRASHLOG_PREFIX);
+        s = str_append(LOC, zlog_default->ident);
+        s = str_append(LOC, ".");
+        s = str_append(LOC, CRASHLOG_SUFFIX);
 #undef LOC
-	*s = '\0';
-	return open(buf, O_WRONLY|O_CREAT|O_EXCL, LOGFILE_MASK);
+        *s = '\0';
+        return open(buf, O_WRONLY|O_CREAT|O_EXCL, LOGFILE_MASK);
       }
     }
   return open(CRASHLOG_PREFIX CRASHLOG_SUFFIX, O_WRONLY|O_CREAT|O_EXCL,
-	      LOGFILE_MASK);
+              LOGFILE_MASK);
 #undef CRASHLOG_SUFFIX
 #undef CRASHLOG_PREFIX
 }
@@ -754,17 +754,17 @@ zlog_signal(int signo, const char *action, siginfo_t *siginfo,
       if (PRI <= zlog_default->maxlvl[ZLOG_DEST_MONITOR])
         vty_monitor_log_fixed(buf, s - buf);
       if (PRI <= zlog_default->maxlvl[ZLOG_DEST_SYSLOG])
-	syslog_sigsafe(PRI|zlog_default->facility,msgstart,s-msgstart);
+        syslog_sigsafe(PRI|zlog_default->facility,msgstart,s-msgstart);
     }
 #undef DUMP
 
   zlog_backtrace_sigsafe(PRI,
 #ifdef SA_SIGINFO
-  			 program_counter
+                         program_counter
 #else
-			 NULL
+                         NULL
 #endif
-			);
+                        );
 #undef PRI
 #undef LOC
 }
@@ -801,7 +801,7 @@ zlog_backtrace_sigsafe(int priority, void *program_counter)
       write(FD, pclabel, sizeof(pclabel)-1); \
       backtrace_symbols_fd(&program_counter, 1, FD); \
     } \
-  write(FD, buf, s-buf);	\
+  write(FD, buf, s-buf);        \
   backtrace_symbols_fd(array, size, FD); \
 }
 #elif defined(HAVE_PRINTSTACK)
@@ -830,38 +830,38 @@ zlog_backtrace_sigsafe(int priority, void *program_counter)
   else
     {
       if (priority <= zlog_default->maxlvl[ZLOG_DEST_STDOUT])
-	DUMP(STDOUT_FILENO)
+        DUMP(STDOUT_FILENO)
       /* Remove trailing '\n' for monitor and syslog */
       *--s = '\0';
       if (priority <= zlog_default->maxlvl[ZLOG_DEST_MONITOR])
-	vty_monitor_log_fixed(buf,s-buf);
+        vty_monitor_log_fixed(buf,s-buf);
       if (priority <= zlog_default->maxlvl[ZLOG_DEST_SYSLOG])
-	syslog_sigsafe(priority|zlog_default->facility,buf,s-buf);
+        syslog_sigsafe(priority|zlog_default->facility,buf,s-buf);
       {
-	int i;
+        int i;
 #ifdef HAVE_GLIBC_BACKTRACE
         bt = backtrace_symbols(array, size);
 #endif
-	/* Just print the function addresses. */
-	for (i = 0; i < size; i++)
-	  {
-	    s = buf;
-	    if (bt)
-	      s = str_append(LOC, bt[i]);
-	    else {
-	      s = str_append(LOC,"[bt ");
-	      s = num_append(LOC,i);
-	      s = str_append(LOC,"] 0x");
-	      s = hex_append(LOC,(u_long)(array[i]));
-	    }
-	    *s = '\0';
-	    if (priority <= zlog_default->maxlvl[ZLOG_DEST_MONITOR])
-	      vty_monitor_log_fixed(buf,s-buf);
-	    if (priority <= zlog_default->maxlvl[ZLOG_DEST_SYSLOG])
-	      syslog_sigsafe(priority|zlog_default->facility,buf,s-buf);
-	  }
-	  if (bt)
-	    free(bt);
+        /* Just print the function addresses. */
+        for (i = 0; i < size; i++)
+          {
+            s = buf;
+            if (bt)
+              s = str_append(LOC, bt[i]);
+            else {
+              s = str_append(LOC,"[bt ");
+              s = num_append(LOC,i);
+              s = str_append(LOC,"] 0x");
+              s = hex_append(LOC,(u_long)(array[i]));
+            }
+            *s = '\0';
+            if (priority <= zlog_default->maxlvl[ZLOG_DEST_MONITOR])
+              vty_monitor_log_fixed(buf,s-buf);
+            if (priority <= zlog_default->maxlvl[ZLOG_DEST_SYSLOG])
+              syslog_sigsafe(priority|zlog_default->facility,buf,s-buf);
+          }
+          if (bt)
+            free(bt);
       }
     }
 #undef DUMP
@@ -891,8 +891,8 @@ uzlog_backtrace(int priority)
       ((size_t)size > sizeof(array)/sizeof(array[0])))
     {
       zlog(NULL, LOG_ERR, "Cannot get backtrace, returned invalid # of frames %d "
-	       "(valid range is between 1 and %lu)",
-	       size, (unsigned long)(sizeof(array)/sizeof(array[0])));
+               "(valid range is between 1 and %lu)",
+               size, (unsigned long)(sizeof(array)/sizeof(array[0])));
       return;
     }
   zlog(NULL, priority, "Backtrace for %d stack frames:", size);
@@ -900,12 +900,12 @@ uzlog_backtrace(int priority)
     {
       zlog(NULL, LOG_ERR, "Cannot get backtrace symbols (out of memory?)");
       for (i = 0; i < size; i++)
-	zlog(NULL, priority, "[bt %d] %p",i,array[i]);
+        zlog(NULL, priority, "[bt %d] %p",i,array[i]);
     }
   else
     {
       for (i = 0; i < size; i++)
-	zlog(NULL, priority, "[bt %d] %s",i,strings[i]);
+        zlog(NULL, priority, "[bt %d] %s",i,strings[i]);
       free(strings);
     }
 #endif /* HAVE_GLIBC_BACKTRACE */
@@ -964,7 +964,7 @@ static inline struct zlog* zlog_actual(struct zlog* zl)
  */
 extern struct zlog *
 openzlog (const char *progname, zlog_proto_t protocol,
-	                                  int syslog_flags, int syslog_facility)
+                                          int syslog_flags, int syslog_facility)
 {
   struct zlog *zl;
   u_int i;
@@ -1559,15 +1559,15 @@ mes_lookup (const struct message *meslist, int max, int index,
 
     for (i = 0; i < max; i++, meslist++)
       {
-	if (meslist->key == index)
-	  {
-	    const char *str = (meslist->str ? meslist->str : none);
+        if (meslist->key == index)
+          {
+            const char *str = (meslist->str ? meslist->str : none);
 
-	    zlog_debug ("message index %d [%s] found in %s at position %d "
-	                                                       "(max is %d)",
-		                                   index, str, mesname, i, max);
-	    return str;
-	  }
+            zlog_debug ("message index %d [%s] found in %s at position %d "
+                                                               "(max is %d)",
+                                                   index, str, mesname, i, max);
+            return str;
+          }
       }
   }
   zlog_err("message index %d not found in %s (max is %d)", index, mesname, max);
@@ -1586,17 +1586,17 @@ struct zebra_desc_table
 
 #define DESC_ENTRY(T,S,C) [(T)] = { (T), (S), (C) }
 static const struct zebra_desc_table route_types[] = {
-  DESC_ENTRY	(ZEBRA_ROUTE_SYSTEM,	"system",	'X' ),
-  DESC_ENTRY	(ZEBRA_ROUTE_KERNEL,	"kernel",	'K' ),
-  DESC_ENTRY	(ZEBRA_ROUTE_CONNECT,	"connected",	'C' ),
-  DESC_ENTRY	(ZEBRA_ROUTE_STATIC,	"static",	'S' ),
-  DESC_ENTRY	(ZEBRA_ROUTE_RIP,	"rip",		'R' ),
-  DESC_ENTRY	(ZEBRA_ROUTE_RIPNG,	"ripng",	'R' ),
-  DESC_ENTRY	(ZEBRA_ROUTE_OSPF,	"ospf",		'O' ),
-  DESC_ENTRY	(ZEBRA_ROUTE_OSPF6,	"ospf6",	'O' ),
-  DESC_ENTRY	(ZEBRA_ROUTE_ISIS,	"isis",		'I' ),
-  DESC_ENTRY	(ZEBRA_ROUTE_BGP,	"bgp",		'B' ),
-  DESC_ENTRY	(ZEBRA_ROUTE_HSLS,	"hsls",		'H' ),
+  DESC_ENTRY    (ZEBRA_ROUTE_SYSTEM,    "system",       'X' ),
+  DESC_ENTRY    (ZEBRA_ROUTE_KERNEL,    "kernel",       'K' ),
+  DESC_ENTRY    (ZEBRA_ROUTE_CONNECT,   "connected",    'C' ),
+  DESC_ENTRY    (ZEBRA_ROUTE_STATIC,    "static",       'S' ),
+  DESC_ENTRY    (ZEBRA_ROUTE_RIP,       "rip",          'R' ),
+  DESC_ENTRY    (ZEBRA_ROUTE_RIPNG,     "ripng",        'R' ),
+  DESC_ENTRY    (ZEBRA_ROUTE_OSPF,      "ospf",         'O' ),
+  DESC_ENTRY    (ZEBRA_ROUTE_OSPF6,     "ospf6",        'O' ),
+  DESC_ENTRY    (ZEBRA_ROUTE_ISIS,      "isis",         'I' ),
+  DESC_ENTRY    (ZEBRA_ROUTE_BGP,       "bgp",          'B' ),
+  DESC_ENTRY    (ZEBRA_ROUTE_HSLS,      "hsls",         'H' ),
 };
 #undef DESC_ENTRY
 
@@ -1604,29 +1604,29 @@ static const struct zebra_desc_table route_types[] = {
 
 #define DESC_ENTRY(T) [(T)] = { (T), (#T), '\0' }
 static const struct zebra_desc_table command_types[] = {
-  DESC_ENTRY	(ZEBRA_INTERFACE_ADD),
-  DESC_ENTRY	(ZEBRA_INTERFACE_DELETE),
-  DESC_ENTRY	(ZEBRA_INTERFACE_ADDRESS_ADD),
-  DESC_ENTRY	(ZEBRA_INTERFACE_ADDRESS_DELETE),
-  DESC_ENTRY	(ZEBRA_INTERFACE_UP),
-  DESC_ENTRY	(ZEBRA_INTERFACE_DOWN),
-  DESC_ENTRY	(ZEBRA_IPV4_ROUTE_ADD),
-  DESC_ENTRY	(ZEBRA_IPV4_ROUTE_DELETE),
-  DESC_ENTRY	(ZEBRA_IPV6_ROUTE_ADD),
-  DESC_ENTRY	(ZEBRA_IPV6_ROUTE_DELETE),
-  DESC_ENTRY	(ZEBRA_REDISTRIBUTE_ADD),
-  DESC_ENTRY	(ZEBRA_REDISTRIBUTE_DELETE),
-  DESC_ENTRY	(ZEBRA_REDISTRIBUTE_DEFAULT_ADD),
-  DESC_ENTRY	(ZEBRA_REDISTRIBUTE_DEFAULT_DELETE),
-  DESC_ENTRY	(ZEBRA_IPV4_NEXTHOP_LOOKUP),
-  DESC_ENTRY	(ZEBRA_IPV6_NEXTHOP_LOOKUP),
-  DESC_ENTRY	(ZEBRA_IPV4_IMPORT_LOOKUP),
-  DESC_ENTRY	(ZEBRA_IPV6_IMPORT_LOOKUP),
-  DESC_ENTRY	(ZEBRA_INTERFACE_RENAME),
-  DESC_ENTRY	(ZEBRA_ROUTER_ID_ADD),
-  DESC_ENTRY	(ZEBRA_ROUTER_ID_DELETE),
-  DESC_ENTRY	(ZEBRA_ROUTER_ID_UPDATE),
-  DESC_ENTRY	(ZEBRA_HELLO),
+  DESC_ENTRY    (ZEBRA_INTERFACE_ADD),
+  DESC_ENTRY    (ZEBRA_INTERFACE_DELETE),
+  DESC_ENTRY    (ZEBRA_INTERFACE_ADDRESS_ADD),
+  DESC_ENTRY    (ZEBRA_INTERFACE_ADDRESS_DELETE),
+  DESC_ENTRY    (ZEBRA_INTERFACE_UP),
+  DESC_ENTRY    (ZEBRA_INTERFACE_DOWN),
+  DESC_ENTRY    (ZEBRA_IPV4_ROUTE_ADD),
+  DESC_ENTRY    (ZEBRA_IPV4_ROUTE_DELETE),
+  DESC_ENTRY    (ZEBRA_IPV6_ROUTE_ADD),
+  DESC_ENTRY    (ZEBRA_IPV6_ROUTE_DELETE),
+  DESC_ENTRY    (ZEBRA_REDISTRIBUTE_ADD),
+  DESC_ENTRY    (ZEBRA_REDISTRIBUTE_DELETE),
+  DESC_ENTRY    (ZEBRA_REDISTRIBUTE_DEFAULT_ADD),
+  DESC_ENTRY    (ZEBRA_REDISTRIBUTE_DEFAULT_DELETE),
+  DESC_ENTRY    (ZEBRA_IPV4_NEXTHOP_LOOKUP),
+  DESC_ENTRY    (ZEBRA_IPV6_NEXTHOP_LOOKUP),
+  DESC_ENTRY    (ZEBRA_IPV4_IMPORT_LOOKUP),
+  DESC_ENTRY    (ZEBRA_IPV6_IMPORT_LOOKUP),
+  DESC_ENTRY    (ZEBRA_INTERFACE_RENAME),
+  DESC_ENTRY    (ZEBRA_ROUTER_ID_ADD),
+  DESC_ENTRY    (ZEBRA_ROUTER_ID_DELETE),
+  DESC_ENTRY    (ZEBRA_ROUTER_ID_UPDATE),
+  DESC_ENTRY    (ZEBRA_HELLO),
 };
 #undef DESC_ENTRY
 
@@ -1648,9 +1648,9 @@ zroute_lookup(u_int zroute)
     {
       if (zroute == route_types[i].type)
         {
-	  zlog_warn("internal error: route type table out of order "
-		    "while searching for %u, please notify developers", zroute);
-	  return &route_types[i];
+          zlog_warn("internal error: route type table out of order "
+                    "while searching for %u, please notify developers", zroute);
+          return &route_types[i];
         }
     }
   zlog_err("internal error: cannot find route type %u in table!", zroute);
@@ -1680,7 +1680,7 @@ zserv_command_string (unsigned int command)
   return command_types[command].string;
 }
 
-#define RTSIZE	(sizeof(route_types)/sizeof(route_types[0]))
+#define RTSIZE  (sizeof(route_types)/sizeof(route_types[0]))
 
 int
 proto_name2num(const char *s)
@@ -1704,36 +1704,36 @@ proto_redistnum(int afi, const char *s)
   if (afi == AFI_IP)
     {
       if (strncmp (s, "k", 1) == 0)
-	return ZEBRA_ROUTE_KERNEL;
+        return ZEBRA_ROUTE_KERNEL;
       else if (strncmp (s, "c", 1) == 0)
-	return ZEBRA_ROUTE_CONNECT;
+        return ZEBRA_ROUTE_CONNECT;
       else if (strncmp (s, "s", 1) == 0)
-	return ZEBRA_ROUTE_STATIC;
+        return ZEBRA_ROUTE_STATIC;
       else if (strncmp (s, "r", 1) == 0)
-	return ZEBRA_ROUTE_RIP;
+        return ZEBRA_ROUTE_RIP;
       else if (strncmp (s, "o", 1) == 0)
-	return ZEBRA_ROUTE_OSPF;
+        return ZEBRA_ROUTE_OSPF;
       else if (strncmp (s, "i", 1) == 0)
-	return ZEBRA_ROUTE_ISIS;
+        return ZEBRA_ROUTE_ISIS;
       else if (strncmp (s, "b", 1) == 0)
-	return ZEBRA_ROUTE_BGP;
+        return ZEBRA_ROUTE_BGP;
     }
   if (afi == AFI_IP6)
     {
       if (strncmp (s, "k", 1) == 0)
-	return ZEBRA_ROUTE_KERNEL;
+        return ZEBRA_ROUTE_KERNEL;
       else if (strncmp (s, "c", 1) == 0)
-	return ZEBRA_ROUTE_CONNECT;
+        return ZEBRA_ROUTE_CONNECT;
       else if (strncmp (s, "s", 1) == 0)
-	return ZEBRA_ROUTE_STATIC;
+        return ZEBRA_ROUTE_STATIC;
       else if (strncmp (s, "r", 1) == 0)
-	return ZEBRA_ROUTE_RIPNG;
+        return ZEBRA_ROUTE_RIPNG;
       else if (strncmp (s, "o", 1) == 0)
-	return ZEBRA_ROUTE_OSPF6;
+        return ZEBRA_ROUTE_OSPF6;
       else if (strncmp (s, "i", 1) == 0)
-	return ZEBRA_ROUTE_ISIS;
+        return ZEBRA_ROUTE_ISIS;
       else if (strncmp (s, "b", 1) == 0)
-	return ZEBRA_ROUTE_BGP;
+        return ZEBRA_ROUTE_BGP;
     }
   return -1;
 }

@@ -171,7 +171,7 @@ typedef int socklen_t;
 #include <linux/filter.h>
 #include <stddef.h>
 #else
-#define RT_TABLE_MAIN		0
+#define RT_TABLE_MAIN           0
 #endif /* HAVE_NETLINK */
 
 #ifdef HAVE_NETDB_H
@@ -217,22 +217,22 @@ typedef int socklen_t;
  * e.g. this makes life easier for FBSD 4.11 users.
  */
 #ifndef INT8_MAX
-#define INT8_MAX	(127)
+#define INT8_MAX        (127)
 #endif
 #ifndef INT16_MAX
-#define INT16_MAX	(32767)
+#define INT16_MAX       (32767)
 #endif
 #ifndef INT32_MAX
-#define INT32_MAX	(2147483647)
+#define INT32_MAX       (2147483647)
 #endif
 #ifndef UINT8_MAX
-#define UINT8_MAX	(255U)
+#define UINT8_MAX       (255U)
 #endif
 #ifndef UINT16_MAX
-#define UINT16_MAX	(65535U)
+#define UINT16_MAX      (65535U)
 #endif
 #ifndef UINT32_MAX
-#define UINT32_MAX	(4294967295U)
+#define UINT32_MAX      (4294967295U)
 #endif
 
 #ifdef HAVE_GLIBC_BACKTRACE
@@ -364,14 +364,14 @@ struct in_pktinfo
  * Not all the world has this BSD define.
  */
 #ifndef BYTE_ORDER
-#define BIG_ENDIAN	4321	/* least-significant byte first (vax, pc) */
-#define LITTLE_ENDIAN	1234	/* most-significant byte first (IBM, net) */
-#define PDP_ENDIAN	3412	/* LSB first in word, MSW first in long (pdp) */
+#define BIG_ENDIAN      4321    /* least-significant byte first (vax, pc) */
+#define LITTLE_ENDIAN   1234    /* most-significant byte first (IBM, net) */
+#define PDP_ENDIAN      3412    /* LSB first in word, MSW first in long (pdp) */
 
 #if defined(WORDS_BIGENDIAN)
-#define BYTE_ORDER	BIG_ENDIAN
+#define BYTE_ORDER      BIG_ENDIAN
 #else /* !WORDS_BIGENDIAN */
-#define BYTE_ORDER	LITTLE_ENDIAN
+#define BYTE_ORDER      LITTLE_ENDIAN
 #endif /* WORDS_BIGENDIAN */
 
 #endif /* ndef BYTE_ORDER */
@@ -390,7 +390,7 @@ struct in_pktinfo
 #endif /* IN6_ARE_ADDR_EQUAL */
 
 /* default zebra TCP port for zclient */
-#define ZEBRA_PORT			2600
+#define ZEBRA_PORT                      2600
 
 /* Zebra message types. */
 #define ZEBRA_INTERFACE_ADD                1
@@ -481,7 +481,7 @@ extern const char *zserv_command_string (unsigned int command);
 #define ZEBRA_NEXTHOP_BLACKHOLE          9
 
 #ifndef INADDR_LOOPBACK
-#define	INADDR_LOOPBACK	0x7f000001	/* Internet address 127.0.0.1.  */
+#define INADDR_LOOPBACK 0x7f000001      /* Internet address 127.0.0.1.  */
 #endif
 
 /* AFI/SAFI types and numbers. */

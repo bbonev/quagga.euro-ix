@@ -58,11 +58,11 @@
 #define VTY_NEWLINE "\n"
 #define VTY_NL      "\n"
 
-/* For indenting, mostly.	*/
+/* For indenting, mostly.       */
 extern const char vty_spaces_string[] ;
 enum { VTY_MAX_SPACES = 40 } ;
 #define VTY_SPACES(n) (vty_spaces_string + ((n) < VTY_MAX_SPACES \
-					      ? VTY_MAX_SPACES - (n) : 0))
+                                              ? VTY_MAX_SPACES - (n) : 0))
 /* Vty read buffer size. */
 #define VTY_READ_BUFSIZ 512
 

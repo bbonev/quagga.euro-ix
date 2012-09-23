@@ -17,7 +17,7 @@
  * You should have received a copy of the GNU General Public License
  * along with GNU Zebra; see the file COPYING.  If not, write to the Free
  * Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
- * 02111-1307, USA.  
+ * 02111-1307, USA.
  */
 
 #ifndef _ZEBRA_TABLE_H
@@ -69,10 +69,10 @@ extern struct route_node *route_lock_node (struct route_node *node);
 extern struct route_node *route_node_match (const struct route_table *,
                                             const struct prefix *);
 extern struct route_node *route_node_match_ipv4 (const struct route_table *,
-						 const struct in_addr *);
+                                                 const struct in_addr *);
 #ifdef HAVE_IPV6
 extern struct route_node *route_node_match_ipv6 (const struct route_table *,
-						 const struct in6_addr *);
+                                                 const struct in6_addr *);
 #endif /* HAVE_IPV6 */
 
 #endif /* _ZEBRA_TABLE_H */

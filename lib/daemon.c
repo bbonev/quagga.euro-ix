@@ -64,13 +64,13 @@ daemon (int nochdir, int noclose)
 
       fd = open ("/dev/null", O_RDWR, 0);
       if (fd != -1)
-	{
-	  dup2 (fd, STDIN_FILENO);
-	  dup2 (fd, STDOUT_FILENO);
-	  dup2 (fd, STDERR_FILENO);
-	  if (fd > 2)
-	    close (fd);
-	}
+        {
+          dup2 (fd, STDIN_FILENO);
+          dup2 (fd, STDOUT_FILENO);
+          dup2 (fd, STDERR_FILENO);
+          if (fd > 2)
+            close (fd);
+        }
     }
 
   umask (0027);

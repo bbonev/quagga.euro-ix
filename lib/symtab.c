@@ -1111,15 +1111,15 @@ symbol_nref_list_del(symbol sym, symbol_nref nref)
   if (prev != NULL)
     {
       if (prev == (void*)sym)
-	{
-	  assert(sym->nref_list == nref) ;
-	  sym->nref_list = next ;       /* remove from head of list     */
-	}
+        {
+          assert(sym->nref_list == nref) ;
+          sym->nref_list = next ;       /* remove from head of list     */
+        }
       else
         prev->next = next ;             /* remove from place in list    */
 
       if (next != NULL)
-	next->prev = prev ;             /* update next's prev ptr       */
+        next->prev = prev ;             /* update next's prev ptr       */
     } ;
 
   nref->next = nref->prev = NULL ;
@@ -1134,7 +1134,7 @@ symbol_nref_list_del(symbol sym, symbol_nref nref)
  *
  *   symbol_nref_walk_start(sym, walk) ;
  *   while ((ref = symbol_nref_walk_step(walk)) != NULL)
- *   	.... whatever
+ *      .... whatever
  *   symbol_nref_walk_end(walk) ;
  *
  *  NB: it is *essential* to call symbol_nref_walk_end() exactly once at some
@@ -1355,16 +1355,16 @@ symbol_walk_next(symbol_walker walk)
  */
 extern vector
 symbol_table_extract(symbol_table table,
-		     symbol_select_cmp* selector, const void* p_val, bool most,
-							  symbol_sort_cmp* sort)
+                     symbol_select_cmp* selector, const void* p_val, bool most,
+                                                          symbol_sort_cmp* sort)
 {
   vector extract ;
   symbol* base ;
-  unsigned int	count ;
+  unsigned int  count ;
   symbol sym ;
 
   extract = vector_init_new(NULL, (most || (selector == NULL))
-						    ? table->entry_count : 8) ;
+                                                    ? table->entry_count : 8) ;
   base  = table->bases ;
 
   if (base == NULL)
@@ -1375,11 +1375,11 @@ symbol_table_extract(symbol_table table,
     {
       sym = *base++ ;
       while (sym != NULL)
-	{
-	  if ((selector == NULL) || selector(sym, p_val))
-	    vector_push_item(extract, sym) ;
-	  sym = sym->next ;
-	} ;
+        {
+          if ((selector == NULL) || selector(sym, p_val))
+            vector_push_item(extract, sym) ;
+          sym = sym->next ;
+        } ;
     } ;
 
   /* If we are sorting, then the vector entries are the address of a symbol,

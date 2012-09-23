@@ -74,9 +74,9 @@ extern void prefix_bgp_orf_remove_all (char *);
 extern int prefix_bgp_show_prefix_list (struct vty *, afi_t, char *);
 
 extern prefix_list_ref prefix_list_set_ref(prefix_list_ref ref, afi_t afi,
-							     const char* name) ;
+                                                             const char* name) ;
 extern prefix_list_ref prefix_list_copy_ref(prefix_list_ref dst,
-							  prefix_list_ref src) ;
+                                                          prefix_list_ref src) ;
 extern prefix_list_ref prefix_list_unset_ref(prefix_list_ref ref) ;
 extern struct prefix_list* prefix_list_ref_plist(prefix_list_ref ref) ;
 extern const char* prefix_list_ref_name(prefix_list_ref ref) ;

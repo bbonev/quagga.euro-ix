@@ -205,14 +205,14 @@ enum node_type
   SERVICE_NODE,         /* unused !                                           */
   DEBUG_NODE,           /* debug config write only                            */
   AAA_NODE,             /* unused !                                           */
-  KEYCHAIN_NODE,	/* see: keychain.c                                    */
+  KEYCHAIN_NODE,        /* see: keychain.c                                    */
   KEYCHAIN_KEY_NODE,    /* see: keychain.c    -- child of KEYCHAIN_NODE       */
   INTERFACE_NODE,       /* interface commands                                 */
   ZEBRA_NODE,           /* router zebra commands                              */
   TABLE_NODE,           /* rtm_table config write -- see zserv.c              */
-  RIP_NODE,		/* router rip commands                                */
+  RIP_NODE,             /* router rip commands                                */
   RIPNG_NODE,           /* router ripng commands                              */
-  BGP_NODE,		/* router bgp commands                                */
+  BGP_NODE,             /* router bgp commands                                */
   BGP_VPNV4_NODE,       /* address-family vpnv4          -- child of BGP_NODE */
   BGP_IPV4_NODE,        /* address-family ipv4 (unicast) -- child of BGP_NODE */
   BGP_IPV4M_NODE,       /* address-family ipv4 multicast -- child of BGP_NODE */
@@ -222,10 +222,10 @@ enum node_type
   OSPF6_NODE,           /* router ospf6 commands                              */
   ISIS_NODE,            /* router isis commands                               */
   MASC_NODE,            /* unused !  RFC 2909 Multicast Address-Set Claim     */
-  IRDP_NODE,		/* unused !  ICMP Router Discovery Protocol           */
+  IRDP_NODE,            /* unused !  ICMP Router Discovery Protocol           */
   IP_NODE,              /* zebra_ip_config write only -- see zebra_vty.c      */
   ACCESS_NODE,          /* access list config write only -- see filter.c      */
-  PREFIX_NODE,		/* prefix list config write only -- see plist.c       */
+  PREFIX_NODE,          /* prefix list config write only -- see plist.c       */
   ACCESS_IPV6_NODE,     /* access list config write only -- see filter.c      */
   PREFIX_IPV6_NODE,     /* prefix list config write only -- see plist.c       */
   AS_LIST_NODE,         /* AS list config write only -- see bgp_filter.c      */

@@ -97,11 +97,11 @@ struct zclient
 struct zserv_header
 {
   uint16_t length;
-  uint8_t marker;	/* corresponds to command field in old zserv
+  uint8_t marker;       /* corresponds to command field in old zserv
                          * always set to 255 in new zserv.
                          */
   uint8_t version;
-#define ZSERV_VERSION	1
+#define ZSERV_VERSION   1
   uint16_t command;
 };
 

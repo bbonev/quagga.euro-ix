@@ -249,8 +249,8 @@ extern void prefix_ipv4_free (struct prefix_ipv4 *);
 extern int str2prefix_ipv4 (const char *, struct prefix_ipv4 *);
 extern void apply_mask_ipv4 (struct prefix_ipv4 *);
 
-#define PREFIX_COPY_IPV4(DST, SRC)	\
-	*((struct prefix_ipv4 *)(DST)) = *((const struct prefix_ipv4 *)(SRC));
+#define PREFIX_COPY_IPV4(DST, SRC)      \
+        *((struct prefix_ipv4 *)(DST)) = *((const struct prefix_ipv4 *)(SRC));
 
 Inline void
 prefix_copy_ipv4(struct prefix* dst, struct prefix* src)
@@ -280,7 +280,7 @@ extern void prefix_ipv6_free (struct prefix_ipv6 *);
 extern int str2prefix_ipv6 (const char *, struct prefix_ipv6 *);
 extern void apply_mask_ipv6 (struct prefix_ipv6 *);
 
-#define PREFIX_COPY_IPV6(DST, SRC)	\
+#define PREFIX_COPY_IPV6(DST, SRC)      \
         *((struct prefix_ipv6 *)(DST)) = *((const struct prefix_ipv6 *)(SRC));
 
 Inline void

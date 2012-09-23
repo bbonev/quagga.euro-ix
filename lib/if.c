@@ -120,14 +120,14 @@ if_create (const char *name, int namelen)
   ifp->ifindex = IFINDEX_INTERNAL;
 
   assert (name);
-  assert (namelen <= INTERFACE_NAMSIZ);	/* Need space for '\0' at end. */
+  assert (namelen <= INTERFACE_NAMSIZ); /* Need space for '\0' at end. */
   strncpy (ifp->name, name, namelen);
   ifp->name[namelen] = '\0';
   if (if_lookup_by_name(ifp->name) == NULL)
     listnode_add_sort (iflist, ifp);
   else
     zlog_err("if_create(%s): corruption detected -- interface with this "
-	     "name exists already!", ifp->name);
+             "name exists already!", ifp->name);
   ifp->connected = list_new ();
   ifp->connected->del = (void (*) (void *)) connected_free;
 
@@ -185,7 +185,7 @@ if_lookup_by_index (unsigned int index)
   for (ALL_LIST_ELEMENTS_RO(iflist, node, ifp))
     {
       if (ifp->ifindex == index)
-	return ifp;
+        return ifp;
     }
   return NULL;
 }
@@ -196,7 +196,7 @@ ifindex2ifname (unsigned int index)
   struct interface *ifp;
 
   return ((ifp = if_lookup_by_index(index)) != NULL) ?
-  	 ifp->name : "unknown";
+         ifp->name : "unknown";
 }
 
 unsigned int
@@ -236,7 +236,7 @@ if_lookup_by_name_len(const char *name, size_t namelen)
   for (ALL_LIST_ELEMENTS_RO (iflist, node, ifp))
     {
       if (!memcmp(name, ifp->name, namelen) && (ifp->name[namelen] == '\0'))
-	return ifp;
+        return ifp;
     }
   return NULL;
 }
@@ -254,15 +254,15 @@ if_lookup_exact_address (struct in_addr src)
   for (ALL_LIST_ELEMENTS_RO (iflist, node, ifp))
     {
       for (ALL_LIST_ELEMENTS_RO (ifp->connected, cnode, c))
-	{
-	  p = c->address;
+        {
+          p = c->address;
 
-	  if (p && p->family == AF_INET)
-	    {
-	      if (IPV4_ADDR_SAME (&p->u.prefix4, &src))
-		return ifp;
-	    }
-	}
+          if (p && p->family == AF_INET)
+            {
+              if (IPV4_ADDR_SAME (&p->u.prefix4, &src))
+                return ifp;
+            }
+        }
     }
   return NULL;
 }
@@ -288,15 +288,15 @@ if_lookup_address (struct in_addr src)
   for (ALL_LIST_ELEMENTS_RO (iflist, node, ifp))
     {
       for (ALL_LIST_ELEMENTS_RO (ifp->connected, cnode, c))
-	{
-	  if (c->address && (c->address->family == AF_INET) &&
-	      prefix_match(CONNECTED_PREFIX(c), &addr) &&
-	      (c->address->prefixlen > bestlen))
-	    {
-	      bestlen = c->address->prefixlen;
-	      match = ifp;
-	    }
-	}
+        {
+          if (c->address && (c->address->family == AF_INET) &&
+              prefix_match(CONNECTED_PREFIX(c), &addr) &&
+              (c->address->prefixlen > bestlen))
+            {
+              bestlen = c->address->prefixlen;
+              match = ifp;
+            }
+        }
     }
   return match;
 }
@@ -309,7 +309,7 @@ if_get_by_name (const char *name)
   struct interface *ifp;
 
   return ((ifp = if_lookup_by_name(name)) != NULL) ? ifp :
-	 if_create(name, strlen(name));
+         if_create(name, strlen(name));
 }
 
 struct interface *
@@ -318,7 +318,7 @@ if_get_by_name_len(const char *name, size_t namelen)
   struct interface *ifp;
 
   return ((ifp = if_lookup_by_name_len(name, namelen)) != NULL) ? ifp :
-	 if_create(name, namelen);
+         if_create(name, namelen);
 }
 
 /* Does interface up ? */
@@ -341,7 +341,7 @@ int
 if_is_operative (struct interface *ifp)
 {
   return ((ifp->flags & IFF_UP) &&
-	  (ifp->flags & IFF_RUNNING || !CHECK_FLAG(ifp->status, ZEBRA_INTERFACE_LINKDETECTION)));
+          (ifp->flags & IFF_RUNNING || !CHECK_FLAG(ifp->status, ZEBRA_INTERFACE_LINKDETECTION)));
 }
 
 /* Is this loopback interface ? */
@@ -386,9 +386,9 @@ if_flag_dump (unsigned long flag)
   if (flag & (X)) \
     { \
       if (separator) \
-	strlcat (logbuf, ",", BUFSIZ); \
+        strlcat (logbuf, ",", BUFSIZ); \
       else \
-	separator = 1; \
+        separator = 1; \
       strlcat (logbuf, STR, BUFSIZ); \
     }
 
@@ -434,11 +434,11 @@ if_dump (const struct interface *ifp)
                "mtu6 %d "
 #endif /* HAVE_IPV6 */
              "%s",
-	     ifp->name, ifp->ifindex, ifp->metric, ifp->mtu,
+             ifp->name, ifp->ifindex, ifp->metric, ifp->mtu,
 #ifdef HAVE_IPV6
                ifp->mtu6,
 #endif /* HAVE_IPV6 */
-	     if_flag_dump (ifp->flags));
+             if_flag_dump (ifp->flags));
 }
 
 /* Interface printing for all interface. */
@@ -542,8 +542,8 @@ DEFUN_ATTR (interface,
   if ((sl = strlen(argv[0])) > INTERFACE_NAMSIZ)
     {
       vty_out (vty, "%% Interface name %s is invalid: length exceeds "
-		    "%d characters%s",
-	       argv[0], INTERFACE_NAMSIZ, VTY_NEWLINE);
+                    "%d characters%s",
+               argv[0], INTERFACE_NAMSIZ, VTY_NEWLINE);
       return CMD_WARNING;
     }
 
@@ -590,7 +590,7 @@ DEFUN_NOSH (no_interface,
   if (CHECK_FLAG (ifp->status, ZEBRA_INTERFACE_ACTIVE))
     {
       vty_out (vty, "%% Only inactive interfaces can be deleted%s",
-	      VTY_NEWLINE);
+              VTY_NEWLINE);
       return CMD_WARNING;
     }
 
@@ -615,13 +615,13 @@ DEFUN (show_address,
   for (ALL_LIST_ELEMENTS_RO (iflist, node, ifp))
     {
       for (ALL_LIST_ELEMENTS_RO (ifp->connected, node2, ifc))
-	{
-	  p = ifc->address;
+        {
+          p = ifc->address;
 
-	  if (p->family == AF_INET)
-	    vty_out (vty, "%s/%d%s", safe_inet_ntoa (p->u.prefix4), p->prefixlen,
-		     VTY_NEWLINE);
-	}
+          if (p->family == AF_INET)
+            vty_out (vty, "%s/%d%s", safe_inet_ntoa (p->u.prefix4), p->prefixlen,
+                     VTY_NEWLINE);
+        }
     }
   return CMD_SUCCESS;
 }
@@ -662,15 +662,15 @@ connected_log (struct connected *connected, char *str)
   p = connected->address;
 
   snprintf (logbuf, BUFSIZ, "%s interface %s %s %s/%d ",
-	    str, ifp->name, prefix_family_str (p),
-	    inet_ntop (p->family, &p->u.prefix, buf, BUFSIZ),
-	    p->prefixlen);
+            str, ifp->name, prefix_family_str (p),
+            inet_ntop (p->family, &p->u.prefix, buf, BUFSIZ),
+            p->prefixlen);
 
   p = connected->destination;
   if (p)
     {
       strncat (logbuf, inet_ntop (p->family, &p->u.prefix, buf, BUFSIZ),
-	       BUFSIZ - strlen(logbuf));
+               BUFSIZ - strlen(logbuf));
     }
   zlog (NULL, LOG_INFO, "%s", logbuf);
 }
@@ -682,12 +682,12 @@ connected_same_prefix (struct prefix *p1, struct prefix *p2)
   if (p1->family == p2->family)
     {
       if (p1->family == AF_INET &&
-	  IPV4_ADDR_SAME (&p1->u.prefix4, &p2->u.prefix4))
-	return 1;
+          IPV4_ADDR_SAME (&p1->u.prefix4, &p2->u.prefix4))
+        return 1;
 #ifdef HAVE_IPV6
       if (p1->family == AF_INET6 &&
-	  IPV6_ADDR_SAME (&p1->u.prefix6, &p2->u.prefix6))
-	return 1;
+          IPV6_ADDR_SAME (&p1->u.prefix6, &p2->u.prefix6))
+        return 1;
 #endif /* HAVE_IPV6 */
     }
   return 0;
@@ -707,10 +707,10 @@ connected_delete_by_prefix (struct interface *ifp, struct prefix *p)
       next = node->next;
 
       if (connected_same_prefix (ifc->address, p))
-	{
-	  listnode_delete (ifp->connected, ifc);
-	  return ifc;
-	}
+        {
+          listnode_delete (ifp->connected, ifc);
+          return ifc;
+        }
     }
   return NULL;
 }
@@ -734,9 +734,9 @@ connected_lookup_address (struct interface *ifp, struct in_addr dst)
   for (ALL_LIST_ELEMENTS_RO (ifp->connected, cnode, c))
     {
       if (c->address && (c->address->family == AF_INET) &&
-	  prefix_match(CONNECTED_PREFIX(c), &addr) &&
-	  (!match || (c->address->prefixlen > match->address->prefixlen)))
-	match = c;
+          prefix_match(CONNECTED_PREFIX(c), &addr) &&
+          (!match || (c->address->prefixlen > match->address->prefixlen)))
+        match = c;
     }
   return match;
 }
@@ -774,7 +774,7 @@ if_nametoindex (const char *name)
   struct interface *ifp;
 
   return ((ifp = if_lookup_by_name_len(name, strnlen(name, IFNAMSIZ))) != NULL)
-  	 ? ifp->ifindex : 0;
+         ? ifp->ifindex : 0;
 }
 #endif
 
@@ -815,7 +815,7 @@ ifaddr_ipv4_add (struct in_addr *ifaddr, struct interface *ifp)
     {
       route_unlock_node (rn);
       zlog_info ("ifaddr_ipv4_add(): address %s is already added",
-		 safe_inet_ntoa (*ifaddr));
+                 safe_inet_ntoa (*ifaddr));
       return;
     }
   rn->info = ifp;
@@ -835,7 +835,7 @@ ifaddr_ipv4_delete (struct in_addr *ifaddr, struct interface *ifp)
   if (! rn)
     {
       zlog_info ("ifaddr_ipv4_delete(): can't find address %s",
-		 safe_inet_ntoa (*ifaddr));
+                 safe_inet_ntoa (*ifaddr));
       return;
     }
   rn->info = NULL;
@@ -859,7 +859,7 @@ ifaddr_ipv4_lookup (struct in_addr *addr, unsigned int ifindex)
 
       rn = route_node_lookup (ifaddr_ipv4_table, (struct prefix *) &p);
       if (! rn)
-	return NULL;
+        return NULL;
 
       ifp = rn->info;
       route_unlock_node (rn);
@@ -896,7 +896,7 @@ if_terminate (void)
 
       ifp = listnode_head (iflist);
       if (ifp == NULL)
-	break;
+        break;
 
       if_delete (ifp);
     }

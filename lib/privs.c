@@ -36,9 +36,9 @@ static qpt_mutex privs_mutex;
 #ifdef HAVE_CAPABILITIES
 /* sort out some generic internal types for:
  *
- * privilege values (cap_value_t, priv_t) 	-> pvalue_t
- * privilege set (..., priv_set_t) 		-> pset_t
- * privilege working storage (cap_t, ...) 	-> pstorage_t
+ * privilege values (cap_value_t, priv_t)       -> pvalue_t
+ * privilege set (..., priv_set_t)              -> pset_t
+ * privilege working storage (cap_t, ...)       -> pstorage_t
  *
  * values we think of as numeric (they're ints really, but we dont know)
  * sets are mostly opaque, to hold a set of privileges, related in some way.
@@ -75,8 +75,8 @@ static struct _zprivs_t
 {
 #ifdef HAVE_CAPABILITIES
   pstorage_t caps;              /* working storage              */
-  pset_t *syscaps_p;		/* system-type requested permitted caps    */
-  pset_t *syscaps_i;     	/* system-type requested inheritable caps  */
+  pset_t *syscaps_p;            /* system-type requested permitted caps    */
+  pset_t *syscaps_i;            /* system-type requested inheritable caps  */
 #endif /* HAVE_CAPABILITIES */
   uid_t zuid,                   /* uid to run as                */
         zsuid;                  /* saved uid                    */
@@ -116,44 +116,44 @@ static struct
 #ifdef HAVE_LCAPS
   /* Quagga -> Linux capabilities mappings
    */
-  [ZCAP_SETID] = 	{ 2, (pvalue_t []) { CAP_SETGID,
-                                             CAP_SETUID 		}, },
-  [ZCAP_BIND] =		{ 2, (pvalue_t []) { CAP_NET_BIND_SERVICE,
-                                             CAP_NET_BROADCAST 		}, },
-  [ZCAP_NET_ADMIN] =	{ 1, (pvalue_t []) { CAP_NET_ADMIN		}, },
-  [ZCAP_NET_RAW] = 	{ 1, (pvalue_t []) { CAP_NET_RAW		}, },
-  [ZCAP_CHROOT] = 	{ 1, (pvalue_t []) { CAP_SYS_CHROOT,		}, },
-  [ZCAP_NICE] = 	{ 1, (pvalue_t []) { CAP_SYS_NICE 		}, },
-  [ZCAP_PTRACE] =  	{ 1, (pvalue_t []) { CAP_SYS_PTRACE 		}, },
-  [ZCAP_DAC_OVERRIDE] = { 1, (pvalue_t []) { CAP_DAC_OVERRIDE 		}, },
-  [ZCAP_READ_SEARCH] =  { 1, (pvalue_t []) { CAP_DAC_READ_SEARCH 	}, },
-  [ZCAP_SYS_ADMIN] =	{ 1, (pvalue_t []) { CAP_SYS_ADMIN 		}, },
-  [ZCAP_FOWNER] = 	{ 1, (pvalue_t []) { CAP_FOWNER			}, },
+  [ZCAP_SETID] =        { 2, (pvalue_t []) { CAP_SETGID,
+                                             CAP_SETUID                 }, },
+  [ZCAP_BIND] =         { 2, (pvalue_t []) { CAP_NET_BIND_SERVICE,
+                                             CAP_NET_BROADCAST          }, },
+  [ZCAP_NET_ADMIN] =    { 1, (pvalue_t []) { CAP_NET_ADMIN              }, },
+  [ZCAP_NET_RAW] =      { 1, (pvalue_t []) { CAP_NET_RAW                }, },
+  [ZCAP_CHROOT] =       { 1, (pvalue_t []) { CAP_SYS_CHROOT,            }, },
+  [ZCAP_NICE] =         { 1, (pvalue_t []) { CAP_SYS_NICE               }, },
+  [ZCAP_PTRACE] =       { 1, (pvalue_t []) { CAP_SYS_PTRACE             }, },
+  [ZCAP_DAC_OVERRIDE] = { 1, (pvalue_t []) { CAP_DAC_OVERRIDE           }, },
+  [ZCAP_READ_SEARCH] =  { 1, (pvalue_t []) { CAP_DAC_READ_SEARCH        }, },
+  [ZCAP_SYS_ADMIN] =    { 1, (pvalue_t []) { CAP_SYS_ADMIN              }, },
+  [ZCAP_FOWNER] =       { 1, (pvalue_t []) { CAP_FOWNER                 }, },
 #elif defined(HAVE_SOLARIS_CAPABILITIES) /* HAVE_LCAPS */
   /* Quagga -> Solaris privilege mappings
    */
-  [ZCAP_SETID] =	{ 1, (pvalue_t []) { PRIV_PROC_SETID		}, },
-  [ZCAP_BIND] = 	{ 1, (pvalue_t []) { PRIV_NET_PRIVADDR		}, },
+  [ZCAP_SETID] =        { 1, (pvalue_t []) { PRIV_PROC_SETID            }, },
+  [ZCAP_BIND] =         { 1, (pvalue_t []) { PRIV_NET_PRIVADDR          }, },
   /* IP_CONFIG is a subset of NET_CONFIG and is allowed in zones */
 #ifdef PRIV_SYS_IP_CONFIG
-  [ZCAP_NET_ADMIN] =	{ 1, (pvalue_t []) { PRIV_SYS_IP_CONFIG	}, },
+  [ZCAP_NET_ADMIN] =    { 1, (pvalue_t []) { PRIV_SYS_IP_CONFIG }, },
 #else
-  [ZCAP_NET_ADMIN] =	{ 1, (pvalue_t []) { PRIV_SYS_NET_CONFIG	}, },
+  [ZCAP_NET_ADMIN] =    { 1, (pvalue_t []) { PRIV_SYS_NET_CONFIG        }, },
 #endif
-  [ZCAP_NET_RAW] = 	{ 2, (pvalue_t []) { PRIV_NET_RAWACCESS,
-                                             PRIV_NET_ICMPACCESS 	}, },
-  [ZCAP_CHROOT] = 	{ 1, (pvalue_t []) { PRIV_PROC_CHROOT		}, },
-  [ZCAP_NICE] = 	{ 1, (pvalue_t []) { PRIV_PROC_PRIOCNTL		}, },
-  [ZCAP_PTRACE] =	{ 1, (pvalue_t []) { PRIV_PROC_SESSION		}, },
+  [ZCAP_NET_RAW] =      { 2, (pvalue_t []) { PRIV_NET_RAWACCESS,
+                                             PRIV_NET_ICMPACCESS        }, },
+  [ZCAP_CHROOT] =       { 1, (pvalue_t []) { PRIV_PROC_CHROOT           }, },
+  [ZCAP_NICE] =         { 1, (pvalue_t []) { PRIV_PROC_PRIOCNTL         }, },
+  [ZCAP_PTRACE] =       { 1, (pvalue_t []) { PRIV_PROC_SESSION          }, },
   [ZCAP_DAC_OVERRIDE] = { 2, (pvalue_t []) { PRIV_FILE_DAC_EXECUTE,
                                              PRIV_FILE_DAC_READ,
                                              PRIV_FILE_DAC_SEARCH,
                                              PRIV_FILE_DAC_WRITE,
-                                             PRIV_FILE_DAC_SEARCH	}, },
-  [ZCAP_READ_SEARCH] =	{ 2, (pvalue_t []) { PRIV_FILE_DAC_SEARCH,
-                                             PRIV_FILE_DAC_READ		}, },
-  [ZCAP_SYS_ADMIN] =	{ 1, (pvalue_t []) { PRIV_SYS_ADMIN		}, },
-  [ZCAP_FOWNER] =	{ 1, (pvalue_t []) { PRIV_FILE_OWNER		}, },
+                                             PRIV_FILE_DAC_SEARCH       }, },
+  [ZCAP_READ_SEARCH] =  { 2, (pvalue_t []) { PRIV_FILE_DAC_SEARCH,
+                                             PRIV_FILE_DAC_READ         }, },
+  [ZCAP_SYS_ADMIN] =    { 1, (pvalue_t []) { PRIV_SYS_ADMIN             }, },
+  [ZCAP_FOWNER] =       { 1, (pvalue_t []) { PRIV_FILE_OWNER            }, },
 
 #endif /* HAVE_SOLARIS_CAPABILITIES */
 };

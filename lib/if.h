@@ -84,7 +84,7 @@ struct interface
   /* Interface index (should be IFINDEX_INTERNAL for non-kernel or
      deleted interfaces). */
   unsigned int ifindex;
-#define IFINDEX_INTERNAL	0
+#define IFINDEX_INTERNAL        0
 
   /* Zebra internal interface status */
   u_char status;
@@ -180,13 +180,13 @@ struct connected
 
 /* Prefix to insert into the RIB */
 #define CONNECTED_PREFIX(C) \
-	(CONNECTED_PEER(C) ? (C)->destination : (C)->address)
+        (CONNECTED_PEER(C) ? (C)->destination : (C)->address)
 
 /* Identifying address.  We guess that if there's a peer address, but the
    local address is in the same prefix, then the local address may be unique. */
-#define CONNECTED_ID(C)	\
-	((CONNECTED_PEER(C) && !prefix_match((C)->destination, (C)->address)) ?\
-	 (C)->destination : (C)->address)
+#define CONNECTED_ID(C) \
+        ((CONNECTED_PEER(C) && !prefix_match((C)->destination, (C)->address)) ?\
+         (C)->destination : (C)->address)
 
 /* Interface hook sort. */
 #define IF_NEW_HOOK   0
@@ -245,7 +245,7 @@ extern struct interface *if_get_by_name (const char *ifname);
    of the ifname string (not counting any optional trailing '\0' character).
    In most cases, strnlen should be used to calculate the namelen value. */
 extern struct interface *if_lookup_by_name_len(const char *ifname,
-					       size_t namelen);
+                                               size_t namelen);
 extern struct interface *if_get_by_name_len(const char *ifname, size_t namelen);
 
 

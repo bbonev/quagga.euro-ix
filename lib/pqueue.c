@@ -58,7 +58,7 @@ trickle_up (int index, struct pqueue *queue)
       /* actually trickle up */
       queue->array[index] = queue->array[PARENT_OF (index)];
       if (queue->update != NULL)
-	(*queue->update) (queue->array[index], index);
+        (*queue->update) (queue->array[index], index);
       index = PARENT_OF (index);
     }
 
@@ -96,7 +96,7 @@ trickle_down (int index, struct pqueue *queue)
       /* Actually trickle down the tmp node.  */
       queue->array[index] = queue->array[which];
        if (queue->update != NULL)
-	 (*queue->update) (queue->array[index], index);
+         (*queue->update) (queue->array[index], index);
       index = which;
     }
 
@@ -113,7 +113,7 @@ pqueue_create (void)
 
   queue = XCALLOC (MTYPE_PQUEUE, sizeof (struct pqueue));
 
-  queue->array = XCALLOC (MTYPE_PQUEUE_DATA, 
+  queue->array = XCALLOC (MTYPE_PQUEUE_DATA,
                           DATA_SIZE * PQUEUE_INIT_ARRAYSIZE);
   queue->array_size = PQUEUE_INIT_ARRAYSIZE;
 

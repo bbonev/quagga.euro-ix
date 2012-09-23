@@ -341,12 +341,12 @@ zclient_flush_data_t(struct thread *thread)
     {
     case BUFFER_ERROR:
       zlog_warn("%s: buffer_flush_available failed on zclient fd %d, closing",
-      		__func__, zclient->sock);
+                __func__, zclient->sock);
       return zclient_failed(zclient);
       break;
     case BUFFER_PENDING:
       zclient->t_write = thread_add_write(master, zclient_flush_data_t,
-					  zclient, zclient->sock);
+                                          zclient, zclient->sock);
       break;
     case BUFFER_EMPTY:
       break;
@@ -360,11 +360,11 @@ zclient_send_message(struct zclient *zclient)
   if (zclient->sock < 0)
     return -1;
   switch (buffer_write(zclient->wb, zclient->sock, STREAM_DATA(zclient->obuf),
-		       stream_get_endp(zclient->obuf)))
+                       stream_get_endp(zclient->obuf)))
     {
     case BUFFER_ERROR:
       zlog_warn("%s: buffer_write failed to zclient fd %d, closing",
-      		 __func__, zclient->sock);
+                 __func__, zclient->sock);
       return zclient_failed(zclient);
       break;
     case BUFFER_EMPTY:
@@ -458,7 +458,7 @@ zclient_start (struct zclient *zclient)
   if (zclient_socket_connect(zclient) < 0)
     {
       if (zclient_debug)
-	zlog_debug ("zclient connection fail");
+        zlog_debug ("zclient connection fail");
       zclient->fail++;
       zclient_event (ZCLIENT_CONNECT, zclient);
       return -1;
@@ -668,7 +668,7 @@ zapi_ipv4_route (u_char cmd, struct zclient *zclient, struct prefix_ipv4 *p,
 #ifdef HAVE_IPV6
 int
 zapi_ipv6_route (u_char cmd, struct zclient *zclient, struct prefix_ipv6 *p,
-	       struct zapi_ipv6 *api)
+               struct zapi_ipv6 *api)
 {
   int i;
   int psize;
@@ -697,15 +697,15 @@ zapi_ipv6_route (u_char cmd, struct zclient *zclient, struct prefix_ipv6 *p,
       stream_putc (s, api->nexthop_num + api->ifindex_num);
 
       for (i = 0; i < api->nexthop_num; i++)
-	{
-	  stream_putc (s, ZEBRA_NEXTHOP_IPV6);
-	  stream_put (s, (u_char *)api->nexthop[i], 16);
-	}
+        {
+          stream_putc (s, ZEBRA_NEXTHOP_IPV6);
+          stream_put (s, (u_char *)api->nexthop[i], 16);
+        }
       for (i = 0; i < api->ifindex_num; i++)
-	{
-	  stream_putc (s, ZEBRA_NEXTHOP_IFINDEX);
-	  stream_putl (s, api->ifindex[i]);
-	}
+        {
+          stream_putc (s, ZEBRA_NEXTHOP_IFINDEX);
+          stream_putl (s, api->ifindex[i]);
+        }
     }
 
   if (CHECK_FLAG (api->message, ZAPI_MESSAGE_DISTANCE))
@@ -839,7 +839,7 @@ zebra_interface_state_read (struct stream *s)
 
   /* Lookup this by interface index. */
   ifp = if_lookup_by_name_len (ifname_tmp,
-			       strnlen(ifname_tmp, INTERFACE_NAMSIZ));
+                               strnlen(ifname_tmp, INTERFACE_NAMSIZ));
 
   /* If such interface does not exist, indicate an error */
   if (! ifp)
@@ -963,13 +963,13 @@ zebra_interface_address_read (int type, struct stream *s)
     {
        /* N.B. NULL destination pointers are encoded as all zeroes */
        ifc = connected_add_by_prefix(ifp, &p,(memconstant(&d.u.prefix,0,plen) ?
-					      NULL : &d));
+                                              NULL : &d));
        if (ifc != NULL)
-	 {
-	   ifc->flags = ifc_flags;
-	   if (ifc->destination)
-	     ifc->destination->prefixlen = ifc->address->prefixlen;
-	 }
+         {
+           ifc->flags = ifc_flags;
+           if (ifc->destination)
+             ifc->destination->prefixlen = ifc->address->prefixlen;
+         }
     }
   else
     {
@@ -1011,19 +1011,19 @@ zclient_read (struct zclient *zclient)
     {
       ssize_t nbyte;
       if (((nbyte = stream_read_try(zclient->ibuf, zclient->sock,
-				     ZEBRA_HEADER_SIZE-already)) == 0) ||
-	  (nbyte == -1))
-	{
-	  if (zclient_debug)
-	   zlog_debug ("zclient connection closed socket [%d].", zclient->sock);
-	  return zclient_failed(zclient);
-	}
+                                     ZEBRA_HEADER_SIZE-already)) == 0) ||
+          (nbyte == -1))
+        {
+          if (zclient_debug)
+           zlog_debug ("zclient connection closed socket [%d].", zclient->sock);
+          return zclient_failed(zclient);
+        }
       if (nbyte != (ssize_t)(ZEBRA_HEADER_SIZE-already))
-	{
-	  /* Try again later. */
-	  zclient_event (ZCLIENT_READ, zclient);
-	  return 0;
-	}
+        {
+          /* Try again later. */
+          zclient_event (ZCLIENT_READ, zclient);
+          return 0;
+        }
       already = ZEBRA_HEADER_SIZE;
     }
 
@@ -1046,7 +1046,7 @@ zclient_read (struct zclient *zclient)
   if (length < ZEBRA_HEADER_SIZE)
     {
       zlog_err("%s: socket %d message length %u is less than %d ",
-	       __func__, zclient->sock, length, ZEBRA_HEADER_SIZE);
+               __func__, zclient->sock, length, ZEBRA_HEADER_SIZE);
       return zclient_failed(zclient);
     }
 
@@ -1055,7 +1055,7 @@ zclient_read (struct zclient *zclient)
     {
       struct stream *ns;
       zlog_warn("%s: message size %u exceeds buffer size %zu, expanding...",
-	                     __func__, length, stream_get_size(zclient->ibuf));
+                             __func__, length, stream_get_size(zclient->ibuf));
       ns = stream_new(length);
       stream_copy(ns, zclient->ibuf);
       stream_free (zclient->ibuf);
@@ -1067,19 +1067,19 @@ zclient_read (struct zclient *zclient)
     {
       ssize_t nbyte;
       if (((nbyte = stream_read_try(zclient->ibuf, zclient->sock,
-				     length-already)) == 0) ||
-	  (nbyte == -1))
-	{
-	  if (zclient_debug)
-	    zlog_debug("zclient connection closed socket [%d].", zclient->sock);
-	  return zclient_failed(zclient);
-	}
+                                     length-already)) == 0) ||
+          (nbyte == -1))
+        {
+          if (zclient_debug)
+            zlog_debug("zclient connection closed socket [%d].", zclient->sock);
+          return zclient_failed(zclient);
+        }
       if (nbyte != (ssize_t)(length-already))
-	{
-	  /* Try again later. */
-	  zclient_event (ZCLIENT_READ, zclient);
-	  return 0;
-	}
+        {
+          /* Try again later. */
+          zclient_event (ZCLIENT_READ, zclient);
+          return 0;
+        }
     }
 
   length -= ZEBRA_HEADER_SIZE;
@@ -1091,47 +1091,47 @@ zclient_read (struct zclient *zclient)
     {
     case ZEBRA_ROUTER_ID_UPDATE:
       if (zclient->router_id_update)
-	(*zclient->router_id_update) (command, zclient, length);
+        (*zclient->router_id_update) (command, zclient, length);
       break;
     case ZEBRA_INTERFACE_ADD:
       if (zclient->interface_add)
-	(*zclient->interface_add) (command, zclient, length);
+        (*zclient->interface_add) (command, zclient, length);
       break;
     case ZEBRA_INTERFACE_DELETE:
       if (zclient->interface_delete)
-	(*zclient->interface_delete) (command, zclient, length);
+        (*zclient->interface_delete) (command, zclient, length);
       break;
     case ZEBRA_INTERFACE_ADDRESS_ADD:
       if (zclient->interface_address_add)
-	(*zclient->interface_address_add) (command, zclient, length);
+        (*zclient->interface_address_add) (command, zclient, length);
       break;
     case ZEBRA_INTERFACE_ADDRESS_DELETE:
       if (zclient->interface_address_delete)
-	(*zclient->interface_address_delete) (command, zclient, length);
+        (*zclient->interface_address_delete) (command, zclient, length);
       break;
     case ZEBRA_INTERFACE_UP:
       if (zclient->interface_up)
-	(*zclient->interface_up) (command, zclient, length);
+        (*zclient->interface_up) (command, zclient, length);
       break;
     case ZEBRA_INTERFACE_DOWN:
       if (zclient->interface_down)
-	(*zclient->interface_down) (command, zclient, length);
+        (*zclient->interface_down) (command, zclient, length);
       break;
     case ZEBRA_IPV4_ROUTE_ADD:
       if (zclient->ipv4_route_add)
-	(*zclient->ipv4_route_add) (command, zclient, length);
+        (*zclient->ipv4_route_add) (command, zclient, length);
       break;
     case ZEBRA_IPV4_ROUTE_DELETE:
       if (zclient->ipv4_route_delete)
-	(*zclient->ipv4_route_delete) (command, zclient, length);
+        (*zclient->ipv4_route_delete) (command, zclient, length);
       break;
     case ZEBRA_IPV6_ROUTE_ADD:
       if (zclient->ipv6_route_add)
-	(*zclient->ipv6_route_add) (command, zclient, length);
+        (*zclient->ipv6_route_add) (command, zclient, length);
       break;
     case ZEBRA_IPV6_ROUTE_DELETE:
       if (zclient->ipv6_route_delete)
-	(*zclient->ipv6_route_delete) (command, zclient, length);
+        (*zclient->ipv6_route_delete) (command, zclient, length);
       break;
     default:
       break;
@@ -1218,10 +1218,10 @@ zclient_event_r (enum event event, struct zclient *zclient)
       break;
     case ZCLIENT_CONNECT:
       if (zclient->fail >= 10)
-	return;
+        return;
       if (zclient_debug)
-	zlog_debug ("zclient connect schedule interval is %d",
-		   zclient->fail < 3 ? 10 : 60);
+        zlog_debug ("zclient connect schedule interval is %d",
+                   zclient->fail < 3 ? 10 : 60);
       if (!qtimer_is_active(zclient->qtr))
         qtimer_set(zclient->qtr,
           qt_add_monotonic(QTIME(zclient->fail < 3 ? 10 : 60)), zclient_connect_r) ;

@@ -83,7 +83,7 @@ struct route_map_rule_cmd
 
   /* Function for value set or match. */
   route_map_result_t (*func_apply)(void *, struct prefix *,
-				   route_map_object_t, void *);
+                                   route_map_object_t, void *);
 
   /* Compile argument and return result as void *. */
   void *(*func_compile)(const char *);
@@ -164,18 +164,18 @@ extern void route_map_finish (void);
 
 /* Add match statement to route map. */
 extern int route_map_add_match (struct route_map_index *index,
-		                const char *match_name,
-		                const char *match_arg);
+                                const char *match_name,
+                                const char *match_arg);
 
 /* Delete specified route match rule. */
 extern int route_map_delete_match (struct route_map_index *index,
-			           const char *match_name,
-			           const char *match_arg);
+                                   const char *match_name,
+                                   const char *match_arg);
 
 /* Add route-map set statement to the route map. */
 extern int route_map_add_set (struct route_map_index *index,
-		              const char *set_name,
-		              const char *set_arg);
+                              const char *set_name,
+                              const char *set_arg);
 
 /* Delete route map set rule. */
 extern int route_map_delete_set (struct route_map_index *index,

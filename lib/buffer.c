@@ -48,7 +48,7 @@ struct buffer_data
 
 /* Default buffer size (used if none specified).  It is rounded up to the
    next page boundery. */
-#define BUFFER_SIZE_DEFAULT		4096
+#define BUFFER_SIZE_DEFAULT             4096
 
 
 #define BUFFER_DATA_FREE(D) XFREE(MTYPE_BUFFER_DATA, (D))
@@ -69,9 +69,9 @@ buffer_init_new (struct buffer* b, size_t size)
       static size_t default_size;
       if (!default_size)
         {
-	  long pgsz = sysconf(_SC_PAGESIZE);
-	  default_size = ((((BUFFER_SIZE_DEFAULT-1)/pgsz)+1)*pgsz);
-	}
+          long pgsz = sysconf(_SC_PAGESIZE);
+          default_size = ((((BUFFER_SIZE_DEFAULT-1)/pgsz)+1)*pgsz);
+        }
       b->size = default_size;
     }
 
@@ -172,7 +172,7 @@ buffer_put(struct buffer *b, const void *p, size_t size)
 
       /* If there is no data buffer add it. */
       if (data == NULL || data->cp == b->size)
-	data = buffer_add (b);
+        data = buffer_add (b);
 
       chunk = ((size <= (b->size - data->cp)) ? size : (b->size - data->cp));
       memcpy ((data->data + data->cp), ptr, chunk);
@@ -213,7 +213,7 @@ buffer_flush_all (struct buffer *b, int fd)
     {
       if ((b->head == head) && (head_sp == head->sp) && (errno != EINTR))
         /* No data was flushed, so kernel buffer must be full. */
-	return ret;
+        return ret;
       head_sp = (head = b->head)->sp;
     }
 
@@ -224,7 +224,7 @@ buffer_flush_all (struct buffer *b, int fd)
    by vty telnet interface). */
 buffer_status_t
 buffer_flush_window (struct buffer *b, int fd, int width, int height,
-		     int erase_flag, int no_more_flag)
+                     int erase_flag, int no_more_flag)
 {
   int nbytes;
   int iov_alloc;
@@ -233,8 +233,8 @@ buffer_flush_window (struct buffer *b, int fd, int width, int height,
   struct iovec small_iov[3];
   char more[] = " --More-- ";
   char erase[] = { 0x08, 0x08, 0x08, 0x08, 0x08, 0x08, 0x08, 0x08, 0x08, 0x08,
-		   ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ',
-		   0x08, 0x08, 0x08, 0x08, 0x08, 0x08, 0x08, 0x08, 0x08, 0x08};
+                   ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ',
+                   0x08, 0x08, 0x08, 0x08, 0x08, 0x08, 0x08, 0x08, 0x08, 0x08};
   struct buffer_data *data;
   int column;
 
@@ -244,7 +244,7 @@ buffer_flush_window (struct buffer *b, int fd, int width, int height,
   if (height < 1)
     {
       zlog_warn("%s called with non-positive window height %d, forcing to 1",
-      		__func__, height);
+                __func__, height);
       height = 1;
     }
   else if (height >= 2)
@@ -252,7 +252,7 @@ buffer_flush_window (struct buffer *b, int fd, int width, int height,
   if (width < 1)
     {
       zlog_warn("%s called with non-positive window width %d, forcing to 1",
-      		__func__, width);
+                __func__, width);
       width = 1;
     }
 
@@ -286,44 +286,44 @@ buffer_flush_window (struct buffer *b, int fd, int width, int height,
       cp = data->sp;
       while ((cp < data->cp) && (height > 0))
         {
-	  /* Calculate lines remaining and column position after displaying
-	     this character. */
-	  if (data->data[cp] == '\r')
-	    column = 1;
-	  else if ((data->data[cp] == '\n') || (column == width))
-	    {
-	      column = 1;
-	      height--;
-	    }
-	  else
-	    column++;
-	  cp++;
+          /* Calculate lines remaining and column position after displaying
+             this character. */
+          if (data->data[cp] == '\r')
+            column = 1;
+          else if ((data->data[cp] == '\n') || (column == width))
+            {
+              column = 1;
+              height--;
+            }
+          else
+            column++;
+          cp++;
         }
       iov[iov_index].iov_base = (char *)(data->data + data->sp);
       iov[iov_index++].iov_len = cp-data->sp;
       data->sp = cp;
 
       if (iov_index == iov_alloc)
-	/* This should not ordinarily happen. */
+        /* This should not ordinarily happen. */
         {
-	  iov_alloc *= 2;
-	  if (iov != small_iov)
-	    {
-	      zlog_warn("%s: growing iov array to %d; "
-			"width %d, height %d, size %lu",
-			__func__, iov_alloc, width, height, (u_long)b->size);
-	      iov = XREALLOC(MTYPE_TMP, iov, iov_alloc*sizeof(*iov));
-	    }
-	  else
-	    {
-	      /* This should absolutely never occur. */
-	      zlog_err("%s: corruption detected: iov_small overflowed; "
-		       "head %p, tail %p, head->next %p",
-		       __func__, b->head, b->tail, b->head->next);
-	      iov = XMALLOC(MTYPE_TMP, iov_alloc*sizeof(*iov));
-	      memcpy(iov, small_iov, sizeof(small_iov));
-	    }
-	}
+          iov_alloc *= 2;
+          if (iov != small_iov)
+            {
+              zlog_warn("%s: growing iov array to %d; "
+                        "width %d, height %d, size %lu",
+                        __func__, iov_alloc, width, height, (u_long)b->size);
+              iov = XREALLOC(MTYPE_TMP, iov, iov_alloc*sizeof(*iov));
+            }
+          else
+            {
+              /* This should absolutely never occur. */
+              zlog_err("%s: corruption detected: iov_small overflowed; "
+                       "head %p, tail %p, head->next %p",
+                       __func__, b->head, b->tail, b->head->next);
+              iov = XMALLOC(MTYPE_TMP, iov_alloc*sizeof(*iov));
+              memcpy(iov, small_iov, sizeof(small_iov));
+            }
+        }
     }
 
   /* In case of `more' display need. */
@@ -344,25 +344,25 @@ buffer_flush_window (struct buffer *b, int fd, int width, int height,
 
     while (iov_index > 0)
       {
-	 int iov_size;
+         int iov_size;
 
-	 iov_size = ((iov_index > IOV_MAX) ? IOV_MAX : iov_index);
-	 if ((nbytes = writev(fd, c_iov, iov_size)) < 0)
-	   {
-	     zlog_warn("%s: writev to fd %d failed: %s",
-		       __func__, fd, errtoa(errno, 0).str) ;
-	     break;
-	   }
+         iov_size = ((iov_index > IOV_MAX) ? IOV_MAX : iov_index);
+         if ((nbytes = writev(fd, c_iov, iov_size)) < 0)
+           {
+             zlog_warn("%s: writev to fd %d failed: %s",
+                       __func__, fd, errtoa(errno, 0).str) ;
+             break;
+           }
 
-	 /* move pointer io-vector */
-	 c_iov += iov_size;
-	 iov_index -= iov_size;
+         /* move pointer io-vector */
+         c_iov += iov_size;
+         iov_index -= iov_size;
       }
   }
 #else  /* IOV_MAX */
    if ((nbytes = writev (fd, iov, iov_index)) < 0)
      zlog_warn("%s: writev to fd %d failed: %s",
-	       __func__, fd, errtoa(errno, 0).str);
+               __func__, fd, errtoa(errno, 0).str);
 #endif /* IOV_MAX */
 
   /* Free printed buffer data. */
@@ -378,7 +378,7 @@ buffer_flush_window (struct buffer *b, int fd, int width, int height,
     XFREE (MTYPE_TMP, iov);
 
   return (nbytes < 0) ? BUFFER_ERROR :
-  			(b->head ? BUFFER_PENDING : BUFFER_EMPTY);
+                        (b->head ? BUFFER_PENDING : BUFFER_EMPTY);
 }
 
 /* This function (unlike other buffer_flush* functions above) is designed
@@ -421,10 +421,10 @@ in one shot. */
   if ((ssize_t)(written = writev(fd,iov,iovcnt)) < 0)
     {
       if (ERRNO_IO_RETRY(errno))
-	/* Calling code should try again later. */
+        /* Calling code should try again later. */
         return BUFFER_PENDING;
       zlog_warn("%s: write error on fd %d: %s",
-		__func__, fd, errtoa(errno, 0).str);
+                __func__, fd, errtoa(errno, 0).str);
       return BUFFER_ERROR;
     }
 
@@ -435,14 +435,14 @@ in one shot. */
       if (!(d = b->head))
         {
           zlog_err("%s: corruption detected: buffer queue empty, "
-		   "but written is %lu", __func__, (u_long)written);
-	  break;
+                   "but written is %lu", __func__, (u_long)written);
+          break;
         }
       if (written < d->cp-d->sp)
         {
-	  d->sp += written;
-	  return BUFFER_PENDING;
-	}
+          d->sp += written;
+          return BUFFER_PENDING;
+        }
 
       written -= (d->cp-d->sp);
       if (!(b->head = d->next))
@@ -478,10 +478,10 @@ buffer_write(struct buffer *b, int fd, const void *p, size_t size)
         nbytes = 0;
       else
         {
-	  zlog_warn("%s: write error on fd %d: %s",
-		    __func__, fd, errtoa(errno, 0).str);
-	  return BUFFER_ERROR;
-	}
+          zlog_warn("%s: write error on fd %d: %s",
+                    __func__, fd, errtoa(errno, 0).str);
+          return BUFFER_ERROR;
+        }
     }
   /* Add any remaining data to the buffer. */
   {

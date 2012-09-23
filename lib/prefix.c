@@ -43,7 +43,7 @@
 /* Maskbit -- mask for last significant byte of a prefix: maskbit[len % 8]
  */
 static const uint8_t maskbit[] = { 0x00, 0x80, 0xc0, 0xe0, 0xf0,
-			                 0xf8, 0xfc, 0xfe, 0xff };
+                                         0xf8, 0xfc, 0xfe, 0xff };
 
 /*==============================================================================
  * "Macros" for banging 32 and 64 bits of masks
@@ -411,7 +411,7 @@ prefix_copy (struct prefix *dest, const struct prefix *src)
 
       default:
         zlog (NULL, LOG_ERR, "prefix_copy(): Unknown address family %d",
-	                                                           src->family);
+                                                                   src->family);
         assert (0);
     } ;
 }
@@ -896,7 +896,7 @@ apply_mask (struct prefix *p)
  * FIXME This function isn't used anywhere. */
 struct prefix *
 sockunion2prefix (const_sockunion dest,
-		  const_sockunion mask)
+                  const_sockunion mask)
 {
   if (dest->sa.sa_family == AF_INET)
     {
@@ -1120,9 +1120,9 @@ ipv4_broadcast_addr (in_addr_t hostaddr, int masklen)
 
   masklen2ip (masklen, &mask);
   return (masklen != IPV4_MAX_PREFIXLEN-1) ?
-	 /* normal case */
+         /* normal case */
          (hostaddr | ~mask.s_addr) :
-	 /* special case for /31 */
+         /* special case for /31 */
          (hostaddr ^ ~mask.s_addr);
 }
 
@@ -1131,7 +1131,7 @@ ipv4_broadcast_addr (in_addr_t hostaddr, int masklen)
    ex.) "1.0.0.0" NULL => "1.0.0.0/8"                   */
 int
 netmask_str2prefix_str (const char *net_str, const char *mask_str,
-			char *prefix_str)
+                        char *prefix_str)
 {
   struct in_addr network;
   struct in_addr mask;
@@ -1156,15 +1156,15 @@ netmask_str2prefix_str (const char *net_str, const char *mask_str,
       destination = ntohl (network.s_addr);
 
       if (network.s_addr == 0)
-	prefixlen = 0;
+        prefixlen = 0;
       else if (IN_CLASSC (destination))
-	prefixlen = 24;
+        prefixlen = 24;
       else if (IN_CLASSB (destination))
-	prefixlen = 16;
+        prefixlen = 16;
       else if (IN_CLASSA (destination))
-	prefixlen = 8;
+        prefixlen = 8;
       else
-	return 0;
+        return 0;
     }
 
   sprintf (prefix_str, "%s/%d", net_str, prefixlen);

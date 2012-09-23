@@ -69,20 +69,20 @@ typedef unsigned char thread_type;
 /* Thread itself. */
 struct thread
 {
-  thread_type type;		/* thread type */
-  thread_type add_type;		/* thread type */
-  struct thread *next;		/* next pointer of the thread */
-  struct thread *prev;		/* previous pointer of the thread */
-  struct thread_master *master;	/* pointer to the struct thread_master. */
+  thread_type type;             /* thread type */
+  thread_type add_type;         /* thread type */
+  struct thread *next;          /* next pointer of the thread */
+  struct thread *prev;          /* previous pointer of the thread */
+  struct thread_master *master; /* pointer to the struct thread_master. */
   int (*func) (struct thread *); /* event function */
-  void *arg;			/* event argument */
+  void *arg;                    /* event argument */
   union {
-    int val;			/* second argument of the event.          */
-    int fd;			/* file descriptor in case of read/write. */
-    struct timeval sands;	/* rest of time sands value.              */
+    int val;                    /* second argument of the event.          */
+    int fd;                     /* file descriptor in case of read/write. */
+    struct timeval sands;       /* rest of time sands value.              */
     qtimer qtr ;                /* pointer to related qtimer              */
   } u;
-  RUSAGE_T ru;			/* Indepth usage info.  */
+  RUSAGE_T ru;                  /* Indepth usage info.  */
   struct cpu_thread_history *hist; /* cache pointer to cpu_history */
 };
 
@@ -103,8 +103,8 @@ struct cpu_thread_history
 
 /* Clocks supported by Quagga */
 enum quagga_clkid {
-  QUAGGA_CLK_REALTIME = 0,	/* ala gettimeofday() */
-  QUAGGA_CLK_MONOTONIC,		/* monotonic, against an indeterminate base */
+  QUAGGA_CLK_REALTIME = 0,      /* ala gettimeofday() */
+  QUAGGA_CLK_MONOTONIC,         /* monotonic, against an indeterminate base */
   QUAGGA_CLK_REALTIME_STABILISED, /* like realtime, but non-decrementing */
 };
 
@@ -186,25 +186,25 @@ extern void thread_finish (void);
 extern void thread_set_qtimer_pile(qtimer_pile pile) ;
 
 extern struct thread *funcname_thread_add_read (struct thread_master *,
-				                int (*)(struct thread *),
-				                void *, int, const char*);
+                                                int (*)(struct thread *),
+                                                void *, int, const char*);
 extern struct thread *funcname_thread_add_write (struct thread_master *,
-				                 int (*)(struct thread *),
-				                 void *, int, const char*);
+                                                 int (*)(struct thread *),
+                                                 void *, int, const char*);
 extern struct thread *funcname_thread_add_timer (struct thread_master *,
-				                 int (*)(struct thread *),
-				                 void *, long, const char*);
+                                                 int (*)(struct thread *),
+                                                 void *, long, const char*);
 extern struct thread *funcname_thread_add_timer_msec (struct thread_master *,
-				                      int (*)(struct thread *),
-				                      void *, long, const char*);
+                                                      int (*)(struct thread *),
+                                                      void *, long, const char*);
 extern struct thread *funcname_thread_add_event (struct thread_master *,
-				                 int (*)(struct thread *),
-				                 void *, int, const char*);
+                                                 int (*)(struct thread *),
+                                                 void *, int, const char*);
 extern struct thread *funcname_thread_add_background (struct thread_master *,
                                                int (*func)(struct thread *),
-				               void *arg,
-				               long milliseconds_to_delay,
-					       const char *funcname);
+                                               void *arg,
+                                               long milliseconds_to_delay,
+                                               const char *funcname);
 extern struct thread *funcname_thread_execute (struct thread_master *,
                                                int (*)(struct thread *),
                                                void *, int, const char *);
@@ -230,7 +230,7 @@ extern time_t quagga_time (time_t *);
 
 /* Returns elapsed real (wall clock) time. */
 extern unsigned long thread_consumed_time(RUSAGE_T *after, RUSAGE_T *before,
-					  unsigned long *cpu_time_elapsed);
+                                          unsigned long *cpu_time_elapsed);
 
 /*==============================================================================
  * Global variables containing a "recent" value of time, which can

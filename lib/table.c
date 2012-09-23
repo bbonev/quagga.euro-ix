@@ -17,7 +17,7 @@
  * You should have received a copy of the GNU General Public License
  * along with GNU Zebra; see the file COPYING.  If not, write to the Free
  * Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
- * 02111-1307, USA.  
+ * 02111-1307, USA.
  */
 
 #include <zebra.h>
@@ -29,7 +29,7 @@
 
 void route_node_delete (struct route_node *);
 void route_table_free (struct route_table *);
-
+
 struct route_table *
 route_table_init (void)
 {
@@ -59,7 +59,7 @@ static struct route_node *
 route_node_set (struct route_table *table, struct prefix *prefix)
 {
   struct route_node *node;
-  
+
   node = route_node_new ();
 
   prefix_copy (&node->p, prefix);
@@ -81,7 +81,7 @@ route_table_free (struct route_table *rt)
 {
   struct route_node *tmp_node;
   struct route_node *node;
- 
+
   if (rt == NULL)
     return;
 
@@ -90,36 +90,36 @@ route_table_free (struct route_table *rt)
   while (node)
     {
       if (node->l_left)
-	{
-	  node = node->l_left;
-	  continue;
-	}
+        {
+          node = node->l_left;
+          continue;
+        }
 
       if (node->l_right)
-	{
-	  node = node->l_right;
-	  continue;
-	}
+        {
+          node = node->l_right;
+          continue;
+        }
 
       tmp_node = node;
       node = node->parent;
 
       if (node != NULL)
-	{
-	  if (node->l_left == tmp_node)
-	    node->l_left = NULL;
-	  else
-	    node->l_right = NULL;
+        {
+          if (node->l_left == tmp_node)
+            node->l_left = NULL;
+          else
+            node->l_right = NULL;
 
-	  route_node_free (tmp_node);
-	}
+          route_node_free (tmp_node);
+        }
       else
-	{
-	  route_node_free (tmp_node);
-	  break;
-	}
+        {
+          route_node_free (tmp_node);
+          break;
+        }
     }
- 
+
   XFREE (MTYPE_ROUTE_TABLE, rt);
   return;
 }
@@ -145,9 +145,9 @@ route_common (struct prefix *n, struct prefix *p, struct prefix *new)
   for (i = 0; i < p->prefixlen / 8; i++)
     {
       if (np[i] == pp[i])
-	newp[i] = np[i];
+        newp[i] = np[i];
       else
-	break;
+        break;
     }
 
   new->prefixlen = i * 8;
@@ -157,10 +157,10 @@ route_common (struct prefix *n, struct prefix *p, struct prefix *new)
       diff = np[i] ^ pp[i];
       mask = 0x80;
       while (new->prefixlen < p->prefixlen && !(mask & diff))
-	{
-	  mask >>= 1;
-	  new->prefixlen++;
-	}
+        {
+          mask >>= 1;
+          new->prefixlen++;
+        }
       newp[i] = np[i] & maskbit[new->prefixlen % 8];
     }
 }
@@ -204,15 +204,15 @@ route_node_match (const struct route_table *table, const struct prefix *p)
 
   /* Walk down tree.  If there is matched route then store it to
      matched. */
-  while (node && node->p.prefixlen <= p->prefixlen && 
-	 prefix_match (&node->p, p))
+  while (node && node->p.prefixlen <= p->prefixlen &&
+         prefix_match (&node->p, p))
     {
       if (node->info)
-	matched = node;
-      
+        matched = node;
+
       if (node->p.prefixlen == p->prefixlen)
         break;
-      
+
       node = node->link[prefix_bit(&p->u.prefix, node->p.prefixlen)];
     }
 
@@ -225,7 +225,7 @@ route_node_match (const struct route_table *table, const struct prefix *p)
 
 struct route_node *
 route_node_match_ipv4 (const struct route_table *table,
-		       const struct in_addr *addr)
+                       const struct in_addr *addr)
 {
   struct prefix_ipv4 p;
 
@@ -240,7 +240,7 @@ route_node_match_ipv4 (const struct route_table *table,
 #ifdef HAVE_IPV6
 struct route_node *
 route_node_match_ipv6 (const struct route_table *table,
-		       const struct in6_addr *addr)
+                       const struct in6_addr *addr)
 {
   struct prefix_ipv6 p;
 
@@ -261,8 +261,8 @@ route_node_lookup (struct route_table *table, struct prefix *p)
 
   node = table->top;
 
-  while (node && node->p.prefixlen <= p->prefixlen && 
-	 prefix_match (&node->p, p))
+  while (node && node->p.prefixlen <= p->prefixlen &&
+         prefix_match (&node->p, p))
     {
       if (node->p.prefixlen == p->prefixlen)
         return node->info ? route_lock_node (node) : NULL;
@@ -283,12 +283,12 @@ route_node_get (struct route_table *table, struct prefix *p)
 
   match = NULL;
   node = table->top;
-  while (node && node->p.prefixlen <= p->prefixlen && 
-	 prefix_match (&node->p, p))
+  while (node && node->p.prefixlen <= p->prefixlen &&
+         prefix_match (&node->p, p))
     {
       if (node->p.prefixlen == p->prefixlen)
         return route_lock_node (node);
-      
+
       match = node;
       node = node->link[prefix_bit(&p->u.prefix, node->p.prefixlen)];
     }
@@ -297,9 +297,9 @@ route_node_get (struct route_table *table, struct prefix *p)
     {
       new = route_node_set (table, p);
       if (match)
-	set_link (match, new);
+        set_link (match, new);
       else
-	table->top = new;
+        table->top = new;
     }
   else
     {
@@ -310,19 +310,19 @@ route_node_get (struct route_table *table, struct prefix *p)
       set_link (new, node);
 
       if (match)
-	set_link (match, new);
+        set_link (match, new);
       else
-	table->top = new;
+        table->top = new;
 
       if (new->p.prefixlen != p->prefixlen)
-	{
-	  match = new;
-	  new = route_node_set (table, p);
-	  set_link (match, new);
-	}
+        {
+          match = new;
+          new = route_node_set (table, p);
+          set_link (match, new);
+        }
     }
   route_lock_node (new);
-  
+
   return new;
 }
 
@@ -352,9 +352,9 @@ route_node_delete (struct route_node *node)
   if (parent)
     {
       if (parent->l_left == node)
-	parent->l_left = child;
+        parent->l_left = child;
       else
-	parent->l_right = child;
+        parent->l_right = child;
     }
   else
     node->table->top = child;
@@ -409,12 +409,12 @@ route_next (struct route_node *node)
   while (node->parent)
     {
       if (node->parent->l_left == node && node->parent->l_right)
-	{
-	  next = node->parent->l_right;
-	  route_lock_node (next);
-	  route_unlock_node (start);
-	  return next;
-	}
+        {
+          next = node->parent->l_right;
+          route_lock_node (next);
+          route_unlock_node (start);
+          return next;
+        }
       node = node->parent;
     }
   route_unlock_node (start);
@@ -450,12 +450,12 @@ route_next_until (struct route_node *node, struct route_node *limit)
   while (node->parent && node != limit)
     {
       if (node->parent->l_left == node && node->parent->l_right)
-	{
-	  next = node->parent->l_right;
-	  route_lock_node (next);
-	  route_unlock_node (start);
-	  return next;
-	}
+        {
+          next = node->parent->l_right;
+          route_lock_node (next);
+          route_unlock_node (start);
+          return next;
+        }
       node = node->parent;
     }
   route_unlock_node (start);
