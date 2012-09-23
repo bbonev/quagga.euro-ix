@@ -56,9 +56,9 @@ community_list_master_lookup (struct community_list_handler *ch, int master)
     switch (master)
       {
       case COMMUNITY_LIST_MASTER:
-	return ch->community_list;
+        return ch->community_list;
       case EXTCOMMUNITY_LIST_MASTER:
-	return ch->extcommunity_list;
+        return ch->extcommunity_list;
       default:
         break ;
       }
@@ -136,7 +136,7 @@ community_list_new(symbol sym, const char* name)
  */
 extern struct community_list *
 community_list_lookup (struct community_list_handler *ch,
-		       const char *name, int master)
+                       const char *name, int master)
 {
   struct symbol_table* table;
 
@@ -158,7 +158,7 @@ community_list_lookup (struct community_list_handler *ch,
  */
 static struct community_list *
 community_list_get (struct community_list_handler *ch,
-		    const char *name, int master, bool set)
+                    const char *name, int master, bool set)
 {
   struct community_list *list;
   struct symbol_table* table;
@@ -612,22 +612,22 @@ community_list_set (struct community_list_handler *ch,
       first = list->head;
 
       if (style != first->style)
-	{
-	  return (first->style == COMMUNITY_LIST_STANDARD
-		  ? COMMUNITY_LIST_ERR_STANDARD_CONFLICT
-		  : COMMUNITY_LIST_ERR_EXPANDED_CONFLICT);
-	}
+        {
+          return (first->style == COMMUNITY_LIST_STANDARD
+                  ? COMMUNITY_LIST_ERR_STANDARD_CONFLICT
+                  : COMMUNITY_LIST_ERR_EXPANDED_CONFLICT);
+        }
     }
 
   if (str)
     {
       if (style == COMMUNITY_LIST_STANDARD)
-	com = community_str2com (str);
+        com = community_str2com (str);
       else
-	regex = bgp_regcomp (str);
+        regex = bgp_regcomp (str);
 
       if (! com && ! regex)
-	return COMMUNITY_LIST_ERR_MALFORMED_VAL;
+        return COMMUNITY_LIST_ERR_MALFORMED_VAL;
     }
 
   entry = community_entry_new ();
@@ -733,22 +733,22 @@ extcommunity_list_set (struct community_list_handler *ch,
       first = list->head;
 
       if (style != first->style)
-	{
-	  return (first->style == EXTCOMMUNITY_LIST_STANDARD
-		  ? COMMUNITY_LIST_ERR_STANDARD_CONFLICT
-		  : COMMUNITY_LIST_ERR_EXPANDED_CONFLICT);
-	}
+        {
+          return (first->style == EXTCOMMUNITY_LIST_STANDARD
+                  ? COMMUNITY_LIST_ERR_STANDARD_CONFLICT
+                  : COMMUNITY_LIST_ERR_EXPANDED_CONFLICT);
+        }
     }
 
   if (str)
     {
       if (style == EXTCOMMUNITY_LIST_STANDARD)
-	ecom = ecommunity_str2com (str, 0, 1);
+        ecom = ecommunity_str2com (str, 0, 1);
       else
-	regex = bgp_regcomp (str);
+        regex = bgp_regcomp (str);
 
       if (! ecom && ! regex)
-	return COMMUNITY_LIST_ERR_MALFORMED_VAL;
+        return COMMUNITY_LIST_ERR_MALFORMED_VAL;
     }
 
   if (ecom)

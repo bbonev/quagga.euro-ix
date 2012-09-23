@@ -393,17 +393,17 @@ bgp_update_packet (struct peer *peer, afi_t afi, safi_t safi)
 
       /* When remaining space can't include NLRI and it's length.  */
       if (STREAM_REMAIN (s) <= BGP_NLRI_LENGTH + PSIZE (rn->p.prefixlen))
-	break;
+        break;
 
       /* If packet is empty, set attribute. */
       if (stream_is_empty (s))
-	{
-	  struct prefix_rd *prd = NULL;
-	  u_char *tag = NULL;
-	  struct peer *from = NULL;
+        {
+          struct prefix_rd *prd = NULL;
+          u_char *tag = NULL;
+          struct peer *from = NULL;
 
-	  if (rn->prn)
-	    prd = (struct prefix_rd *) &rn->prn->p;
+          if (rn->prn)
+            prd = (struct prefix_rd *) &rn->prn->p;
           if (binfo)
             {
               from = binfo->peer;
@@ -411,38 +411,38 @@ bgp_update_packet (struct peer *peer, afi_t afi, safi_t safi)
                 tag = binfo->extra->tag;
             }
 
-	  bgp_packet_set_marker (s, BGP_MSG_UPDATE);
-	  stream_putw (s, 0);
-	  pos = stream_get_endp (s);
-	  stream_putw (s, 0);
-	  total_attr_len = bgp_packet_attribute (NULL, peer, s,
-	                                         adv->baa->attr,
-	                                         &rn->p, afi, safi,
-	                                         from, prd, tag);
-	  stream_putw_at (s, pos, total_attr_len);
-	}
+          bgp_packet_set_marker (s, BGP_MSG_UPDATE);
+          stream_putw (s, 0);
+          pos = stream_get_endp (s);
+          stream_putw (s, 0);
+          total_attr_len = bgp_packet_attribute (NULL, peer, s,
+                                                 adv->baa->attr,
+                                                 &rn->p, afi, safi,
+                                                 from, prd, tag);
+          stream_putw_at (s, pos, total_attr_len);
+        }
 
       if (afi == AFI_IP && safi == SAFI_UNICAST)
-	stream_put_prefix (s, &rn->p);
+        stream_put_prefix (s, &rn->p);
 
       if (BGP_DEBUG (update, UPDATE_OUT))
-	zlog (peer->log, LOG_DEBUG, "%s send UPDATE %s/%d",
-	      peer->host,
-	      inet_ntop (rn->p.family, &(rn->p.u.prefix), buf, BUFSIZ),
-	      rn->p.prefixlen);
+        zlog (peer->log, LOG_DEBUG, "%s send UPDATE %s/%d",
+              peer->host,
+              inet_ntop (rn->p.family, &(rn->p.u.prefix), buf, BUFSIZ),
+              rn->p.prefixlen);
 
       /* Synchnorize attribute.  */
       if (adj->attr)
-	bgp_attr_unintern (&adj->attr);
+        bgp_attr_unintern (&adj->attr);
       else
-	peer->scount[afi][safi]++;
+        peer->scount[afi][safi]++;
 
       adj->attr = bgp_attr_intern (adv->baa->attr);
 
       adv = bgp_advertise_clean (peer, adj, afi, safi);
 
       if (! (afi == AFI_IP && safi == SAFI_UNICAST))
-	break;
+        break;
     }
 
   if (stream_is_empty (s))
@@ -661,7 +661,7 @@ bgp_withdraw_packet (struct peer *peer, afi_t afi, safi_t safi)
  */
 void
 bgp_default_update_send (struct peer *peer, struct attr *attr,
-			 afi_t afi, safi_t safi, struct peer *from)
+                         afi_t afi, safi_t safi, struct peer *from)
 {
   struct stream *s;
   struct prefix p;
@@ -685,8 +685,8 @@ bgp_default_update_send (struct peer *peer, struct attr *attr,
     {
       bgp_dump_attr (peer, attr, attrstr, BUFSIZ);
       zlog (peer->log, LOG_DEBUG, "%s send UPDATE %s/%d %s",
-	    peer->host, inet_ntop(p.family, &(p.u.prefix), buf, BUFSIZ),
-	    p.prefixlen, attrstr);
+            peer->host, inet_ntop(p.family, &(p.u.prefix), buf, BUFSIZ),
+            p.prefixlen, attrstr);
     }
 
   s = peer->work ;
@@ -827,31 +827,31 @@ bgp_write_packet (struct peer *peer)
   for (afi = AFI_IP; afi < AFI_MAX; afi++)
     for (safi = SAFI_UNICAST; safi < SAFI_MAX; safi++)
       {
-	adv = bgp_advertise_fifo_head(&peer->sync[afi][safi]->withdraw);
-	if (adv)
-	  {
-	    /* Note that -- unlike bgp_update_packet() -- this guarantees to
-	     * generate a packet, unless there is absolutely nothing to be
-	     * withdrawn -- in which case ->withdraw *will* be empty.
-	     */
-	    s = bgp_withdraw_packet (peer, afi, safi);
-	    if (s)
-	      return s;
-	  } ;
+        adv = bgp_advertise_fifo_head(&peer->sync[afi][safi]->withdraw);
+        if (adv)
+          {
+            /* Note that -- unlike bgp_update_packet() -- this guarantees to
+             * generate a packet, unless there is absolutely nothing to be
+             * withdrawn -- in which case ->withdraw *will* be empty.
+             */
+            s = bgp_withdraw_packet (peer, afi, safi);
+            if (s)
+              return s;
+          } ;
 
-	qassert(bgp_advertise_fifo_head(&peer->sync[afi][safi]->withdraw)
-	                                                              == NULL) ;
+        qassert(bgp_advertise_fifo_head(&peer->sync[afi][safi]->withdraw)
+                                                                      == NULL) ;
       } ;
 
   for (afi = AFI_IP; afi < AFI_MAX; afi++)
     for (safi = SAFI_UNICAST; safi < SAFI_MAX; safi++)
       {
-	while (1)
-	  {
-	    adv = bgp_advertise_fifo_head(&peer->sync[afi][safi]->update) ;
+        while (1)
+          {
+            adv = bgp_advertise_fifo_head(&peer->sync[afi][safi]->update) ;
 
-	    if (adv == NULL)
-	      break ;
+            if (adv == NULL)
+              break ;
 
             if (adv->binfo->uptime >= peer->synctime)
               break ;                   /* leave for later      */
@@ -885,25 +885,25 @@ bgp_write_packet (struct peer *peer)
             s = bgp_update_packet (peer, adv, afi, safi);
 
             if (s != NULL)
-	      return s;
-	  } ;
+              return s;
+          } ;
 
-	/* If there is nothing left to advertise, then this is a good moment
-	 * to send an EOR, if one is required.
-	 */
-	if ((adv == NULL) && CHECK_FLAG (peer->cap, PEER_CAP_RESTART_RCV))
-	  {
-	    if (peer->afc_nego[afi][safi] && peer->synctime
-		&& ! CHECK_FLAG (peer->af_sflags[afi][safi], PEER_STATUS_EOR_SEND)
-		&& safi != SAFI_MPLS_VPN)
-	      {
-		SET_FLAG (peer->af_sflags[afi][safi], PEER_STATUS_EOR_SEND);
-		s = bgp_update_packet_eor (peer, afi, safi);
+        /* If there is nothing left to advertise, then this is a good moment
+         * to send an EOR, if one is required.
+         */
+        if ((adv == NULL) && CHECK_FLAG (peer->cap, PEER_CAP_RESTART_RCV))
+          {
+            if (peer->afc_nego[afi][safi] && peer->synctime
+                && ! CHECK_FLAG (peer->af_sflags[afi][safi], PEER_STATUS_EOR_SEND)
+                && safi != SAFI_MPLS_VPN)
+              {
+                SET_FLAG (peer->af_sflags[afi][safi], PEER_STATUS_EOR_SEND);
+                s = bgp_update_packet_eor (peer, afi, safi);
 
-		if (s != NULL)
-	          return s;
-	      }
-	  }
+                if (s != NULL)
+                  return s;
+              }
+          }
       }
 
   return NULL;
@@ -960,7 +960,7 @@ bgp_write (bgp_peer peer, struct stream* s)
  */
 void
 bgp_route_refresh_send (struct peer *peer, afi_t afi, safi_t safi,
-			u_char orf_type, u_char when_to_refresh, int remove)
+                        u_char orf_type, u_char when_to_refresh, int remove)
 {
   bgp_route_refresh rr = NULL;
   struct bgp_filter *filter = NULL;
@@ -1039,7 +1039,7 @@ bgp_route_refresh_send (struct peer *peer, afi_t afi, safi_t safi,
 
 void
 bgp_capability_send (struct peer *peer, afi_t afi, safi_t safi,
-		     int capability_code, int action)
+                     int capability_code, int action)
 {
   struct stream *s;
   uint   length;
@@ -1066,8 +1066,8 @@ bgp_capability_send (struct peer *peer, afi_t afi, safi_t safi,
 
       if (BGP_DEBUG (normal, NORMAL))
         zlog_debug ("%s sending CAPABILITY has %s MP_EXT CAP for afi/safi: %d/%d",
-		   peer->host, action == CAPABILITY_ACTION_SET ?
-		   "Advertising" : "Removing", afi, safi);
+                   peer->host, action == CAPABILITY_ACTION_SET ?
+                   "Advertising" : "Removing", afi, safi);
     }
 
   /* Set packet size.
@@ -1098,7 +1098,7 @@ bgp_update_receive (struct peer *peer, bgp_size_t size)
   if (peer->state != bgp_peer_pEstablished)
     {
       zlog_err ("%s [FSM] Update packet received under status %s",
-		peer->host, map_direct(bgp_peer_status_map, peer->state).str);
+                peer->host, map_direct(bgp_peer_status_map, peer->state).str);
       bgp_peer_down_error (peer, BGP_NOTIFY_FSM_ERR, 0);
       return -1;
     }
@@ -1115,8 +1115,8 @@ bgp_update_receive (struct peer *peer, bgp_size_t size)
   if (stream_has_overrun(args->s))
     {
       zlog_err ("%s [Error] Update packet error"
-		" (packet length is short for unfeasible length)",
-		peer->host);
+                " (packet length is short for unfeasible length)",
+                peer->host);
       bgp_peer_down_error (peer, BGP_NOTIFY_UPDATE_ERR,
                                  BGP_NOTIFY_UPDATE_MAL_ATTR);
       return -1;
@@ -1148,7 +1148,7 @@ bgp_update_receive (struct peer *peer, bgp_size_t size)
         } ;
 
       if (BGP_DEBUG (packet, PACKET_RECV))
-	zlog_debug ("%s [Update:RECV] Unfeasible NLRI received", peer->host);
+        zlog_debug ("%s [Update:RECV] Unfeasible NLRI received", peer->host);
 
       args->withdraw.afi    = AFI_IP;
       args->withdraw.safi   = SAFI_UNICAST;
@@ -1341,150 +1341,150 @@ bgp_update_receive (struct peer *peer, bgp_size_t size)
   if (peer->afc[AFI_IP][SAFI_UNICAST])
     {
       if (args->withdraw.length)
-	bgp_nlri_parse (peer, NULL, &args->withdraw);
+        bgp_nlri_parse (peer, NULL, &args->withdraw);
 
       if (args->update.length)
         bgp_nlri_parse (peer, NLRI_ATTR_ARG, &args->update);
 
       if (args->mp_update.length
-	  && args->mp_update.afi  == AFI_IP
-	  && args->mp_update.safi == SAFI_UNICAST)
-	bgp_nlri_parse (peer, NLRI_ATTR_ARG, &args->mp_update);
+          && args->mp_update.afi  == AFI_IP
+          && args->mp_update.safi == SAFI_UNICAST)
+        bgp_nlri_parse (peer, NLRI_ATTR_ARG, &args->mp_update);
 
       if (args->mp_withdraw.length
-	  && args->mp_withdraw.afi  == AFI_IP
-	  && args->mp_withdraw.safi == SAFI_UNICAST)
-	bgp_nlri_parse (peer, NULL, &args->mp_withdraw);
+          && args->mp_withdraw.afi  == AFI_IP
+          && args->mp_withdraw.safi == SAFI_UNICAST)
+        bgp_nlri_parse (peer, NULL, &args->mp_withdraw);
 
       if ((attribute_len == 0) && (args->withdraw.length == 0)
                                && (args->update.length == 0))
-	{
-	  /* End-of-RIB received */
-	  SET_FLAG (peer->af_sflags[AFI_IP][SAFI_UNICAST],
-		    PEER_STATUS_EOR_RECEIVED);
+        {
+          /* End-of-RIB received */
+          SET_FLAG (peer->af_sflags[AFI_IP][SAFI_UNICAST],
+                    PEER_STATUS_EOR_RECEIVED);
 
-	  /* NSF delete stale route */
-	  if (peer->nsf[AFI_IP][SAFI_UNICAST])
-	    bgp_clear_stale_route (peer, AFI_IP, SAFI_UNICAST);
+          /* NSF delete stale route */
+          if (peer->nsf[AFI_IP][SAFI_UNICAST])
+            bgp_clear_stale_route (peer, AFI_IP, SAFI_UNICAST);
 
-	  if (BGP_DEBUG (normal, NORMAL))
-	    zlog (peer->log, LOG_DEBUG,
+          if (BGP_DEBUG (normal, NORMAL))
+            zlog (peer->log, LOG_DEBUG,
                   "rcvd End-of-RIB for IPv4 Unicast from %s",
-		  peer->host);
-	}
+                  peer->host);
+        }
     }
 
   if (peer->afc[AFI_IP][SAFI_MULTICAST])
     {
       if (args->mp_update.length
-	  && args->mp_update.afi == AFI_IP
-	  && args->mp_update.safi == SAFI_MULTICAST)
-	bgp_nlri_parse (peer, NLRI_ATTR_ARG, &args->mp_update);
+          && args->mp_update.afi == AFI_IP
+          && args->mp_update.safi == SAFI_MULTICAST)
+        bgp_nlri_parse (peer, NLRI_ATTR_ARG, &args->mp_update);
 
       if (args->mp_withdraw.length
-	  && args->mp_withdraw.afi == AFI_IP
-	  && args->mp_withdraw.safi == SAFI_MULTICAST)
-	bgp_nlri_parse (peer, NULL, &args->mp_withdraw);
+          && args->mp_withdraw.afi == AFI_IP
+          && args->mp_withdraw.safi == SAFI_MULTICAST)
+        bgp_nlri_parse (peer, NULL, &args->mp_withdraw);
 
       if (args->mp_eor
-	  && args->mp_withdraw.afi == AFI_IP
-	  && args->mp_withdraw.safi == SAFI_MULTICAST)
-	{
-	  /* End-of-RIB received */
-	  SET_FLAG (peer->af_sflags[AFI_IP][SAFI_MULTICAST],
-		    PEER_STATUS_EOR_RECEIVED);
+          && args->mp_withdraw.afi == AFI_IP
+          && args->mp_withdraw.safi == SAFI_MULTICAST)
+        {
+          /* End-of-RIB received */
+          SET_FLAG (peer->af_sflags[AFI_IP][SAFI_MULTICAST],
+                    PEER_STATUS_EOR_RECEIVED);
 
-	  /* NSF delete stale route */
-	  if (peer->nsf[AFI_IP][SAFI_MULTICAST])
-	    bgp_clear_stale_route (peer, AFI_IP, SAFI_MULTICAST);
+          /* NSF delete stale route */
+          if (peer->nsf[AFI_IP][SAFI_MULTICAST])
+            bgp_clear_stale_route (peer, AFI_IP, SAFI_MULTICAST);
 
-	  if (BGP_DEBUG (normal, NORMAL))
-	    zlog (peer->log, LOG_DEBUG,
+          if (BGP_DEBUG (normal, NORMAL))
+            zlog (peer->log, LOG_DEBUG,
                   "rcvd End-of-RIB for IPv4 Multicast from %s",
-		  peer->host);
-	}
+                  peer->host);
+        }
     }
   if (peer->afc[AFI_IP6][SAFI_UNICAST])
     {
       if (args->mp_update.length
-	  && args->mp_update.afi  == AFI_IP6
-	  && args->mp_update.safi == SAFI_UNICAST)
-	bgp_nlri_parse (peer, NLRI_ATTR_ARG, &args->mp_update);
+          && args->mp_update.afi  == AFI_IP6
+          && args->mp_update.safi == SAFI_UNICAST)
+        bgp_nlri_parse (peer, NLRI_ATTR_ARG, &args->mp_update);
 
       if (args->mp_withdraw.length
-	  && args->mp_withdraw.afi  == AFI_IP6
-	  && args->mp_withdraw.safi == SAFI_UNICAST)
-	bgp_nlri_parse (peer, NULL, &args->mp_withdraw);
+          && args->mp_withdraw.afi  == AFI_IP6
+          && args->mp_withdraw.safi == SAFI_UNICAST)
+        bgp_nlri_parse (peer, NULL, &args->mp_withdraw);
 
       if (args->mp_eor
-	  && args->mp_withdraw.afi  == AFI_IP6
-	  && args->mp_withdraw.safi == SAFI_UNICAST)
-	{
-	  /* End-of-RIB received */
-	  SET_FLAG (peer->af_sflags[AFI_IP6][SAFI_UNICAST],
+          && args->mp_withdraw.afi  == AFI_IP6
+          && args->mp_withdraw.safi == SAFI_UNICAST)
+        {
+          /* End-of-RIB received */
+          SET_FLAG (peer->af_sflags[AFI_IP6][SAFI_UNICAST],
                     PEER_STATUS_EOR_RECEIVED);
 
-	  /* NSF delete stale route */
-	  if (peer->nsf[AFI_IP6][SAFI_UNICAST])
-	    bgp_clear_stale_route (peer, AFI_IP6, SAFI_UNICAST);
+          /* NSF delete stale route */
+          if (peer->nsf[AFI_IP6][SAFI_UNICAST])
+            bgp_clear_stale_route (peer, AFI_IP6, SAFI_UNICAST);
 
-	  if (BGP_DEBUG (normal, NORMAL))
-	    zlog (peer->log, LOG_DEBUG,
+          if (BGP_DEBUG (normal, NORMAL))
+            zlog (peer->log, LOG_DEBUG,
                   "rcvd End-of-RIB for IPv6 Unicast from %s",
-		  peer->host);
-	}
+                  peer->host);
+        }
     }
   if (peer->afc[AFI_IP6][SAFI_MULTICAST])
     {
       if (args->mp_update.length
-	  && args->mp_update.afi == AFI_IP6
-	  && args->mp_update.safi == SAFI_MULTICAST)
-	bgp_nlri_parse (peer, NLRI_ATTR_ARG, &args->mp_update);
+          && args->mp_update.afi == AFI_IP6
+          && args->mp_update.safi == SAFI_MULTICAST)
+        bgp_nlri_parse (peer, NLRI_ATTR_ARG, &args->mp_update);
 
       if (args->mp_withdraw.length
-	  && args->mp_withdraw.afi == AFI_IP6
-	  && args->mp_withdraw.safi == SAFI_MULTICAST)
-	bgp_nlri_parse (peer, NULL, &args->mp_withdraw);
+          && args->mp_withdraw.afi == AFI_IP6
+          && args->mp_withdraw.safi == SAFI_MULTICAST)
+        bgp_nlri_parse (peer, NULL, &args->mp_withdraw);
 
       if (args->mp_eor
-	  && args->mp_withdraw.afi == AFI_IP6
-	  && args->mp_withdraw.safi == SAFI_MULTICAST)
-	{
-	  /* End-of-RIB received */
+          && args->mp_withdraw.afi == AFI_IP6
+          && args->mp_withdraw.safi == SAFI_MULTICAST)
+        {
+          /* End-of-RIB received */
 
-	  /* NSF delete stale route */
-	  if (peer->nsf[AFI_IP6][SAFI_MULTICAST])
-	    bgp_clear_stale_route (peer, AFI_IP6, SAFI_MULTICAST);
+          /* NSF delete stale route */
+          if (peer->nsf[AFI_IP6][SAFI_MULTICAST])
+            bgp_clear_stale_route (peer, AFI_IP6, SAFI_MULTICAST);
 
-	  if (BGP_DEBUG (update, UPDATE_IN))
-	    zlog (peer->log, LOG_DEBUG,
+          if (BGP_DEBUG (update, UPDATE_IN))
+            zlog (peer->log, LOG_DEBUG,
                   "rcvd End-of-RIB for IPv6 Multicast from %s",
-		  peer->host);
-	}
+                  peer->host);
+        }
     }
   if (peer->afc[AFI_IP][SAFI_MPLS_VPN])
     {
       if (args->mp_update.length
-	  && args->mp_update.afi == AFI_IP
-	  && args->mp_update.safi == SAFI_MPLS_LABELED_VPN)
-	bgp_nlri_parse_vpnv4 (peer, NLRI_ATTR_ARG, &args->mp_update);
+          && args->mp_update.afi == AFI_IP
+          && args->mp_update.safi == SAFI_MPLS_LABELED_VPN)
+        bgp_nlri_parse_vpnv4 (peer, NLRI_ATTR_ARG, &args->mp_update);
 
       if (args->mp_withdraw.length
-	  && args->mp_withdraw.afi == AFI_IP
-	  && args->mp_withdraw.safi == SAFI_MPLS_LABELED_VPN)
-	bgp_nlri_parse_vpnv4 (peer, NULL, &args->mp_withdraw);
+          && args->mp_withdraw.afi == AFI_IP
+          && args->mp_withdraw.safi == SAFI_MPLS_LABELED_VPN)
+        bgp_nlri_parse_vpnv4 (peer, NULL, &args->mp_withdraw);
 
       if (args->mp_eor
-	  && args->mp_withdraw.afi == AFI_IP
-	  && args->mp_withdraw.safi == SAFI_MPLS_LABELED_VPN)
-	{
-	  /* End-of-RIB received */
+          && args->mp_withdraw.afi == AFI_IP
+          && args->mp_withdraw.safi == SAFI_MPLS_LABELED_VPN)
+        {
+          /* End-of-RIB received */
 
-	  if (BGP_DEBUG (update, UPDATE_IN))
-	    zlog (peer->log, LOG_DEBUG,
+          if (BGP_DEBUG (update, UPDATE_IN))
+            zlog (peer->log, LOG_DEBUG,
                   "rcvd End-of-RIB for VPNv4 Unicast from %s",
-		  peer->host);
-	}
+                  peer->host);
+        }
     }
 
   /* Everything is done.  We unintern temporary structures which
@@ -1599,18 +1599,18 @@ bgp_capability_msg_parse (struct peer *peer, u_char *pnt, bgp_size_t length)
 
       /* Action value check.  */
       if (action != CAPABILITY_ACTION_SET
-	  && action != CAPABILITY_ACTION_UNSET)
+          && action != CAPABILITY_ACTION_UNSET)
         {
           zlog_info ("%s Capability Action Value error %d",
-		     peer->host, action);
+                     peer->host, action);
           /* TODO: Is this the right notification ??           */
           bgp_peer_down_error (peer, BGP_NOTIFY_CEASE, 0);
           return -1;
         }
 
       if (BGP_DEBUG (normal, NORMAL))
-	zlog_debug ("%s CAPABILITY has action: %d, code: %u, length %u",
-		   peer->host, action, hdr->code, hdr->length);
+        zlog_debug ("%s CAPABILITY has action: %d, code: %u, length %u",
+                   peer->host, action, hdr->code, hdr->length);
 
       /* Capability length check. */
       if ((pnt + hdr->length + 3) > end)
@@ -1627,12 +1627,12 @@ bgp_capability_msg_parse (struct peer *peer, u_char *pnt, bgp_size_t length)
       /* We know MP Capability Code. */
       if (hdr->code == CAPABILITY_CODE_MP)
         {
-	  afi = ntohs (mpc.afi);
-	  safi = mpc.safi;
+          afi = ntohs (mpc.afi);
+          safi = mpc.safi;
 
           /* Ignore capability when override-capability is set. */
           if (CHECK_FLAG (peer->flags, PEER_FLAG_OVERRIDE_CAPABILITY))
-	    continue;
+            continue;
 
           if (!bgp_afi_safi_valid_indices (afi, &safi))
             {
@@ -1642,7 +1642,7 @@ bgp_capability_msg_parse (struct peer *peer, u_char *pnt, bgp_size_t length)
               continue;
             }
 
-	  /* Address family check.  */
+          /* Address family check.  */
           if (BGP_DEBUG (normal, NORMAL))
             zlog_debug ("%s CAPABILITY has %s MP_EXT CAP for afi/safi: %u/%u",
                        peer->host,
@@ -1710,7 +1710,7 @@ bgp_capability_receive (struct peer *peer, bgp_size_t size)
   if (! CHECK_FLAG (peer->cap, PEER_CAP_DYNAMIC_ADV))
     {
       plog_err (peer->log, "%s [Error] BGP dynamic capability is not enabled",
-		peer->host);
+                peer->host);
       bgp_peer_down_error (peer, BGP_NOTIFY_HEADER_ERR,
                                    BGP_NOTIFY_HEADER_BAD_MESTYPE);
       return -1;
@@ -1720,8 +1720,8 @@ bgp_capability_receive (struct peer *peer, bgp_size_t size)
   if (peer->state != bgp_peer_pEstablished)
     {
       plog_err (peer->log,
-		"%s [Error] Dynamic capability packet received under status %s",
-		peer->host, map_direct(bgp_peer_status_map, peer->state).str) ;
+                "%s [Error] Dynamic capability packet received under status %s",
+                peer->host, map_direct(bgp_peer_status_map, peer->state).str) ;
       bgp_peer_down_error (peer, BGP_NOTIFY_FSM_ERR, 0);
       return -1;
     }

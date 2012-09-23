@@ -29,7 +29,7 @@ Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
 #include "bgp_regex.h"
 
 /* Character `_' has special mean.  It represents [,{}() ] and the
-   beginning of the line(^) and the end of the line ($).  
+   beginning of the line(^) and the end of the line ($).
 
    (^|[,{}() ]|$) */
 
@@ -51,16 +51,16 @@ bgp_regcomp (const char *regstr)
       magic++;
 
   magic_str = XMALLOC (MTYPE_TMP, len + (14 * magic) + 1);
-  
+
   for (i = 0, j = 0; i < len; i++)
     {
       if (regstr[i] == '_')
-	{
-	  memcpy (magic_str + j, magic_regexp, strlen (magic_regexp));
-	  j += strlen (magic_regexp);
-	}
+        {
+          memcpy (magic_str + j, magic_regexp, strlen (magic_regexp));
+          j += strlen (magic_regexp);
+        }
       else
-	magic_str[j++] = regstr[i];
+        magic_str[j++] = regstr[i];
     }
   magic_str[j] = '\0';
 

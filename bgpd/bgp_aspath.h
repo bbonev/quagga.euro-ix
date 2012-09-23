@@ -34,10 +34,10 @@ Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
 #define BGP_PRIVATE_AS_MAX       65535U
 
 /* we leave BGP_AS_MAX as the 16bit AS MAX number.  */
-#define BGP_AS_MAX		     65535U
-#define BGP_AS4_MAX		4294967295U
+#define BGP_AS_MAX                   65535U
+#define BGP_AS4_MAX             4294967295U
 /* Transition 16Bit AS as defined by IANA */
-#define BGP_AS_TRANS		 23456U
+#define BGP_AS_TRANS             23456U
 
 /* AS_PATH segment data in abstracted form, no limit is placed on length */
 struct assegment

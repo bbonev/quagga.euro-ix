@@ -101,7 +101,7 @@ bgp_advertise_free (struct bgp_advertise *adv)
 
 static void
 bgp_advertise_add (struct bgp_advertise_attr *baa,
-		   bgp_advertise adv)
+                   bgp_advertise adv)
 {
   bgp_advertise last ;
 
@@ -124,7 +124,7 @@ bgp_advertise_add (struct bgp_advertise_attr *baa,
 
 static void
 bgp_advertise_delete (struct bgp_advertise_attr *baa,
-		      struct bgp_advertise *adv)
+                      struct bgp_advertise *adv)
 {
   if (adv->adv_next != NULL)
     adv->adv_next->adv_prev = adv->adv_prev;
@@ -161,10 +161,10 @@ bgp_advertise_unintern (struct hash *hash, struct bgp_advertise_attr *baa)
   else
     {
       if (baa->attr)
-	{
-	  hash_release (hash, baa);
-	  bgp_attr_unintern (&baa->attr);
-	}
+        {
+          hash_release (hash, baa);
+          bgp_attr_unintern (&baa->attr);
+        }
       baa_free (baa);
     }
 }
@@ -173,7 +173,7 @@ bgp_advertise_unintern (struct hash *hash, struct bgp_advertise_attr *baa)
 
 int
 bgp_adj_out_lookup (struct peer *peer, struct prefix *p,
-		    afi_t afi, safi_t safi, struct bgp_node *rn)
+                    afi_t afi, safi_t safi, struct bgp_node *rn)
 {
   struct bgp_adj_out *adj;
 
@@ -185,13 +185,13 @@ bgp_adj_out_lookup (struct peer *peer, struct prefix *p,
     return 0;
 
   return (adj->adv
-	  ? (adj->adv->baa ? 1 : 0)
-	  : (adj->attr ? 1 : 0));
+          ? (adj->adv->baa ? 1 : 0)
+          : (adj->attr ? 1 : 0));
 }
 
 struct bgp_advertise *
 bgp_advertise_clean (struct peer *peer, struct bgp_adj_out *adj,
-		     afi_t afi, safi_t safi)
+                     afi_t afi, safi_t safi)
 {
   struct bgp_advertise *adv;
   struct bgp_advertise_attr *baa;
@@ -225,8 +225,8 @@ bgp_advertise_clean (struct peer *peer, struct bgp_adj_out *adj,
 
 void
 bgp_adj_out_set (struct bgp_node *rn, struct peer *peer, struct prefix *p,
-		 struct attr *attr, afi_t afi, safi_t safi,
-		 struct bgp_info *binfo)
+                 struct attr *attr, afi_t afi, safi_t safi,
+                 struct bgp_info *binfo)
 {
   struct bgp_adj_out*   adj = NULL;
   struct bgp_adj_out**  adj_out_head ;
@@ -241,7 +241,7 @@ bgp_adj_out_set (struct bgp_node *rn, struct peer *peer, struct prefix *p,
   /* Look for adjacency information. */
   for (adj = rn->adj_out; adj; adj = adj->adj_next)
     if (adj->peer == peer)
-	  break;
+          break;
 
   if (adj == NULL)
     {
@@ -293,7 +293,7 @@ bgp_adj_out_set (struct bgp_node *rn, struct peer *peer, struct prefix *p,
 
 void
 bgp_adj_out_unset (struct bgp_node *rn, struct peer *peer, struct prefix *p,
-		   afi_t afi, safi_t safi)
+                   afi_t afi, safi_t safi)
 {
   struct bgp_adj_out *adj;
   struct bgp_advertise *adv;
@@ -336,7 +336,7 @@ bgp_adj_out_unset (struct bgp_node *rn, struct peer *peer, struct prefix *p,
 
 void
 bgp_adj_out_remove (struct bgp_node *rn, struct bgp_adj_out *adj,
-		    struct peer *peer, afi_t afi, safi_t safi)
+                    struct peer *peer, afi_t afi, safi_t safi)
 {
   assert((rn == adj->rn) && (peer == adj->peer)) ;
 
@@ -379,14 +379,14 @@ bgp_adj_in_set (struct bgp_node *rn, struct peer *peer, struct attr *attr)
   for (adj = rn->adj_in; adj; adj = adj->adj_next)
     {
       if (adj->peer == peer)
-	{
-	  if (adj->attr != attr)
-	    {
-	      bgp_attr_unintern (&adj->attr);
-	      adj->attr = bgp_attr_intern (attr);
-	    }
-	  return;
-	}
+        {
+          if (adj->attr != attr)
+            {
+              bgp_attr_unintern (&adj->attr);
+              adj->attr = bgp_attr_intern (attr);
+            }
+          return;
+        }
     }
 
   /* Need to create a brand new bgp_adj_in                      */
@@ -479,13 +479,13 @@ bgp_sync_init (struct peer *peer)
   for (afi = AFI_IP; afi < AFI_MAX; afi++)
     for (safi = SAFI_UNICAST; safi < SAFI_MAX; safi++)
       {
-	sync = XCALLOC (MTYPE_BGP_SYNCHRONISE,
-	                sizeof (struct bgp_synchronize));
-	bgp_advertise_fifo_init(&sync->update);
-	bgp_advertise_fifo_init(&sync->withdraw);
-	bgp_advertise_fifo_init(&sync->withdraw_low);
-	peer->sync[afi][safi] = sync;
-	peer->hash[afi][safi] = hash_create (baa_hash_key, baa_hash_cmp);
+        sync = XCALLOC (MTYPE_BGP_SYNCHRONISE,
+                        sizeof (struct bgp_synchronize));
+        bgp_advertise_fifo_init(&sync->update);
+        bgp_advertise_fifo_init(&sync->withdraw);
+        bgp_advertise_fifo_init(&sync->withdraw_low);
+        peer->sync[afi][safi] = sync;
+        peer->hash[afi][safi] = hash_create (baa_hash_key, baa_hash_cmp);
       }
 }
 
@@ -498,12 +498,12 @@ bgp_sync_delete (struct peer *peer)
   for (afi = AFI_IP; afi < AFI_MAX; afi++)
     for (safi = SAFI_UNICAST; safi < SAFI_MAX; safi++)
       {
-	if (peer->sync[afi][safi])
-	  XFREE (MTYPE_BGP_SYNCHRONISE, peer->sync[afi][safi]);
-	peer->sync[afi][safi] = NULL;
+        if (peer->sync[afi][safi])
+          XFREE (MTYPE_BGP_SYNCHRONISE, peer->sync[afi][safi]);
+        peer->sync[afi][safi] = NULL;
 
-	if (peer->hash[afi][safi])
-	  hash_free (peer->hash[afi][safi]);
-	peer->hash[afi][safi] = NULL;
+        if (peer->hash[afi][safi])
+          hash_free (peer->hash[afi][safi]);
+        peer->hash[afi][safi] = NULL;
       }
 }

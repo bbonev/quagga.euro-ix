@@ -36,7 +36,7 @@
 #include "command.h"
 #include "log.h"
 #include "memory.h"
-#include "sockunion.h"		/* for inet_ntop () */
+#include "sockunion.h"          /* for inet_ntop () */
 #include "linklist.h"
 #include "plist.h"
 
@@ -255,7 +255,7 @@ bgp_msg_send_open(bgp_connection connection, bgp_open_state open_state)
 
       zlog_debug ("%s sending OPEN, version %d, my as %u, holdtime %d, id %s%s",
                   connection->host, BGP_VERSION_4, open_state->my_as,
-	           open_state->holdtime, buf, no_cap) ;
+                   open_state->holdtime, buf, no_cap) ;
 
     } ;
 

@@ -43,10 +43,10 @@ Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
 #define BGP_ATTR_BITMAP_SIZE    (BGP_ATTR_TYPE_RANGE / BITMAP_NBBY)
 
 /* BGP Attribute flags. */
-#define BGP_ATTR_FLAG_OPTIONAL  0x80	/* Attribute is optional. */
-#define BGP_ATTR_FLAG_TRANS     0x40	/* Attribute is transitive. */
-#define BGP_ATTR_FLAG_PARTIAL   0x20	/* Attribute is partial. */
-#define BGP_ATTR_FLAG_EXTLEN    0x10	/* Extended length flag. */
+#define BGP_ATTR_FLAG_OPTIONAL  0x80    /* Attribute is optional. */
+#define BGP_ATTR_FLAG_TRANS     0x40    /* Attribute is transitive. */
+#define BGP_ATTR_FLAG_PARTIAL   0x20    /* Attribute is partial. */
+#define BGP_ATTR_FLAG_EXTLEN    0x10    /* Extended length flag. */
 
 /* BGP attribute header must bigger than 2. */
 #define BGP_ATTR_MIN_LEN        3       /* Attribute flag, type length. */
@@ -199,7 +199,7 @@ extern void bgp_packet_withdraw_vpn_prefix(struct stream *s, struct prefix *p,
                                                         struct prefix_rd *prd) ;
 
 extern void bgp_dump_routes_attr (struct stream *, struct attr *,
-				  struct prefix *);
+                                  struct prefix *);
 extern int attrhash_cmp (const void *, const void *);
 extern unsigned int attrhash_key_make (void *);
 extern void attr_show_all (struct vty *);

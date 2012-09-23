@@ -104,27 +104,27 @@ bgp_dump_attr (struct peer *peer, struct attr *attr, char *buf, size_t size)
 
   if (CHECK_FLAG (attr->flag, ATTR_FLAG_BIT (BGP_ATTR_LOCAL_PREF)))
     snprintf (buf + strlen (buf), size - strlen (buf), ", localpref %d",
-	      attr->local_pref);
+              attr->local_pref);
 
   if (CHECK_FLAG (attr->flag, ATTR_FLAG_BIT (BGP_ATTR_MULTI_EXIT_DISC)))
     snprintf (buf + strlen (buf), size - strlen (buf), ", metric %d",
-	      attr->med);
+              attr->med);
 
   if (CHECK_FLAG (attr->flag, ATTR_FLAG_BIT (BGP_ATTR_COMMUNITIES)))
     snprintf (buf + strlen (buf), size - strlen (buf), ", community %s",
-	      community_str (attr->community));
+              community_str (attr->community));
 
   if (CHECK_FLAG (attr->flag, ATTR_FLAG_BIT (BGP_ATTR_ATOMIC_AGGREGATE)))
     snprintf (buf + strlen (buf), size - strlen (buf), ", atomic-aggregate");
 
   if (CHECK_FLAG (attr->flag, ATTR_FLAG_BIT (BGP_ATTR_AGGREGATOR)))
     snprintf (buf + strlen (buf), size - strlen (buf), ", aggregated by %u %s",
-	      attr->extra->aggregator_as,
-	      safe_inet_ntoa (attr->extra->aggregator_addr));
+              attr->extra->aggregator_as,
+              safe_inet_ntoa (attr->extra->aggregator_addr));
 
   if (CHECK_FLAG (attr->flag, ATTR_FLAG_BIT (BGP_ATTR_ORIGINATOR_ID)))
     snprintf (buf + strlen (buf), size - strlen (buf), ", originator %s",
-	      safe_inet_ntoa (attr->extra->originator_id));
+              safe_inet_ntoa (attr->extra->originator_id));
 
   if (CHECK_FLAG (attr->flag, ATTR_FLAG_BIT (BGP_ATTR_CLUSTER_LIST)))
     {
@@ -132,13 +132,13 @@ bgp_dump_attr (struct peer *peer, struct attr *attr, char *buf, size_t size)
 
       snprintf (buf + strlen (buf), size - strlen (buf), ", clusterlist");
       for (i = 0; i < attr->extra->cluster->length / 4; i++)
-	snprintf (buf + strlen (buf), size - strlen (buf), " %s",
-		  safe_inet_ntoa (attr->extra->cluster->list[i]));
+        snprintf (buf + strlen (buf), size - strlen (buf), " %s",
+                  safe_inet_ntoa (attr->extra->cluster->list[i]));
     }
 
   if (CHECK_FLAG (attr->flag, ATTR_FLAG_BIT (BGP_ATTR_AS_PATH)))
     snprintf (buf + strlen (buf), size - strlen (buf), ", path %s",
-	      aspath_print (attr->aspath));
+              aspath_print (attr->aspath));
 
   if (strlen (buf) > 1)
     return 1;
@@ -237,10 +237,10 @@ bgp_notify_print(struct peer *peer, bgp_notify notification)
               notification->code, notification->subcode, length, hex_form) ;
   else
     plog_debug(peer->log, "%s %s NOTIFICATION %s%s (%d/%d) %d bytes %s",
-	       peer->host, notification->received ? "received" : "sending",
+               peer->host, notification->received ? "received" : "sending",
                map_direct(bgp_notify_msg_map, notification->code).str,
                map_direct(subcode_map, notification->subcode).str,
-	       notification->code, notification->subcode, length, hex_form) ;
+               notification->code, notification->subcode, length, hex_form) ;
 
   /* Release the space allocated to the hex form of the data, if any
    */
@@ -640,30 +640,30 @@ DEFUN (debug_bgp_update_direct,
   if (vty->node == CONFIG_NODE)
     {
       if (strncmp ("i", argv[0], 1) == 0)
-	{
-	  DEBUG_OFF (update, UPDATE_OUT);
-	  DEBUG_ON (update, UPDATE_IN);
-	}
+        {
+          DEBUG_OFF (update, UPDATE_OUT);
+          DEBUG_ON (update, UPDATE_IN);
+        }
       else
-	{
-	  DEBUG_OFF (update, UPDATE_IN);
-	  DEBUG_ON (update, UPDATE_OUT);
-	}
+        {
+          DEBUG_OFF (update, UPDATE_IN);
+          DEBUG_ON (update, UPDATE_OUT);
+        }
     }
   else
     {
       if (strncmp ("i", argv[0], 1) == 0)
-	{
-	  TERM_DEBUG_OFF (update, UPDATE_OUT);
-	  TERM_DEBUG_ON (update, UPDATE_IN);
-	  vty_out (vty, "BGP updates debugging is on (inbound)%s", VTY_NEWLINE);
-	}
+        {
+          TERM_DEBUG_OFF (update, UPDATE_OUT);
+          TERM_DEBUG_ON (update, UPDATE_IN);
+          vty_out (vty, "BGP updates debugging is on (inbound)%s", VTY_NEWLINE);
+        }
       else
-	{
-	  TERM_DEBUG_OFF (update, UPDATE_IN);
-	  TERM_DEBUG_ON (update, UPDATE_OUT);
-	  vty_out (vty, "BGP updates debugging is on (outbound)%s", VTY_NEWLINE);
-	}
+        {
+          TERM_DEBUG_OFF (update, UPDATE_IN);
+          TERM_DEBUG_ON (update, UPDATE_OUT);
+          vty_out (vty, "BGP updates debugging is on (outbound)%s", VTY_NEWLINE);
+        }
     }
   return CMD_SUCCESS;
 }

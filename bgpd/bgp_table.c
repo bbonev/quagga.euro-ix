@@ -119,16 +119,16 @@ bgp_table_free (struct bgp_table *rt)
   while (node)
     {
       if (node->l_left)
-	{
-	  node = node->l_left;
-	  continue;
-	}
+        {
+          node = node->l_left;
+          continue;
+        }
 
       if (node->l_right)
-	{
-	  node = node->l_right;
-	  continue;
-	}
+        {
+          node = node->l_right;
+          continue;
+        }
 
       assert(  (node->info     == NULL)
             && (node->adj_out  == NULL)
@@ -144,16 +144,16 @@ bgp_table_free (struct bgp_table *rt)
       bgp_node_free (tmp_node);
 
       if (node != NULL)
-	{
-	  if (node->l_left == tmp_node)
-	    node->l_left = NULL;
-	  else
-	    node->l_right = NULL;
-	}
+        {
+          if (node->l_left == tmp_node)
+            node->l_left = NULL;
+          else
+            node->l_right = NULL;
+        }
       else
-	{
-	  break;
-	}
+        {
+          break;
+        }
     }
 
   assert (rt->count == 0);
@@ -190,9 +190,9 @@ route_common (struct prefix *n, struct prefix *p, struct prefix *new)
   for (i = 0; i < p->prefixlen / 8; i++)
     {
       if (np[i] == pp[i])
-	newp[i] = np[i];
+        newp[i] = np[i];
       else
-	break;
+        break;
     }
 
   new->prefixlen = i * 8;
@@ -202,10 +202,10 @@ route_common (struct prefix *n, struct prefix *p, struct prefix *new)
       diff = np[i] ^ pp[i];
       mask = 0x80;
       while (new->prefixlen < p->prefixlen && !(mask & diff))
-	{
-	  mask >>= 1;
-	  new->prefixlen++;
-	}
+        {
+          mask >>= 1;
+          new->prefixlen++;
+        }
       newp[i] = np[i] & maskbit[new->prefixlen % 8];
     }
 }
@@ -251,10 +251,10 @@ bgp_node_match (const struct bgp_table *table, struct prefix *p)
   /* Walk down tree.  If there is matched route then store it to
      matched. */
   while (node && node->p.prefixlen <= p->prefixlen &&
-	 prefix_match (&node->p, p))
+         prefix_match (&node->p, p))
     {
       if (node->info)
-	matched = node;
+        matched = node;
       node = node->link[prefix_bit(&p->u.prefix, node->p.prefixlen)];
     }
 
@@ -302,10 +302,10 @@ bgp_node_lookup (const struct bgp_table *table, struct prefix *p)
   node = table->top;
 
   while (node && node->p.prefixlen <= p->prefixlen &&
-	 prefix_match (&node->p, p))
+         prefix_match (&node->p, p))
     {
       if (node->p.prefixlen == p->prefixlen && node->info)
-	return bgp_lock_node (node);
+        return bgp_lock_node (node);
 
       node = node->link[prefix_bit(&p->u.prefix, node->p.prefixlen)];
     }
@@ -324,13 +324,13 @@ bgp_node_get (struct bgp_table *const table, struct prefix *p)
   match = NULL;
   node = table->top;
   while (node && node->p.prefixlen <= p->prefixlen &&
-	 prefix_match (&node->p, p))
+         prefix_match (&node->p, p))
     {
       if (node->p.prefixlen == p->prefixlen)
-	{
-	  bgp_lock_node (node);
-	  return node;
-	}
+        {
+          bgp_lock_node (node);
+          return node;
+        }
       match = node;
       node = node->link[prefix_bit(&p->u.prefix, node->p.prefixlen)];
     }
@@ -339,9 +339,9 @@ bgp_node_get (struct bgp_table *const table, struct prefix *p)
     {
       new = bgp_node_set (table, p);
       if (match)
-	set_link (match, new);
+        set_link (match, new);
       else
-	table->top = new;
+        table->top = new;
     }
   else
     {
@@ -352,17 +352,17 @@ bgp_node_get (struct bgp_table *const table, struct prefix *p)
       set_link (new, node);
 
       if (match)
-	set_link (match, new);
+        set_link (match, new);
       else
-	table->top = new;
+        table->top = new;
 
       if (new->p.prefixlen != p->prefixlen)
-	{
-	  match = new;
-	  new = bgp_node_set (table, p);
-	  set_link (match, new);
-	  table->count++;
-	}
+        {
+          match = new;
+          new = bgp_node_set (table, p);
+          set_link (match, new);
+          table->count++;
+        }
     }
   table->count++;
   bgp_lock_node (new);
@@ -397,9 +397,9 @@ bgp_node_delete (struct bgp_node *node)
   if (parent)
     {
       if (parent->l_left == node)
-	parent->l_left = child;
+        parent->l_left = child;
       else
-	parent->l_right = child;
+        parent->l_right = child;
     }
   else
     node->table->top = child;
@@ -456,12 +456,12 @@ bgp_route_next (struct bgp_node *node)
   while (node->parent)
     {
       if (node->parent->l_left == node && node->parent->l_right)
-	{
-	  next = node->parent->l_right;
-	  bgp_lock_node (next);
-	  bgp_unlock_node (start);
-	  return next;
-	}
+        {
+          next = node->parent->l_right;
+          bgp_lock_node (next);
+          bgp_unlock_node (start);
+          return next;
+        }
       node = node->parent;
     }
   bgp_unlock_node (start);
@@ -497,12 +497,12 @@ bgp_route_next_until (struct bgp_node *node, struct bgp_node *limit)
   while (node->parent && node != limit)
     {
       if (node->parent->l_left == node && node->parent->l_right)
-	{
-	  next = node->parent->l_right;
-	  bgp_lock_node (next);
-	  bgp_unlock_node (start);
-	  return next;
-	}
+        {
+          next = node->parent->l_right;
+          bgp_lock_node (next);
+          bgp_unlock_node (start);
+          return next;
+        }
       node = node->parent;
     }
   bgp_unlock_node (start);

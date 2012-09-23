@@ -78,7 +78,7 @@ decode_rd_ip (u_char *pnt, struct rd_ip *rd_ip)
 
 int
 bgp_nlri_parse_vpnv4 (struct peer *peer, struct attr *attr,
-		      struct bgp_nlri *packet)
+                      struct bgp_nlri *packet)
 {
   u_char *pnt;
   u_char *lim;
@@ -114,10 +114,10 @@ bgp_nlri_parse_vpnv4 (struct peer *peer, struct attr *attr,
       psize = PSIZE (prefixlen);
 
       if (prefixlen < 88)
-	{
-	  zlog_err ("prefix length is less than 88: %d", prefixlen);
-	  return -1;
-	}
+        {
+          zlog_err ("prefix length is less than 88: %d", prefixlen);
+          return -1;
+        }
 
       label = decode_label (pnt);
 
@@ -132,14 +132,14 @@ bgp_nlri_parse_vpnv4 (struct peer *peer, struct attr *attr,
 
       /* Decode RD value. */
       if (type == RD_TYPE_AS)
-	decode_rd_as (pnt + 5, &rd_as);
+        decode_rd_as (pnt + 5, &rd_as);
       else if (type == RD_TYPE_IP)
-	decode_rd_ip (pnt + 5, &rd_ip);
+        decode_rd_ip (pnt + 5, &rd_ip);
       else
-	{
-	  zlog_err ("Invalid RD type %d", type);
-	  return -1;
-	}
+        {
+          zlog_err ("Invalid RD type %d", type);
+          return -1;
+        }
 
       p.prefixlen = prefixlen - 88;
       memcpy (&p.u.prefix, pnt + 11, psize - 11);
@@ -147,22 +147,22 @@ bgp_nlri_parse_vpnv4 (struct peer *peer, struct attr *attr,
 if(0)
   {
       if (type == RD_TYPE_AS)
-	zlog_info ("prefix %u:%u:%u:%s/%u", label, rd_as.as, rd_as.val,
-		   safe_inet_ntoa (p.u.prefix4), p.prefixlen);
+        zlog_info ("prefix %u:%u:%u:%s/%u", label, rd_as.as, rd_as.val,
+                   safe_inet_ntoa (p.u.prefix4), p.prefixlen);
       else if (type == RD_TYPE_IP)
-	zlog_info ("prefix %u:%s:%u:%s/%u", label, safe_inet_ntoa (rd_ip.ip),
-		   rd_ip.val, safe_inet_ntoa (p.u.prefix4), p.prefixlen);
+        zlog_info ("prefix %u:%s:%u:%s/%u", label, safe_inet_ntoa (rd_ip.ip),
+                   rd_ip.val, safe_inet_ntoa (p.u.prefix4), p.prefixlen);
   } ;
 
       if (pnt + psize > lim)
-	return -1;
+        return -1;
 
       if (attr)
-	bgp_update (peer, &p, attr, AFI_IP, SAFI_MPLS_VPN,
-		    ZEBRA_ROUTE_BGP, BGP_ROUTE_NORMAL, &prd, tagpnt, 0);
+        bgp_update (peer, &p, attr, AFI_IP, SAFI_MPLS_VPN,
+                    ZEBRA_ROUTE_BGP, BGP_ROUTE_NORMAL, &prd, tagpnt, 0);
       else
-	bgp_withdraw (peer, &p, attr, AFI_IP, SAFI_MPLS_VPN,
-		      ZEBRA_ROUTE_BGP, BGP_ROUTE_NORMAL, &prd, tagpnt);
+        bgp_withdraw (peer, &p, attr, AFI_IP, SAFI_MPLS_VPN,
+                      ZEBRA_ROUTE_BGP, BGP_ROUTE_NORMAL, &prd, tagpnt);
     }
 
   /* Packet length consistency check. */
@@ -203,10 +203,10 @@ str2prefix_rd (const char *str, struct prefix_rd *prd)
   if (! p2)
     {
       if (! all_digit (half))
-	{
-	  XFREE (MTYPE_TMP, half);
-	  return 0;
-	}
+        {
+          XFREE (MTYPE_TMP, half);
+          return 0;
+        }
       stream_putw (s, RD_TYPE_AS);
       stream_putw (s, atoi (half));
       stream_putl (s, atol (p + 1));
@@ -215,10 +215,10 @@ str2prefix_rd (const char *str, struct prefix_rd *prd)
     {
       ret = inet_aton (half, &addr);
       if (! ret)
-	{
-	  XFREE (MTYPE_TMP, half);
-	  return 0;
-	}
+        {
+          XFREE (MTYPE_TMP, half);
+          return 0;
+        }
       stream_putw (s, RD_TYPE_IP);
       stream_put_in_addr (s, &addr);
       stream_putw (s, atol (p + 1));
@@ -409,7 +409,7 @@ enum bgp_show_type
 
 static int
 bgp_show_mpls_vpn (struct vty *vty, struct prefix_rd *prd, enum bgp_show_type type,
-		   void *output_arg, int tags)
+                   void *output_arg, int tags)
 {
   struct bgp *bgp;
   struct bgp_table *table;
@@ -431,71 +431,71 @@ bgp_show_mpls_vpn (struct vty *vty, struct prefix_rd *prd, enum bgp_show_type ty
   for (rn = bgp_table_top (bgp->rib[AFI_IP][SAFI_MPLS_VPN]); rn; rn = bgp_route_next (rn))
     {
       if (prd && memcmp (rn->p.u.val, prd->val, 8) != 0)
-	continue;
+        continue;
 
       if ((table = rn->info) != NULL)
-	{
-	  rd_header = 1;
+        {
+          rd_header = 1;
 
-	  for (rm = bgp_table_top (table); rm; rm = bgp_route_next (rm))
-	    for (ri = rm->info; ri; ri = ri->info_next)
-	      {
-		if (type == bgp_show_type_neighbor)
-		  {
-		    union sockunion *su = output_arg;
+          for (rm = bgp_table_top (table); rm; rm = bgp_route_next (rm))
+            for (ri = rm->info; ri; ri = ri->info_next)
+              {
+                if (type == bgp_show_type_neighbor)
+                  {
+                    union sockunion *su = output_arg;
 
-		    if (ri->peer->su_remote == NULL || ! sockunion_same(ri->peer->su_remote, su))
-		      continue;
-		  }
-		if (header)
-		  {
-		    if (tags)
-		      vty_out (vty, v4_header_tag, VTY_NEWLINE);
-		    else
-		      {
-			vty_out (vty, "BGP table version is 0, local router ID is %s%s",
-				 safe_inet_ntoa (bgp->router_id), VTY_NEWLINE);
-			vty_out (vty, "Status codes: s suppressed, d damped, h history, * valid, > best, i - internal%s",
-				 VTY_NEWLINE);
-			vty_out (vty, "Origin codes: i - IGP, e - EGP, ? - incomplete%s%s",
-				 VTY_NEWLINE, VTY_NEWLINE);
-			vty_out (vty, v4_header, VTY_NEWLINE);
-		      }
-		    header = 0;
-		  }
+                    if (ri->peer->su_remote == NULL || ! sockunion_same(ri->peer->su_remote, su))
+                      continue;
+                  }
+                if (header)
+                  {
+                    if (tags)
+                      vty_out (vty, v4_header_tag, VTY_NEWLINE);
+                    else
+                      {
+                        vty_out (vty, "BGP table version is 0, local router ID is %s%s",
+                                 safe_inet_ntoa (bgp->router_id), VTY_NEWLINE);
+                        vty_out (vty, "Status codes: s suppressed, d damped, h history, * valid, > best, i - internal%s",
+                                 VTY_NEWLINE);
+                        vty_out (vty, "Origin codes: i - IGP, e - EGP, ? - incomplete%s%s",
+                                 VTY_NEWLINE, VTY_NEWLINE);
+                        vty_out (vty, v4_header, VTY_NEWLINE);
+                      }
+                    header = 0;
+                  }
 
-		if (rd_header)
-		  {
-		    u_int16_t type;
-		    struct rd_as rd_as;
-		    struct rd_ip rd_ip;
-		    u_char *pnt;
+                if (rd_header)
+                  {
+                    u_int16_t type;
+                    struct rd_as rd_as;
+                    struct rd_ip rd_ip;
+                    u_char *pnt;
 
-		    pnt = rn->p.u.val;
+                    pnt = rn->p.u.val;
 
-		    /* Decode RD type. */
-		    type = decode_rd_type (pnt);
-		    /* Decode RD value. */
-		    if (type == RD_TYPE_AS)
-		      decode_rd_as (pnt + 2, &rd_as);
-		    else if (type == RD_TYPE_IP)
-		      decode_rd_ip (pnt + 2, &rd_ip);
+                    /* Decode RD type. */
+                    type = decode_rd_type (pnt);
+                    /* Decode RD value. */
+                    if (type == RD_TYPE_AS)
+                      decode_rd_as (pnt + 2, &rd_as);
+                    else if (type == RD_TYPE_IP)
+                      decode_rd_ip (pnt + 2, &rd_ip);
 
-		    vty_out (vty, "Route Distinguisher: ");
+                    vty_out (vty, "Route Distinguisher: ");
 
-		    if (type == RD_TYPE_AS)
-		      vty_out (vty, "%u:%d", rd_as.as, rd_as.val);
-		    else if (type == RD_TYPE_IP)
-		      vty_out (vty, "%s:%d", safe_inet_ntoa (rd_ip.ip), rd_ip.val);
+                    if (type == RD_TYPE_AS)
+                      vty_out (vty, "%u:%d", rd_as.as, rd_as.val);
+                    else if (type == RD_TYPE_IP)
+                      vty_out (vty, "%s:%d", safe_inet_ntoa (rd_ip.ip), rd_ip.val);
 
-		    vty_out (vty, "%s", VTY_NEWLINE);
-		    rd_header = 0;
-		  }
-	        if (tags)
-		  route_vty_out_tag (vty, &rm->p, ri, 0, SAFI_MPLS_VPN);
-	        else
-		  route_vty_out (vty, &rm->p, ri, 0, SAFI_MPLS_VPN);
-	      }
+                    vty_out (vty, "%s", VTY_NEWLINE);
+                    rd_header = 0;
+                  }
+                if (tags)
+                  route_vty_out_tag (vty, &rm->p, ri, 0, SAFI_MPLS_VPN);
+                else
+                  route_vty_out (vty, &rm->p, ri, 0, SAFI_MPLS_VPN);
+              }
         }
     }
   return CMD_SUCCESS;

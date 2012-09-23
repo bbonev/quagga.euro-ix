@@ -22,7 +22,7 @@ Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
 #define _QUAGGA_BGP_COMMUNITY_H
 
 /* Communities attribute.  */
-struct community 
+struct community
 {
   /* Reference count of communities value.  */
   unsigned long refcnt;

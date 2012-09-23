@@ -130,7 +130,7 @@ as_filter_make (regex_t *reg, const char *reg_str, enum as_filter_type type)
 
 static struct as_filter *
 as_filter_lookup (struct as_list *aslist, const char *reg_str,
-		  enum as_filter_type type)
+                  enum as_filter_type type)
 {
   struct as_filter *asfilter;
 
@@ -211,9 +211,9 @@ as_list_insert (const char *name)
   for (number = 0, i = 0; i < strlen (name); i++)
     {
       if (isdigit ((int) name[i]))
-	number = (number * 10) + (name[i] - '0');
+        number = (number * 10) + (name[i] - '0');
       else
-	break;
+        break;
     }
 
   /* In case of name is all digit character */
@@ -225,8 +225,8 @@ as_list_insert (const char *name)
       list = &as_list_master.num;
 
       for (point = list->head; point; point = point->next)
-	if (atol (point->name) >= number)
-	  break;
+        if (atol (point->name) >= number)
+          break;
     }
   else
     {
@@ -237,8 +237,8 @@ as_list_insert (const char *name)
 
       /* Set point to insertion point. */
       for (point = list->head; point; point = point->next)
-	if (strcmp (point->name, name) >= 0)
-	  break;
+        if (strcmp (point->name, name) >= 0)
+          break;
     }
 
   /* In case of this is the first element of master. */
@@ -289,7 +289,7 @@ as_list_get (const char *name)
 
       /* Run hook function. */
       if (as_list_master.add_hook)
-	(*as_list_master.add_hook) ();
+        (*as_list_master.add_hook) ();
     }
 
   return aslist;
@@ -395,7 +395,7 @@ as_list_apply (struct as_list *aslist, void *object)
   for (asfilter = aslist->head; asfilter; asfilter = asfilter->next)
     {
       if (as_filter_match (asfilter, aspath))
-	return asfilter->type;
+        return asfilter->type;
     }
   return AS_FILTER_DENY;
 }
@@ -422,8 +422,8 @@ as_list_dup_check (struct as_list *aslist, struct as_filter *new)
   for (asfilter = aslist->head; asfilter; asfilter = asfilter->next)
     {
       if (asfilter->type == new->type
-	  && strcmp (asfilter->reg_str, new->reg_str) == 0)
-	return 1;
+          && strcmp (asfilter->reg_str, new->reg_str) == 0)
+        return 1;
     }
   return 0;
 }
@@ -463,7 +463,7 @@ DEFUN (ip_as_path, ip_as_path_cmd,
     {
       XFREE (MTYPE_TMP, regstr);
       vty_out (vty, "can't compile regexp %s%s", argv[0],
-	       VTY_NEWLINE);
+               VTY_NEWLINE);
       return CMD_WARNING;
     }
 
@@ -506,7 +506,7 @@ DEFUN (no_ip_as_path,
   if (aslist == NULL)
     {
       vty_out (vty, "ip as-path access-list %s doesn't exist%s", argv[0],
-	       VTY_NEWLINE);
+               VTY_NEWLINE);
       return CMD_WARNING;
     }
 
@@ -529,7 +529,7 @@ DEFUN (no_ip_as_path,
     {
       XFREE (MTYPE_TMP, regstr);
       vty_out (vty, "can't compile regexp %s%s", argv[0],
-	       VTY_NEWLINE);
+               VTY_NEWLINE);
       return CMD_WARNING;
     }
 
@@ -565,7 +565,7 @@ DEFUN (no_ip_as_path_all,
   if (aslist == NULL)
     {
       vty_out (vty, "ip as-path access-list %s doesn't exist%s", argv[0],
-	       VTY_NEWLINE);
+               VTY_NEWLINE);
       return CMD_WARNING;
     }
 
@@ -588,7 +588,7 @@ as_list_show (struct vty *vty, struct as_list *aslist)
   for (asfilter = aslist->head; asfilter; asfilter = asfilter->next)
     {
       vty_out (vty, "    %s %s%s", filter_type_str (asfilter->type),
-	       asfilter->reg_str, VTY_NEWLINE);
+               asfilter->reg_str, VTY_NEWLINE);
     }
 }
 
@@ -603,10 +603,10 @@ as_list_show_all (struct vty *vty)
       vty_out (vty, "AS path access list %s%s", aslist->name, VTY_NEWLINE);
 
       for (asfilter = aslist->head; asfilter; asfilter = asfilter->next)
-	{
-	  vty_out (vty, "    %s %s%s", filter_type_str (asfilter->type),
-		   asfilter->reg_str, VTY_NEWLINE);
-	}
+        {
+          vty_out (vty, "    %s %s%s", filter_type_str (asfilter->type),
+                   asfilter->reg_str, VTY_NEWLINE);
+        }
     }
 
   for (aslist = as_list_master.str.head; aslist; aslist = aslist->next)
@@ -614,10 +614,10 @@ as_list_show_all (struct vty *vty)
       vty_out (vty, "AS path access list %s%s", aslist->name, VTY_NEWLINE);
 
       for (asfilter = aslist->head; asfilter; asfilter = asfilter->next)
-	{
-	  vty_out (vty, "    %s %s%s", filter_type_str (asfilter->type),
-		   asfilter->reg_str, VTY_NEWLINE);
-	}
+        {
+          vty_out (vty, "    %s %s%s", filter_type_str (asfilter->type),
+                   asfilter->reg_str, VTY_NEWLINE);
+        }
     }
 }
 
@@ -659,21 +659,21 @@ config_write_as_list (struct vty *vty)
   for (aslist = as_list_master.num.head; aslist; aslist = aslist->next)
     for (asfilter = aslist->head; asfilter; asfilter = asfilter->next)
       {
-	vty_out (vty, "ip as-path access-list %s %s %s%s",
-		 aslist->name, filter_type_str (asfilter->type),
-		 asfilter->reg_str,
-		 VTY_NEWLINE);
-	write++;
+        vty_out (vty, "ip as-path access-list %s %s %s%s",
+                 aslist->name, filter_type_str (asfilter->type),
+                 asfilter->reg_str,
+                 VTY_NEWLINE);
+        write++;
       }
 
   for (aslist = as_list_master.str.head; aslist; aslist = aslist->next)
     for (asfilter = aslist->head; asfilter; asfilter = asfilter->next)
       {
-	vty_out (vty, "ip as-path access-list %s %s %s%s",
-		 aslist->name, filter_type_str (asfilter->type),
-		 asfilter->reg_str,
-		 VTY_NEWLINE);
-	write++;
+        vty_out (vty, "ip as-path access-list %s %s %s%s",
+                 aslist->name, filter_type_str (asfilter->type),
+                 asfilter->reg_str,
+                 VTY_NEWLINE);
+        write++;
       }
   return write;
 }

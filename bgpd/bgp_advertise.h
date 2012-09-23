@@ -211,13 +211,13 @@ bgp_advertise_fifo_del(bgp_advertise adv)
 
 /* Prototypes.  */
 extern void bgp_adj_out_set (struct bgp_node *, struct peer *, struct prefix *,
-		      struct attr *, afi_t, safi_t, struct bgp_info *);
+                      struct attr *, afi_t, safi_t, struct bgp_info *);
 extern void bgp_adj_out_unset (struct bgp_node *, struct peer *, struct prefix *,
-			afi_t, safi_t);
+                        afi_t, safi_t);
 extern void bgp_adj_out_remove (struct bgp_node *, struct bgp_adj_out *,
-			 struct peer *, afi_t, safi_t);
+                         struct peer *, afi_t, safi_t);
 extern int bgp_adj_out_lookup (struct peer *, struct prefix *, afi_t, safi_t,
-			struct bgp_node *);
+                        struct bgp_node *);
 
 extern void bgp_adj_in_set (struct bgp_node *, struct peer *, struct attr *);
 extern void bgp_adj_in_unset (struct bgp_node *, struct peer *);

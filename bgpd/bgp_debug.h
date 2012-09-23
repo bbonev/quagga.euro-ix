@@ -46,12 +46,12 @@ extern int Debug_Keepalive;
 extern int Debug_Update;
 extern int Debug_Radix;
 
-#define	NLRI	 1
-#define	WITHDRAW 2
-#define	NO_OPT	 3
-#define	SEND	 4
-#define	RECV	 5
-#define	DETAIL	 6
+#define NLRI     1
+#define WITHDRAW 2
+#define NO_OPT   3
+#define SEND     4
+#define RECV     5
+#define DETAIL   6
 
 /* Prototypes. */
 extern void bgp_debug_cmd_init (void);
@@ -102,24 +102,24 @@ extern unsigned long term_bgp_debug_zebra;
 #define BGP_DEBUG_PACKET_RECV         0x01
 #define BGP_DEBUG_PACKET_RECV_DETAIL  0x02
 
-#define CONF_DEBUG_ON(a, b)	(conf_bgp_debug_ ## a |= (BGP_DEBUG_ ## b))
-#define CONF_DEBUG_OFF(a, b)	(conf_bgp_debug_ ## a &= ~(BGP_DEBUG_ ## b))
+#define CONF_DEBUG_ON(a, b)     (conf_bgp_debug_ ## a |= (BGP_DEBUG_ ## b))
+#define CONF_DEBUG_OFF(a, b)    (conf_bgp_debug_ ## a &= ~(BGP_DEBUG_ ## b))
 
-#define TERM_DEBUG_ON(a, b)	(term_bgp_debug_ ## a |= (BGP_DEBUG_ ## b))
-#define TERM_DEBUG_OFF(a, b)	(term_bgp_debug_ ## a &= ~(BGP_DEBUG_ ## b))
+#define TERM_DEBUG_ON(a, b)     (term_bgp_debug_ ## a |= (BGP_DEBUG_ ## b))
+#define TERM_DEBUG_OFF(a, b)    (term_bgp_debug_ ## a &= ~(BGP_DEBUG_ ## b))
 
 #define DEBUG_ON(a, b) \
     do { \
-	CONF_DEBUG_ON(a, b); \
-	TERM_DEBUG_ON(a, b); \
+        CONF_DEBUG_ON(a, b); \
+        TERM_DEBUG_ON(a, b); \
     } while (0)
 #define DEBUG_OFF(a, b) \
     do { \
-	CONF_DEBUG_OFF(a, b); \
-	TERM_DEBUG_OFF(a, b); \
+        CONF_DEBUG_OFF(a, b); \
+        TERM_DEBUG_OFF(a, b); \
     } while (0)
 
-#define BGP_DEBUG(a, b)		(term_bgp_debug_ ## a & BGP_DEBUG_ ## b)
+#define BGP_DEBUG(a, b)         (term_bgp_debug_ ## a & BGP_DEBUG_ ## b)
 #define CONF_BGP_DEBUG(a, b)    (conf_bgp_debug_ ## a & BGP_DEBUG_ ## b)
 
 extern int bgp_dump_attr (struct peer *, struct attr *, char *, size_t);

@@ -107,17 +107,17 @@ extern struct community_list_handler *community_list_init (void);
 extern void community_list_terminate (struct community_list_handler *);
 
 extern int community_list_set (struct community_list_handler *ch,
-			       const char *name, const char *str, int direct,
-			       int style);
+                               const char *name, const char *str, int direct,
+                               int style);
 extern int community_list_unset (struct community_list_handler *ch,
-				 const char *name, const char *str,
-				 int direct, int style);
+                                 const char *name, const char *str,
+                                 int direct, int style);
 extern int extcommunity_list_set (struct community_list_handler *ch,
-				  const char *name, const char *str,
-				  int direct, int style);
+                                  const char *name, const char *str,
+                                  int direct, int style);
 extern int extcommunity_list_unset (struct community_list_handler *ch,
-				    const char *name, const char *str,
-				    int direct, int style);
+                                    const char *name, const char *str,
+                                    int direct, int style);
 
 extern struct symbol_table*
 community_list_master_lookup (struct community_list_handler *, int);
@@ -128,7 +128,7 @@ community_list_lookup (struct community_list_handler *, const char *, int);
 extern int community_list_match (struct community *, struct community_list *);
 extern int ecommunity_list_match (struct ecommunity *, struct community_list *);
 extern int community_list_exact_match (struct community *,
-				       struct community_list *);
+                                       struct community_list *);
 extern struct community *
 community_list_match_delete (struct community *, struct community_list *);
 

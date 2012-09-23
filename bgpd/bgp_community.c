@@ -33,7 +33,7 @@ static struct community *
 community_new (void)
 {
   return (struct community *) XCALLOC (MTYPE_COMMUNITY,
-				       sizeof (struct community));
+                                       sizeof (struct community));
 }
 
 /* Free communities value.  */
@@ -74,24 +74,24 @@ community_del_val (struct community *com, u_int32_t *val)
   while (i < com->size)
     {
       if (memcmp (com->val + i, val, sizeof (u_int32_t)) == 0)
-	{
-	  c = com->size -i -1;
+        {
+          c = com->size -i -1;
 
-	  if (c > 0)
-	    memcpy (com->val + i, com->val + (i + 1), c * sizeof (*val));
+          if (c > 0)
+            memcpy (com->val + i, com->val + (i + 1), c * sizeof (*val));
 
-	  com->size--;
+          com->size--;
 
-	  if (com->size > 0)
-	    com->val = XREALLOC (MTYPE_COMMUNITY_VAL, com->val,
-				 com_length (com));
-	  else
-	    {
-	      XFREE (MTYPE_COMMUNITY_VAL, com->val);
-	      com->val = NULL;
-	    }
-	  return;
-	}
+          if (com->size > 0)
+            com->val = XREALLOC (MTYPE_COMMUNITY_VAL, com->val,
+                                 com_length (com));
+          else
+            {
+              XFREE (MTYPE_COMMUNITY_VAL, com->val);
+              com->val = NULL;
+            }
+          return;
+        }
       i++;
     }
 }
@@ -176,7 +176,7 @@ community_uniq_sort (struct community *com)
       val = community_val_get (com, i);
 
       if (! community_include (new, val))
-	community_add_val (new, val);
+        community_add_val (new, val);
     }
 
   qsort (new->val, new->size, sizeof (u_int32_t), community_compare);
@@ -227,23 +227,23 @@ community_com2str  (struct community *com)
       comval = ntohl (comval);
 
       switch (comval)
-	{
-	case COMMUNITY_INTERNET:
-	  len += strlen (" internet");
-	  break;
-	case COMMUNITY_NO_EXPORT:
-	  len += strlen (" no-export");
-	  break;
-	case COMMUNITY_NO_ADVERTISE:
-	  len += strlen (" no-advertise");
-	  break;
-	case COMMUNITY_LOCAL_AS:
-	  len += strlen (" local-AS");
-	  break;
-	default:
-	  len += strlen (" 65536:65535");
-	  break;
-	}
+        {
+        case COMMUNITY_INTERNET:
+          len += strlen (" internet");
+          break;
+        case COMMUNITY_NO_EXPORT:
+          len += strlen (" no-export");
+          break;
+        case COMMUNITY_NO_ADVERTISE:
+          len += strlen (" no-advertise");
+          break;
+        case COMMUNITY_LOCAL_AS:
+          len += strlen (" local-AS");
+          break;
+        default:
+          len += strlen (" 65536:65535");
+          break;
+        }
     }
 
   /* Allocate memory.  */
@@ -257,35 +257,35 @@ community_com2str  (struct community *com)
       comval = ntohl (comval);
 
       if (first)
-	first = 0;
+        first = 0;
       else
-	*pnt++ = ' ';
+        *pnt++ = ' ';
 
       switch (comval)
-	{
-	case COMMUNITY_INTERNET:
-	  strcpy (pnt, "internet");
-	  pnt += strlen ("internet");
-	  break;
-	case COMMUNITY_NO_EXPORT:
-	  strcpy (pnt, "no-export");
-	  pnt += strlen ("no-export");
-	  break;
-	case COMMUNITY_NO_ADVERTISE:
-	  strcpy (pnt, "no-advertise");
-	  pnt += strlen ("no-advertise");
-	  break;
-	case COMMUNITY_LOCAL_AS:
-	  strcpy (pnt, "local-AS");
-	  pnt += strlen ("local-AS");
-	  break;
-	default:
-	  as = (comval >> 16) & 0xFFFF;
-	  val = comval & 0xFFFF;
-	  sprintf (pnt, "%u:%d", as, val);
-	  pnt += strlen (pnt);
-	  break;
-	}
+        {
+        case COMMUNITY_INTERNET:
+          strcpy (pnt, "internet");
+          pnt += strlen ("internet");
+          break;
+        case COMMUNITY_NO_EXPORT:
+          strcpy (pnt, "no-export");
+          pnt += strlen ("no-export");
+          break;
+        case COMMUNITY_NO_ADVERTISE:
+          strcpy (pnt, "no-advertise");
+          pnt += strlen ("no-advertise");
+          break;
+        case COMMUNITY_LOCAL_AS:
+          strcpy (pnt, "local-AS");
+          pnt += strlen ("local-AS");
+          break;
+        default:
+          as = (comval >> 16) & 0xFFFF;
+          val = comval & 0xFFFF;
+          sprintf (pnt, "%u:%d", as, val);
+          pnt += strlen (pnt);
+          break;
+        }
     }
   *pnt = '\0';
 
@@ -433,7 +433,7 @@ community_match (const struct community *com1, const struct community *com2)
   while (i < com1->size && j < com2->size)
     {
       if (memcmp (com1->val + i, com2->val + j, sizeof (u_int32_t)) == 0)
-	j++;
+        j++;
       i++;
     }
 
@@ -465,7 +465,7 @@ community_merge (struct community *com1, struct community *com2)
 {
   if (com1->val)
     com1->val = XREALLOC (MTYPE_COMMUNITY_VAL, com1->val,
-			  (com1->size + com2->size) * 4);
+                          (com1->size + com2->size) * 4);
   else
     com1->val = XMALLOC (MTYPE_COMMUNITY_VAL, (com1->size + com2->size) * 4);
 
@@ -504,33 +504,33 @@ community_gettoken (const char *buf, enum community_token *token,
   if (isalpha ((int) *p))
     {
       if (strncmp (p, "internet", strlen ("internet")) == 0)
-	{
-	  *val = COMMUNITY_INTERNET;
-	  *token = community_token_no_export;
-	  p += strlen ("internet");
-	  return p;
-	}
+        {
+          *val = COMMUNITY_INTERNET;
+          *token = community_token_no_export;
+          p += strlen ("internet");
+          return p;
+        }
       if (strncmp (p, "no-export", strlen ("no-export")) == 0)
-	{
-	  *val = COMMUNITY_NO_EXPORT;
-	  *token = community_token_no_export;
-	  p += strlen ("no-export");
-	  return p;
-	}
+        {
+          *val = COMMUNITY_NO_EXPORT;
+          *token = community_token_no_export;
+          p += strlen ("no-export");
+          return p;
+        }
       if (strncmp (p, "no-advertise", strlen ("no-advertise")) == 0)
-	{
-	  *val = COMMUNITY_NO_ADVERTISE;
-	  *token = community_token_no_advertise;
-	  p += strlen ("no-advertise");
-	  return p;
-	}
+        {
+          *val = COMMUNITY_NO_ADVERTISE;
+          *token = community_token_no_advertise;
+          p += strlen ("no-advertise");
+          return p;
+        }
       if (strncmp (p, "local-AS", strlen ("local-AS")) == 0)
-	{
-	  *val = COMMUNITY_LOCAL_AS;
-	  *token = community_token_local_as;
-	  p += strlen ("local-AS");
-	  return p;
-	}
+        {
+          *val = COMMUNITY_LOCAL_AS;
+          *token = community_token_local_as;
+          p += strlen ("local-AS");
+          return p;
+        }
 
       /* Unknown string. */
       *token = community_token_unknown;
@@ -546,35 +546,35 @@ community_gettoken (const char *buf, enum community_token *token,
       u_int32_t community_high = 0;
 
       while (isdigit ((int) *p) || *p == ':')
-	{
-	  if (*p == ':')
-	    {
-	      if (separator)
-		{
-		  *token = community_token_unknown;
-		  return NULL;
-		}
-	      else
-		{
-		  separator = 1;
-		  digit = 0;
-		  community_high = community_low << 16;
-		  community_low = 0;
-		}
-	    }
-	  else
-	    {
-	      digit = 1;
-	      community_low *= 10;
-	      community_low += (*p - '0');
-	    }
-	  p++;
-	}
+        {
+          if (*p == ':')
+            {
+              if (separator)
+                {
+                  *token = community_token_unknown;
+                  return NULL;
+                }
+              else
+                {
+                  separator = 1;
+                  digit = 0;
+                  community_high = community_low << 16;
+                  community_low = 0;
+                }
+            }
+          else
+            {
+              digit = 1;
+              community_low *= 10;
+              community_low += (*p - '0');
+            }
+          p++;
+        }
       if (! digit)
-	{
-	  *token = community_token_unknown;
-	  return NULL;
-	}
+        {
+          *token = community_token_unknown;
+          return NULL;
+        }
       *val = community_high + community_low;
       *token = community_token_val;
       return p;
@@ -597,21 +597,21 @@ community_str2com (const char *str)
       str = community_gettoken (str, &token, &val);
 
       switch (token)
-	{
-	case community_token_val:
-	case community_token_no_export:
-	case community_token_no_advertise:
-	case community_token_local_as:
-	  if (com == NULL)
-	    com = community_new();
-	  community_add_val (com, val);
-	  break;
-	case community_token_unknown:
-	default:
-	  if (com)
-	    community_free (com);
-	  return NULL;
-	}
+        {
+        case community_token_val:
+        case community_token_no_export:
+        case community_token_no_advertise:
+        case community_token_local_as:
+          if (com == NULL)
+            com = community_new();
+          community_add_val (com, val);
+          break;
+        case community_token_unknown:
+        default:
+          if (com)
+            community_free (com);
+          return NULL;
+        }
     } while (str);
 
   if (! com)
@@ -642,7 +642,7 @@ void
 community_init (void)
 {
   comhash = hash_create ((unsigned int (*) (void *))community_hash_make,
-			 (int (*) (const void *, const void *))community_cmp);
+                         (int (*) (const void *, const void *))community_cmp);
 }
 
 void

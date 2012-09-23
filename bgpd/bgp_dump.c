@@ -400,7 +400,7 @@ bgp_dump_set_timer(bgp_dump_control bdc)
       /* Periodic dump every interval seconds
        */
       if ((interval < (24 * 60 * 60)) && (((24 * 60 * 60) % interval) == 0))
-	{
+        {
           /* Dump at predictable times: if a day has a whole number of
            * intervals, dump every interval seconds starting from midnight
            */
@@ -408,11 +408,11 @@ bgp_dump_set_timer(bgp_dump_control bdc)
           time_t t;
           struct tm tm;
 
-	  (void) time(&t);
-	  localtime_r(&t, &tm);
-	  secs_into_day = tm.tm_sec + 60 * (tm.tm_min + 60 * tm.tm_hour) ;
-	  interval = interval - secs_into_day % interval; /* always > 0 */
-	}
+          (void) time(&t);
+          localtime_r(&t, &tm);
+          secs_into_day = tm.tm_sec + 60 * (tm.tm_min + 60 * tm.tm_hour) ;
+          interval = interval - secs_into_day % interval; /* always > 0 */
+        }
 
       if (bdc->qtr == NULL)
         bdc->qtr = qtimer_init_new(NULL, routing_nexus->pile,
@@ -990,13 +990,13 @@ bgp_dump_parse_time (const char *str)
   for (i = 0; i < len; i++)
     {
       if (isdigit ((int) str[i]))
-	{
+        {
           seen_d = true ;
-	  time *= 10;
-	  time += str[i] - '0';
-	}
+          time *= 10;
+          time += str[i] - '0';
+        }
       else
-	{
+        {
           if (!seen_d)
             return -1 ;         /* must have digit before non-digit     */
 
@@ -1031,7 +1031,7 @@ bgp_dump_parse_time (const char *str)
 
           seen_d = false ;      /* accept only digit or end             */
           time = 0 ;            /* no further value, yet                */
-	} ;
+        } ;
     } ;
 
   return total + time ;
@@ -1084,14 +1084,14 @@ bgp_dump_set (struct vty *vty, bgp_dump_type_t type, const char *template,
       /* Check interval string. */
       int get = bgp_dump_parse_time (interval_str);
       if (get < 60)
-	{
+        {
           if (get < 0)
             vty_out (vty, "Malformed interval string%s", VTY_NEWLINE) ;
           else
             vty_out (vty, "Interval < 60 seconds%s", VTY_NEWLINE) ;
 
           return CMD_WARNING;
-	} ;
+        } ;
 
       interval = get ;
 

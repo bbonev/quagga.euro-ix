@@ -78,7 +78,7 @@ struct bgp_info
 #define BGP_INFO_DMED_SELECTED  (1 << 7)
 #define BGP_INFO_STALE          (1 << 8)
 #define BGP_INFO_REMOVED        (1 << 9)
-#define BGP_INFO_COUNTED	(1 << 10)
+#define BGP_INFO_COUNTED        (1 << 10)
 
   /* BGP route type.  This can be static, RIP, OSPF, BGP etc.  */
   u_char type;
@@ -206,8 +206,8 @@ extern int bgp_maximum_prefix_overflow (struct peer *, afi_t, safi_t, int);
 extern void bgp_maximum_prefix_cancel_timer (struct peer *peer) ;
 
 extern void bgp_redistribute_add (struct prefix *, const struct in_addr *,
-				  const struct in6_addr *,
-				  u_int32_t, u_char);
+                                  const struct in6_addr *,
+                                  u_int32_t, u_char);
 extern void bgp_redistribute_delete (struct prefix *, u_char);
 extern void bgp_redistribute_withdraw (struct bgp *, afi_t, int);
 
@@ -224,10 +224,10 @@ extern int bgp_static_unset_vpnv4 (struct vty *, const char *,
 
 /* this is primarily for MPLS-VPN */
 extern int bgp_update (struct peer *, struct prefix *, struct attr *,
-		       afi_t, safi_t, int, int, struct prefix_rd *,
-		       u_char *, int);
+                       afi_t, safi_t, int, int, struct prefix_rd *,
+                       u_char *, int);
 extern int bgp_withdraw (struct peer *, struct prefix *, struct attr *,
-			 afi_t, safi_t, int, int, struct prefix_rd *, u_char *);
+                         afi_t, safi_t, int, int, struct prefix_rd *, u_char *);
 
 /* for bgp_nexthop and bgp_damp */
 extern void bgp_process (struct bgp *, struct bgp_node *, afi_t, safi_t);
@@ -235,9 +235,9 @@ extern int bgp_config_write_network (struct vty *, struct bgp *, afi_t, safi_t, 
 extern int bgp_config_write_distance (struct vty *, struct bgp *);
 
 extern void bgp_aggregate_increment (struct bgp *, struct prefix *, struct bgp_info *,
-			      afi_t, safi_t);
+                              afi_t, safi_t);
 extern void bgp_aggregate_decrement (struct bgp *, struct prefix *, struct bgp_info *,
-			      afi_t, safi_t);
+                              afi_t, safi_t);
 
 extern u_char bgp_distance_apply (struct prefix *, struct bgp_info *, struct bgp *);
 

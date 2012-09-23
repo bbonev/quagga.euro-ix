@@ -441,29 +441,29 @@ struct peer
 } ;
 
 
-#define BGP_TIMER_ON(T,F,V)			\
-  do {						\
-    if (!(T) && (peer->state != bgp_peer_pDeleting))	\
+#define BGP_TIMER_ON(T,F,V)                     \
+  do {                                          \
+    if (!(T) && (peer->state != bgp_peer_pDeleting))    \
       THREAD_TIMER_ON(master,(T),(F),peer,(V)); \
   } while (0)
 
-#define BGP_TIMER_OFF(T)			\
-  do {						\
-    if (T)					\
-      THREAD_TIMER_OFF(T);			\
+#define BGP_TIMER_OFF(T)                        \
+  do {                                          \
+    if (T)                                      \
+      THREAD_TIMER_OFF(T);                      \
   } while (0)
 
 #if 0
-#define BGP_EVENT_ADD(P,E)			\
-  do {						\
-    if ((P)->state != bgp_peer_pDeleting)			\
+#define BGP_EVENT_ADD(P,E)                      \
+  do {                                          \
+    if ((P)->state != bgp_peer_pDeleting)                       \
       thread_add_event (master, bgp_event, (P), (E)); \
   } while (0)
 
-#define BGP_EVENT_FLUSH(P)			\
-  do { 						\
-    assert (peer); 				\
-    thread_cancel_event (master, (P)); 		\
+#define BGP_EVENT_FLUSH(P)                      \
+  do {                                          \
+    assert (peer);                              \
+    thread_cancel_event (master, (P));          \
   } while (0)
 
 /* Prototypes. */

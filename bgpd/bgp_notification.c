@@ -269,7 +269,7 @@ extern void
 bgp_notify_append_data(bgp_notify notification, const void* data,
                                                                  bgp_size_t len)
 {
-  bgp_size_t new_length = notification->length + len ;	/* unsigned	*/
+  bgp_size_t new_length = notification->length + len ;  /* unsigned     */
 
   if (new_length > notification->size)
     {

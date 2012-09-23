@@ -38,7 +38,7 @@ static struct ecommunity *
 ecommunity_new (void)
 {
   return (struct ecommunity *) XCALLOC (MTYPE_ECOMMUNITY,
-					sizeof (struct ecommunity));
+                                        sizeof (struct ecommunity));
 }
 
 /* Allocate ecommunities.  */
@@ -90,8 +90,8 @@ ecommunity_add_val (struct ecommunity *ecom, struct ecommunity_val *eval)
   ecom->val = XREALLOC (MTYPE_ECOMMUNITY_VAL, ecom->val, ecom_length (ecom));
 
   memmove (ecom->val + (c + 1) * ECOMMUNITY_SIZE,
-	   ecom->val + c * ECOMMUNITY_SIZE,
-	   (ecom->size - 1 - c) * ECOMMUNITY_SIZE);
+           ecom->val + c * ECOMMUNITY_SIZE,
+           (ecom->size - 1 - c) * ECOMMUNITY_SIZE);
   memcpy (ecom->val + c * ECOMMUNITY_SIZE, eval->val, ECOMMUNITY_SIZE);
 
   return 1;
@@ -176,13 +176,13 @@ ecommunity_merge (struct ecommunity *ecom1, struct ecommunity *ecom2)
 {
   if (ecom1->val)
     ecom1->val = XREALLOC (MTYPE_ECOMMUNITY_VAL, ecom1->val,
-			   (ecom1->size + ecom2->size) * ECOMMUNITY_SIZE);
+                           (ecom1->size + ecom2->size) * ECOMMUNITY_SIZE);
   else
     ecom1->val = XMALLOC (MTYPE_ECOMMUNITY_VAL,
-			  (ecom1->size + ecom2->size) * ECOMMUNITY_SIZE);
+                          (ecom1->size + ecom2->size) * ECOMMUNITY_SIZE);
 
   memcpy (ecom1->val + (ecom1->size * ECOMMUNITY_SIZE),
-	  ecom2->val, ecom2->size * ECOMMUNITY_SIZE);
+          ecom2->val, ecom2->size * ECOMMUNITY_SIZE);
   ecom1->size += ecom2->size;
 
   return ecom1;
@@ -255,7 +255,7 @@ ecommunity_cmp (const void *arg1, const void *arg2)
   const struct ecommunity *ecom2 = arg2;
 
   return (ecom1->size == ecom2->size
-	  && memcmp (ecom1->val, ecom2->val, ecom1->size * ECOMMUNITY_SIZE) == 0);
+          && memcmp (ecom1->val, ecom2->val, ecom1->size * ECOMMUNITY_SIZE) == 0);
 }
 
 /* Initialize Extended Comminities related hash. */
@@ -284,7 +284,7 @@ enum ecommunity_token
 /* Get next Extended Communities token from the string. */
 static const char *
 ecommunity_gettoken (const char *str, struct ecommunity_val *eval,
-		     enum ecommunity_token *token)
+                     enum ecommunity_token *token)
 {
   int ret;
   int dot = 0;
@@ -313,48 +313,48 @@ ecommunity_gettoken (const char *str, struct ecommunity_val *eval,
     {
       /* "rt" match check.  */
       if (tolower ((int) *p) == 'r')
-	{
-	  p++;
- 	  if (tolower ((int) *p) == 't')
-	    {
-	      p++;
-	      *token = ecommunity_token_rt;
-	      return p;
-	    }
-	  if (isspace ((int) *p) || *p == '\0')
-	    {
-	      *token = ecommunity_token_rt;
-	      return p;
-	    }
-	  goto error;
-	}
+        {
+          p++;
+          if (tolower ((int) *p) == 't')
+            {
+              p++;
+              *token = ecommunity_token_rt;
+              return p;
+            }
+          if (isspace ((int) *p) || *p == '\0')
+            {
+              *token = ecommunity_token_rt;
+              return p;
+            }
+          goto error;
+        }
       /* "soo" match check.  */
       else if (tolower ((int) *p) == 's')
-	{
-	  p++;
- 	  if (tolower ((int) *p) == 'o')
-	    {
-	      p++;
-	      if (tolower ((int) *p) == 'o')
-		{
-		  p++;
-		  *token = ecommunity_token_soo;
-		  return p;
-		}
-	      if (isspace ((int) *p) || *p == '\0')
-		{
-		  *token = ecommunity_token_soo;
-		  return p;
-		}
-	      goto error;
-	    }
-	  if (isspace ((int) *p) || *p == '\0')
-	    {
-	      *token = ecommunity_token_soo;
-	      return p;
-	    }
-	  goto error;
-	}
+        {
+          p++;
+          if (tolower ((int) *p) == 'o')
+            {
+              p++;
+              if (tolower ((int) *p) == 'o')
+                {
+                  p++;
+                  *token = ecommunity_token_soo;
+                  return p;
+                }
+              if (isspace ((int) *p) || *p == '\0')
+                {
+                  *token = ecommunity_token_soo;
+                  return p;
+                }
+              goto error;
+            }
+          if (isspace ((int) *p) || *p == '\0')
+            {
+              *token = ecommunity_token_soo;
+              return p;
+            }
+          goto error;
+        }
       goto error;
     }
 
@@ -374,27 +374,27 @@ ecommunity_gettoken (const char *str, struct ecommunity_val *eval,
   while (isdigit ((int) *p) || *p == ':' || *p == '.')
     {
       if (*p == ':')
-	{
-	  if (separator)
-	    goto error;
+        {
+          if (separator)
+            goto error;
 
-	  separator = 1;
-	  digit = 0;
+          separator = 1;
+          digit = 0;
 
-	  if ((p - str) > INET_ADDRSTRLEN)
-	    goto error;
+          if ((p - str) > INET_ADDRSTRLEN)
+            goto error;
           memset (buf, 0, INET_ADDRSTRLEN + 1);
           memcpy (buf, str, p - str);
 
-	  if (dot)
-	    {
-	      /* Parsing A.B.C.D in:
+          if (dot)
+            {
+              /* Parsing A.B.C.D in:
                * A.B.C.D:MN
                */
-	      ret = inet_aton (buf, &ip);
-	      if (ret == 0)
-	        goto error;
-	    }
+              ret = inet_aton (buf, &ip);
+              if (ret == 0)
+                goto error;
+            }
           else
             {
               /* ASN */
@@ -403,26 +403,26 @@ ecommunity_gettoken (const char *str, struct ecommunity_val *eval,
               if (*endptr != '\0' || (errno != 0))
                 goto error;
             }
-	}
+        }
       else if (*p == '.')
-	{
-	  if (separator)
-	    goto error;
-	  dot++;
-	  if (dot > 4)
-	    goto error;
-	}
+        {
+          if (separator)
+            goto error;
+          dot++;
+          if (dot > 4)
+            goto error;
+        }
       else
-	{
-	  digit = 1;
+        {
+          digit = 1;
 
-	  /* We're past the IP/ASN part */
-	  if (separator)
-	    {
-	      val *= 10;
-	      val += (*p - '0');
+          /* We're past the IP/ASN part */
+          if (separator)
+            {
+              val *= 10;
+              val += (*p - '0');
             }
-	}
+        }
       p++;
     }
 
@@ -513,48 +513,48 @@ ecommunity_str2com (const char *str, int type, int keyword_included)
   while ((str = ecommunity_gettoken (str, &eval, &token)))
     {
       switch (token)
-	{
-	case ecommunity_token_rt:
-	case ecommunity_token_soo:
-	  if (! keyword_included || keyword)
-	    {
-	      if (ecom)
-		ecommunity_free (&ecom);
-	      return NULL;
-	    }
-	  keyword = 1;
+        {
+        case ecommunity_token_rt:
+        case ecommunity_token_soo:
+          if (! keyword_included || keyword)
+            {
+              if (ecom)
+                ecommunity_free (&ecom);
+              return NULL;
+            }
+          keyword = 1;
 
-	  if (token == ecommunity_token_rt)
-	    {
-	      type = ECOMMUNITY_ROUTE_TARGET;
-	    }
-	  if (token == ecommunity_token_soo)
-	    {
-	      type = ECOMMUNITY_SITE_ORIGIN;
-	    }
-	  break;
-	case ecommunity_token_val:
-	  if (keyword_included)
-	    {
-	      if (! keyword)
-		{
-		  if (ecom)
-		    ecommunity_free (&ecom);
-		  return NULL;
-		}
-	      keyword = 0;
-	    }
-	  if (ecom == NULL)
-	    ecom = ecommunity_new ();
-	  eval.val[1] = type;
-	  ecommunity_add_val (ecom, &eval);
-	  break;
-	case ecommunity_token_unknown:
-	default:
-	  if (ecom)
-	    ecommunity_free (&ecom);
-	  return NULL;
-	}
+          if (token == ecommunity_token_rt)
+            {
+              type = ECOMMUNITY_ROUTE_TARGET;
+            }
+          if (token == ecommunity_token_soo)
+            {
+              type = ECOMMUNITY_SITE_ORIGIN;
+            }
+          break;
+        case ecommunity_token_val:
+          if (keyword_included)
+            {
+              if (! keyword)
+                {
+                  if (ecom)
+                    ecommunity_free (&ecom);
+                  return NULL;
+                }
+              keyword = 0;
+            }
+          if (ecom == NULL)
+            ecom = ecommunity_new ();
+          eval.val[1] = type;
+          ecommunity_add_val (ecom, &eval);
+          break;
+        case ecommunity_token_unknown:
+        default:
+          if (ecom)
+            ecommunity_free (&ecom);
+          return NULL;
+        }
     }
   return ecom;
 }
@@ -624,97 +624,97 @@ ecommunity_ecom2str (struct ecommunity *ecom, int format)
     {
       /* Make it sure size is enough.  */
       while (str_pnt + ECOMMUNITY_STR_DEFAULT_LEN >= str_size)
-	{
-	  str_size *= 2;
-	  str_buf = XREALLOC (MTYPE_ECOMMUNITY_STR, str_buf, str_size);
-	}
+        {
+          str_size *= 2;
+          str_buf = XREALLOC (MTYPE_ECOMMUNITY_STR, str_buf, str_size);
+        }
 
       /* Space between each value.  */
       if (! first)
-	str_buf[str_pnt++] = ' ';
+        str_buf[str_pnt++] = ' ';
 
       pnt = ecom->val + (i * 8);
 
       /* High-order octet of type. */
       encode = *pnt++;
       if (encode != ECOMMUNITY_ENCODE_AS && encode != ECOMMUNITY_ENCODE_IP
-		      && encode != ECOMMUNITY_ENCODE_AS4)
-	{
-	  len = sprintf (str_buf + str_pnt, "?");
-	  str_pnt += len;
-	  first = 0;
-	  continue;
-	}
+                      && encode != ECOMMUNITY_ENCODE_AS4)
+        {
+          len = sprintf (str_buf + str_pnt, "?");
+          str_pnt += len;
+          first = 0;
+          continue;
+        }
 
       /* Low-order octet of type. */
       type = *pnt++;
       if (type !=  ECOMMUNITY_ROUTE_TARGET && type != ECOMMUNITY_SITE_ORIGIN)
-	{
-	  len = sprintf (str_buf + str_pnt, "?");
-	  str_pnt += len;
-	  first = 0;
-	  continue;
-	}
+        {
+          len = sprintf (str_buf + str_pnt, "?");
+          str_pnt += len;
+          first = 0;
+          continue;
+        }
 
       switch (format)
-	{
-	case ECOMMUNITY_FORMAT_COMMUNITY_LIST:
-	  prefix = (type == ECOMMUNITY_ROUTE_TARGET ? "rt " : "soo ");
-	  break;
-	case ECOMMUNITY_FORMAT_DISPLAY:
-	  prefix = (type == ECOMMUNITY_ROUTE_TARGET ? "RT:" : "SoO:");
-	  break;
-	case ECOMMUNITY_FORMAT_ROUTE_MAP:
-	  prefix = "";
-	  break;
-	default:
-	  prefix = "";
-	  break;
-	}
+        {
+        case ECOMMUNITY_FORMAT_COMMUNITY_LIST:
+          prefix = (type == ECOMMUNITY_ROUTE_TARGET ? "rt " : "soo ");
+          break;
+        case ECOMMUNITY_FORMAT_DISPLAY:
+          prefix = (type == ECOMMUNITY_ROUTE_TARGET ? "RT:" : "SoO:");
+          break;
+        case ECOMMUNITY_FORMAT_ROUTE_MAP:
+          prefix = "";
+          break;
+        default:
+          prefix = "";
+          break;
+        }
 
       /* Put string into buffer.  */
       if (encode == ECOMMUNITY_ENCODE_AS4)
-	{
-	  eas.as = (*pnt++ << 24);
-	  eas.as |= (*pnt++ << 16);
-	  eas.as |= (*pnt++ << 8);
-	  eas.as |= (*pnt++);
+        {
+          eas.as = (*pnt++ << 24);
+          eas.as |= (*pnt++ << 16);
+          eas.as |= (*pnt++ << 8);
+          eas.as |= (*pnt++);
 
-	  eas.val = (*pnt++ << 8);
-	  eas.val |= (*pnt++);
+          eas.val = (*pnt++ << 8);
+          eas.val |= (*pnt++);
 
-	  len = sprintf( str_buf + str_pnt, "%s%u:%d", prefix,
+          len = sprintf( str_buf + str_pnt, "%s%u:%d", prefix,
                         eas.as, eas.val );
-	  str_pnt += len;
-	  first = 0;
-	}
+          str_pnt += len;
+          first = 0;
+        }
       if (encode == ECOMMUNITY_ENCODE_AS)
-	{
-	  eas.as = (*pnt++ << 8);
-	  eas.as |= (*pnt++);
+        {
+          eas.as = (*pnt++ << 8);
+          eas.as |= (*pnt++);
 
-	  eas.val = (*pnt++ << 24);
-	  eas.val |= (*pnt++ << 16);
-	  eas.val |= (*pnt++ << 8);
-	  eas.val |= (*pnt++);
+          eas.val = (*pnt++ << 24);
+          eas.val |= (*pnt++ << 16);
+          eas.val |= (*pnt++ << 8);
+          eas.val |= (*pnt++);
 
-	  len = sprintf (str_buf + str_pnt, "%s%u:%d", prefix,
-			 eas.as, eas.val);
-	  str_pnt += len;
-	  first = 0;
-	}
+          len = sprintf (str_buf + str_pnt, "%s%u:%d", prefix,
+                         eas.as, eas.val);
+          str_pnt += len;
+          first = 0;
+        }
       else if (encode == ECOMMUNITY_ENCODE_IP)
-	{
-	  memcpy (&eip.ip, pnt, 4);
-	  pnt += 4;
-	  eip.val = (*pnt++ << 8);
-	  eip.val |= (*pnt++);
+        {
+          memcpy (&eip.ip, pnt, 4);
+          pnt += 4;
+          eip.val = (*pnt++ << 8);
+          eip.val |= (*pnt++);
 
-	  len = sprintf (str_buf + str_pnt, "%s%s:%d", prefix,
-			 safe_inet_ntoa (eip.ip), eip.val);
-	  str_pnt += len;
-	  first = 0;
-	}
+          len = sprintf (str_buf + str_pnt, "%s%s:%d", prefix,
+                         safe_inet_ntoa (eip.ip), eip.val);
+          str_pnt += len;
+          first = 0;
+        }
     }
   return str_buf;
 }

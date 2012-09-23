@@ -196,8 +196,8 @@ struct bgp_rd
 
 
 
-#define PEER_PASSWORD_MINLEN	(1)
-#define PEER_PASSWORD_MAXLEN	(80)
+#define PEER_PASSWORD_MINLEN    (1)
+#define PEER_PASSWORD_MAXLEN    (80)
 
 /* This structure's member directly points incoming packet data
    stream. */
@@ -217,14 +217,14 @@ struct bgp_nlri
 };
 
 /* BGP versions.  */
-#define BGP_VERSION_4		                 4
+#define BGP_VERSION_4                            4
 
 /* Default BGP port number.  */
 #define BGP_PORT_DEFAULT                       179
 
 /* BGP message header and packet size.  */
-#define BGP_MARKER_SIZE		                16
-#define BGP_HEADER_SIZE		                19
+#define BGP_MARKER_SIZE                         16
+#define BGP_HEADER_SIZE                         19
 #define BGP_MAX_PACKET_SIZE                   4096
 
 /* BGP minimum message size.  */
@@ -236,10 +236,10 @@ struct bgp_nlri
 #define BGP_MSG_CAPABILITY_MIN_SIZE             (BGP_HEADER_SIZE + 3)
 
 /* BGP message types.  */
-#define	BGP_MSG_OPEN		                 1
-#define	BGP_MSG_UPDATE		                 2
-#define	BGP_MSG_NOTIFY		                 3
-#define	BGP_MSG_KEEPALIVE	                 4
+#define BGP_MSG_OPEN                             1
+#define BGP_MSG_UPDATE                           2
+#define BGP_MSG_NOTIFY                           3
+#define BGP_MSG_KEEPALIVE                        4
 #define BGP_MSG_ROUTE_REFRESH_NEW                5
 #define BGP_MSG_CAPABILITY                       6
 #define BGP_MSG_ROUTE_REFRESH_OLD              128
@@ -398,11 +398,11 @@ typedef enum
 #define BGP_ERR_INSTANCE_MISMATCH               -26
 #define BGP_ERR_LOCAL_AS_ALLOWED_ONLY_FOR_EBGP  -27
 #define BGP_ERR_CANNOT_HAVE_LOCAL_AS_SAME_AS    -28
-#define BGP_ERR_TCPSIG_FAILED			-29
+#define BGP_ERR_TCPSIG_FAILED                   -29
 #define BGP_ERR_PEER_EXISTS                     -30
-#define BGP_ERR_NO_EBGP_MULTIHOP_WITH_GTSM	-31
-#define BGP_ERR_NO_IBGP_WITH_TTLHACK		-32
-#define BGP_ERR_MAX				-33
+#define BGP_ERR_NO_EBGP_MULTIHOP_WITH_GTSM      -31
+#define BGP_ERR_NO_IBGP_WITH_TTLHACK            -32
+#define BGP_ERR_MAX                             -33
 
 /*------------------------------------------------------------------------------
  * Globals.
@@ -466,7 +466,7 @@ extern void bgp_reset (void);
 
 extern void bgp_zclient_reset (void);                      /* See bgp_zebra ! */
 extern int bgp_nexthop_set (union sockunion *, union sockunion *,
-		     struct bgp_nexthop *, struct peer *); /* See bgp_zebra ! */
+                     struct bgp_nexthop *, struct peer *); /* See bgp_zebra ! */
 
 extern struct bgp *bgp_get_default (void);
 extern struct bgp *bgp_lookup (as_t, const char *);
@@ -475,7 +475,7 @@ extern struct peer *peer_lookup (struct bgp *, union sockunion *);
 extern struct peer_group *peer_group_lookup (struct bgp *, const char *);
 extern struct peer_group *peer_group_get (struct bgp *, const char *);
 extern struct peer *peer_lookup_with_open (union sockunion *, as_t, struct in_addr *,
-				    int *);
+                                    int *);
 extern int peer_sort (struct peer *peer);
 extern int peer_active (struct peer *);
 extern int peer_active_nego (struct peer *);
@@ -536,9 +536,9 @@ extern void peer_rsclient_unset(struct peer* peer, int afi, int safi,
                                                              bool keep_export) ;
 
 extern int peer_group_bind (struct bgp *, union sockunion *, struct peer_group *,
-		     afi_t, safi_t, as_t *);
+                     afi_t, safi_t, as_t *);
 extern int peer_group_unbind (struct bgp *, struct peer *, struct peer_group *,
-		       afi_t, safi_t);
+                       afi_t, safi_t);
 
 extern int peer_flag_set (struct peer *, u_int32_t);
 extern int peer_flag_unset (struct peer *, u_int32_t);

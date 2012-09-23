@@ -594,10 +594,10 @@ bgp_accept_action(qps_file qf, void* file_info)
   if (connection == NULL)
     {
       if (BGP_DEBUG(fsm, FSM))
-	zlog_debug(exists
-	             ? "[FSM] BGP accept IP address %s is not accepting"
-	             : "[FSM] BGP accept IP address %s is not configured",
-	                                                sutoa(&su_remote).str) ;
+        zlog_debug(exists
+                     ? "[FSM] BGP accept IP address %s is not accepting"
+                     : "[FSM] BGP accept IP address %s is not configured",
+                                                        sutoa(&su_remote).str) ;
       close(sock_fd) ;
       return ;          /* quietly reject connection                    */
 /* TODO: RFC recommends sending a NOTIFICATION when refusing accept()   */

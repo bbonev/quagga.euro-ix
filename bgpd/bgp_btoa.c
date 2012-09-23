@@ -63,48 +63,48 @@ attr_parse (struct stream *s, u_int16_t len)
       type = stream_getc (s);
 
       if (flag & ATTR_FLAG_EXTLEN)
-	length = stream_getw (s);
+        length = stream_getw (s);
       else
-	length = stream_getc (s);
+        length = stream_getc (s);
 
       printf ("FLAG: %d\n", flag);
       printf ("TYPE: %d\n", type);
       printf ("Len: %d\n", length);
 
       switch (type)
-	{
-	case BGP_ATTR_ORIGIN:
-	  {
-	    u_char origin;
-	    origin = stream_getc (s);
-	    printf ("ORIGIN: %d\n", origin);
-	  }
-	  break;
-	case BGP_ATTR_AS_PATH:
-	  {
-	    struct aspath aspath;
+        {
+        case BGP_ATTR_ORIGIN:
+          {
+            u_char origin;
+            origin = stream_getc (s);
+            printf ("ORIGIN: %d\n", origin);
+          }
+          break;
+        case BGP_ATTR_AS_PATH:
+          {
+            struct aspath aspath;
 
-	    aspath.data = (s->data + s->getp);
-	    aspath.length = length;
-	    aspath.str = aspath_make_str_count (&aspath);
-	    printf ("ASPATH: %s\n", aspath.str);
-	    free (aspath.str);
+            aspath.data = (s->data + s->getp);
+            aspath.length = length;
+            aspath.str = aspath_make_str_count (&aspath);
+            printf ("ASPATH: %s\n", aspath.str);
+            free (aspath.str);
 
-	    stream_forward (s, length);
-	  }
-	  break;
-	case BGP_ATTR_NEXT_HOP:
-	  {
-	    struct in_addr nexthop;
-	    nexthop.s_addr = stream_get_ipv4 (s);
-	    printf ("NEXTHOP: %s\n", inet_ntoa (nexthop));
-	    /* stream_forward (s, length); */
-	  }
-	  break;
-	default:
-	  stream_forward (s, length);
-	  break;
-	}
+            stream_forward (s, length);
+          }
+          break;
+        case BGP_ATTR_NEXT_HOP:
+          {
+            struct in_addr nexthop;
+            nexthop.s_addr = stream_get_ipv4 (s);
+            printf ("NEXTHOP: %s\n", inet_ntoa (nexthop));
+            /* stream_forward (s, length); */
+          }
+          break;
+        default:
+          stream_forward (s, length);
+          break;
+        }
     }
 
   return 0;
@@ -149,15 +149,15 @@ main (int argc, char **argv)
 
       ret = fread (s->data, 12, 1, fp);
       if (feof (fp))
-	{
-	  printf ("END OF FILE\n");
-	  break;
-	}
+        {
+          printf ("END OF FILE\n");
+          break;
+        }
       if (ferror (fp))
-	{
-	  printf ("ERROR OF FREAD\n");
-	  break;
-	}
+        {
+          printf ("ERROR OF FREAD\n");
+          break;
+        }
 
       /* Extract header. */
       now = stream_getl (s);
@@ -170,119 +170,119 @@ main (int argc, char **argv)
       /* printf ("TYPE: %d/%d\n", type, subtype); */
 
       if (type == MSG_PROTOCOL_BGP4MP)
-	printf ("TYPE: BGP4MP");
+        printf ("TYPE: BGP4MP");
       else if (type == MSG_TABLE_DUMP)
-	printf ("TYPE: MSG_TABLE_DUMP");
+        printf ("TYPE: MSG_TABLE_DUMP");
       else
-	printf ("TYPE: Unknown %d", type);
+        printf ("TYPE: Unknown %d", type);
 
       if (type == MSG_TABLE_DUMP)
-	switch (subtype)
-	  {
-	  case AFI_IP:
-	    printf ("/AFI_IP\n");
-	    break;
-	  case AFI_IP6:
-	    printf ("/AFI_IP6\n");
-	    break;
-	  default:
-	    printf ("/UNKNOWN %d", subtype);
-	    break;
-	  }
+        switch (subtype)
+          {
+          case AFI_IP:
+            printf ("/AFI_IP\n");
+            break;
+          case AFI_IP6:
+            printf ("/AFI_IP6\n");
+            break;
+          default:
+            printf ("/UNKNOWN %d", subtype);
+            break;
+          }
       else
-	{
-	  switch (subtype)
-	    {
-	    case BGP4MP_STATE_CHANGE:
-	      printf ("/CHANGE\n");
-	      break;
-	    case BGP4MP_MESSAGE:
-	      printf ("/MESSAGE\n");
-	      break;
-	    case BGP4MP_ENTRY:
-	      printf ("/ENTRY\n");
-	      break;
-	    case BGP4MP_SNAPSHOT:
-	      printf ("/SNAPSHOT\n");
-	      break;
-	    default:
-	      printf ("/UNKNOWN %d", subtype);
-	      break;
-	    }
-	}
+        {
+          switch (subtype)
+            {
+            case BGP4MP_STATE_CHANGE:
+              printf ("/CHANGE\n");
+              break;
+            case BGP4MP_MESSAGE:
+              printf ("/MESSAGE\n");
+              break;
+            case BGP4MP_ENTRY:
+              printf ("/ENTRY\n");
+              break;
+            case BGP4MP_SNAPSHOT:
+              printf ("/SNAPSHOT\n");
+              break;
+            default:
+              printf ("/UNKNOWN %d", subtype);
+              break;
+            }
+        }
 
       printf ("len: %d\n", len);
 
       ret = fread (s->data + 12, len, 1, fp);
       if (feof (fp))
-	{
-	  printf ("ENDOF FILE 2\n");
-	  break;
-	}
+        {
+          printf ("ENDOF FILE 2\n");
+          break;
+        }
       if (ferror (fp))
-	{
-	  printf ("ERROR OF FREAD 2\n");
-	  break;
-	}
+        {
+          printf ("ERROR OF FREAD 2\n");
+          break;
+        }
 
       /* printf ("now read %d\n", len); */
 
       if (type == MSG_TABLE_DUMP)
-	{
-	  u_char status;
-	  time_t originated;
-	  struct in_addr peer;
-	  u_int16_t attrlen;
+        {
+          u_char status;
+          time_t originated;
+          struct in_addr peer;
+          u_int16_t attrlen;
 
-	  viewno = stream_getw (s);
-	  seq_num = stream_getw (s);
-	  printf ("VIEW: %d\n", viewno);
-	  printf ("SEQUENCE: %d\n", seq_num);
+          viewno = stream_getw (s);
+          seq_num = stream_getw (s);
+          printf ("VIEW: %d\n", viewno);
+          printf ("SEQUENCE: %d\n", seq_num);
 
-	  /* start */
-	  while (s->getp < len - 16)
-	    {
-	      p.prefix.s_addr = stream_get_ipv4 (s);
-	      p.prefixlen = stream_getc (s);
-	      printf ("PREFIX: %s/%d\n", inet_ntoa (p.prefix), p.prefixlen);
+          /* start */
+          while (s->getp < len - 16)
+            {
+              p.prefix.s_addr = stream_get_ipv4 (s);
+              p.prefixlen = stream_getc (s);
+              printf ("PREFIX: %s/%d\n", inet_ntoa (p.prefix), p.prefixlen);
 
-	      status = stream_getc (s);
-	      originated = stream_getl (s);
-	      peer.s_addr = stream_get_ipv4 (s);
-	      source_as = stream_getw(s);
+              status = stream_getc (s);
+              originated = stream_getl (s);
+              peer.s_addr = stream_get_ipv4 (s);
+              source_as = stream_getw(s);
 
-	      printf ("FROM: %s AS%d\n", inet_ntoa (peer), source_as);
-	      printf ("ORIGINATED: %s", ctime (&originated));
+              printf ("FROM: %s AS%d\n", inet_ntoa (peer), source_as);
+              printf ("ORIGINATED: %s", ctime (&originated));
 
-	      attrlen = stream_getw (s);
-	      printf ("ATTRLEN: %d\n", attrlen);
+              attrlen = stream_getw (s);
+              printf ("ATTRLEN: %d\n", attrlen);
 
-	      attr_parse (s, attrlen);
+              attr_parse (s, attrlen);
 
-	      printf ("STATUS: 0x%x\n", status);
-	    }
-	}
+              printf ("STATUS: 0x%x\n", status);
+            }
+        }
       else
-	{
-	  source_as = stream_getw (s);
-	  dest_as = stream_getw (s);
-	  printf ("source_as: %d\n", source_as);
-	  printf ("dest_as: %d\n", dest_as);
+        {
+          source_as = stream_getw (s);
+          dest_as = stream_getw (s);
+          printf ("source_as: %d\n", source_as);
+          printf ("dest_as: %d\n", dest_as);
 
-	  ifindex = stream_getw (s);
-	  family = stream_getw (s);
+          ifindex = stream_getw (s);
+          family = stream_getw (s);
 
-	  printf ("ifindex: %d\n", ifindex);
-	  printf ("family: %d\n", family);
+          printf ("ifindex: %d\n", ifindex);
+          printf ("family: %d\n", family);
 
-	  sip.s_addr = stream_get_ipv4 (s);
-	  dip.s_addr = stream_get_ipv4 (s);
+          sip.s_addr = stream_get_ipv4 (s);
+          dip.s_addr = stream_get_ipv4 (s);
 
-	  printf ("saddr: %s\n", inet_ntoa (sip));
-	  printf ("daddr: %s\n", inet_ntoa (dip));
+          printf ("saddr: %s\n", inet_ntoa (sip));
+          printf ("daddr: %s\n", inet_ntoa (dip));
 
-	  printf ("\n");
-	}
+          printf ("\n");
+        }
     }
   fclose (fp);
   return 0;
