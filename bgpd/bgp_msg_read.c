@@ -299,13 +299,13 @@ bgp_msg_unknown_receive(bgp_connection connection, bgp_size_t body_size)
 /*==============================================================================
  * BGP OPEN message
  */
-static int bgp_msg_open_option_parse (bgp_connection connection,
+static bool bgp_msg_open_option_parse (bgp_connection connection,
                                            bgp_notify notification, sucker sr) ;
-static int bgp_msg_capability_option_parse (bgp_connection connection,
+static bool bgp_msg_capability_option_parse (bgp_connection connection,
                                            bgp_notify notification, sucker sr) ;
-static int bgp_msg_open_error(bgp_notify notification,
+static bool bgp_msg_open_error(bgp_notify notification,
                                                     bgp_nom_subcode_t subcode) ;
-static int bgp_msg_open_invalid(bgp_notify notification) ;
+static bool bgp_msg_open_invalid(bgp_notify notification) ;
 
 /*------------------------------------------------------------------------------
  * Receive BGP open packet and parse it into the connection's open_recv
@@ -315,7 +315,6 @@ static int bgp_msg_open_invalid(bgp_notify notification) ;
 static void
 bgp_msg_open_receive (bgp_connection connection, bgp_size_t body_size)
 {
-  int ret;
   u_char version;
   u_char optlen;
   struct in_addr remote_id;
@@ -331,10 +330,47 @@ bgp_msg_open_receive (bgp_connection connection, bgp_size_t body_size)
    */
   notification = bgp_notify_new(BGP_NOMC_OPEN, BGP_NOMS_UNSPECIFIC) ;
 
-  /* To receive the parsed open message
+  /* To receive the parsed open message we create an empty bgp_open_state
+   * object.  Zeroizing that has set:
+   *
+   *   * my_as               -- X     -- will be set from OPEN/BGP_CAN_AS4
+   *
+   *   * holdtime            -- X     -- will be set from OPEN
+   *   * keepalive           -- X     -- ditto
+   *   * bgp_id              -- X     -- ditto
+   *
+   *   * can_capability      -- false -- no capability option seen, yet
+   *
+   *   * can_as4             -- false -- set by BGP_CAN_AS4 capability
+   *   * my_as2              -- X     -- will be set from OPEN
+   *
+   *   * can_mp_ext          -- X     -- set to IPv4-Unicast by default
+   *   * has_mp_ext          -- false -- set by BGP_CAN_MP_EXT
+   *
+   *   * can_r_refresh       -- none  -- set by BGP_CAN_R_REFRESH and/or
+   *                                            BGP_CAN_R_REFRESH_pre
+   *   * can_orf_prefix      -- none  -- set by BGP_CAN_ORF and/or
+   *                                                            BGP_CAN_ORF_pre
+   *   * can_orf_prefix_send -- empty -- ditto
+   *   * can_orf_prefix_recv -- empty -- ditto
+   *
+   *   * can_dynamic         -- false -- set by BGP_CAN_DYNAMIC_CAP
+   *
+   *   * can_g_restart       -- false -- set by BGP_CAN_G_RESTART
+   *   * can_preserve        -- empty -- ditto
+   *   * has_preserved       -- empty -- ditto
+   *   * has_restarted       -- false -- ditto
+   *   * restart_time        -- 0     -- ditto
+   *
+   *   * unknowns            -- empty vector
+   *   * afi_safi            -- empty vector
    */
+  confirm(bgp_form_none  == 0) ;
+  confirm(qafx_set_empty == 0) ;
+
   open_recv = connection->open_recv
                               = bgp_open_state_init_new(connection->open_recv) ;
+  open_recv->can_mp_ext = qafx_ipv4_unicast_bit ;
 
   /* Parse fixed part of the open packet
    */
@@ -417,8 +453,7 @@ bgp_msg_open_receive (bgp_connection connection, bgp_size_t body_size)
 
   suck_init(&ssr, stream_get_pnt(s), optlen) ;
 
-  ret = bgp_msg_open_option_parse (connection, notification, &ssr) ;
-  if (ret < 0)
+  if (!bgp_msg_open_option_parse (connection, notification, &ssr))
     goto reject ;
 
   /* Now worry about the AS number
@@ -590,19 +625,23 @@ bgp_msg_noms_o_bad_id(bgp_notify notification, bgp_id_t id)
 } ;
 
 /*------------------------------------------------------------------------------
- * Reset notification to BGP_NOMC_OPEN with the given subcode, and return -1.
+ * Reset notification to BGP_NOMC_OPEN with the given subcode.
+ *
+ * Returns:  false
  */
-static int
+static bool
 bgp_msg_open_error(bgp_notify notification, bgp_nom_subcode_t subcode)
 {
   bgp_notify_reset(notification, BGP_NOMC_OPEN, subcode) ;
-  return -1 ;
+  return false ;
 } ;
 
 /*------------------------------------------------------------------------------
- * Reset notification to BGP_NOMC_OPEN/BGP_NOMS_UNSPECIFIC, and return -1.
+ * Reset notification to BGP_NOMC_OPEN/BGP_NOMS_UNSPECIFIC.
+ *
+ * Returns:  false
  */
-static int
+static bool
 bgp_msg_open_invalid(bgp_notify notification)
 {
   return bgp_msg_open_error(notification, BGP_NOMS_UNSPECIFIC) ;
@@ -636,24 +675,23 @@ bgp_msg_capability_unsupported(bgp_notify notification, sucker sr)
  * Expects the notification to be set up: BGP_NOMC_OPEN, BGP_NOMS_UNSPECIFIC
  *                                        with no data, yet.
  *
- * Returns: -1 => error -- see notification
- *           0 => OK, no capabilities
- *           1 => OK, at least one capability
+ * Expects connection->open_recv to be in initial state.
+ *
+ * Returns:  true <=> OK
+ *           false => failed, see notification.
  */
-static int
+static bool
 bgp_msg_open_option_parse (bgp_connection connection, bgp_notify notification,
                                                                       sucker sr)
 {
-  int ret, capability ;
   int left ;
   bgp_session session = connection->session ;
   bgp_open_state open_send = session->open_send ;
   bgp_open_state open_recv = connection->open_recv ;
 
-  /* Prepare to read BGP OPEN message options                           */
-
-  ret        = 0 ;      /* OK so far                    */
-  capability = 0 ;      /* No capability option, yet    */
+  /* Prepare to read BGP OPEN message options
+   */
+  open_recv->can_capability = false ;   /* No capability option, yet    */
 
   while ((left = suck_left(sr)) > 0)
     {
@@ -661,7 +699,8 @@ bgp_msg_open_option_parse (bgp_connection connection, bgp_notify notification,
       u_char opt_type ;
       u_char opt_length ;
 
-      /* Fetch option type and length, if possible      */
+      /* Fetch option type and length, if possible
+       */
       if ((left -= 2) > 0)
         {
           opt_type   = suck_b(sr);
@@ -674,7 +713,8 @@ bgp_msg_open_option_parse (bgp_connection connection, bgp_notify notification,
           opt_length = 0 ;
         }
 
-      /* Must not have exceeded available bytes         */
+      /* Must not have exceeded available bytes
+       */
       if (left < 0)
         {
           zlog_info ("%s Option length error", connection->host);
@@ -696,10 +736,9 @@ bgp_msg_open_option_parse (bgp_connection connection, bgp_notify notification,
           return bgp_msg_open_error(notification, BGP_NOMS_O_AUTH) ;
 
         case BGP_OPT_CAPS:
-          capability = 1 ;      /* does => can  */
+          open_recv->can_capability = true ;    /* did => can   */
 
-          ret = bgp_msg_capability_option_parse(connection, notification, sr) ;
-          if (ret < 0)
+          if(!bgp_msg_capability_option_parse(connection, notification, sr))
             return bgp_msg_open_invalid(notification) ;
 
           break;
@@ -726,19 +765,21 @@ bgp_msg_open_option_parse (bgp_connection connection, bgp_notify notification,
    */
   if (session->cap_strict)
     {
-      /* Treat any unsupported capability as an error.          */
-      if (bgp_notify_get_subcode(notification) == BGP_NOMS_O_CAPABILITY)
-        return -1 ;
+      /* Treat any unsupported capability as an error.
+       */
+      if (!bgp_notify_get_subcode(notification) == BGP_NOMS_O_CAPABILITY)
+        return false ;
 
-      /* Check local AFI/SAFI set is same as the remote one.    */
+      /* Check local AFI/SAFI set is same as the remote one.
+       */
       if (open_recv->can_mp_ext != open_send->can_mp_ext)
         return bgp_msg_open_error(notification, BGP_NOMS_O_CAPABILITY) ;
     } ;
 
-  /* If there were any capabilities, and not going to override AFI/SAFI,
+  /* If there were any BGP_CAN_MP_EXT, and not going to override AFI/SAFI,
    * then check that there is at least one AFI/SAFI in common.
    */
-  if (capability && ! session->cap_override)
+  if (! session->cap_override)
     {
       if ((open_recv->can_mp_ext & open_send->can_mp_ext) == 0)
         {
@@ -747,11 +788,11 @@ bgp_msg_open_option_parse (bgp_connection connection, bgp_notify notification,
           if (bgp_notify_get_subcode(notification) != BGP_NOMS_O_CAPABILITY)
             bgp_msg_open_error(notification, BGP_NOMS_O_CAPABILITY) ;
 
-          return -1 ;
+          return false ;
         }
     } ;
 
-  return connection->open_recv->can_capability = capability ;
+  return true ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -847,13 +888,13 @@ static int bgp_msg_capability_as4 (bgp_connection connection, sucker sr) ;
 /*------------------------------------------------------------------------------
  * Set notification to malformed/invalid.
  *
- * Returns -1 !
+ * Returns:  false
  */
-static int
+static bool
 bgp_msg_capability_bad(bgp_notify notification)
 {
   bgp_notify_reset(notification, BGP_NOMC_OPEN, BGP_NOMS_UNSPECIFIC) ;
-  return -1 ;
+  return false ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -875,10 +916,10 @@ bgp_msg_capability_bad(bgp_notify notification)
  * If an invalid or malformed capability is found, the notification is set
  * BGP_NOMS_UNSPECIFIC -- see bgp_msg_capability_bad() above.
  *
- * Returns:  0 => OK (but may have collected some unsupported capabilities)
- *          -1 => invalid or malformed
+ * Returns:  true <=> OK (but may have collected some unsupported capabilities)
+ *           false => invalid or malformed
  */
-static int
+static bool
 bgp_msg_capability_option_parse (bgp_connection connection,
                                              bgp_notify notification, sucker sr)
 {
@@ -959,6 +1000,15 @@ bgp_msg_capability_option_parse (bgp_connection connection,
              * NB: bgp_msg_capability_mp() returns > 0 if the AFI/SAFI is not
              *     recognised or is not one of the configured ones.
              */
+            if (!open_recv->has_mp_ext)
+              {
+                /* This is the first MP_EXT, so set the flag and clear the
+                 * default IPv4-Unicast.
+                 */
+                open_recv->has_mp_ext = true ;
+                open_recv->can_mp_ext = 0 ;
+              } ;
+
             if (! connection->session->cap_override)
               ret = bgp_msg_capability_mp(connection, sr);
             break;
@@ -1017,9 +1067,12 @@ bgp_msg_capability_option_parse (bgp_connection connection,
       suck_pop(sr, &ssr) ;
     }
 
-  return 0 ;
+  return true ;
 } ;
 
+/*------------------------------------------------------------------------------
+ * Suck up afi, 0, safi combination and return the qafx_bit (if any)
+ */
 static qafx_bit_t
 bgp_msg_afi_safi(sucker sr, struct iAFI_SAFI* mp)
 {
@@ -1116,7 +1169,8 @@ bgp_msg_capability_orf(bgp_connection connection, uint8_t cap_code, sucker sr)
   return 0;
 } ;
 
-/* Process ORF Entry:
+/*------------------------------------------------------------------------------
+ * Process ORF Entry:
  *
  * Entry is:  AFI       -- word
  *            reserved  -- byte
@@ -1356,8 +1410,8 @@ bgp_msg_capability_restart (bgp_connection connection, sucker sr)
         }
       else
         {
-          /* Now can register the capability                    */
-
+          /* Now can register the capability
+           */
           if (connection->session->open_send->can_mp_ext & qb)
             {
               open_recv->can_preserve  |= qb ;
@@ -1485,11 +1539,9 @@ bgp_msg_notify_receive (bgp_connection connection, bgp_size_t body_size)
  *
  * NB: requires the session to be locked (connection-wise) and not NULL.
  */
-static int
-bgp_msg_orf_recv(bgp_connection connection, bgp_route_refresh rr,
+static int bgp_msg_orf_recv(bgp_connection connection, bgp_route_refresh rr,
                                                      qafx_bit_t qb, sucker sr) ;
-static int
-bgp_msg_orf_prefix_recv(orf_prefix orfpe, qafx_bit_t qb, sucker sr) ;
+static int bgp_msg_orf_prefix_recv(orf_prefix orfpe, qafx_bit_t qb, sucker sr) ;
 
 /*------------------------------------------------------------------------------
  * Process BGP ROUTE-REFRESH message
@@ -1807,10 +1859,8 @@ bgp_msg_orf_prefix_recv(orf_prefix orfpe, qafx_bit_t qb, sucker sr)
  *
  * NB: requires the session to be locked (connection-wise) and not NULL.
  */
-static void bgp_msg_capability_receive(bgp_connection connection,
-                                                           bgp_size_t body_size)
+static void
+bgp_msg_capability_receive(bgp_connection connection, bgp_size_t body_size)
 {
   ++connection->session->stats.dynamic_cap_in ;
-
-  return ;
 } ;

@@ -39,6 +39,8 @@
 /*------------------------------------------------------------------------------
  * Initialise new bgp_open_state structure -- allocate if required.
  *
+ * Returns:  a bgp_open_state object which has been zeroized and the
+ *           vector of unknowns has been emptied.
  */
 extern bgp_open_state
 bgp_open_state_init_new(bgp_open_state state)
@@ -49,6 +51,7 @@ bgp_open_state_init_new(bgp_open_state state)
     memset(state, 0, sizeof(struct bgp_open_state)) ;
 
   vector_init_new(state->unknowns, 0) ;
+  vector_init_new(state->afi_safi, 0) ;
 
   return state ;
 }

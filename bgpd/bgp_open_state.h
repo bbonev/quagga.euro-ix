@@ -95,6 +95,8 @@ struct bgp_open_state
   as2_t       my_as2 ;                /* AS2 from OPEN message              */
 
   qafx_set_t  can_mp_ext ;            /* will accept, may send these        */
+  bool        has_mp_ext ;            /* incoming capabilities included one
+                                       * or more BGP_CAN_MP_EXT             */
 
   bgp_form_t  can_r_refresh ;         /* none/old/new/both                  */
   bgp_form_t  can_orf_prefix ;        /* none/old/new/both                  */
