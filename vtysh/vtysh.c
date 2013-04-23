@@ -1009,7 +1009,7 @@ static int
 execute_command (const char *command, int argc, const char *arg1,
                  const char *arg2)
 {
-  int ret;
+  int ret Unused ;
   pid_t pid;
   int status;
 
@@ -1047,7 +1047,7 @@ execute_command (const char *command, int argc, const char *arg1,
     {
       /* This is parent. */
       execute_flag = 1;
-      ret = wait4 (pid, &status, 0, NULL);
+      ret = wait4 (pid, &status, 0, NULL);      /* TODO check ret ??    */
       execute_flag = 0;
     }
   return 0;
