@@ -29,26 +29,17 @@
 
 #include "bgpd/bgp_notification.h"
 #include "bgpd/bgp_open_state.h"
+#include "bgpd/bgp_names.h"
 
 /*==============================================================================
  * A bgp_notify structure encapsulates the contents of a BGP NOTIFICATION
  * message.
  */
 
-/*------------------------------------------------------------------------------
- * Calculate size for bgp_notify of given length
- *
- * Rounds up to multiple of 32, such that is always at least 16 bytes available.
- */
-static inline bgp_size_t
-bgp_notify_size(bgp_size_t size)
-{
-  return (size == 0) ? 0 : ((size + 32 + 16 - 1) / 32) * 32 ;
-} ;
-
 /*==============================================================================
  * Create/Destroy bgp_notify
  */
+static void bgp_notify_now_need(bgp_notify notification, uint need) ;
 
 /*------------------------------------------------------------------------------
  * Allocate and initialise new notification
@@ -62,18 +53,25 @@ bgp_notify_new(bgp_nom_code_t code, bgp_nom_subcode_t subcode)
 {
   bgp_notify notification ;
 
-  notification = XCALLOC(MTYPE_BGP_NOTIFY, sizeof(struct bgp_notify)) ;
+  notification = XCALLOC(MTYPE_BGP_NOTIFY, sizeof(bgp_notify_t)) ;
 
-  notification->code    = code ;
-  notification->subcode = subcode ;
-
-  /* Implicitly:
+  /* Zeroizing sets:
    *
-   *  notification->received = false ;
-   *  notification->size     = 0
-   *  notification->length   = 0
-   *  notification->data     = NULL
+   *   * received               -- false    -- not yet
+   *
+   *   * code                   -- X        -- set below
+   *   * subcode                -- X        -- set below
+   *
+   *   * data                   -- NULL     -- none, yet
+   *   * length                 -- 0        -- none, yet
+   *   * size                   -- 0        -- none, yet
+   *
+   *   * msg_buff               -- 0        -- none, yet
+   *
+   *   * embedded               -- 0's      -- nicely cleared out
    */
+  notification->code     = code ;
+  notification->subcode  = subcode ;
 
   return notification ;
 } ;
@@ -89,18 +87,69 @@ bgp_notify_new(bgp_nom_code_t code, bgp_nom_subcode_t subcode)
  * NB: returns a 'NOT received' notification.
  */
 extern bgp_notify
-bgp_notify_new_expect(bgp_nom_code_t code, bgp_nom_subcode_t subcode,
-                                                              bgp_size_t expect)
+bgp_notify_new_need(bgp_nom_code_t code, bgp_nom_subcode_t subcode, uint need)
 {
-  bgp_notify notification = bgp_notify_new(code, subcode) ;
+  bgp_notify notification ;
 
-  if (expect != 0)
-    {
-      notification->size  = bgp_notify_size(expect) ;
-      notification->data  = XCALLOC(MTYPE_TMP, notification->size) ;
-    } ;
+  notification = bgp_notify_new(code, subcode) ;
+  bgp_notify_now_need(notification, need) ;
 
   return notification ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Need enough space for 'need' bytes of notification data.
+ *
+ * Tidies up, so that everything in buffer from the given 'need' onwards is
+ * zeroized -- assuming that was tidy before any new allocation.
+ *
+ * NB: when a notification is initialised, the size is set zero.  Here we
+ *     will set things up to use the embedded buffer, if it is big enough.
+ *
+ *     Note that we set up to use the embedded buffer even if need == 0.
+ */
+static void
+bgp_notify_now_need(bgp_notify notification, uint need)
+{
+  uint zero_to ;
+
+  if (notification->size == 0)
+    {
+      notification->msg_buff = notification->embedded ;
+      notification->data     = notification->embedded   + BGP_NOM_MIN_L ;
+      notification->size     = bgp_notify_embedded_size - BGP_NOM_MIN_L ;
+    } ;
+
+  if (notification->size >= need)
+    {
+      qassert(notification->length <= notification->size) ;
+      zero_to = notification->length ;
+    }
+  else
+    {
+      ptr_t msg_buff ;
+      uint  full_size ;
+
+      msg_buff  = notification->msg_buff ;
+      full_size = uround_up_up(need + BGP_NOM_MIN_L, 32) ;
+
+      if (msg_buff != notification->embedded)
+        msg_buff = XREALLOC(MTYPE_TMP, msg_buff, full_size) ;
+      else
+        {
+          msg_buff = XMALLOC(MTYPE_TMP, full_size) ;
+          memcpy(msg_buff, notification->embedded, bgp_notify_embedded_size) ;
+        } ;
+
+      notification->msg_buff = msg_buff ;
+      notification->data     = msg_buff  + BGP_NOM_MIN_L ;
+      notification->size     = full_size - BGP_NOM_MIN_L ;
+
+      zero_to = notification->size ;
+  } ;
+
+  if ((need < zero_to) && (zero_to <= notification->size))
+    memset(notification->data + need, 0, zero_to - need) ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -113,11 +162,11 @@ bgp_notify_new_expect(bgp_nom_code_t code, bgp_nom_subcode_t subcode,
  */
 extern bgp_notify
 bgp_notify_new_with_data(bgp_nom_code_t code, bgp_nom_subcode_t subcode,
-                                               const void* data, bgp_size_t len)
+                                                     const void* data, uint len)
 {
   bgp_notify notification ;
 
-  notification = bgp_notify_new_expect(code, subcode, len) ;
+  notification = bgp_notify_new_need(code, subcode, len) ;
   bgp_notify_append_data(notification, data, len) ;
 
   return notification ;
@@ -128,15 +177,19 @@ bgp_notify_new_with_data(bgp_nom_code_t code, bgp_nom_subcode_t subcode,
  *
  * Does nothing if there is no structure.
  */
-extern void
+extern bgp_notify
 bgp_notify_free(bgp_notify notification)
 {
   if (notification != NULL)
     {
-      if (notification->data != NULL)
-        XFREE(MTYPE_TMP, notification->data) ;
+      if ((notification->msg_buff != NULL) &&
+                             (notification->msg_buff != notification->embedded))
+        XFREE(MTYPE_BGP_NOTIFY, notification->msg_buff) ;
+
       XFREE(MTYPE_BGP_NOTIFY, notification) ;
     } ;
+
+  return NULL ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -150,18 +203,13 @@ bgp_notify_dup(bgp_notify notification)
   if (notification == NULL)
     return NULL ;
 
-  duplicate = XMALLOC(MTYPE_BGP_NOTIFY, sizeof(struct bgp_notify)) ;
-  *duplicate = *notification ;
+  duplicate = bgp_notify_new_need(notification->code, notification->subcode,
+                                                         notification->length) ;
+  duplicate->received = notification->received ;
 
-  if (duplicate->length == 0)
+  if (notification->length != 0)
     {
-      duplicate->size = 0 ;
-      duplicate->data = NULL ;
-    }
-  else
-    {
-      duplicate->size = bgp_notify_size(duplicate->length) ;
-      duplicate->data = XCALLOC(MTYPE_TMP, duplicate->size) ;
+      duplicate->length   = notification->length ;
       memcpy(duplicate->data, notification->data, duplicate->length) ;
     } ;
 
@@ -176,8 +224,7 @@ bgp_notify_dup(bgp_notify notification)
 extern void
 bgp_notify_unset(bgp_notify* p_notification)
 {
-  bgp_notify_free(*p_notification) ;    /* free anything that's there   */
-  *p_notification = NULL ;
+  *p_notification = bgp_notify_free(*p_notification) ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -239,7 +286,7 @@ bgp_notify_set_mov(bgp_notify* p_dst, bgp_notify* p_src)
   *p_src = NULL ;
 } ;
 
-/*==============================================================================
+/*------------------------------------------------------------------------------
  * Set new Code and Subcode and discard and data accumulated so far.
  *
  * NB: does not change the received state of the notification.
@@ -258,63 +305,230 @@ bgp_notify_reset(bgp_notify notification, bgp_nom_code_t code,
   return notification ;
 } ;
 
+/*------------------------------------------------------------------------------
+ * Set a default Code and Subcode.
+ */
+extern bgp_notify
+bgp_notify_default(bgp_notify notification, bgp_nom_code_t code,
+                                                      bgp_nom_subcode_t subcode)
+{
+  if (notification == NULL)
+    return bgp_notify_new(code, subcode) ;
+
+  return notification ;
+} ;
+
 /*==============================================================================
- * Append data to given notification
+ * Appending stuff to a notification
+ */
+
+/*------------------------------------------------------------------------------
+ * Append data to given notification (if any)
  *
  * Copes with zero length append (and data may be NULL if len == 0).
  *
- * NB: returns possibly NEW ADDRESS of the notification.
+ * Returns:  address of the notification -- as given.
+ *
+ * NB: does nothing if no notification !
  */
-extern void
-bgp_notify_append_data(bgp_notify notification, const void* data,
-                                                                 bgp_size_t len)
+extern bgp_notify
+bgp_notify_append_data(bgp_notify notification, const void* data, uint len)
 {
-  bgp_size_t new_length = notification->length + len ;  /* unsigned     */
+  uint new_length ;
 
-  if (new_length > notification->size)
-    {
-      bgp_size_t size = bgp_notify_size(new_length) ;
+  if (notification == NULL)
+    return NULL ;
 
-      if (notification->size == 0)
-        notification->data = XCALLOC(MTYPE_TMP, size) ;
-      else
-        notification->data = XREALLOC(MTYPE_TMP, notification->data, size) ;
+  new_length = notification->length + len ;
 
-      memset(notification->data + new_length, 0, size - new_length) ;
-      notification->size = size ;
-    } ;
+  bgp_notify_now_need(notification, new_length) ;
 
   if (len > 0)
     memcpy(notification->data + notification->length, data, len) ;
 
   notification->length = new_length ;
+
+  return notification ;
 } ;
 
 /*------------------------------------------------------------------------------
- * Append one byte
+ * Append one byte to notification (if any)
+ *
+ * Returns:  address of the notification -- as given.
+ *
+ * NB: does nothing if no notification !
  */
-extern void
+extern bgp_notify
 bgp_notify_append_b(bgp_notify notification, uint8_t b)
 {
-  bgp_notify_append_data(notification, &b, 1) ;
+  return bgp_notify_append_data(notification, &b, 1) ;
 } ;
 
 /*------------------------------------------------------------------------------
- * Append one word (uint16_t), in network byte order
+ * Append one word (uint16_t), in network byte order to notification (if any)
+ *
+ * Returns:  address of the notification -- as given.
+ *
+ * NB: does nothing if no notification !
  */
-extern void
+extern bgp_notify
 bgp_notify_append_w(bgp_notify notification, uint16_t w)
 {
   w = htons(w) ;
-  bgp_notify_append_data(notification, &w, 2) ;
+  return bgp_notify_append_data(notification, &w, 2) ;
 } ;
 
 /*------------------------------------------------------------------------------
- * Append one long (uint32_t), in network byte order
+ * Append one long (uint32_t), in network byte order to notification (if any)
+ *
+ * Returns:  address of the notification -- as given.
+ *
+ * NB: does nothing if no notification !
  */
-extern void
+extern bgp_notify
 bgp_notify_append_l(bgp_notify notification, uint32_t l)
 {
   l = htonl(l) ;
-  bgp_notify_append_data(notification, &l, 4) ;
+  return bgp_notify_append_data(notification, &l, 4) ;
+} ;
+
+/*==============================================================================
+ * Other functions
+ */
+
+/*------------------------------------------------------------------------------
+ * Return pointer to a NOTIFICATION message
+ *
+ * The message is complete with BGP Message header -- so can be written
+ * directly.
+ *
+ * NB: the message is part of the notification object.
+ *
+ *     So... caller MUST NOT hold on to the pointer to the message beyond
+ *     any change to the notification or after it is freed !!
+ */
+extern ptr_t
+bgp_notify_message(bgp_notify notification, uint* p_msg_length)
+{
+  uint  msg_length ;
+  ptr_t msg ;
+
+  if (notification == NULL)
+    {
+      *p_msg_length = 0 ;
+      return NULL ;
+    } ;
+
+  /* Make sure we have notification->msg_buff & notification->data set up.
+   */
+  bgp_notify_now_need(notification, notification->length) ;
+
+  msg_length = bgp_notify_msg_length(notification) ;
+  msg        = notification->msg_buff ;
+
+  memset(  &msg[BGP_MH_MARKER], 0xFF, BGP_MH_MARKER_L) ;
+  store_ns(&msg[BGP_MH_LENGTH], msg_length) ;
+  store_b( &msg[BGP_MH_TYPE],   BGP_MT_NOTIFICATION);
+
+  store_b(&msg[BGP_MH_BODY + BGP_NOM_CODE],    notification->code) ;
+  store_b(&msg[BGP_MH_BODY + BGP_NOM_SUBCODE], notification->subcode) ;
+
+  qassert(notification->data == (notification->msg_buff + BGP_NOM_MIN_L)) ;
+
+  *p_msg_length = msg_length ;
+  return msg ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Get the length of a complete NOTIFICATION message (if any)
+ *
+ * NB: we silently curtail this to the maximum that will fit into such a
+ *     message.
+ */
+extern uint
+bgp_notify_msg_length(bgp_notify notification)
+{
+  uint msg_length ;
+
+  if (notification != NULL)
+    msg_length = BGP_NOM_MIN_L + notification->length ;
+  else
+    msg_length = 0 ;
+
+  if (msg_length > BGP_MSG_MAX_L)
+    msg_length = BGP_MSG_MAX_L ;
+
+  return msg_length ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Get the length of the data portion of a NOTIFICATION (if any)
+ *
+ * NB: we silently curtail this to the maximum that will fit into such a
+ *     message.
+ */
+extern uint
+bgp_notify_data_length(bgp_notify notification)
+{
+  uint data_length ;
+
+  if (notification != NULL)
+    data_length = notification->length ;
+  else
+    data_length = 0 ;
+
+  if (data_length > (BGP_MSG_MAX_L - BGP_NOM_MIN_L))
+    data_length = BGP_MSG_MAX_L - BGP_NOM_MIN_L ;
+
+  return data_length ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Put a NOTIFICATION message to the given sock_fd.
+ *
+ * Take no notice of errors or other niceties -- we don't care !
+ */
+extern void
+bgp_notify_put(int sock_fd, bgp_notify notification)
+{
+  ptr_t msg ;
+  uint  msg_length ;
+
+  msg = bgp_notify_message(notification, &msg_length) ;
+
+  if ((sock_fd >= 0) && (msg != NULL))
+    write(sock_fd, msg, msg_length) ;
+} ;
+
+/*==============================================================================
+ * Notifications and human readable stuff.
+ */
+
+/*------------------------------------------------------------------------------
+ * Render the given notification as a string.
+ */
+extern bgp_notify_string_t
+bgp_notify_string(bgp_notify notification)
+{
+  bgp_notify_string_t QFB_QFS(st, qfs) ;
+  map_direct_p subcode_map ;
+
+  qfs_put_str(qfs, map_direct_with_value(bgp_notify_msg_map,
+                                                     notification->code).str) ;
+  subcode_map = bgp_notify_subcode_msg_map(notification->code) ;
+  qfs_put_str(qfs, map_direct_with_value(subcode_map,
+                                                   notification->subcode).str) ;
+
+  if (notification->length == 0)
+    qfs_put_str(qfs, " -- no data") ;
+  else
+    {
+      qfs_printf(qfs, " -- %d: 0x", notification->length) ;
+      qfs_put_n_hex(qfs, notification->data, notification->length,
+                                                             pf_lc | pf_space) ;
+    } ;
+
+  qfs_term_string(qfs, "...", 3 + 1) ;
+
+  return st ;
 } ;

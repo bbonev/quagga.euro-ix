@@ -24,6 +24,7 @@
 
 #include "sockunion.h"
 
+extern int getsockopt_so_error (int sock_fd) ;
 extern int setsockopt_reuseaddr (int sock_fd) ;
 extern int setsockopt_reuseport (int sock_fd) ;
 extern int setsockopt_broadcast (int sock_fd) ;
@@ -32,12 +33,18 @@ extern int setsockopt_ttl (int sock_fd, int ttl);
 extern int setsockopt_minttl (int sock_fd, int ttl);
 extern int setsockopt_cork (int sock_fd, int onoff);
 
+extern int setsockopt_so_recvbuf_x(int sock_fd, int size) ;
 extern int setsockopt_so_recvbuf (int sock_fd, int size);
+extern int getsockopt_so_recvbuf (int sock_fd);
+
+extern int setsockopt_so_sendbuf_x(int sock_fd, int size) ;
 extern int setsockopt_so_sendbuf (int sock_fd, int size);
 extern int getsockopt_so_sendbuf (int sock_fd);
+extern int setsockopt_so_sendlowat(int sock_fd, int size) ;
+extern int getsockopt_so_sendlowat(int sock_fd) ;
 
-extern int setsockopt_tcp_signature(int sock_fd, union sockunion *su,
-                                                        const char *password);
+extern int setsockopt_tcp_signature(int sock_fd, sockunion_c su,
+                                                        const char* password);
 /*
  * It is OK to reference in6_pktinfo here without a protecting #if
  * because this macro will only be used #if HAVE_IPV6, and in6_pktinfo

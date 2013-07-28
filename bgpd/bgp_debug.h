@@ -21,8 +21,11 @@ Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
 #ifndef _QUAGGA_BGP_DEBUG_H
 #define _QUAGGA_BGP_DEBUG_H
 
-#include "bgp_attr.h"
-#include "stdbool.h"
+#include "misc.h"
+#include "qstring.h"
+
+#include "bgpd/bgp_attr_store.h"
+#include "bgpd/bgp_notification.h"
 
 /* sort of packet direction */
 #define DUMP_ON        1
@@ -57,29 +60,29 @@ extern int Debug_Radix;
 extern void bgp_debug_cmd_init (void);
 extern void bgp_debug_init (void);
 
-extern int debug (unsigned int option);
+extern uint debug (uint option);
 
-extern unsigned long conf_bgp_debug_as4;
-extern unsigned long conf_bgp_debug_fsm;
-extern unsigned long conf_bgp_debug_io;
-extern unsigned long conf_bgp_debug_events;
-extern unsigned long conf_bgp_debug_packet;
-extern unsigned long conf_bgp_debug_filter;
-extern unsigned long conf_bgp_debug_keepalive;
-extern unsigned long conf_bgp_debug_update;
-extern unsigned long conf_bgp_debug_normal;
-extern unsigned long conf_bgp_debug_zebra;
+extern uint conf_bgp_debug_as4;
+extern uint conf_bgp_debug_fsm;
+extern uint conf_bgp_debug_io;
+extern uint conf_bgp_debug_events;
+extern uint conf_bgp_debug_packet;
+extern uint conf_bgp_debug_filter;
+extern uint conf_bgp_debug_keepalive;
+extern uint conf_bgp_debug_update;
+extern uint conf_bgp_debug_normal;
+extern uint conf_bgp_debug_zebra;
 
-extern unsigned long term_bgp_debug_as4;
-extern unsigned long term_bgp_debug_fsm;
-extern unsigned long term_bgp_debug_io;
-extern unsigned long term_bgp_debug_events;
-extern unsigned long term_bgp_debug_packet;
-extern unsigned long term_bgp_debug_filter;
-extern unsigned long term_bgp_debug_keepalive;
-extern unsigned long term_bgp_debug_update;
-extern unsigned long term_bgp_debug_normal;
-extern unsigned long term_bgp_debug_zebra;
+extern uint term_bgp_debug_as4;
+extern uint term_bgp_debug_fsm;
+extern uint term_bgp_debug_io;
+extern uint term_bgp_debug_events;
+extern uint term_bgp_debug_packet;
+extern uint term_bgp_debug_filter;
+extern uint term_bgp_debug_keepalive;
+extern uint term_bgp_debug_update;
+extern uint term_bgp_debug_normal;
+extern uint term_bgp_debug_zebra;
 
 #define BGP_DEBUG_AS4                 0x01
 #define BGP_DEBUG_AS4_SEGMENT         0x02
@@ -122,7 +125,8 @@ extern unsigned long term_bgp_debug_zebra;
 #define BGP_DEBUG(a, b)         (term_bgp_debug_ ## a & BGP_DEBUG_ ## b)
 #define CONF_BGP_DEBUG(a, b)    (conf_bgp_debug_ ## a & BGP_DEBUG_ ## b)
 
-extern int bgp_dump_attr (struct peer *, struct attr *, char *, size_t);
-extern void bgp_notify_print (struct peer* peer, bgp_notify notification);
+extern qstring bgp_dump_attr (bgp_peer peer, attr_set attr,
+                      attr_next_hop_t* next_hop, attr_next_hop_t* mp_next_hop) ;
+extern void bgp_notify_print (bgp_peer peer, bgp_notify notification);
 
 #endif /* _QUAGGA_BGP_DEBUG_H */

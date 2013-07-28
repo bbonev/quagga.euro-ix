@@ -44,10 +44,13 @@ struct elstring
   } body ;
 
   ulen  len ;
+  ulen  cp ;            /* not used by elstring.                */
 } ;
 
 typedef struct elstring  elstring_t[1] ;
 typedef struct elstring* elstring ;
+
+typedef struct elstring  elstring_s ;
 
 /* Setting an elstring object to all zeros is enough to initialise it to
  * an empty string.

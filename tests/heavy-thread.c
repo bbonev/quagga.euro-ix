@@ -87,8 +87,8 @@ clear_something (struct thread *thread)
       ws->i++;
       if (thread_should_yield(thread))
         {
-          thread_add_background(master, clear_something, ws, 0);
-          return 0;
+	  thread_add_background(master, clear_something, ws, 0);
+	  return 0;
         }
     }
 

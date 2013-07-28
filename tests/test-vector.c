@@ -10,7 +10,6 @@
 
 /* prototypes */
 void assert_true(int result, const char * message);
-int main(int argc, char **argv);
 void test_vector_init(void);
 void test_vector_set_index(void);
 void test_vector_lookup(void);

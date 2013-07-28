@@ -7,10 +7,74 @@
 #include <stdio.h>
 
 #include "avl.h"
-#include "symtab.h"
 #include "qlib_init.h"
 #include "thread.h"
 #include "command.h"
+
+#define MCHECK_H
+
+#ifdef MCHECK_H
+#include <mcheck.h>
+#endif
+
+/*==============================================================================
+ * lib/avl.c torture tests
+ */
+extern void next_test(void) ;
+
+static uint test_count = 0 ;
+static uint test_stop  = 0 ;
+
+static uint fail_count = 0 ;
+static uint fail_limit = 50 ;
+
+static uint srand_seed = 314159265 ;
+
+extern void
+next_test(void)
+{
+  test_count++ ;
+
+  if (test_count == test_stop)
+    {
+      fprintf(stderr, "\n+++ STOP at test %u...\n", test_count) ;
+    } ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Assertion and error handling
+ *
+ * Returns: true <=> the assertion is true
+ */
+#define test_assert(assertion, ...) \
+  ((assertion) ? true \
+               : test_fail(__func__, __LINE__, #assertion, __VA_ARGS__))
+
+static bool test_fail(const char* func, uint line, const char* assertion,
+                               const char* format, ...) PRINTF_ATTRIBUTE(4, 5) ;
+
+static bool
+test_fail(const char* func, uint line, const char* assertion,
+                                       const char* format, ...)
+{
+  va_list va;
+
+  ++fail_count ;
+
+  fprintf(stderr, "\n***%4d(%4d): %s() line %u assert(%s): ",
+                                fail_count, test_count, func, line, assertion) ;
+  va_start (va, format);
+  vfprintf(stderr, format, va);
+  va_end (va);
+
+  if (fail_count == fail_limit)
+    {
+      fprintf(stderr, "\n*** hit failure limit\n") ;
+      assert(false) ;
+    } ;
+
+  return false ;
+} ;
 
 /*==============================================================================
  * prototypes
@@ -23,10 +87,6 @@ typedef enum
   random_order,
 } order_t ;
 
-int main(int argc, char **argv);
-
-static void assert_true(int result, const char * message);
-
 static void test_avl_init(void) ;
 static void test_avl_tree_new(void) ;
 static void test_avl_tree_lookup(const uint len, const order_t how,
@@ -38,6 +98,18 @@ static void scan_avl_tree(avl_tree tree, bool compare) ;
 static void show_tree(avl_tree tree) ;
 static void shuffle(uint list[], uint n, uint seed) ;
 
+typedef enum avl_link
+{
+  avl_in_order,
+  avl_in_reverse,
+  avl_pre_order,
+  avl_post_order,
+  avl_level_order,
+  avl_level_reverse,
+} avl_link_t ;
+
+static vector avl_tree_link(avl_tree tree, avl_link_t how, uint* p_height) ;
+
 /*------------------------------------------------------------------------------
  * Run all tests
  */
@@ -47,8 +119,18 @@ main(int argc, char **argv)
   int i ;
   uint s ;
 
+#ifdef MCHECK_H
+  mcheck(NULL) ;
+#endif
+
   qlib_init_first_stage(0);     /* Absolutely first     */
   host_init(argv[0]) ;
+
+  srand(srand_seed) ;           /* reproducible                 */
+
+  fprintf(stderr, "Start AVL Tree testing: "
+                                     "srand(%u), fail_limit=%u, test_stop=%u\n",
+                                            srand_seed, fail_limit, test_stop) ;
 
   test_avl_init() ;
 
@@ -74,50 +156,52 @@ main(int argc, char **argv)
   return 0;
 }
 
-static void
-assert_true(int result, const char * message)
-{
-  if (!result)
-    {
-      printf("Assert failed: %s\n", message);
-    }
-}
-
 /*==============================================================================
  * Data structures and related functions
  */
 
-/* The test avl_value is pretty simple.
+/* The test avl_item is pretty simple.
  */
-struct test_value
+typedef struct test_item  test_item_t ;
+typedef struct test_item* test_item ;
+
+struct test_item
 {
+  avl_node_t avl ;
+
   uint  val ;
 
   uint  visit ;
 
   uint  pos ;
 
-  avl_node_t avl ;
-
   char  name[] ;
 } ;
 
+struct test_create
+{
+  bool  added ;
+  uint  count ;
+};
+
+
+CONFIRM(offsetof(test_item_t, avl) == 0) ;
+
 typedef char test_name_t[24] ;
 
-typedef struct test_value  test_value_t ;
-typedef struct test_value* test_value ;
+static uint item_count = 0 ;   /* Keep track of items created/freed   */
+static uint item_max   = 0 ;   /* Keep track of items created/freed   */
+static uint item_visit = 0 ;   /* current visit number                 */
 
-static uint value_count = 0 ;   /* Keep track of values created/freed   */
-static uint value_max   = 0 ;   /* Keep track of values created/freed   */
-static uint value_visit = 0 ;   /* current visit number                 */
+enum { max_item_count = 100 * 1000 } ;
 
-enum { max_value_count = 100 * 1000 } ;
+static test_item items[max_item_count] ;
+static uint order[max_item_count] ;
 
-static test_value values[max_value_count] ;
-static uint order[max_value_count] ;
+static struct test_create items_created ;       /* see test_avl_new()   */
 
 /*------------------------------------------------------------------------------
- * Initialise the test value handling
+ * Initialise the test item handling
  *
  */
 static void
@@ -125,15 +209,18 @@ test_avl_init(void)
 {
   uint i ;
 
-  for (i = 0 ; i < max_value_count ; ++i)
+  for (i = 0 ; i < max_item_count ; ++i)
     {
-      values[i] = NULL ;
+      items[i] = NULL ;
       order[i]  = 0 ;
     } ;
 
-  value_count = 0 ;
-  value_max   = 0 ;
-  value_visit = 0 ;
+  item_count = 0 ;
+  item_max   = 0 ;
+  item_visit = 0 ;
+
+  items_created.count = 0 ; ;
+  items_created.added = false ; ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -145,7 +232,7 @@ test_avl_set_order(uint len, order_t how, uint seed)
   uint i ;
   char* desc ;
 
-  assert(len <= max_value_count) ;
+  assert(len <= max_item_count) ;
 
   if (seed != 0)
     srand(seed) ;
@@ -202,7 +289,7 @@ shuffle(uint list[], uint n, uint seed)
 } ;
 
 /*------------------------------------------------------------------------------
- * Set value name
+ * Set item name
  */
 static const char*
 test_avl_set_name(test_name_t name, uint val)
@@ -212,52 +299,52 @@ test_avl_set_name(test_name_t name, uint val)
 } ;
 
 /*------------------------------------------------------------------------------
- * Set new test value.
+ * Set new test item.
  *
- * Used when avl_insert_add signals that a new value has been added -- makes
- * sure that the value should not already exist, and replaces any existing
- * value.
+ * Used when avl_insert_add signals that a new item has been added -- makes
+ * sure that the item should not already exist, and replaces any existing
+ * item.
  */
 static void
-test_avl_set_value(test_value value, uint val)
+test_avl_set_item(test_item item, uint val)
 {
   test_name_t  name ;
 
-  assert(val < max_value_count) ;
+  assert(val < max_item_count) ;
 
-  assert(values[val] == NULL) ;
-  assert(strcmp(test_avl_set_name(name, val), value->name) == 0) ;
+  assert(items[val] == NULL) ;
+  assert(strcmp(test_avl_set_name(name, val), item->name) == 0) ;
 
-  values[val] = value ;
+  items[val] = item ;
 
-  value->val = val ;
-  value->visit = 0 ;
+  item->val = val ;
+  item->visit = 0 ;
 
-  if (val > value_max)
-    value_max = val ;
+  if (val > item_max)
+    item_max = val ;
 
-  ++value_count ;
+  ++item_count ;
 } ;
 
 /*------------------------------------------------------------------------------
- * Unset test value.
+ * Unset test item.
  *
- * Used when avl_insert_add signals that a new value has been added -- makes
- * sure that the value should not already exist, and replaces any existing
- * value.
+ * Used when avl_insert_add signals that a new item has been added -- makes
+ * sure that the item should not already exist, and replaces any existing
+ * item.
  */
 static void
-test_avl_unset_value(test_value value)
+test_avl_unset_item(test_item item)
 {
-  if (value != NULL)
+  if (item != NULL)
     {
-      assert(value->val < max_value_count) ;
-      assert(values[value->val] == value) ;
+      assert(item->val < max_item_count) ;
+      assert(items[item->val] == item) ;
 
-      values[value->val] = NULL ;
-      free(value) ;
+      items[item->val] = NULL ;
+      free(item) ;
 
-      --value_count ;
+      --item_count ;
     } ;
 } ;
 
@@ -269,40 +356,45 @@ test_avl_unset_all(void)
 {
   uint i ;
 
-  for (i = 0 ; i <= value_max ; ++i)
-    test_avl_unset_value(values[i]) ;
+  for (i = 0 ; i <= item_max ; ++i)
+    test_avl_unset_item(items[i]) ;
 
-  assert(value_count == 0) ;
+  assert(item_count == 0) ;
 
-  value_max   = 0 ;
-  value_visit = 0 ;
+  item_max   = 0 ;
+  item_visit = 0 ;
 } ;
 
 /*------------------------------------------------------------------------------
  * The comparison function -- avl_cmp_func
  */
 static int
-test_avl_cmp(avl_key_c name, avl_value value)
+test_avl_cmp(avl_key_c name, avl_item item)
 {
-  return strcmp_mixed(name, ((const struct test_value*)value)->name) ;
+  return strcmp_mixed(name, ((const struct test_item*)item)->name) ;
 } ;
 
 /*------------------------------------------------------------------------------
- * The value create function -- avl_new_func
+ * The item create function -- avl_new_func
  *
- * Creates a skeleton value -- enough for insertion in the tree.
+ * Creates a skeleton item -- enough for insertion in the tree.
  *
- * Updates the value_count.
+ * Updates the item_count.
  */
-static avl_value
-test_avl_new(avl_tree tree, avl_key_c name)
+static avl_item
+test_avl_new(avl_key_c name, void* arg)
 {
-  struct test_value* value ;
+  struct test_item*   item ;
+  struct test_create* created ;
 
-  value = calloc(1, offsetof(test_value_t, name) + strlen(name) + 1) ;
-  strcpy(value->name, name) ;
+  item = calloc(1, offsetof(test_item_t, name) + strlen(name) + 1) ;
+  strcpy(item->name, name) ;
 
-  return value ;
+  created = arg ;
+  created->added  = true ;
+  created->count += 1 ;
+
+  return item ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -312,7 +404,6 @@ static const avl_tree_params_t test_avl_tree_params =
     {
       .new    = test_avl_new,
       .cmp    = test_avl_cmp,
-      .offset = offsetof(test_value_t, avl),
     };
 
 /*------------------------------------------------------------------------------
@@ -327,58 +418,72 @@ static const avl_tree_params_t test_avl_tree_params =
 static void
 test_avl_tree_new(void)
 {
+  uint fail_count_was, test_count_was ;
+
   avl_tree tree = NULL;
   test_name_t name ;
-  struct test_value* value ;
-  struct test_value* value2 ;
-  bool  add ;
+  struct test_item* item ;
+  struct test_item* item2 ;
 
-  printf("%s\n", __func__);
-  tree = avl_tree_init_new(NULL, &test_avl_tree_params, NULL) ;
-  assert_true(tree != NULL, "tree == NULL");
+  fail_count_was = fail_count ;
+  test_count_was = test_count ;
+
+  fprintf(stderr, "  test: construct and destroy a trivial tree") ;
+
+  tree = avl_tree_init_new(NULL, &test_avl_tree_params) ;
+  test_assert(tree != NULL, "tree == NULL");
+  assert(items_created.count == 0) ;
 
   /* expect to not find                                 */
-  value = avl_lookup(tree, name);
-  assert_true(value == NULL, "value != NULL");
+  item = avl_lookup(&tree->root, NULL, name, tree->params);
+  test_assert(item == NULL, "item != NULL");
 
   /* add                                                */
   test_avl_set_name(name, 77) ;
-  add = false ;
-  value = avl_lookup_add(tree, name, &add);
-  assert_true(value != NULL, "value == NULL");
-  assert_true(add, "add == false") ;
+  items_created.added = false ; ;
+  item = avl_lookup_add(&tree->root, tree->root, name, tree->params,
+                                                                &items_created);
+  test_assert(item != NULL, "item == NULL");
+  test_assert(items_created.added, "add == false") ;
+  test_assert(items_created.count == 1, "items_created.count != 1") ;
 
-  test_avl_set_value(value, 77) ;
+  test_avl_set_item(item, 77) ;
 
-  assert_true(avl_tree_node_count(tree) == 1, "node count != 1") ;
-  assert(value_count == 1) ;
+  assert(item_count == 1) ;
 
   /* find                                               */
-  value2 = avl_lookup(tree, name);
-  assert_true(value2 == value, "value2 != value") ;
+  item2 = avl_lookup(&tree->root, tree->root, name, tree->params);
+  test_assert(item2 == item, "item2 != item") ;
 
-  add = true ;
-  value2 = avl_lookup_add(tree, name, &add) ;
-  assert_true(value2 == value, "value2 != value") ;
-  assert_true(!add, "add == true") ;
+  items_created.added = false ;
+  item2 = avl_lookup_add(&tree->root, NULL, name, tree->params, &items_created);
+  test_assert(item2 == item, "item2 != item") ;
+  test_assert(!items_created.added, "add == true") ;
+  test_assert(items_created.count == 1, "items_created.count != 1") ;
 
   /* delete                                             */
-  value2 = avl_delete(tree, name) ;
-  assert_true(value2 == value, "value2 != value") ;
-  assert_true(avl_tree_node_count(tree) == 0, "node count != 0") ;
+  item2 = avl_delete(&tree->root, tree->root, name, tree->params) ;
+  test_assert(item2 == item, "item2 != item") ;
 
-  test_avl_unset_value(value) ;
-  assert(value_count == 0) ;
+  test_avl_unset_item(item) ;
+  assert(item_count == 0) ;
+  items_created.count = 0 ;
 
   /* delete and don't expect to find                    */
-  value2 = avl_delete(tree, name) ;
-  assert_true(value2 == NULL, "found non-existent value") ;
+  item2 = avl_delete(&tree->root, NULL, name, tree->params) ;
+  test_assert(item2 == NULL, "found non-existent item") ;
 
   /* tidy up and finish                                 */
   test_avl_unset_all() ;
 
   tree = avl_tree_reset(tree, free_it) ;
-  assert_true(tree == NULL, "tree not freed") ;
+  items_created.count = 0 ;
+  test_assert(tree == NULL, "tree not freed") ;
+
+  if (fail_count_was == fail_count)
+    fprintf(stderr, " -- %d tests -- OK\n", test_count - test_count_was) ;
+  else
+    fprintf(stderr, "\n  *** %d failures\n", fail_count - fail_count_was) ;
 } ;
 
 #if 0
@@ -386,8 +491,8 @@ static int
 test_symbol_sort(const symbol* a, const symbol* b)
 {
   return symbol_mixed_name_cmp(
-                 ((struct test_value*)symbol_get_value(*a))->name,
-                 ((struct test_value*)symbol_get_value(*b))->name ) ;
+                 ((struct test_item*)symbol_get_item(*a))->name,
+                 ((struct test_item*)symbol_get_item(*b))->name ) ;
 } ;
 #endif
 
@@ -408,9 +513,10 @@ test_avl_tree_lookup(const uint len, const order_t how, const uint seed)
 {
   avl_tree tree ;
   test_name_t name ;
-  uint i ;
+  vector linked ;
+  uint i, height ;
 
-  test_value value ;
+  test_item item ;
 
   const bool trace = false ;
 
@@ -422,26 +528,24 @@ test_avl_tree_lookup(const uint len, const order_t how, const uint seed)
   printf("%s %s\n", __func__, desc) ;
   free(desc) ;
 
-  tree = avl_tree_init_new(NULL, &test_avl_tree_params, NULL) ;
+  tree = avl_tree_init_new(NULL, &test_avl_tree_params) ;
+  assert(items_created.count == 0) ;
 
   /* add                                                                */
   for (i = 0; i < len; ++i)
     {
-      bool add ;
       uint v ;
 
       v = order[i] ;
 
-      add = false ;
-      value = avl_lookup_add(tree, test_avl_set_name(name, v), &add) ;
-      assert_true(value != NULL, "add: value == NULL");
-      assert_true(add, "add: not added") ;
+      items_created.added = false ; ;
+      item = avl_lookup_add(&tree->root, NULL, test_avl_set_name(name, v),
+                                                 tree->params, &items_created) ;
+      test_assert(item != NULL, "add: item == NULL");
+      test_assert(items_created.added, "add: not added") ;
 
-      test_avl_set_value(value, v) ;
+      test_avl_set_item(item, v) ;
 
-      assert_true(avl_tree_node_count(tree) == (i + 1), "node count != i + 1") ;
-      assert_true(avl_tree_node_count(tree) == value_count,
-                                                 "node count != value_count") ;
       if (trace)
         {
           if (i == 0)
@@ -450,48 +554,55 @@ test_avl_tree_lookup(const uint len, const order_t how, const uint seed)
           show_tree(tree) ;
           printf("\n") ;
         } ;
-    }
+    } ;
+
+  assert(items_created.count == len) ;
 
   /* try walking the entire tree -- in order                            */
-  ++value_visit ;               /* new walk     */
-  i = 0;
-  value = avl_tree_link(tree, avl_in_order) ;
-  while (value != NULL)
+  ++item_visit ;               /* new walk     */
+  linked = avl_tree_link(tree, avl_in_order, &height) ;
+  for (i = 0 ; i < vector_length(linked) ; ++i)
     {
-      assert_true(value->visit != value_visit, "value seen already") ;
-      assert_true(value->val == i, "value != i") ;
+      item = vector_get_item(linked, i) ;
 
-      value->visit = value_visit ;
-      ++i;
+      test_assert(item->visit != item_visit, "item seen already") ;
+      test_assert(item->val == i, "item != i") ;
 
-      value = avl_get_next_linked(tree, value) ;
+      item->visit = item_visit ;
     } ;
-  assert_true(i == len, "i != len");
+  test_assert(i == len, "i != len");
+
+  linked = vector_free(linked) ;
+
+  assert(items_created.count == len) ;
 
   /* try walking the entire tree -- depth first: post_order
    */
-  ++value_visit ;               /* new walk     */
+  ++item_visit ;               /* new walk     */
   i = 0;
-  value = avl_tree_link(tree, avl_post_order) ;
-  while (value != NULL)
+  linked = avl_tree_link(tree, avl_post_order, &height) ;
+  for (i = 0 ; i < vector_length(linked) ; ++i)
     {
-      test_value child ;
+      test_item child ;
 
-      assert_true(value->visit != value_visit, "value seen already") ;
-      value->visit = value_visit ;
-      ++i;
+      item = vector_get_item(linked, i) ;
 
-      child = avl_get_child(tree, value, avl_left) ;
+      test_assert(item->visit != item_visit, "item seen already") ;
+      item->visit = item_visit ;
+
+      child = (avl_item)((avl_node)item)->child[avl_left] ;
       if (child != NULL)
-        assert_true(child->visit == value_visit, "left child not seen") ;
+        test_assert(child->visit == item_visit, "left child not seen") ;
 
-      child = avl_get_child(tree, value, avl_left) ;
+      child = (avl_item)((avl_node)item)->child[avl_right] ;
       if (child != NULL)
-        assert_true(child->visit == value_visit, "right child not seen") ;
-
-      value = avl_get_next_linked(tree, value) ;
+        test_assert(child->visit == item_visit, "right child not seen") ;
     } ;
-  assert_true(i == len, "i != len");
+  test_assert(i == len, "i != len");
+
+  linked = vector_free(linked) ;
+
+  assert(items_created.count == len) ;
 
   /* See what we got                                                    */
   scan_avl_tree(tree, true) ;
@@ -500,7 +611,8 @@ test_avl_tree_lookup(const uint len, const order_t how, const uint seed)
   test_avl_unset_all() ;
 
   tree = avl_tree_reset(tree, free_it) ;
-  assert_true(tree == NULL, "tree not freed") ;
+  items_created.count = 0 ;
+  test_assert(tree == NULL, "tree not freed") ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -514,7 +626,7 @@ test_avl_tree_delete(const uint len, const order_t how, const uint seed)
   test_name_t name ;
   uint i, q ;
 
-  test_value value ;
+  test_item item ;
 
   bool trace = false ;
 
@@ -526,26 +638,24 @@ test_avl_tree_delete(const uint len, const order_t how, const uint seed)
   printf("%s %s\n", __func__, desc) ;
   free(desc) ;
 
-  tree = avl_tree_init_new(NULL, &test_avl_tree_params, NULL) ;
+  tree = avl_tree_init_new(NULL, &test_avl_tree_params) ;
+  assert(items_created.count == 0) ;
 
   /* Fill tree for the first time                                       */
   for (i = 0; i < len; ++i)
     {
-      bool add ;
       uint v ;
 
       v = order[i] ;
 
-      add = false ;
-      value = avl_lookup_add(tree, test_avl_set_name(name, v), &add) ;
-      assert_true(value != NULL, "add: value == NULL");
-      assert_true(add, "add: not added") ;
+      items_created.added = false ; ;
+      item = avl_lookup_add(&tree->root, NULL, test_avl_set_name(name, v),
+                                                 tree->params, &items_created) ;
+      test_assert(item != NULL, "add: item == NULL");
+      test_assert(items_created.added, "add: not added") ;
 
-      test_avl_set_value(value, v) ;
+      test_avl_set_item(item, v) ;
 
-      assert_true(avl_tree_node_count(tree) == (i + 1), "node count != i + 1") ;
-      assert_true(avl_tree_node_count(tree) == value_count,
-                                                 "node count != value_count") ;
       if (trace)
         {
           if (i == 0)
@@ -555,6 +665,8 @@ test_avl_tree_delete(const uint len, const order_t how, const uint seed)
           printf("\n") ;
         } ;
     } ;
+
+  assert(items_created.count == len) ;
 
   scan_avl_tree(tree, true) ;
 
@@ -573,16 +685,15 @@ test_avl_tree_delete(const uint len, const order_t how, const uint seed)
 
           v = order[i] ;
 
-          value = avl_delete(tree, test_avl_set_name(name, v)) ;
-          assert_true(value != NULL, "delete: value == NULL");
+          item = avl_delete(&tree->root, tree->root, test_avl_set_name(name, v),
+                                                                tree->params) ;
+          test_assert(item != NULL, "delete: item == NULL");
+          items_created.count -= 1 ;
 
-          test_avl_unset_value(value) ;
+          test_avl_unset_item(item) ;
 
           --c ;
 
-          assert_true(avl_tree_node_count(tree) == c, "node count != c") ;
-          assert_true(avl_tree_node_count(tree) == value_count,
-                                                  "node count != value_count") ;
           if (trace)
             {
               if (i == 0)
@@ -600,21 +711,18 @@ test_avl_tree_delete(const uint len, const order_t how, const uint seed)
       for (i = 0; i < n ; ++i)
         {
           uint v ;
-          bool add ;
 
           v = order[i] ;
 
-          add = false ;
-          value = avl_lookup_add(tree, test_avl_set_name(name, v), &add) ;
-          assert_true(value != NULL, "add: value == NULL");
-          assert_true(add, "add: not added") ;
+          items_created.added = false ; ;
+          item = avl_lookup_add(&tree->root, tree->root,
+                     test_avl_set_name(name, v), tree->params, &items_created) ;
+          test_assert(item != NULL, "add: item == NULL");
+          test_assert(items_created.added, "add: not added") ;
 
-          test_avl_set_value(value, v) ;
+          test_avl_set_item(item, v) ;
           ++c ;
 
-          assert_true(avl_tree_node_count(tree) == c, "node count != c") ;
-          assert_true(avl_tree_node_count(tree) == value_count,
-                                                  "node count != value_count") ;
           if (trace)
             {
               if (i == 0)
@@ -636,15 +744,13 @@ test_avl_tree_delete(const uint len, const order_t how, const uint seed)
 
       v = order[i] ;
 
-      value = avl_delete(tree, test_avl_set_name(name, v)) ;
-      assert_true(value != NULL, "delete: value == NULL");
+      item = avl_delete(&tree->root, NULL, test_avl_set_name(name, v),
+                                                            tree->params) ;
+      test_assert(item != NULL, "delete: item == NULL");
+      items_created.count -= 1 ;
 
-      test_avl_unset_value(value) ;
+      test_avl_unset_item(item) ;
 
-      assert_true(avl_tree_node_count(tree) == (len - i - 1),
-                                            "node count != (len - i - 1)") ;
-      assert_true(avl_tree_node_count(tree) == value_count,
-                                              "node count != value_count") ;
       if (trace)
         {
           if (i == 0)
@@ -661,7 +767,8 @@ test_avl_tree_delete(const uint len, const order_t how, const uint seed)
   test_avl_unset_all() ;
 
   tree = avl_tree_reset(tree, free_it) ;
-  assert_true(tree == NULL, "tree not freed") ;
+  items_created.count = 0 ;
+  test_assert(tree == NULL, "tree not freed") ;
 } ;
 
 /*==============================================================================
@@ -684,15 +791,19 @@ scan_avl_tree(avl_tree tree, bool compare)
   uint   max_d ;
   uint   tpl ;
   uint   h ;
-
-  test_value value ;
+  uint   height ;
+  vector linked ;
+  test_item item ;
 
   /* Get number of nodes and height and report same.
    *
    * Under qdebug, getting the height also checks the node balance.
    */
-  t = avl_tree_node_count(tree) ;
+  linked = avl_tree_link(tree, avl_post_order, &height) ;
+  t = vector_length(linked) ;
 
+  test_assert(t == items_created.count, "got %u items, expected %u", t,
+                                                          items_created.count) ;
   printf("AVL Tree %'d entries:", t) ;
 
   /* Do a depth first walk to establish the depth of each and every node,
@@ -701,13 +812,14 @@ scan_avl_tree(avl_tree tree, bool compare)
   for (d = 0 ; d < (n + 2) ; ++d)
     depth[d] = 0 ;
 
-  i = 0 ;
   max_d = 0 ;
-  tpl = 0 ;
-  value = avl_tree_link(tree, avl_post_order) ;
-  while (value != NULL)
+  tpl   = 0 ;
+
+  for (i = 0 ; i < t ; ++i)
     {
-      d = avl_get_level(tree, value) + 1 ;
+      item = vector_get_item(linked, i) ;
+
+      d = ((avl_node)item)->level + 1 ;
 
       if (d <= n)
         ++depth[d] ;
@@ -718,21 +830,17 @@ scan_avl_tree(avl_tree tree, bool compare)
         max_d = d ;
 
       tpl += d ;
-
-      ++i ;
-
-      value = avl_get_next_linked(tree, value) ;
     } ;
 
-  h = avl_get_height(tree) ;
+  h = avl_get_height(tree->root) ;
 
-  assert_true(i == t, "i != tree_node_count");
-  assert_true(max_d == h, "max depth and heigh mismatch") ;
+  assert(i == t);
+  test_assert(max_d == h, "max depth and heigh mismatch") ;
 
   printf(" max depth: %d  av. path length %3.1f\n", max_d,
                              tpl != 0 ? (double)tpl / (double)t : (double)tpl) ;
 
-  assert_true(max_d <= n, "maximum depth is BROKEN\n") ;
+  test_assert(max_d <= n, "maximum depth is BROKEN\n") ;
 
   if (t != 0)
     show_histogram(depth, max_d, n, t) ;
@@ -823,48 +931,46 @@ show_histogram(uint count[], uint max, uint n, uint t)
 static void
 show_tree(avl_tree tree)
 {
-  uint level ;
-  uint i ;
-  uint pos ;
+  uint   level ;
+  uint   i ;
+  uint   pos ;
+  vector linked ;
+  char*  buf ;
+  uint   bp ;
+  uint   bl ;
+  uint   height ;
 
-  char* buf ;
-  uint  bp ;
-  uint  bl ;
-
-  struct test_value* value ;
+  struct test_item* item ;
 
   /* Walk to establish the node widths  */
 
-  i = 0 ;
-  value = avl_tree_link(tree, avl_in_order) ;
-  while (value != NULL)
+  linked = avl_tree_link(tree, avl_in_order, &height) ;
+  for (i = 0 ; i < vector_length(linked) ; ++i)
     {
-      value->pos  = i ;
-      ++i ;
-      value = avl_get_next_linked(tree, value) ;
+      item = vector_get_item(linked, i) ;
+      item->pos  = i ;
     } ;
-  assert_true(i == tree->node_count, "i != tree_node_count");
+  linked = vector_free(linked) ;
 
   bl  = 200 ;
   buf = malloc(bl) ;
 
-  i = 0 ;
   pos = 0 ;
   level = UINT_MAX ;
   bp = 0 ;
-  value = avl_tree_link(tree, avl_level_order) ;
-  while (value != NULL)
+  linked = avl_tree_link(tree, avl_level_order, &height) ;
+  for (i = 0 ; i < vector_length(linked) ; ++i)
     {
       uint old_level ;
       uint tpos ;
-      struct test_value* child ;
+      struct test_item* child ;
 
-      ++i ;
+      item = vector_get_item(linked, i) ;
 
-      tpos = value->pos * 2 + 1 ;
+      tpos = item->pos * 2 + 1 ;
 
       old_level = level ;
-      level = avl_get_level(tree, value) ;
+      level = ((avl_node)item)->level ;
 
       if (level != old_level)
         {
@@ -878,7 +984,7 @@ show_tree(avl_tree tree)
                   ++pos ;
                 } ;
 
-              buf[bp++] = show_bal_char(avl_get_balance(tree, value)) ;
+              buf[bp++] = ((avl_node)item)->bal ;
             }
           else
             printf("\n  :") ;
@@ -890,7 +996,7 @@ show_tree(avl_tree tree)
           pos = 0 ;
         } ;
 
-      child = avl_get_child(tree, value, avl_left) ;
+      child = (avl_item)((avl_node)item)->child[avl_left] ;
       if (child != NULL)
         {
           uint cpos ;
@@ -908,7 +1014,7 @@ show_tree(avl_tree tree)
           while (bp < cpos)
             buf[bp++] = ' ' ;
 
-          buf[bp++] = show_bal_char(avl_get_balance(tree, child)) ;
+          buf[bp++] = show_bal_char(((avl_node)child)->bal) ;
           buf[bp++] = '/' ;
           cpos += 2 ;
 
@@ -935,10 +1041,10 @@ show_tree(avl_tree tree)
           ++pos ;
         } ;
 
-      printf("%03d", value->val) ;
+      printf("%03d", item->val) ;
       pos += 3 ;
 
-      child = avl_get_child(tree, value, avl_right) ;
+      child = (avl_item)((avl_node)item)->child[avl_right] ;
       if (child != NULL)
         {
           uint cpos ;
@@ -956,7 +1062,7 @@ show_tree(avl_tree tree)
             buf[bp++] = ' ' ;
 
           buf[bp++] = '\\' ;
-          buf[bp++] = show_bal_char(avl_get_balance(tree, child)) ;
+          buf[bp++] = show_bal_char(((avl_node)child)->bal) ;
 
           while (cpos > pos)
             {
@@ -964,13 +1070,11 @@ show_tree(avl_tree tree)
               ++pos ;
             } ;
         } ;
-
-      value = avl_get_next_linked(tree, value) ;
     } ;
 
-  printf("\n") ;
+  vector_free(linked) ;
 
-  assert_true(i == tree->node_count, "i != tree_node_count");
+  printf("\n") ;
 } ;
 
 
@@ -989,7 +1093,278 @@ show_bal_char(int bal)
         return '+' ;
 
       default:
-        assert_true(false, "invalid balance") ;
+        test_assert(false, "invalid balance") ;
         return '*' ;
     } ;
 } ;
+
+/*==============================================================================
+ * Tree
+ */
+static void avl_link_in_order(vector order, avl_node node, uint level,
+                                                               uint* p_height) ;
+static void avl_link_in_reverse(vector order, avl_node node, uint level,
+                                                               uint* p_height) ;
+static void avl_link_pre_order(vector order, avl_node node, uint level,
+                                                               uint* p_height) ;
+static void avl_link_post_order(vector order, avl_node node, uint level,
+                                                               uint* p_height) ;
+static void avl_link_level_order(vector order, avl_node node,
+                                                               uint* p_height) ;
+static void avl_link_level_reverse(vector order, avl_node node,
+                                                               uint* p_height) ;
+
+/*------------------------------------------------------------------------------
+ * Construct vector of items, in the required order.
+ */
+static vector
+avl_tree_link(avl_tree tree, avl_link_t how, uint* p_height)
+{
+  vector order ;
+  uint   height ;
+  avl_node root ;
+
+  if (p_height == NULL)
+    p_height = &height ;
+  *p_height = 0 ;
+
+  order = vector_new(100) ;
+
+  if (tree == NULL)
+    root = NULL ;
+  else
+    root = (avl_node)tree->root ;
+
+  switch (how)
+    {
+      case avl_in_order:
+        avl_link_in_order(order, root, 0, p_height) ;
+        break ;
+
+      case avl_in_reverse:
+        avl_link_in_reverse(order, root, 0, p_height) ;
+        break ;
+
+      case avl_pre_order:
+        avl_link_pre_order(order, root, 0, p_height) ;
+        break ;
+
+      case avl_post_order:
+        avl_link_post_order(order, root, 0, p_height) ;
+        break ;
+
+      case avl_level_order:
+        avl_link_level_order(order, root, p_height) ;
+        break ;
+
+      case avl_level_reverse:
+        avl_link_level_reverse(order, root, p_height) ;
+        break ;
+
+      default:
+        assert(false) ;
+    } ;
+
+  return order ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Add given subtree to tree list: in-order.
+ *
+ * In in-order each node follows its left but precedes its right children.
+ */
+static void
+avl_link_in_order(vector order, avl_node node, uint level, uint* p_height)
+{
+  if (node != NULL)
+    {
+      avl_link_in_order(order, node->child[avl_left], level + 1, p_height) ;
+
+      if (*p_height <= level)
+        *p_height = level + 1 ;
+
+      node->level = level ;
+      vector_push_item(order, node) ;
+
+      avl_link_in_order(order, node->child[avl_right], level + 1, p_height) ;
+    } ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Add given subtree to tree list, depth first: in-order, reversed.
+ *
+ * In in-order each node follows its right but precedes its left children.
+ */
+static void
+avl_link_in_reverse(vector order, avl_node node, uint level, uint* p_height)
+{
+  if (node != NULL)
+    {
+      avl_link_in_reverse(order, node->child[avl_right], level + 1, p_height) ;
+
+      if (*p_height <= level)
+        *p_height = level + 1 ;
+
+      node->level = level ;
+      vector_push_item(order, node) ;
+
+      avl_link_in_reverse(order, node->child[avl_left], level + 1, p_height) ;
+    } ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Add given subtree to tree list, depth first: pre-order.
+ *
+ * In pre-order each node precedes its left and then its right children.
+ */
+static void
+avl_link_pre_order(vector order, avl_node node, uint level, uint* p_height)
+{
+  if (node != NULL)
+    {
+      if (*p_height <= level)
+        *p_height = level + 1 ;
+
+      node->level = level ;
+      vector_push_item(order, node) ;
+
+      avl_link_pre_order(order, node->child[avl_left],  level + 1, p_height) ;
+      avl_link_pre_order(order, node->child[avl_right], level + 1, p_height) ;
+    } ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Add given subtree to tree list, depth first: post-order.
+ *
+ * In post-order each node follows its left and then its right children.
+ */
+static void
+avl_link_post_order(vector order, avl_node node, uint level, uint* p_height)
+{
+  if (node != NULL)
+    {
+      avl_link_post_order(order, node->child[avl_left],  level + 1, p_height) ;
+      avl_link_post_order(order, node->child[avl_right], level + 1, p_height) ;
+
+      if (*p_height <= level)
+        *p_height = level + 1 ;
+
+      node->level = level ;
+      vector_push_item(order, node) ;
+    } ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Add tree to list, starting with level 0 (root), then level 1 and so on.
+ *
+ * In each level, the nodes are left to right across the tree.
+ */
+static void
+avl_link_level_order(vector order, avl_node node, uint* p_height)
+{
+  vector queue ;
+  uint   i, level, height ;
+
+  if (node == NULL)
+    return ;
+
+  queue  = vector_new(100) ;
+  i      = 0 ;
+  level  = 0 ;
+  height = 1 ;
+  node->level = 0 ;
+
+  do
+    {
+      avl_node child ;
+
+      level = node->level ;     /* this level           */
+
+      if (height <= level)
+        height = level + 1 ;
+
+      if (i >= 100)
+        {
+          vector_delete(queue, 0, i) ;
+          i = 0 ;
+        } ;
+
+      vector_push_item(order, node) ;
+
+      if ((child = node->child[avl_left]) != NULL)
+        {
+          child->level = level + 1 ;
+          vector_push_item(queue, child) ;
+        } ;
+
+      if ((child = node->child[avl_right]) != NULL)
+        {
+          child->level = level + 1 ;
+          vector_push_item(queue, child) ;
+        } ;
+
+      node = vector_get_item(queue, i++) ;
+    }
+  while (node != NULL) ;
+
+  *p_height = height ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Add tree to list, starting with deepest level, then up to level 0 (root).
+ *
+ * In each level, the nodes are left to right across the tree.
+ */
+static void
+avl_link_level_reverse(vector order, avl_node node, uint* p_height)
+{
+  vector queue ;
+  uint   i, level, height ;
+
+  if (node == NULL)
+    return ;
+
+  queue  = vector_new(100) ;
+  i      = 0 ;
+  level  = 0 ;
+  height = 1 ;
+  node->level = 0 ;
+
+  do
+    {
+      avl_node child ;
+
+      level = node->level ;     /* this level           */
+
+      if (height <= level)
+        height = level + 1 ;
+
+      if (i >= 100)
+        {
+          vector_delete(queue, 0, i) ;
+          i = 0 ;
+        } ;
+
+      vector_push_item(order, node) ;
+
+      if ((child = node->child[avl_right]) != NULL)
+        {
+          child->level = level + 1 ;
+          vector_push_item(queue, child) ;
+        } ;
+
+      if ((child = node->child[avl_left]) != NULL)
+        {
+          child->level = level + 1 ;
+          vector_push_item(queue, child) ;
+        } ;
+
+      node = vector_get_item(queue, i++) ;
+    }
+  while (node != NULL) ;
+
+  *p_height = height ;
+
+  vector_reverse(order) ;
+} ;
+

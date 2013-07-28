@@ -21,71 +21,103 @@ Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
 #ifndef _QUAGGA_BGP_TABLE_H
 #define _QUAGGA_BGP_TABLE_H
 
+#include "bgpd/bgp_common.h"
+
+/* The bgp_node is the entry in a prefix table, which contains the information
+ * for a number of notional tables:
+ *
+ *   * RIB    -- all available routes for the prefix
+ *
+ *               In an ordinary table,
+ *
+ */
+typedef struct bgp_node  bgp_node_t ;
+
+struct bgp_node
+{
+  prefix_t      p ;
+
+  bgp_table     table;
+
+  bgp_node      parent;
+  bgp_node      link[2];
+#define l_left   link[0]
+#define l_right  link[1]
+
+  void*         info;
+
+  bgp_adj_out   adj_out;
+  bgp_adj_in    adj_in;
+
+  bgp_node      prn;
+
+  uint          lock;
+
+  byte          qafx ;
+  bool          on_wq ;
+
+  bgp_node      wq_next ;
+};
+
 typedef enum
 {
   BGP_TABLE_MAIN,
   BGP_TABLE_RSCLIENT,
-} bgp_table_t;
+} bgp_table_type_t;
+
+typedef struct bgp_table  bgp_table_t ;
 
 struct bgp_table
 {
-  bgp_table_t type;
+  bgp_table_type_t type;
 
-  /* afi/safi of this table */
-  afi_t afi;
-  safi_t safi;
+  qafx_t qafx ;
 
-  int lock;
+  uint lock;
 
   /* The owner of this 'bgp_table' structure. */
-  struct peer *owner;
+  bgp_peer  owner;
 
-  struct bgp_node *top;
+  bgp_node  top;
 
   unsigned long count;
 };
 
-struct bgp_node
-{
-  struct prefix p;
-
-  struct bgp_table *table;
-  struct bgp_node *parent;
-  struct bgp_node *link[2];
-#define l_left   link[0]
-#define l_right  link[1]
-
-  void *info;
-
-  struct bgp_adj_out *adj_out;
-
-  struct bgp_adj_in *adj_in;
-
-  struct bgp_node *prn;
-
-  int lock;
-
-  struct bgp_node*  wq_next ;
-  uint8_t on_wq ;
-};
-
-extern struct bgp_table *bgp_table_init (afi_t, safi_t);
+extern bgp_table bgp_table_init (qafx_t qafx);
 extern void bgp_table_lock (struct bgp_table *);
 extern void bgp_table_unlock (struct bgp_table *);
-extern void bgp_table_finish (struct bgp_table **);
+extern bgp_table bgp_table_finish (bgp_table);
 extern void bgp_unlock_node (struct bgp_node *node);
-extern struct bgp_node *bgp_table_top (const struct bgp_table *const);
-extern struct bgp_node *bgp_route_next (struct bgp_node *);
-extern struct bgp_node *bgp_route_next_until (struct bgp_node *, struct bgp_node *);
-extern struct bgp_node *bgp_node_get (struct bgp_table *const, struct prefix *);
-extern struct bgp_node *bgp_node_lookup (const struct bgp_table *const, struct prefix *);
-extern struct bgp_node *bgp_lock_node (struct bgp_node *node);
-extern struct bgp_node *bgp_node_match (const struct bgp_table *, struct prefix *);
-extern struct bgp_node *bgp_node_match_ipv4 (const struct bgp_table *,
+extern bgp_node bgp_table_top (const struct bgp_table *const);
+extern bgp_node bgp_route_next (struct bgp_node *);
+extern bgp_node bgp_route_next_until (struct bgp_node *, struct bgp_node *);
+extern bgp_node bgp_node_get (bgp_table table, prefix_c p);
+extern bgp_node bgp_node_lookup (bgp_table, prefix_c);
+extern bgp_node bgp_node_lookup_parent (bgp_table table, prefix_c p) ;
+extern bgp_node bgp_lock_node (struct bgp_node *node);
+extern bgp_node bgp_node_match (const struct bgp_table *, prefix_c);
+extern bgp_node bgp_node_match_ipv4 (const struct bgp_table *,
                                           struct in_addr *);
 #ifdef HAVE_IPV6
 extern struct bgp_node *bgp_node_match_ipv6 (const struct bgp_table *,
                                           struct in6_addr *);
 #endif /* HAVE_IPV6 */
 extern unsigned long bgp_table_count (const struct bgp_table *const);
+
+/*------------------------------------------------------------------------------
+ *
+ */
+inline static bgp_table
+bgp_table_get(bgp_table* p_table, qafx_t qafx)
+{
+  bgp_table table ;
+
+  table = *p_table ;
+
+  if (table != NULL)
+    return table ;
+
+  return *p_table = bgp_table_init (qafx) ;
+} ;
+
 #endif /* _QUAGGA_BGP_TABLE_H */

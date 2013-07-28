@@ -812,12 +812,16 @@ Inline void qpt_cond_broadcast(qpt_cond cv) ;
  * Spinlocks are pretty trivial -- requiring only to be initialised, locked,
  * unlocked and, finally, destroyed.
  *
+ * For the tidy minded, a spinlock can be zeroized during first stage
+ * initialisation.
+ *
  * NB: recursive spinlocks are not supported !
  *
  * NB: if NOT qpthreads_active, locking and unlocking always succeed.  This
  *     allows code to be made thread-safe for when pthreads is running, but to
  *     work perfectly well without pthreads.
  */
+extern void qpt_spin_zeroize(qpt_spin slk) ;
 extern void qpt_spin_init(qpt_spin slk) ;
 extern void qpt_spin_destroy(qpt_spin slk) ;
 Inline void qpt_spin_lock(qpt_spin slk) ;

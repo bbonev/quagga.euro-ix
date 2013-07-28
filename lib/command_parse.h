@@ -216,11 +216,12 @@ struct cmd_item
   cmd_item_type_t  type ;
   bool         arg ;            /* include in argv                      */
 
-  /* For item_range values                                              */
+  /* For item_range values
+   */
   bool  range_sign_allowed ;
   bool  range_sign_required ;
-  long  range_min ;
-  long  range_max ;
+  rlong range_min ;
+  rlong range_max ;
 } ;
 
 /*==============================================================================
@@ -585,10 +586,10 @@ typedef struct cmd_token* cmd_token ;
  */
 struct token_vector
 {
-  vector_t      body ;
+  vector_t  body[1] ;
 } ;
 
-typedef struct token_vector  token_vector_t[1] ;
+typedef struct token_vector  token_vector_t ;
 typedef struct token_vector* token_vector ;
 
 enum {
@@ -600,9 +601,9 @@ enum {
  */
 struct arg_vector
 {
-  vector_t      body ;
+  vector_t      body[1] ;
 } ;
-typedef struct arg_vector  arg_vector_t[1] ;
+typedef struct arg_vector  arg_vector_t ;
 typedef struct arg_vector* arg_vector ;
 
 enum {

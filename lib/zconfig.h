@@ -36,6 +36,16 @@ Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
 
 #endif /* HAVE_CONFIG_H */
 
+/* Have been bitten by this one
+ */
+#if __STDC_VERSION__ >= 199901
+# undef restrict
+#else
+# ifndef restrict
+#  define restrict
+# endif
+#endif
+
 /* To turn on pthreads (under gcc, at least) we use -pthread -- which tells
  * both compiler and linker what to do.
  *

@@ -270,8 +270,6 @@ static heap_test_t heap_tests[] =
 /*------------------------------------------------------------------------------
  * Prototypes
  */
-int main(int argc, char **argv);
-
 static void test_heap_init(void) ;
 static void test_heap(heap_test test, uint count) ;
 

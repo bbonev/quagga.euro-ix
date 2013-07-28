@@ -1,7 +1,6 @@
-/*
- * Quagga Work Queue Support.
+/* Quagga Work Queue Support.
  *
- * Copyright (C) 2005 Sun Microsystems, Inc.
+ * Copyright (C) 2013 Chris Hall (GMCH), Highwayman
  *
  * This file is part of GNU Zebra.
  *
@@ -20,14 +19,325 @@
  * Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
  * 02111-1307, USA.
  */
+#include "misc.h"
 
+#include "workqueue.h"
+#include "memory.h"
+#include "linklist.h"
+
+/*==============================================================================
+ * Work Queue Item Function
+ * ========================
+ *
+ * When a work queue is "run", the items on the queue are dispatched, in turn
+ * until the allotted time is used up.
+ *
+ * Each work queue item has a data pointer and a function associated with it.
+ * When the item is dispatched the function is called and is passed the
+ * data pointer and the current "yield time".  If the function finds that
+ * there is no work to be done, it must return wqrc_nothing.  If the function
+ * finds that there is something to be done it may do some amount of work,
+ * and return wqrc_something.  The amount of work may depend on the
+ * "yield time" if the function wishes.
+ *
+ * When a work queue item is dispatched it may return with:
+ *
+ *   * wqrc_nothing   -- there was nothing to do.
+ *
+ *     The next item (if any) is dispatched -- unconditionally.
+ *
+ *     NB: wqrc_nothing <=> no (actual) work was done, and no (material) time
+ *         was spent doing it.
+ *
+ *   * wqrc_something -- something has been done.
+ *
+ *     If time has not run out, the next item (if any) is dispatched.
+ *
+ * What the next item is depends on the "action" which is:
+ *
+ *   wqrc_retain     -- leave item as is, but step past
+ *
+ *                      The item will not be dispatched again until the next
+ *                      time the work queue is run.
+ *
+ *                      This may be used with wqrc_nothing or wqrc_something
+ *                      where items are on the work queue to be "polled".
+ *
+ *                      The next item is the one which follows the current one.
+ *
+ *   wqrc_rerun      -- leave item as is, and rerun
+ *
+ *                      The next item is the current one.
+ *
+ *                      This is probably not useful for wqrc_nothing.
+ *
+ *                      For wqrc_something this may be used where the item
+ *                      (for example) itself contains a number of things to do,
+ *                      and after some amount of work wishes to return to
+ *                      check whether time has run out.
+ *
+ *   wqrc_reschedule -- move item to end of work queue
+ *
+ *                      The next item is the one which followed the current
+ *                      one before it was rescheduled, OR itself (if is at the
+ *                      end of the work queue).
+ *
+ *                      This may be used to achieve a round-robin scheduling
+ *                      of work.
+ *
+ *                      This is probably not useful for wqrc_nothing.
+ *
+ *   wqrc_rerun_reschedule -- if out of time, reschedule otherwise rerun
+ *
+ *                      The next item is the current one.
+ *
+ *                      This is probably not useful for wqrc_nothing, where it
+ *                      is the same as rerun !
+ *
+ *                      For wqrc_something this may be used to keep processing
+ *                      while time is available, then round-robin to wait for
+ *                      another time-slice.
+ *
+ *   wqrc_remove     -- remove item from work queue
+ *   wqrc_release    -- remove item from work queue and free it
+ *
+ *                      The next item is the one which followed the current
+ *                      one before it was removed.
+ */
+
+/*------------------------------------------------------------------------------
+ * Initialise (creating as required) a work queue item
+ *
+ * If wqi == NULL, create a new work queue item
+ *
+ * Sets the given work queue item function and data pointer.
+ *
+ * Returns:  address of the given or created item
+ */
+extern wq_item
+wq_item_init_new(wq_item wqi, wq_function func, void* data)
+{
+  if (wqi == NULL)
+    wqi = XCALLOC(MTYPE_WORK_QUEUE_ITEM, sizeof(wq_item_t)) ;
+  else
+    memset(wqi, 0, sizeof(wq_item_t)) ;
+
+  wqi->func = func ;
+  wqi->data = data ;
+
+  return wqi ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Free work queue item created by wq_item_init_new() -- if any
+ *
+ * NB: it is the caller's responsibility to ensure that the item is not on any
+ *     work queue.
+ *
+ * NB: it is the caller's responsibility to ensure that any data referred to by
+ *     the work queue item has been released as required.
+ *
+ * Returns:  NULL
+ */
+extern wq_item
+wq_item_free(wq_item wqi)
+{
+  if (wqi != NULL)
+    XFREE(MTYPE_WORK_QUEUE_ITEM, wqi) ;
+
+  return NULL ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Append given work queue item to the given work queue.
+ *
+ * NB: it is the caller's responsibility to ensure that the item is not on any
+ *     work queue, and that it is properly initialised.
+ *
+ * Returns:  address of the given work queue item.
+ */
+extern wq_item
+wq_item_add(wq_base wq, wq_item wqi)
+{
+  ddl_append(*wq, wqi, queue) ;
+
+  return wqi ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Remove given work queue item from the given work queue.
+ *
+ * NB: it is the caller's responsibility to ensure that the item is on the
+ *     work queue !
+ *
+ * Returns:  address of the given work queue item.
+ */
+extern wq_item
+wq_item_del(wq_base wq, wq_item wqi)
+{
+  ddl_del(*wq, wqi, queue) ;
+
+  return wqi ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Remove given work queue item from the given work queue and free it.
+ *
+ * NB: it is the caller's responsibility to ensure that the item is on the
+ *     work queue !
+ *
+ * Returns:  NULL
+ */
+extern wq_item
+wq_item_del_free(wq_base wq, wq_item wqi)
+{
+  if (wqi != NULL)
+    ddl_del(*wq, wqi, queue) ;
+
+  return wq_item_free(wqi) ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Initialise the given work queue
+ */
+extern void
+wq_init(wq_base wq)
+{
+  ddl_init(*wq) ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Run the given work queue
+ *
+ * NB: only when an item returns wqrc_something does this check for time
+ *     expired.  Which means:
+ *
+ *       * no matter what the time now and the yield time, will dispatch
+ *         items until hits end of queue or an item does something.
+ *
+ *       * ie: no matter what the time now and the yield time, one item will
+ *             get a chance to do something.
+ *
+ * Returns:  true <=> at least one item reported wqrc_something at some time.
+ *                 => *p_now set to time after last item that reported
+ *                    wqrc_something
+ *
+ *          false <=> no item reported wqrc_something and have reached the end
+ *                    of the queue.
+ *                 => *p_now *untouched*
+ */
+extern bool
+wq_run(wq_base wq, qtime_mono_t yield_time, qtime_mono_t* p_now)
+{
+  bool    something ;
+  wq_item wqi ;
+
+  something = false ;
+  wqi  = ddl_head(*wq) ;
+
+  while (wqi != NULL)
+    {
+      wq_ret_code_t ret ;
+      wq_item       next ;
+
+      /* Do something and collect the result
+       */
+      ret = wqi->func(wqi->data, yield_time) ;
+
+      switch (ret & wqrc_action_mask)
+        {
+          /* wqrc_retain: keep the item, but step past it for this run along
+           *              the work queue.
+           */
+          case wqrc_retain:
+            wqi = ddl_next(wqi, queue) ;
+            break ;
+
+          /* wqrc_rerun:            if time allows, rerun now,
+           *                        otherwise retain.
+           * wqrc_rerun_reschedule: if time allows, rerun now,
+           *                        otherwise reschedule (see below).
+           */
+          case wqrc_rerun:
+          case wqrc_rerun_reschedule:
+            break ;
+
+          /* wqrc_reschedule: move item to end of queue
+           */
+          case wqrc_reschedule:
+            next = ddl_next(wqi, queue) ;
+            if (next != NULL)
+              {
+                ddl_del(*wq, wqi, queue) ;
+                ddl_append(*wq, wqi, queue) ;
+                wqi = next ;
+              } ;
+            break ;
+
+          default:
+            qassert(false) ;
+            fall_through ;
+
+          /* wqrc_remove: remove item from queue
+           */
+          case wqrc_remove:
+            next = ddl_next(wqi, queue) ;
+            ddl_del(*wq, wqi, queue) ;
+            wqi = next ;
+            break ;
+
+          /* wqrc_release: remove item from queue and free it
+           */
+          case wqrc_release:
+            next = ddl_next(wqi, queue) ;
+            ddl_del(*wq, wqi, queue) ;
+            wq_item_free(wqi) ;
+            wqi = next ;
+            break ;
+        } ;
+
+      /* If we did something, see if we should yield.
+       */
+      confirm((wqrc_something != 0) && ((wqrc_nothing & wqrc_something) == 0)) ;
+
+      if (ret & wqrc_something)
+        {
+          qtime_mono_t now ;
+
+          something = true ;
+          now = qt_get_monotonic() ;
+
+          if ((wqi == NULL) || (now >= yield_time))
+            {
+              if (ret == (wqrc_something | wqrc_rerun_reschedule))
+                {
+                  qassert(wqi != NULL) ;
+
+                  if (ddl_next(wqi, queue) != NULL)
+                    {
+                      ddl_del(*wq, wqi, queue) ;
+                      ddl_append(*wq, wqi, queue) ;
+                    } ;
+                } ;
+
+              *p_now = now ;
+              break ;
+            } ;
+        } ;
+    } ;
+
+  return something ;
+} ;
+
+/*==============================================================================
+ * Previous workqueue implementation.
+ *
+ * Copyright (C) 2005 Sun Microsystems, Inc.
+ */
 #include <lib/zebra.h>
 #include "thread.h"
-#include "memory.h"
-#include "workqueue.h"
 #include "command.h"
 #include "log.h"
-#include "linklist.h"
 
 /* master list of work_queues */
 static struct list work_queues;
@@ -37,10 +347,14 @@ enum {
   WQ_HYSTERESIS_FACTOR = 4,
 } ;
 
+/*------------------------------------------------------------------------------
+ * Free given work queue item -- running any work queue 'del_item_data'
+ */
 static void
 work_queue_item_free (struct work_queue *wq, struct work_queue_item *item)
 {
-  /* call private data deletion callback if needed              */
+  /* call private data deletion callback if needed
+   */
   if (wq->spec.del_item_data != NULL)
     wq->spec.del_item_data (wq, item) ;
 
@@ -48,16 +362,18 @@ work_queue_item_free (struct work_queue *wq, struct work_queue_item *item)
   return;
 }
 
-/* create new work queue */
-struct work_queue *
+/*------------------------------------------------------------------------------
+ * create a new work queue, of given name.
+ *
+ * user must fill in the 'spec' of the returned work queue before adding
+ * anything to it
+ */
+extern struct work_queue *
 work_queue_new (struct thread_master *m, const char *queue_name)
 {
   struct work_queue *new;
 
-  new = XCALLOC (MTYPE_WORK_QUEUE, sizeof (struct work_queue));
-
-  if (new == NULL)
-    return new;
+  new = XCALLOC (MTYPE_WORK_QUEUE, sizeof(work_queue_t));
 
   new->name   = XSTRDUP (MTYPE_WORK_QUEUE_NAME, queue_name);
   new->master = m;
@@ -67,13 +383,19 @@ work_queue_new (struct thread_master *m, const char *queue_name)
 
   new->cycles.granularity = WQ_MIN_GRANULARITY;
 
-  /* Default values, can be overriden by caller */
+  /* Default values, can be overridden by caller
+   */
   new->spec.hold = WORK_QUEUE_DEFAULT_HOLD;
 
   return new;
 }
 
-void
+/*------------------------------------------------------------------------------
+ * destroy work queue
+ *
+ * Runs work_queue_item_free() across entire queue.
+ */
+extern void
 work_queue_free (struct work_queue *wq)
 {
   work_queue_item item ;
@@ -92,10 +414,12 @@ work_queue_free (struct work_queue *wq)
   return;
 }
 
+/*------------------------------------------------------------------------------
+ * if appropriate, schedule work queue thread
+ */
 static int
 work_queue_schedule (struct work_queue *wq, unsigned int delay)
 {
-  /* if appropriate, schedule work queue thread */
   if ( CHECK_FLAG (wq->flags, WQ_UNPLUGGED)
        && (wq->thread == NULL)
        && (wq->head != NULL) )
@@ -114,9 +438,9 @@ work_queue_schedule (struct work_queue *wq, unsigned int delay)
  * Schedules the work queue if there were no items (unless already scheduled
  * or plugged).
  *
- * Returns the address of the args area in the new item.
+ * Returns:  the address of the new item
  */
-extern void*
+extern work_queue_item
 work_queue_item_add (struct work_queue *wq)
 {
   work_queue_item item ;
@@ -124,12 +448,6 @@ work_queue_item_add (struct work_queue *wq)
   assert (wq);
 
   item = XCALLOC (MTYPE_WORK_QUEUE_ITEM, sizeof (struct work_queue_item));
-
-  if (item == NULL)
-    {
-      zlog_err ("%s: unable to get new queue item", __func__);
-      return NULL ;
-    }
 
   item->next = NULL ;
   if (wq->head == NULL)
@@ -146,41 +464,54 @@ work_queue_item_add (struct work_queue *wq)
     } ;
   wq->tail = item ;
 
-  ++wq->list_count ;
+  wq->list_count += 1 ;
   work_queue_schedule (wq, wq->spec.hold);
 
-  return work_queue_item_args(item) ;
+  return item ;
 }
 
-static void
-work_queue_item_remove (struct work_queue *wq, work_queue_item item)
+/*------------------------------------------------------------------------------
+ * Remove given work queue item from the given work queue, and free the item.
+ *
+ * Returns:  the address of item after the removed one (if any)
+ */
+static work_queue_item
+work_queue_item_remove (work_queue wq, work_queue_item item)
 {
+  work_queue_item next ;
+
   assert ((wq != NULL) && (item != NULL)) ;
+
+  next = item->next ;
 
   if (wq->head == item)
     {
-      /* Removing the first item                */
+      /* Removing the first item
+       */
       assert(item->prev == NULL) ;
 
-      wq->head = item->next ;
+      wq->head = next ;
 
       if (wq->tail == item)
         {
-          /* Removing the only item             */
-          assert((item->next == NULL) && (wq->list_count == 1)) ;
+          /* Removing the only item
+           */
+          assert((next == NULL) && (wq->list_count == 1)) ;
           wq->tail = NULL ;
         }
       else
         {
-          /* First, but not the only item       */
-          assert((item->next != NULL) && (wq->list_count > 1)) ;
+          /* First, but not the only item
+           */
+          assert((next != NULL) && (wq->list_count > 1)) ;
           wq->head->prev = NULL ;
         } ;
     }
   else if (wq->tail == item)
     {
-      /* Removing last, but not only item       */
-      assert(item->next == NULL) ;
+      /* Removing last, but not only item
+       */
+      assert(next == NULL) ;
       assert((item->prev != NULL) && (wq->list_count > 1)) ;
 
       wq->tail = item->prev ;
@@ -188,31 +519,44 @@ work_queue_item_remove (struct work_queue *wq, work_queue_item item)
     }
   else
     {
-      /* Removing from somewhere in middle      */
-      assert(item->next != NULL) ;
+      /* Removing from somewhere in middle
+       */
+      assert(next != NULL) ;
       assert((item->prev != NULL) && (wq->list_count > 2)) ;
 
-      item->prev->next = item->next ;
+      item->prev->next = next ;
       item->next->prev = item->prev ;
     } ;
 
-  --wq->list_count ;
+  wq->list_count -= 1 ;
   work_queue_item_free (wq, item);
 
-  return;
+  return next ;
 }
 
+/*------------------------------------------------------------------------------
+ * Requeue given work queue item at the end of the given work queue
+ *
+ * Returns:  the address of the next item to process
+ *
+ * Note that the next item to process will be the given item, if it is the last
+ * on the queue.
+ */
 static work_queue_item
-work_queue_item_requeue (struct work_queue *wq, work_queue_item item)
+work_queue_item_requeue (work_queue wq, work_queue_item item)
 {
-  work_queue_item next = item->next ;
-  work_queue_item last = wq->tail ;
+  work_queue_item next ;
+  work_queue_item last ;
+
+  next = item->next ;
+  last = wq->tail ;
 
   assert(last != NULL) ;
 
   if (last == item)
     {
-      /* Requeuing last item -- easy !          */
+      /* Requeuing last item -- easy !
+       */
       assert(next == NULL) ;
       return item ;
     } ;
@@ -221,19 +565,25 @@ work_queue_item_requeue (struct work_queue *wq, work_queue_item item)
 
   if (wq->head == item)
     {
-      /* Requeuing first, but not only item     */
+      /* Requeuing first, but not only item
+       */
       assert(item->prev == NULL) ;
 
-      wq->head       = next ;
-      next->prev     = NULL ;
+      wq->head    = next ;
+      next->prev  = NULL ;
     }
   else
     {
-      /* Requeuing something in middle          */
-      assert(item->prev != NULL) ;
+      /* Requeuing something in middle
+       */
+      work_queue_item prev ;
 
-      item->prev->next = item->next ;
-      item->next->prev = item->prev ;
+      prev = item->prev ;
+
+      assert(prev != NULL) ;
+
+      prev->next  = next ;
+      next->prev  = prev ;
     } ;
 
   item->next   = NULL ;
@@ -243,13 +593,14 @@ work_queue_item_requeue (struct work_queue *wq, work_queue_item item)
   wq->tail     = item ;
 
   return next ;
-}
+} ;
 
-/* 'plug' a queue: Stop it from being scheduled,
+/*------------------------------------------------------------------------------
+ * 'plug' a queue: Stop it from being scheduled,
  * ie: prevent the queue from draining.
  */
-void
-work_queue_plug (struct work_queue *wq)
+extern void
+work_queue_plug (work_queue wq)
 {
   if (wq->thread)
     thread_cancel (wq->thread);
@@ -259,30 +610,36 @@ work_queue_plug (struct work_queue *wq)
   UNSET_FLAG (wq->flags, WQ_UNPLUGGED);
 }
 
-/* unplug queue, schedule it again, if appropriate
+/*------------------------------------------------------------------------------
+ * unplug queue, schedule it again, if appropriate
  * Ie: Allow the queue to be drained again
  */
-void
-work_queue_unplug (struct work_queue *wq)
+extern void
+work_queue_unplug (work_queue wq)
 {
   SET_FLAG (wq->flags, WQ_UNPLUGGED);
 
-  /* if thread isnt already waiting, add one */
+  /* if thread isnt already waiting, add one
+   */
   work_queue_schedule (wq, wq->spec.hold);
 }
 
-/* timer thread to process a work queue
- * will reschedule itself if required,
- * otherwise work_queue_item_add
+/*------------------------------------------------------------------------------
+ * Thread function: process the work queue and reschedule if required.
+ *
+ * Runs the first item in the work queue,
+ *
+ *
+ * Returns: 0
  */
-int
+extern int
 work_queue_run (struct thread *thread)
 {
-  struct work_queue *wq;
-  work_queue_item next, item ;
-  wq_item_status ret;
-  unsigned int cycles = 0;
-  char yielded = 0;
+  work_queue      wq;
+  work_queue_item item ;
+  wq_item_status  ret;
+  uint cycles ;
+  bool yielded ;
 
   wq = THREAD_ARG (thread);
   wq->thread = NULL;
@@ -309,93 +666,91 @@ work_queue_run (struct thread *thread)
   if (wq->cycles.granularity == 0)
     wq->cycles.granularity = WQ_MIN_GRANULARITY;
 
-  next = wq->head ;
-  while (next != NULL)
+  cycles  = 0 ;
+  yielded = false ;
+
+  item = wq->head ;
+  while (item != NULL)
   {
-    item = next ;
-    next = item->next ;         /* default next item    */
-
-    /* dont run items which are past their allowed retries */
-    if (item->ran > wq->spec.max_retries)
+    /* run and take care of items that want to be retried immediately
+     *
+     * Note that we check for maximum retry exceeded at the top of the loop,
+     * which picks up WQ_RETRY_LATER which
+     */
+    while (1)
       {
-        /* run error handler, if any */
-        if (wq->spec.errorfunc != NULL)
-          wq->spec.errorfunc (wq, item);
-        work_queue_item_remove (wq, item);
-        continue;
-      }
+        if (item->ran > wq->spec.max_retries)
+          {
+            ret = WQ_ERROR ;
+            break ;
+          } ;
 
-    /* run and take care of items that want to be retried immediately */
-    do
-      {
-        ret = wq->spec.workfunc (wq, item);
-        item->ran++;
-      }
-    while ((ret == WQ_RETRY_NOW)
-           && (item->ran < wq->spec.max_retries));
+        ret = wq->spec.workfunc (wq, item) ;
+
+        if (ret != WQ_RETRY_NOW)
+          break ;
+
+        item->ran += 1 ;
+      } ;
 
     switch (ret)
       {
-      case WQ_QUEUE_BLOCKED:
-        {
-          /* decrement item->ran again, cause this isn't an item
-           * specific error, and fall through to WQ_RETRY_LATER
-           */
-          item->ran--;
-        }
-      case WQ_RETRY_LATER:
-        {
+        case WQ_QUEUE_BLOCKED:
+          goto stats ;
+
+        case WQ_RETRY_LATER:
+          item->ran += 1 ;
           goto stats;
-        }
-      case WQ_REQUEUE:
-        {
-          item->ran--;
-          next = work_queue_item_requeue (wq, item);
+
+        case WQ_REQUEUE:
+          item = work_queue_item_requeue (wq, item);
+          cycles += 1 ;
           break;
-        }
-      case WQ_RETRY_NOW:
-        /* a RETRY_NOW that gets here has exceeded max_tries, same as ERROR */
-      case WQ_ERROR:
-        {
+
+        case WQ_RETRY_NOW:
+          /* a RETRY_NOW that gets here has exceeded max_tries, same as ERROR
+           */
+        case WQ_ERROR:
           if (wq->spec.errorfunc != NULL)
             wq->spec.errorfunc (wq, item);
-        }
-        /* fall through here is deliberate */
-      case WQ_SUCCESS:
-      default:
-        {
-          work_queue_item_remove (wq, item);
+
+          fall_through ;
+
+        case WQ_SUCCESS:
+        default:
+          item = work_queue_item_remove (wq, item);
+          cycles += 1 ;
           break;
-        }
-      }
+      } ;
 
-    /* completed cycle */
-    cycles++;
-
-    /* test if we should yield */
-    if ( !(cycles % wq->cycles.granularity)
-        && thread_should_yield (thread))
+    /* test if we should yield
+     */
+    if ( ((cycles % wq->cycles.granularity) == 0)
+                                                && thread_should_yield (thread))
       {
-        yielded = 1;
-        goto stats;
+        yielded = true;
+        break ;
       }
-  }
+  } ;
 
 stats:
 
-  /* we yielded, check whether granularity should be reduced */
   if (yielded && (cycles < wq->cycles.granularity))
     {
+      /* we yielded, check whether granularity should be reduced
+       */
       wq->cycles.granularity = ((cycles > 0) ? cycles
                                              : WQ_MIN_GRANULARITY);
     }
-  /* otherwise, should granularity increase? */
   else if (cycles >= (wq->cycles.granularity))
     {
+      /* otherwise, should granularity increase?
+       */
       if (cycles > wq->cycles.best)
         wq->cycles.best = cycles;
 
-      /* along with yielded check, provides hysteresis for granularity */
+      /* along with yielded check, provides hysteresis for granularity
+       */
       if (cycles > (wq->cycles.granularity * WQ_HYSTERESIS_FACTOR
                                            * WQ_HYSTERESIS_FACTOR))
         wq->cycles.granularity *= WQ_HYSTERESIS_FACTOR; /* quick ramp-up */
@@ -411,7 +766,8 @@ stats:
             __func__, cycles, wq->cycles.best, wq->cycles.granularity);
 #endif
 
-  /* Is the queue done yet? If it is, call the completion callback. */
+  /* Is the queue done yet?   If it is, call the completion callback.
+   */
   if (wq->head != NULL)
     work_queue_schedule (wq, 0);
   else if (wq->spec.completion_func)

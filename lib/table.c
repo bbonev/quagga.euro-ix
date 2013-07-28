@@ -30,6 +30,7 @@
 void route_node_delete (struct route_node *);
 void route_table_free (struct route_table *);
 
+
 struct route_table *
 route_table_init (void)
 {

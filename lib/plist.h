@@ -23,63 +23,75 @@
 #ifndef _QUAGGA_PLIST_H
 #define _QUAGGA_PLIST_H
 
+#include "qafi_safi.h"
 #include "prefix.h"
-#include "symtab.h"
-#include "vector.h"
+#include "sockunion.h"
 #include "vty.h"
 
-#define AFI_ORF_PREFIX 65535
+enum
+{
+  qAFI_ORF_PREFIX = qAFI_last + 1
+} ;
 
 enum prefix_list_type
 {
   PREFIX_DENY,
   PREFIX_PERMIT,
 };
+typedef enum prefix_list_type prefix_list_type_t ;
 
-struct prefix_list ;
+typedef struct prefix_list  prefix_list_t ;
+typedef struct prefix_list* prefix_list ;
 
-/* References to prefix lists are dynamically allocated symbol nref objects.
- */
-typedef symbol_nref prefix_list_ref ;
+typedef struct orf_prefix_value  orf_prefix_value_t ;
+typedef struct orf_prefix_value* orf_prefix_value ;
 
-struct orf_prefix
+struct orf_prefix_value
 {
-  u_int32_t seq;
-  u_char ge;
-  u_char le;
-  struct prefix p;
+  uint32_t     seq ;
+  prefix_list_type_t type ;
+  prefix_len_t ge ;
+  prefix_len_t le ;
+  prefix_t     pfx ;
 };
 
-/* Prototypes. */
+/* Name of a BGP ORF prefix list -- IP-99999
+ */
+enum
+  {
+    bgp_orf_name_len  = (((SU_ADDRSTRLEN + 1 + 5 + 1) + 7) / 8) * 8
+  } ;
+typedef char bgp_orf_name[bgp_orf_name_len] ;
+
+/*==============================================================================
+ * Prototypes.
+ */
 extern void prefix_list_cmd_init (void);
 extern void prefix_list_init (void);
 extern void prefix_list_reset (free_keep_b free);
-extern void prefix_list_add_hook (void (*func) (struct prefix_list *));
-extern void prefix_list_delete_hook (void (*func) (struct prefix_list *));
+extern void prefix_list_add_hook (void (*func) (prefix_list));
+extern void prefix_list_delete_hook (void (*func) (prefix_list));
 
-extern struct prefix_list *prefix_list_lookup (afi_t, const char *);
-extern enum prefix_list_type prefix_list_apply (struct prefix_list *, void *);
+extern prefix_list prefix_list_lookup (qAFI_t, const char *);
+extern prefix_list prefix_list_find (qAFI_t, const char *);
+extern prefix_list_type_t prefix_list_apply (prefix_list, const void *);
 
-extern bool prefix_list_is_active(struct prefix_list* plist) ;
-extern bool prefix_list_is_set(struct prefix_list* plist) ;
-extern const char* prefix_list_get_name(struct prefix_list* plist) ;
+extern prefix_list prefix_list_get_ref(qAFI_t q_afi, const char *name) ;
+extern prefix_list prefix_list_set_ref(prefix_list plist) ;
+extern prefix_list prefix_list_clear_ref(prefix_list plist) ;
 
-extern struct stream * prefix_bgp_orf_entry (struct stream *,
-                                             prefix_list_ref ref,
-                                             u_char, u_char, u_char);
-extern int prefix_bgp_orf_get(struct prefix_list *plist, vector_index_t i,
-    struct orf_prefix *orfpe, enum prefix_list_type *pe_type);
-extern int prefix_bgp_orf_set (char *, afi_t, struct orf_prefix *, int, int);
-extern void prefix_bgp_orf_remove_all (char *);
-extern int prefix_bgp_show_prefix_list (struct vty *, afi_t, char *);
+extern bool prefix_list_is_active(prefix_list plist) ;
+extern bool prefix_list_is_set(prefix_list plist) ;
+extern const char* prefix_list_get_name(prefix_list plist) ;
 
-extern prefix_list_ref prefix_list_set_ref(prefix_list_ref ref, afi_t afi,
-                                                             const char* name) ;
-extern prefix_list_ref prefix_list_copy_ref(prefix_list_ref dst,
-                                                          prefix_list_ref src) ;
-extern prefix_list_ref prefix_list_unset_ref(prefix_list_ref ref) ;
-extern struct prefix_list* prefix_list_ref_plist(prefix_list_ref ref) ;
-extern const char* prefix_list_ref_name(prefix_list_ref ref) ;
-extern void* prefix_list_ref_ident(prefix_list_ref ref) ;
+extern void prefix_bgp_orf_name_set(bgp_orf_name, sockunion, uint16_t qafx) ;
+extern bool prefix_bgp_orf_get(orf_prefix_value orfpv, prefix_list plist,
+                                                              vector_index_t i);
+extern cmd_ret_t prefix_bgp_orf_set (bgp_orf_name, qAFI_t, orf_prefix_value,
+                                                                     bool set) ;
+extern void prefix_bgp_orf_remove_all (bgp_orf_name);
+extern prefix_list prefix_bgp_orf_delete(prefix_list plist) ;
+
+extern int prefix_bgp_show_prefix_list (struct vty *, char *);
 
 #endif /* _QUAGGA_PLIST_H */

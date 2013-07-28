@@ -31,16 +31,20 @@
  * A name table maps an integer value to a name, with an option default for
  * unknown values.
  *
- * Two forms of name table are supported:
+ * Three forms of name table are supported:
  *
  *   * direct   -- where the names are in an array indexed directly by value
  *
  *   * indirect -- where the name has to be searched for
  *
+ *   * bits     -- where a bit significant value specifies a number of
+ *                 names.
+ *
  * Obviously, direct is more efficient, except where the value range is large,
  * or very sparse.
  */
-QFB_T(60) name_str_t ;          /* Reasonable size "name"       */
+QFB_T( 60) name_str_t ;         /* Reasonable size "name"               */
+QFB_T(120) bits_str_t ;         /* Reasonable size "set of names"       */
 
 /*------------------------------------------------------------------------------
  * Direct name table
@@ -117,9 +121,68 @@ typedef const struct map_direct* map_direct_p ;
  * Indirect Map -- TBA
  */
 
+/*------------------------------------------------------------------------------
+ * Bits name table -- for sets of up to 64 bits.
+ *
+ * This is an array of map_bit_names_s structures:
+ *
+ *   uint64_t bits ; const char* "string" ;
+ *
+ * terminated by an entry with a 0 bits value.
+ *
+ * So can construct such a table:
+ *
+ * static const map_bit_names_s[] =
+ * {
+ *   { .bits = 0x55555, .str = "Ahha" },
+ *   ....
+ *   { 0 }
+ * } ;
+ */
+typedef const struct map_bit_names map_bit_names_s ;
+
+struct map_bit_names
+{
+  uint64_t    bits ;
+  const char* str ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Bits ordinal table -- for sets of up to 64 bits.
+ *
+ * This is an array of map_bit_ords_s structures:
+ *
+ *   uint64_t bits ; uint ord ;
+ *
+ * terminated by an entry with a 0 bits value.
+ *
+ * So can construct such a table:
+ *
+ * static const map_bit_ords_s[] =
+ * {
+ *   { .bits = 0x55555, .ord = 1 },
+ *   ....
+ *   { 0 }
+ * } ;
+ */
+typedef const struct map_bit_ords map_bit_ords_s ;
+
+struct map_bit_ords
+{
+  uint64_t  bits ;
+  uint      ord ;
+} ;
+
 /*==============================================================================
  * Functions
  */
 extern name_str_t map_direct(const map_direct_t map, int val) ;
+extern name_str_t map_direct_with_value(const map_direct_t map, int val) ;
+extern const char* map_direct_known(const map_direct_t map, int val) ;
+
+extern const char* map_bits_first(const map_bit_names_s* map, uint64_t* p_bits) ;
+extern bits_str_t map_bits_all(const map_bit_names_s* map, uint64_t bits) ;
+
+extern uint map_bit_ord_first(const map_bit_ords_s* map, uint64_t* p_bits) ;
 
 #endif /* _ZEBRA_NAME_MAP_H */

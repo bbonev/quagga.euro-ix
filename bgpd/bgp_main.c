@@ -30,7 +30,6 @@ Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
 #include "lib/version.h"
 #include "prefix.h"
 #include "log.h"
-#include "privs.h"
 #include "sigevent.h"
 #include "zclient.h"
 #include "routemap.h"
@@ -41,7 +40,7 @@ Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
 #include "qfstring.h"
 
 #include "bgpd/bgpd.h"
-#include "bgpd/bgp_attr.h"
+#include "bgpd/bgp_attr_store.h"
 #include "bgpd/bgp_mplsvpn.h"
 #include "bgpd/bgp_aspath.h"
 #include "bgpd/bgp_dump.h"
@@ -56,52 +55,38 @@ Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
 #include "bgpd/bgp_vty.h"
 #include "bgpd/bgp_zebra.h"
 
-/* Configuration file and directory.                                    */
+/* Configuration file and directory.
+ */
 char config_default[] = SYSCONFDIR BGP_DEFAULT_CONFIG;
 
-/* Route retain mode flag.                                              */
+/* Route retain mode flag.
+ */
 static bool retain_mode         = false;
 
-/* Have started terminating the program                                 */
+/* Have started terminating the program
+ */
 static bool program_terminating = false ;
 
-/* whether to ignore warnings in configuration file                     */
+/* whether to ignore warnings in configuration file
+ */
 static bool config_ignore_warnings = false;
 
-/* whether configured to run with qpthreads                             */
+/* whether configured to run with qpthreads
+ */
 static bool pthreaded_option     = false ;
 
-/* whether configured to run as an AS2 speaker                          */
+/* whether configured to run as an AS2 speaker
+ */
 static bool config_as2_speaker  = false ;
 
-/* Process ID saved for use by init system                              */
+/* Process ID saved for use by init system
+ */
 static const char *pid_file = PATH_BGPD_PID;
 
-/* VTY port number and address.                                         */
+/* VTY port number and address.
+ */
 int   vty_port = BGP_VTY_PORT;
 char *vty_addr = NULL;
-
-/* privileges                                                           */
-static zebra_capabilities_t _caps_p [] =
-{
-    ZCAP_BIND,
-    ZCAP_NET_RAW,
-    ZCAP_NET_ADMIN,
-};
-
-struct zebra_privs_t bgpd_privs =
-{
-#if defined(QUAGGA_USER) && defined(QUAGGA_GROUP)
-  .user      = QUAGGA_USER,
-  .group     = QUAGGA_GROUP,
-#endif
-#ifdef VTY_GROUP
-  .vty_group = VTY_GROUP,
-#endif
-  .caps_p    = _caps_p,
-  .cap_num_p = sizeof(_caps_p)/sizeof(_caps_p[0]),
-  .cap_num_i = 0,
-};
 
 /*==============================================================================
  *
@@ -199,6 +184,23 @@ usage (const char *progname, int status)
 }
 
 /*------------------------------------------------------------------------------
+ * Trim "\s*(=\s*)?" orft the front of an optarg.
+ */
+static char*
+trim_optarg(char* arg)
+{
+  while (isspace(*arg))
+    ++arg ;
+
+  if (*arg == '=')
+    {
+      do { ++arg ; } while(isspace(*arg)) ;
+    } ;
+
+  return arg ;
+} ;
+
+/*------------------------------------------------------------------------------
  * Main routine of bgpd. Treatment of argument and start bgp finite
  * state machine is handled at here.
  */
@@ -240,9 +242,10 @@ main (int argc, char **argv)
 
   while (1)
     {
-      int  result ;
-      int  val ;
-      int  opt;
+      strtox_t tox ;
+      int   val ;
+      int   opt ;
+      char* str ;
 
       opt = getopt_long (argc, argv, "2A:bCdf:Fg:hi:Il:np:P:Qrtu:vW:z:",
                                                                  longopts, 0);
@@ -289,52 +292,85 @@ main (int argc, char **argv)
         /* Set pid file name
          */
         case 'i':
-          pid_file = optarg;
+          pid_file = trim_optarg(optarg) ;
+          if (*pid_file == '\0')
+            pid_file = PATH_BGPD_PID ;
           break;
 
         /* Set zebra server path.
          */
         case 'z':
-          zclient_serv_path_set (optarg);
+          str = trim_optarg(optarg) ;
+          if (!zclient_serv_path_set(str))
+            {
+              fprintf(stderr, "%% invalid zebra path '-z %s'\n", str) ;
+              invalid_option = true ;
+            } ;
           break;
 
         /* Set port to listen on for BGP -- 0 => default.
          */
         case 'p':
-          val = strtoul_xr(optarg, &result, NULL, 0, 0xFFFF) ;
+          str = trim_optarg(optarg) ;
 
-          if (result >= 0)
-            {
-              if (val == 0)
-                bm->port = BGP_PORT_DEFAULT ;
-              else
-                bm->port = val ;
-            }
+          if (str == '\0')
+            str = NULL ;
           else
             {
-              fprintf(stderr, "%% invalid BGP port '-p %s'\n", optarg) ;
-              invalid_option = true ;
+              val = strtoul_x(str, &tox, NULL) ;
+
+              if ((tox == strtox_ok) && (val == 0))
+                str = NULL ;
+              else
+                {
+                  val = str2port(str, "tcp") ;
+
+                  if (val == 0)
+                    {
+                      fprintf(stderr, "%% invalid BGP port '-p %s'\n", str) ;
+                      invalid_option = true ;
+                    } ;
+                } ;
             } ;
+
+          bm->port_str = str ;
           break;
 
         /* Set address to listen on for VTY connections.
          */
         case 'A':
-          vty_addr = optarg;
+          vty_addr = trim_optarg(optarg) ;
+          if (*vty_addr == '\0')
+            vty_addr = NULL ;
           break;
 
         /* Set port to listen on for VTY connections -- 0 => none.
          */
         case 'P':
-          val = strtoul_xr(optarg, &result, NULL, 0, 0xFFFF) ;
+          str = trim_optarg(optarg) ;
 
-          if (result >= 0)
-            vty_port = val ;
+          if (str == '\0')
+            val = 0 ;
           else
             {
-              fprintf(stderr, "%% invalid BGP port '-p %s'\n", optarg) ;
-              invalid_option = true ;
+              val = strtoul_x(str, &tox, NULL) ;
+
+              if ((tox != strtox_ok) || (val != 0))
+                {
+                  val = str2port(str, "tcp") ;
+
+                  if (val == 0)
+                    {
+                      fprintf(stderr, "%% invalid BGP port '-P %s'\n", str) ;
+                      invalid_option = true ;
+                    } ;
+                } ;
             } ;
+
+          if (val != 0)
+            vty_port = val ;
+          else
+            vty_port = BGP_VTY_PORT ;
           break;
 
         /* Retain routes after exit from bgpd
@@ -346,7 +382,7 @@ main (int argc, char **argv)
         /* Set address to listen on for BGP
          */
         case 'l':
-          bm->address = optarg;
+          bm->addresses = trim_optarg(optarg) ;
           fall_through ;                /* NB: -l => -n                 */
 
         /* Set "no FIB" option
@@ -358,13 +394,15 @@ main (int argc, char **argv)
         /* Set user to run as.
          */
         case 'u':
-          bgpd_privs.user = optarg;
+          str = trim_optarg(optarg) ;
+          bgpd_privs.user = (*str != '\0') ? str : QUAGGA_USER ;
           break;
 
         /* Set group to run as.
          */
         case 'g':
-          bgpd_privs.group = optarg;
+          str = trim_optarg(optarg) ;
+          bgpd_privs.group = (*str != '\0') ? str : QUAGGA_GROUP;
           break;
 
         /* Print program version and exit.
@@ -455,6 +493,14 @@ main (int argc, char **argv)
 
   bm->as2_speaker = config_as2_speaker ;
 
+
+  /* At the last possible moment, we check whether the
+   *
+   */
+
+
+
+
   /* Start execution only if not in dry-run mode
    */
   if (dryrun)
@@ -487,12 +533,12 @@ main (int argc, char **argv)
   if (qdebug)
     zlog_notice(debug_banner, argv[0], "");
 
-  zlog_notice ("BGPd %s%s starting: vty@%d, bgp@%s:%d",
+  zlog_notice ("BGPd %s%s starting: vty@%d, bgp@%s:%s",
                QUAGGA_VERSION,
                (qpthreads_enabled ? " pthreaded" : ""),
                vty_port,
-               (bm->address ? bm->address : "<all>"),
-               (int)bm->port);
+               (bm->addresses ? bm->addresses : "<all>"),
+               bm->port_str);
 
   /* If we are debugging the FSM, set the name of the bgp_nexus timer pile.
    *
@@ -624,14 +670,15 @@ bgp_init_second_stage(bool pthreads)
   thread_set_qtimer_pile(routing_nexus->pile) ;
 
   /* Nexus hooks.
-   * Beware if !qpthreads_enabled then there is only 1 nexus object
+   *
+   * Beware: if !qpthreads_enabled then there is only 1 nexus object
    * with all nexus pointers being aliases for it.
    */
   qpn_add_hook_function(&routing_nexus->in_thread_init, routing_start) ;
   qpn_add_hook_function(&bgp_nexus->in_thread_init,  bgp_in_thread_init) ;
 
   qpn_add_hook_function(&routing_nexus->in_thread_final, routing_finish) ;
-  qpn_add_hook_function(&bgp_nexus->in_thread_final, bgp_close_listeners) ;
+  qpn_add_hook_function(&bgp_nexus->in_thread_final, bgp_listeners_finish) ;
 
   qpn_add_hook_function(&routing_nexus->foreground, routing_foreground) ;
   qpn_add_hook_function(&bgp_nexus->foreground, bgp_connection_queue_process) ;
@@ -659,7 +706,7 @@ bgp_init_second_stage(bool pthreads)
 static void
 bgp_in_thread_init(void)
 {
-  bgp_open_listeners(bm->address, bm->port);
+  bgp_listeners_init(bm->addresses, bm->port_str);
 } ;
 
 /*------------------------------------------------------------------------------
@@ -720,18 +767,22 @@ bgp_exit (int status)
   extern struct zclient *zclient;
   extern struct zclient *zlookup;
 
-  /* it only makes sense for this to be called on a clean exit */
+  /* it only makes sense for this to be called on a clean exit
+   */
   assert (status == 0);
 
-  /* reverse bgp_master_init */
+  /* reverse bgp_master_init
+   */
   for (ALL_LIST_ELEMENTS (bm->bgp, node, nnode, bgp))
     bgp_delete (bgp);
   list_free (bm->bgp);
 
-  /* dismantle the peer index   */
+  /* dismantle the peer index
+   */
   bgp_peer_index_finish() ;
 
-  /* reverse bgp_zebra_init/if_init */
+  /* reverse bgp_zebra_init/if_init
+   */
   if (retain_mode)
     if_add_hook (IF_DELETE_HOOK, NULL);
 
@@ -747,48 +798,58 @@ bgp_exit (int status)
     }
   list_free (iflist);
 
-  /* curtains                                   */
+  /* curtains
+   */
   zlog_notice ("Terminated");
 
-  /* reverse bgp_attr_init */
-  bgp_attr_finish ();
-
-  /* reverse bgp_dump_init */
+  /* reverse bgp_dump_init
+   */
   bgp_dump_finish ();
 
-  /* reverse bgp_route_init */
+  /* reverse bgp_route_init
+   */
   bgp_route_finish ();
 
-  /* reverse bgp_route_map_init/route_map_init */
+  /* reverse bgp_route_map_init/route_map_init
+   */
   route_map_finish ();
 
-  /* reverse bgp_scan_init */
+  /* reverse bgp_scan_init
+   */
   bgp_scan_finish ();
 
-  /* reverse access_list_init */
+  /* reverse access_list_init
+   */
   access_list_add_hook (NULL);
   access_list_delete_hook (NULL);
-  access_list_reset ();
+  access_list_reset (free_it);
 
-  /* reverse bgp_filter_init */
+  /* reverse bgp_filter_init
+   */
   as_list_add_hook (NULL);
   as_list_delete_hook (NULL);
   bgp_filter_reset ();
 
-  /* reverse prefix_list_init */
+  /* reverse prefix_list_init
+   */
   prefix_list_add_hook (NULL);
   prefix_list_delete_hook (NULL);
   prefix_list_reset (free_it);
 
-  /* reverse community_list_init */
+  /* reverse community_list_init
+   */
   community_list_terminate (bgp_clist);
+
+  /* reverse bgp_attr_start()
+   */
+  bgp_attr_finish ();
 
   cmd_table_terminate ();
   vty_terminate ();
 
-  if (zclient)
+  if (zclient != NULL)
     zclient_free (zclient);
-  if (zlookup)
+  if (zlookup != NULL)
     zclient_free (zlookup);
 
   if (zlog_default)
@@ -805,7 +866,7 @@ bgp_exit (int status)
   host_finish() ;
 
   qexit (status, (CONF_BGP_DEBUG (normal, NORMAL) || qdebug)) ;
-}
+} ;
 
 /*==============================================================================
  * Signal Handling.
@@ -1060,40 +1121,40 @@ bgp_do_show_nexus(struct vty* vty, qpn_nexus qpn)
 
   vty_out(vty, "%16s updated %s ago: %s(%s/%s) cycles\n",
           qpn->name,
-          qfs_time_period(curr.last_time - now, 0).str,
-          qfs_dec_value(curr.cycles, pf_scale).str,
-          qfs_dec_value(curr.cycles - prev.cycles, pf_scale | pf_plus_nz).str,
-          qfs_time_period(delta, pf_plus_nz).str) ;
+          qfs_put_time_period(curr.last_time - now, 0).str,
+          qfs_put_dec_value(curr.cycles, pf_scale).str,
+          qfs_put_dec_value(curr.cycles - prev.cycles, pf_scale | pf_plus_nz).str,
+          qfs_put_time_period(delta, pf_plus_nz).str) ;
 
   vty_out(vty, "  %s(%s) active  %s(%s) idle\n",
-      qfs_time_period((curr.last_time - curr.start_time) - curr.idle, 0).str,
-      qfs_time_period(delta - idle_delta, pf_plus_nz).str,
-      qfs_time_period(curr.idle, 0).str,
-      qfs_time_period(idle_delta, pf_plus_nz).str) ;
+      qfs_put_time_period((curr.last_time - curr.start_time) - curr.idle, 0).str,
+      qfs_put_time_period(delta - idle_delta, pf_plus_nz).str,
+      qfs_put_time_period(curr.idle, 0).str,
+      qfs_put_time_period(idle_delta, pf_plus_nz).str) ;
 
   vty_out(vty, "  %s(%s) signals",
-      qfs_dec_value(curr.signals, pf_scale).str,
-      qfs_dec_value(curr.signals - prev.signals, pf_scale | pf_plus_nz).str) ;
+      qfs_put_dec_value(curr.signals, pf_scale).str,
+      qfs_put_dec_value(curr.signals - prev.signals, pf_scale | pf_plus_nz).str) ;
 
   vty_out(vty, "  %s(%s) foreg.",
-      qfs_dec_value(curr.foreg, pf_scale).str,
-      qfs_dec_value(curr.foreg - prev.foreg, pf_scale | pf_plus_nz).str) ;
+      qfs_put_dec_value(curr.foreg, pf_scale).str,
+      qfs_put_dec_value(curr.foreg - prev.foreg, pf_scale | pf_plus_nz).str) ;
 
   vty_out(vty, "  %s(%s) dispatch\n",
-      qfs_dec_value(curr.dispatch, pf_scale).str,
-      qfs_dec_value(curr.dispatch - prev.dispatch, pf_scale | pf_plus_nz).str) ;
+      qfs_put_dec_value(curr.dispatch, pf_scale).str,
+      qfs_put_dec_value(curr.dispatch - prev.dispatch, pf_scale | pf_plus_nz).str) ;
 
   vty_out(vty, "  %s(%s) i/o act.",
-      qfs_dec_value(curr.io_acts, pf_scale).str,
-      qfs_dec_value(curr.io_acts - prev.io_acts, pf_scale | pf_plus_nz).str) ;
+      qfs_put_dec_value(curr.io_acts, pf_scale).str,
+      qfs_put_dec_value(curr.io_acts - prev.io_acts, pf_scale | pf_plus_nz).str) ;
 
   vty_out(vty, "  %s(%s) timers",
-      qfs_dec_value(curr.timers, pf_scale).str,
-      qfs_dec_value(curr.timers - prev.timers, pf_scale | pf_plus_nz).str) ;
+      qfs_put_dec_value(curr.timers, pf_scale).str,
+      qfs_put_dec_value(curr.timers - prev.timers, pf_scale | pf_plus_nz).str) ;
 
   vty_out(vty, "  %s(%s) backg.\n",
-      qfs_dec_value(curr.backg, pf_scale).str,
-      qfs_dec_value(curr.backg - prev.backg, pf_scale | pf_plus_nz).str) ;
+      qfs_put_dec_value(curr.backg, pf_scale).str,
+      qfs_put_dec_value(curr.backg - prev.backg, pf_scale | pf_plus_nz).str) ;
 } ;
 
 

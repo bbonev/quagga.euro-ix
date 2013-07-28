@@ -498,6 +498,10 @@ Private bool ssl_del_func(void** p_prev, void* item, size_t link_offset)
  *
  *     NB: confusion will arise if only one of these pointers is NULL.
  *
+ *   ddl_init_pair(item, list)      -- initialise pointer pair
+ *
+ *     Sets both pointers NULL -- not strictly necessary, but tidy.
+ *
  *   ddl_push(base, item, list)     -- insert at head of list
  *
  *     Treat as void function.  The item may *not* be NULL.
@@ -546,7 +550,7 @@ Private bool ssl_del_func(void** p_prev, void* item, size_t link_offset)
  *
  *   ddl_del(base, item, list)      -- delete from list
  *
- *     Treat as void function.  Does nothing if the item is NULL.
+ *     Treat as void function.  The item may *not* be NULL.
  *
  *     Undefined if item is not on the list.
  *
@@ -612,7 +616,7 @@ Private bool ssl_del_func(void** p_prev, void* item, size_t link_offset)
  *     sub is unchanged by this operation -- but its head->list.prev and
  *     and tail->list.next may well be.
  *
- *   ddl_append_list(base, sub)     -- append sublist b to list a
+ *   ddl_append_list(base, sub, list) -- append sub list to base list
  *
  *     Treat as void function.
  *
@@ -622,7 +626,7 @@ Private bool ssl_del_func(void** p_prev, void* item, size_t link_offset)
  *     sub is unchanged by this operation -- but its head->list.prev and
  *     and tail->list.next may well be.
  *
- *   ddl_prepend_list(base, sub)    -- prepend sublist b to list a
+ *   ddl_prepend_list(base, sub, list) -- prepend sub list to base list
  *
  *     Treat as void function.
  *
@@ -717,7 +721,12 @@ Private bool ssl_del_func(void** p_prev, void* item, size_t link_offset)
 #define ddl_init(base)                                                  \
   ((base).head = (base).tail = NULL)
 
-#define ddl_push(base, item, list)                                      \
+#define ddl_init_pair(item, list)                                       \
+  ((item)->list.next = (item)->list.prev = NULL)
+
+#define ddl_push(base, item, list) ddl_prepend(base, item, list)
+
+#define ddl_prepend(base, item, list)                                   \
   do { (item)->list.next = (base).head ;                                \
        (item)->list.prev = NULL ;                                       \
        if ((base).head != NULL)                                         \
@@ -768,17 +777,14 @@ Private bool ssl_del_func(void** p_prev, void* item, size_t link_offset)
   } while (0)
 
 #define ddl_del(base, item, list)                                       \
-  do { if ((item) != NULL)                                              \
-         {                                                              \
-           if ((item)->list.next != NULL)                               \
-             (item)->list.next->list.prev = (item)->list.prev ;         \
-           else                                                         \
-             (base).tail = (item)->list.prev ;                          \
-           if ((item)->list.prev != NULL)                               \
-             (item)->list.prev->list.next = (item)->list.next ;         \
-           else                                                         \
-             (base).head = (item)->list.next ;                          \
-         } ;                                                            \
+  do { if ((item)->list.next != NULL)                                   \
+         (item)->list.next->list.prev = (item)->list.prev ;             \
+       else                                                             \
+         (base).tail = (item)->list.prev ;                              \
+       if ((item)->list.prev != NULL)                                   \
+         (item)->list.prev->list.next = (item)->list.next ;             \
+       else                                                             \
+         (base).head = (item)->list.next ;                              \
   } while (0)
 
 #define ddl_del_head(base, list)                                        \
@@ -924,200 +930,513 @@ Private bool ssl_del_func(void** p_prev, void* item, size_t link_offset)
   } while (0)
 
 /*==============================================================================
-  * Double Base, Single Link
-  *
-  * To delete entry must chase down list to find it.  Can insert at tail, but
-  * not remove (except by chasing down list).
-  *
-  * Supports:
-  *
-  *   dsl_init(base)                 -- initialise base
-  *
-  *     An empty list has *both* head and tail pointers NULL.
-  *
-  *     NB: confusion will arise if only one of these pointers is NULL.
-  *
-  *   dsl_push(base, item, next)     -- insert at head of list
-  *
-  *     Treat as void function.  The item may *not* be NULL.
-  *
-  *     Undefined if item is already on any list (including this one).
-  *
-  *   dsl_append(base, item, next)   -- insert at tail of list
-  *
-  *     Treat as void function.  The item may *not* be NULL.
-  *
-  *     Undefined if item is already on any list (including this one).
-  *
-  *   dsl_in_after(after, base, item, next)   -- insert after
-  *
-  *     Treat as void function.  The after & item may *not* be NULL.
-  *
-  *     Undefined if item is already on any list (including this one), or if
-  *     after is not on the list.
-  *
-  *   dsl_pop(&dst, base, next)      -- pop head of list, if any
-  *
-  *     Treat as function returning void*.
-  *
-  *     Returns old head in dst and as return from "function".
-  *
-  *     Returns NULL and sets dst == NULL if list is empty.
-  *
-  *   dsl_del(base, item, next)      -- delete from list
-  *
-  *     Treat as void function.  Does nothing if the item is NULL.
-  *
-  *     Undefined if item is not on the list.
-  *
-  *   dsl_del_head(base, next)       -- delete head of list
-  *
-  *     Treat as void function.  Does nothing if the list is empty.
-  *
-  *   dsl_del_tail(base, next)       -- delete tail of list
-  *
-  *     Treat as void function.  Does nothing if the list is empty.
-  *
-  *   dsl_head(base)                 -- return head of list
-  *
-  *     Treat as function returning void*.
-  *
-  *   dsl_tail(base)                 -- return tail of list
-  *
-  *     Treat as function returning void*.
-  *
-  *   dsl_next(item, next)           -- step to next item, if any
-  *
-  *     Treat as function returning void*.  Returns NULL if the item is NULL.
-  *
-  * Note that dsl_del() and dsl_pop() do NOT affect the item->next pointer.
-  *
-  * Where:
-  *
-  *   "base" to be an r-value of type: struct base_pair(struct item*)*
-  *
-  *          That is... a variable or field which is a pointer to
-  *
-  *   "item" to be an l-value of type struct item*
-  *
-  *   "dst"  to be an r-value of type struct item*
-  *
-  *   "next" to be the name of a field in struct item of type struct item*
-  *
-  *------------------------------------------------------------------------------
-  * For example:
-  *
-  *   struct item                       // definition for list items
-  *   {
-  *     ...
-  *     struct item*  bar_next ;
-  *     ...
-  *   } ;
-  *
-  *   static struct base_pair(struct item*) bar_base ;
-  *                                    // declaration of the list base
-  *
-  *   // create item and add to list (adds at front)
-  *   struct item* q = calloc(1, sizeof(struct item)) ;
-  *   dsl_push(bar_base, q, bar_next) ;
-  *
-  *   // remove item from list
-  *   dsl_del(bar_base, q, bar_next) ;
-  *
-  *   // walk a list
-  *   struct item* t = dsl_head(bar_base) ;
-  *   while (t != NULL)
-  *     {
-  *       ....
-  *       t = dsl_next(t, bar_next) ;
-  *     }
-  *
-  *   // walk and empty out a list -- removing item before processing
-  *   struct item* t ;
-  *   while (dsl_pop(&t, bar_base, bar_next) != NULL)
-  *     {
-  *       ....  // t points to old head of list
-  *     }
-  *
-  *   // walk and empty out a list -- removing after processing
-  *   struct item* t ;
-  *   while ((t = dsl_head(bar_base) != NULL)
-  *     {
-  *       ....
-  *       dsl_del_head(bar_base, bar_next) ;
-  *     }
-  *
-  * And for example:
-  *
-  *   struct parent_item                 // parent structure containing list
-  *   {
-  *      ....
-  *      struct base_pair(struct item*) bar_base ;
-  *      ....
-  *   }
-  *
-  *   void footle(struct parent_item* parent, struct item* item)
-  *   {
-  *     ....
-  *     dsl_push(parent->bar_base, item, bar_next) ;
-  *     ....
-  *   }
-  */
+ * Double Base, Single Link
+ *
+ * To delete entry must chase down list to find it.  Can insert at tail, but
+ * not remove (except by chasing down list).
+ *
+ * Supports:
+ *
+ *   dsl_init(base)                 -- initialise base
+ *
+ *     An empty list has *both* head and tail pointers NULL.
+ *
+ *     NB: confusion will arise if only one of these pointers is NULL.
+ *
+ *   dsl_push(base, item, next)     -- insert at head of list
+ *
+ *     Treat as void function.  The item may *not* be NULL.
+ *
+ *     Undefined if item is already on any list (including this one).
+ *
+ *   dsl_append(base, item, next)   -- insert at tail of list
+ *
+ *     Treat as void function.  The item may *not* be NULL.
+ *
+ *     Undefined if item is already on any list (including this one).
+ *
+ *   dsl_in_after(after, base, item, next)   -- insert after
+ *
+ *     Treat as void function.  The after & item may *not* be NULL.
+ *
+ *     Undefined if item is already on any list (including this one), or if
+ *     after is not on the list.
+ *
+ *   dsl_pop(&dst, base, next)      -- pop head of list, if any
+ *
+ *     Treat as function returning void*.
+ *
+ *     Returns old head in dst and as return from "function".
+ *
+ *     Returns NULL and sets dst == NULL if list is empty.
+ *
+ *   dsl_del(base, item, next)      -- delete from list
+ *
+ *     Treat as void function.  Does nothing if the item is NULL.
+ *
+ *     Undefined if item is not on the list.
+ *
+ *   dsl_del_head(base, next)       -- delete head of list
+ *
+ *     Treat as void function.  Does nothing if the list is empty.
+ *
+ *   dsl_del_tail(base, next)       -- delete tail of list
+ *
+ *     Treat as void function.  Does nothing if the list is empty.
+ *
+ *   dsl_head(base)                 -- return head of list
+ *
+ *     Treat as function returning void*.
+ *
+ *   dsl_tail(base)                 -- return tail of list
+ *
+ *     Treat as function returning void*.
+ *
+ *   dsl_next(item, next)           -- step to next item, if any
+ *
+ *     Treat as function returning void*.  Returns NULL if the item is NULL.
+ *
+ * Note that dsl_del() and dsl_pop() do NOT affect the item->next pointer.
+ *
+ * Where:
+ *
+ *   "base" to be an r-value of type: struct base_pair(struct item*)*
+ *
+ *          That is... a variable or field which is a pointer to
+ *
+ *   "item" to be an l-value of type struct item*
+ *
+ *   "dst"  to be an r-value of type struct item*
+ *
+ *   "next" to be the name of a field in struct item of type struct item*
+ *
+ *------------------------------------------------------------------------------
+ * For example:
+ *
+ *   struct item                       // definition for list items
+ *   {
+ *     ...
+ *     struct item*  bar_next ;
+ *     ...
+ *   } ;
+ *
+ *   static struct base_pair(struct item*) bar_base ;
+ *                                    // declaration of the list base
+ *
+ *   // create item and add to list (adds at front)
+ *   struct item* q = calloc(1, sizeof(struct item)) ;
+ *   dsl_push(bar_base, q, bar_next) ;
+ *
+ *   // remove item from list
+ *   dsl_del(bar_base, q, bar_next) ;
+ *
+ *   // walk a list
+ *   struct item* t = dsl_head(bar_base) ;
+ *   while (t != NULL)
+ *     {
+ *       ....
+ *       t = dsl_next(t, bar_next) ;
+ *     }
+ *
+ *   // walk and empty out a list -- removing item before processing
+ *   struct item* t ;
+ *   while (dsl_pop(&t, bar_base, bar_next) != NULL)
+ *     {
+ *       ....  // t points to old head of list
+ *     }
+ *
+ *   // walk and empty out a list -- removing after processing
+ *   struct item* t ;
+ *   while ((t = dsl_head(bar_base) != NULL)
+ *     {
+ *       ....
+ *       dsl_del_head(bar_base, bar_next) ;
+ *     }
+ *
+ * And for example:
+ *
+ *   struct parent_item                 // parent structure containing list
+ *   {
+ *      ....
+ *      struct base_pair(struct item*) bar_base ;
+ *      ....
+ *   }
+ *
+ *   void footle(struct parent_item* parent, struct item* item)
+ *   {
+ *     ....
+ *     dsl_push(parent->bar_base, item, bar_next) ;
+ *     ....
+ *   }
+ */
 
- #define dsl_init(base)                                                  \
-   ((base).head = (base).tail = NULL)
+#define dsl_init(base)                                                  \
+  ((base).head = (base).tail = NULL)
 
- #define dsl_push(base, item, next)                                      \
-   do { (item)->next = (base).head ;                                     \
-        if ((base).tail == NULL)                                         \
-          (base).tail = (item) ;                                         \
-        (base).head = (item) ;                                           \
-   } while (0)
+#define dsl_push(base, item, next)                                      \
+  do { (item)->next = (base).head ;                                     \
+       if ((base).tail == NULL)                                         \
+         (base).tail = (item) ;                                         \
+       (base).head = (item) ;                                           \
+  } while (0)
 
- #define dsl_append(base, item, next)                                    \
-   do { (item)->next = NULL ;                                            \
-        if ((base).tail != NULL)                                         \
-          (base).tail->next = (item) ;                                   \
-        else                                                             \
-          (base).head = (item) ;                                         \
-        (base).tail = (item) ;                                           \
-   } while (0)
+#define dsl_append(base, item, next)                                    \
+  do { (item)->next = NULL ;                                            \
+       if ((base).tail != NULL)                                         \
+         (base).tail->next = (item) ;                                   \
+       else                                                             \
+         (base).head = (item) ;                                         \
+       (base).tail = (item) ;                                           \
+  } while (0)
 
- #define dsl_in_after(after, base, item, next)                           \
-   do { (item)->next = (after)->next ;                                   \
-        (after)->next = (item) ;                                         \
-        if ((base).tail == (after))                                      \
-          (base).tail = (item) ;                                         \
-   } while (0)
+#define dsl_in_after(after, base, item, next)                           \
+  do { (item)->next = (after)->next ;                                   \
+       (after)->next = (item) ;                                         \
+       if ((base).tail == (after))                                      \
+         (base).tail = (item) ;                                         \
+  } while (0)
 
- Private bool dsl_del_func(struct dl_void_base_pair* p_base,
+Private bool dsl_del_func(struct dl_void_base_pair* p_base,
                                                  void* obj, size_t link_offset)
                                                      __attribute__((noinline)) ;
- #define dsl_del(base, item, list)                                       \
-   dsl_del_func((struct dl_void_base_pair*)(&base), item,                \
+#define dsl_del(base, item, next)                                       \
+  dsl_del_func((struct dl_void_base_pair*)(&base), item,                \
                                                    _lu_off(item, next))
 
- #define dsl_del_head(base, next)                                        \
-   do { if ((base).head != NULL)                                         \
-          {                                                              \
-            (base).head = (base).head->next ;                            \
-            if ((base).head == NULL)                                     \
-              (base).tail = NULL ;                                       \
-          }                                                              \
-   } while (0)
+#define dsl_del_head(base, next)                                        \
+  do { if ((base).head != NULL)                                         \
+         {                                                              \
+           (base).head = (base).head->next ;                            \
+           if ((base).head == NULL)                                     \
+             (base).tail = NULL ;                                       \
+         }                                                              \
+  } while (0)
 
- #define dsl_pop(dst, base, next)                                        \
-   ((*(dst) = (base).head) != NULL                                       \
-     ? ( ((base).head = (base).head->next) == NULL                       \
-           ? ( (base).tail = NULL, *(dst) )                              \
-           :                       *(dst) )                              \
-     : NULL)
+#define dsl_pop(dst, base, next)                                        \
+  ((*(dst) = (base).head) != NULL                                       \
+    ? ( ((base).head = (base).head->next) == NULL                       \
+          ? ( (base).tail = NULL, *(dst) )                              \
+          :                       *(dst) )                              \
+    : NULL)
 
- #define dsl_head(base) ((base).head)
+#define dsl_head(base) ((base).head)
 
- #define dsl_tail(base) ((base).tail)
+#define dsl_tail(base) ((base).tail)
 
- #define dsl_next(item, next)                                            \
-   ((item) != NULL ? (item)->next : NULL)
+#define dsl_next(item, next)                                            \
+  ((item) != NULL ? (item)->next : NULL)
+
+
+
+/*==============================================================================
+ * Ring, Double Link
+ *
+ * On this ring all items are connected forwards and backwards.  The head
+ * of a ring points to one of the items.
+ *
+ * Supports:
+ *
+ *   rdl_init(base)                 -- initialise base
+ *
+ *     An empty ring has a NULL base.
+ *
+ *   rdl_clear(item, ring)          -- clear the ring pointer pair
+ *
+ *     Sets both pointers NULL.
+ *
+ *     NB: unlike a list, when an item is on a ring neither ring.next nor
+ *         ring.prev are NULL.  So, if the pointers are cleared, this may be
+ *         used to tell whether the item is on the ring or not.
+ *
+ *   rdl_is_on(item, ring)          -- is item on its ring ?
+ *   rdl_is_off(item, ring)         -- is item not on its ring ?
+ *
+ *     Treat as function returning bool
+ *
+ *     NB: this depends on the CALLER ensuring that the ring pointer pair
+ *         is cleared when the item is not on its ring.
+ *
+ *   rdl_head(base)                 -- return head of ring
+ *
+ *     Treat as function returning void*.
+ *
+ *   rdl_tail(base)                 -- return tail of ring
+ *
+ *     Treat as function returning void*.
+ *
+ *   rdl_next(item, ring)           -- step to next item, if any
+ *
+ *     Treat as function returning void*.  Returns NULL if the item is NULL.
+ *
+ *   rdl_prev(item, ring)           -- step to prev item, if any
+ *
+ *     Treat as function returning void*.  Returns NULL if the item is NULL.
+ *
+ *   rdl_append(base, item, ring)   -- insert at tail of ring
+ *
+ *     Treat as void function.  The item may *not* be NULL.
+ *
+ *     Undefined if item is already on any ring (including this one).
+ *
+ *   rdl_prepend(base, item, ring)  -- insert at head of ring
+ *
+ *     Treat as void function.  The item may *not* be NULL.
+ *
+ *     Undefined if item is already on any ring (including this one).
+ *
+ *   rdl_del(base, item, ring)      -- delete from ring
+ *
+ *     Treat as void function.  The item may *not* be NULL.
+ *
+ *     Undefined if item is not on the ring.
+ *
+ *   rdl_del_head(base, ring)       -- delete head of ring
+ *
+ *     Treat as function returning previous head.
+ *
+ *     Does nothing if the ring is empty.
+ *
+ * Note that rdl_del() and rdl_del_head() set the ring.next and
+ * ring.prev pointers to NULL.
+ *
+ * Where:
+ *
+ *   "base" to be an r-value of type: struct item*
+ *
+ *          That is... a variable or field which points to an item.
+ *
+ *   "item" to be an l-value of type struct item*
+ *
+ *   "ring" to be the name of a field in struct item
+ *          of type: struct dl_list_pair(struct item*)
+ *
+ */
+#define rdl_init(base)                                                  \
+  ((base) = NULL)
+
+#define rdl_clear(item, ring) \
+  _rdl_clear((dl_pair)&((item)->ring))
+
+#define rdl_is_on(item, ring) \
+  _rdl_is_on((dl_pair)&((item)->ring))
+
+#define rdl_is_off(item, ring) \
+  (!_rdl_is_on((dl_pair)&((item)->ring)))
+
+#define rdl_head(base) \
+  _rdl_head((void**)&(base))
+
+#define rdl_tail(base, ring) \
+  _rdl_tail((void**)&(base), (dl_pair)&((base)->ring))
+
+#define rdl_next(item, ring) \
+  _rdl_next(item, (dl_pair)&((item)->ring))
+
+#define rdl_prev(item, ring) \
+  _rdl_prev(item, (dl_pair)&((item)->ring))
+
+#define rdl_append(base, item, ring) \
+  _rdl_append((void**)&base, item, (dl_pair)&((item)->ring))
+
+#define rdl_prepend(base, item, ring) \
+  _rdl_prepend((void**)&base, item, (dl_pair)&((item)->ring))
+
+#define rdl_del(base, item, ring) \
+  _rdl_del((void**)&base, item, (dl_pair)&((item)->ring))
+
+#define rdl_del_head(base, ring) \
+  _rdl_del_head((void**)&base, (dl_pair)&((base)->ring))
+
+typedef struct dl_list_pair(void*) dl_pair_t ;
+typedef dl_pair_t* dl_pair ;
+
+#define dl_pair_make(item, offset) ((dl_pair)((void*)((char*)item + offset)))
+
+
+/*------------------------------------------------------------------------------
+ * Clear rdl pair.
+ */
+Inline void
+_rdl_clear(dl_pair item_pair)
+{
+  item_pair->next = item_pair->prev = NULL ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Is the rdl pair next != NULL
+ *
+ * Returns:  true <=> next != NULL
+ */
+Inline bool
+_rdl_is_on(dl_pair item_pair)
+{
+  if (item_pair->next != NULL)
+    {
+      qassert(item_pair->prev != NULL) ;
+      return true ;
+    }
+  else
+    {
+      qassert(item_pair->prev == NULL) ;
+      return false ;
+    }
+} ;
+
+/*------------------------------------------------------------------------------
+ * Get next item on ring -- returns NULL iff item is NULL
+ *
+ * NB: next may be the same item -- caller must check is cares.
+ */
+Inline void*
+_rdl_next(void* item , dl_pair item_pair)
+{
+  if (item != NULL)
+    item = item_pair->next ;
+
+  return item ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Get previous item on ring -- returns NULL iff item is NULL
+ *
+ * NB: next may be the same item -- caller must check is cares.
+ */
+Inline void*
+_rdl_prev(void* item, dl_pair item_pair)
+{
+  if (item != NULL)
+    item = item_pair->prev ;
+
+  return item ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Get head of rdl ring (if any)
+ */
+Inline void*
+_rdl_head(void** base)
+{
+  return *base ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Get tail of rdl ring (if any)
+ *
+ * We are passed: base_pair = &((*base)->ring.
+ */
+Inline void*
+_rdl_tail(void** base, dl_pair item_pair)
+{
+  void* item ;
+
+  item = *base ;
+  return _rdl_prev(item, item_pair) ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Append given item to rdl.
+ */
+Inline void
+_rdl_append(void** base, void* item, dl_pair item_pair)
+{
+  void*   next ;
+
+  next   = *base ;
+
+  if (next == NULL)
+    {
+      *base = item_pair->next = item_pair->prev = item ;
+    }
+  else
+    {
+      uint    offset ;
+      dl_pair next_pair ;
+      void*   prev ;
+      dl_pair prev_pair ;
+
+      offset = (char*)item_pair - (char*)item ;
+
+      next_pair = dl_pair_make(next, offset) ;
+      prev      = next_pair->prev ;
+      prev_pair = dl_pair_make(prev, offset) ;
+
+      qassert(prev_pair->next == next_pair->prev) ;
+
+      item_pair->next = next ;
+      item_pair->prev = prev ;
+
+      next_pair->prev = item ;
+      prev_pair->next = item ;
+    } ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Prepend given item to rdl.
+ */
+Inline void
+_rdl_prepend(void** base, void* item, dl_pair item_pair)
+{
+  _rdl_append(base, item, item_pair) ;
+  *base = item ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Delete given item from rdl.
+ *
+ * NB: item MUST be on the rdl !!
+ */
+Inline void
+_rdl_del(void** base, void* item, dl_pair item_pair)
+{
+  void* next ;
+  void* prev ;
+
+  qassert(*base != NULL) ;
+
+  next = item_pair->next ;
+  prev = item_pair->prev ;
+
+  if (next == item)
+    {
+      /* Ring contains just the one item !
+       */
+      qassert((*base == item) && (next == prev)) ;
+     *base = NULL ;
+    }
+  else
+    {
+      uint    offset ;
+      dl_pair next_pair ;
+      dl_pair prev_pair ;
+
+      offset = (char*)item_pair - (char*)item ;
+
+      next_pair = dl_pair_make(next, offset) ;
+      prev_pair = dl_pair_make(prev, offset) ;
+
+      next_pair->prev = prev ;
+      prev_pair->next = next ;
+
+      if (*base == item)
+        *base = next ;
+    } ;
+
+  item_pair->next = item_pair->prev = NULL ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Delete head of rdl (if any) and return address of same.
+ */
+Inline void*
+_rdl_del_head(void** base, dl_pair item_pair)
+{
+  void* item ;
+
+  item = *base ;
+  if (item != NULL)
+    _rdl_del(base, item, item_pair) ;
+
+  return item ;
+} ;
 
 #endif /* _ZEBRA_LIST_UTIL_H */

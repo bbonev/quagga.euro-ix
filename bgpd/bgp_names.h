@@ -26,23 +26,29 @@ Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
 /*------------------------------------------------------------------------------
  * Mapping various BGP protocol items to their names
  *
- * e.g. map_direct(bgp_fsm_status_map, prev_state).str
+ * e.g. map_direct(bgp_fsm_state_map, prev_state).str
  */
-extern const map_direct_t bgp_fsm_status_map ;
+extern const map_direct_t bgp_fsm_state_map ;
+extern const map_direct_t bgp_fsm_event_map ;
 extern const map_direct_t bgp_peer_status_map ;
 extern const map_direct_t bgp_message_type_map ;
+
 extern const map_direct_t bgp_notify_msg_map ;
+extern map_direct_p bgp_notify_subcode_msg_map(uint code) ;
 extern const map_direct_t bgp_notify_head_msg_map ;
 extern const map_direct_t bgp_notify_open_msg_map ;
 extern const map_direct_t bgp_notify_update_msg_map ;
+extern const map_direct_t bgp_notify_fsm_msg_map ;
 extern const map_direct_t bgp_notify_cease_msg_map ;
 extern const map_direct_t bgp_notify_capability_msg_map ;
 extern const map_direct_t bgp_notify_unspecific_msg_map ;
 extern const map_direct_t bgp_notify_unknown_msg_map ;
+
 extern const map_direct_t bgp_origin_short_map ;
 extern const map_direct_t bgp_origin_long_map ;
 extern const map_direct_t bgp_attr_name_map ;
 extern const map_direct_t bgp_afi_name_map ;
 extern const map_direct_t bgp_safi_name_map ;
+extern const map_direct_t bgp_capcode_name_map ;
 
 #endif /* _QUAGGA_BGP_NAMES_H */

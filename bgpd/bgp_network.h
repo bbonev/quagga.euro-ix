@@ -24,10 +24,19 @@
 
 #include "bgpd/bgp_common.h"
 
-extern int bgp_open_listeners(const char *address, unsigned short port) ;
-extern void bgp_close_listeners(void) ;
-extern void bgp_open_connect(bgp_connection connection) ;
-extern void bgp_prepare_to_accept(bgp_connection connection) ;
+#include "sockunion.h"
+
+extern uint bgp_listeners_init(const char* addresses, const char* port_str) ;
+extern void bgp_listeners_finish(void) ;
+
+extern bool bgp_listen_set(bgp_connection_options_c cops) ;
+extern void bgp_listen_set_password(bgp_connection_options_c cops) ;
+extern void bgp_listen_unset(bgp_connection_options_c cops) ;
+
+extern void bgp_connect(bgp_connection connection) ;
+extern void bgp_accept_open(bgp_connection connection) ;
+
+
 extern void bgp_not_prepared_to_accept(bgp_connection connection) ;
 extern void bgp_set_new_ttl(bgp_connection connection, int ttl, bool gtsm) ;
 

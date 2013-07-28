@@ -199,7 +199,7 @@ errtox(int err, ulen len, uint want)
       const char* name = errno_name_lookup(err) ;
 
       if (name != NULL)
-        qfs_append(qfs, name) ;
+        qfs_put_str(qfs, name) ;
       else
         qfs_printf(qfs, "ERRNO=%d", err) ;
     } ;
@@ -207,7 +207,7 @@ errtox(int err, ulen len, uint want)
   /* name and string ?                                          */
   if (want == 3)
     {
-      qfs_append(qfs, " ") ;
+      qfs_put_str(qfs, " ") ;
       q  = "'" ;
       ql = 2 ;
     } ;
@@ -255,12 +255,12 @@ errtox(int err, ulen len, uint want)
 
       /* Add strerror to the result... with quotes as rquired           */
       if (ql != 0)
-        qfs_append(qfs, q) ;
+        qfs_put_str(qfs, q) ;
 
-      qfs_append(qfs, errm) ;
+      qfs_put_str(qfs, errm) ;
 
       if (ql != 0)
-        qfs_append(qfs, q) ;
+        qfs_put_str(qfs, q) ;
     } ;
 
   /* '\0' terminate -- if has overflowed, replace last few characters
@@ -389,7 +389,7 @@ eaitox(int eai, int err, ulen len, uint want)
       const char* name = eaino_name_lookup(eai) ;
 
       if (name != NULL)
-        qfs_append(qfs, name) ;
+        qfs_put_str(qfs, name) ;
       else
         qfs_printf(qfs, "EAI=%d", eai) ;
     } ;
@@ -398,7 +398,7 @@ eaitox(int eai, int err, ulen len, uint want)
    */
   if (want == 3)
     {
-      qfs_append(qfs, " ") ;
+      qfs_put_str(qfs, " ") ;
       q  = "'" ;
       ql = 2 ;
     } ;
@@ -414,21 +414,23 @@ eaitox(int eai, int err, ulen len, uint want)
       else
         eaim = gai_strerror(eai) ;
 
-     /* Add strerror to the result... with quotes as rquired           */
+     /* Add strerror to the result... with quotes as required
+      */
       if (ql != 0)
-        qfs_append(qfs, q) ;
+        qfs_put_str(qfs, q) ;
 
-      qfs_append(qfs, eaim) ;
+      qfs_put_str(qfs, eaim) ;
 
       if (ql != 0)
-        qfs_append(qfs, q) ;
+        qfs_put_str(qfs, q) ;
 
-      /* '\0' terminate -- if has overflowed, replace last few characters
-       * by "..." -- noting that sizeof("...") includes the '\0'.
-       */
-      if (qfs_term(qfs) != 0)
-        qfs_term_string(qfs, ellipsis, sizeof(ellipsis)) ;
     } ;
+
+  /* '\0' terminate -- if has overflowed, replace last few characters
+   * by "..." -- noting that sizeof("...") includes the '\0'.
+   */
+  if (qfs_term(qfs) != 0)
+    qfs_term_string(qfs, ellipsis, sizeof(ellipsis)) ;
 
   /* Put back errno and we are done
    */
@@ -555,6 +557,17 @@ siptoa(sa_family_t family, const void* address)
     } ;
 
   return ipa;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Construct string for given IPv4 address (in_addr_t).
+ *
+ * Returns struct with embedded string.
+ */
+extern str_iptoa_t
+sipv4toa(in_addr_t addr)
+{
+  return siptoa(AF_INET, &addr) ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -847,3 +860,119 @@ qstrerror(int err)
 
   return errm ;
 } ;
+
+/*------------------------------------------------------------------------------
+ * A thread-safe version of getservbyname().
+ *
+ * Returns:  NULL  => getservbyname() returned NULL
+ *           copy of what getservbyname() returned  -- MUST be XFREE'd.
+ *
+ * NB: what is returned is fully thread-safe -- it is an XMALLOC'd piece
+ *     of memory containing a copy of what getservbyname() returns, and a
+ *     copy of all the strings it returns.
+ *
+ *     The object returned appears to be a pointer to a 'struct servent', but
+ *     is in fact a pointer to a larger piece of memory, which includes all the
+ *     things pointed to by the 'struct servent' fields.
+ *
+ * NB: caller is responsible for XFREE(MTYPE_TMP, ....) when it is done
+ *     with the returned value.
+ */
+static inline char*
+servent_strcpy(char** p_dst, char* src, char* str, char* end)
+{
+  if (src == NULL)
+    qassert(*p_dst == NULL) ;
+  else
+    {
+      uint len ;
+
+      len = strlen(src) ;
+      assert((str + len + 1) <= end) ;
+
+      strcpy(str, src) ;
+
+      *p_dst = str ;
+      str += len + 1 ;
+    } ;
+
+  return str ;
+} ;
+
+extern struct servent*
+safe_getservbyname(const char* name, const char* proto)
+{
+  struct safe_sp
+  {
+    struct servent se ;
+    void* body[] ;
+  } ;
+
+  struct servent* sp ;
+
+  THREAD_SAFE_LOCK() ;          /* <-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<- */
+
+  sp = getservbyname(name, proto) ;
+
+  if (sp != NULL)
+    {
+      struct safe_sp* s ;
+      struct servent* ssp ;
+
+      /* To make this thread-safe we now need to copy a bunch of strings
+       * from the given sp -- including an array of same.
+       */
+      uint   str_len, alias_count, size, i ;
+      char*  str, * end ;
+
+      enum { svp = sizeof(void*) } ;
+
+      str_len = 0 ;
+
+      if ((str = sp->s_name) != NULL)
+        str_len += strlen(str) + 1 ;
+
+      alias_count = 0 ;
+      if (sp->s_aliases != NULL)
+        {
+          while ((str = sp->s_aliases[alias_count]) != NULL)
+            {
+              str_len += strlen(str) + 1 ;
+              ++alias_count ;
+            } ;
+        } ;
+
+      if ((str = sp->s_proto) != NULL)
+        str_len += strlen(str) + 1 ;
+
+      size = offsetof(struct safe_sp, body) + ((alias_count + 1) * svp)
+                                            + str_len ;
+      size = ((size + svp - 1) / svp) * svp ;
+      s    = XCALLOC(MTYPE_TMP, size) ;
+      ssp  = &s->se ;
+
+      str  = (char*)(s->body[alias_count + 1]) ;
+      end  = str + str_len ;
+
+      assert(end <= ((char*)s + size)) ;
+
+      str = servent_strcpy(&ssp->s_name, sp->s_name, str, end) ;
+
+      ssp->s_aliases = (char**)s->body ;
+      for (i = 0 ; i < alias_count ; ++i)
+        str = servent_strcpy(&ssp->s_aliases[i], sp->s_aliases[i], str, end) ;
+
+      qassert(ssp->s_aliases[alias_count] == NULL) ;
+
+      ssp->s_port = sp->s_port ;
+
+      str = servent_strcpy(&ssp->s_proto, sp->s_proto, str, end) ;
+
+      sp = ssp ;
+    } ;
+
+  THREAD_SAFE_UNLOCK() ;        /* <-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<- */
+
+  return sp ;
+} ;
+

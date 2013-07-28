@@ -22,6 +22,7 @@
 
 #include <signal.h>
 #include <string.h>
+#include <sys/socket.h>
 
 #include "zassert.h"
 #include "qpselect.h"
@@ -119,7 +120,7 @@ enum { qpselect_debug = QPSELECT_DEBUG } ;
  * set of action functions -- so these may be used to implement a form of
  * state machine for the file.
  *
- * When the action function is called it is passed the qps_file structure and
+ * When the action function is called it is passed the qfile structure and
  * the file_info pointer from that structure.
  *
  * During an action function modes may be enabled/disabled, actions changed,
@@ -136,8 +137,8 @@ static short fd_byte_count[FD_SETSIZE] ;    /* number of bytes for fds 0..fd */
 /* Forward references   */
 static void qps_make_super_set_map(void) ;
 static void qps_selection_re_init(qps_selection qps) ;
-static qps_file qps_file_lookup_fd(qps_selection qps, fd_t fd, qps_file insert);
-static void qps_file_remove(qps_selection qps, qps_file qf) ;
+static qfile qps_qfile_lookup(qps_selection qps, fd_t fd, qfile insert);
+static void qps_do_remove_qfile(qps_selection qps, qfile qf) ;
 static void qps_super_set_zero(fd_super_set* p_set, int n) ;
 static int qps_super_set_cmp(fd_super_set* p_a, fd_super_set* p_b, int n) ;
 static int qps_next_fd_pending(fd_super_set* pending, fd_t fd, fd_t fd_last) ;
@@ -168,7 +169,7 @@ extern qps_selection
 qps_selection_init_new(qps_selection qps)
 {
   if (qps == NULL)
-    qps = XCALLOC(MTYPE_QPS_SELECTION, sizeof(struct qps_selection)) ;
+    qps = XCALLOC(MTYPE_QPS_SELECTION, sizeof(qps_selection_t)) ;
 
   qps_selection_re_init(qps) ;
 
@@ -184,7 +185,7 @@ qps_selection_init_new(qps_selection qps)
 static void
 qps_selection_re_init(qps_selection qps)
 {
-  memset(qps, 0, sizeof(struct qps_selection)) ;
+  memset(qps, 0, sizeof(qps_selection_t)) ;
 
   /* Zeroising initialises:
    *
@@ -216,7 +217,9 @@ qps_selection_re_init(qps_selection qps)
  * Add given file to the selection, setting its fd and pointer to further
  * file information.  All modes are disabled.
  *
- * This initialises most of the qps_file structure, but not the actions.
+ * This initialises most of the qfile structure, but not the actions.
+ *
+ * Sets qpsfUP and clears the err trap.
  *
  * NB: while a file is a member of a selection, the fd MUST be a valid, open
  *     fd -- otherwise, could end up here reusing an fd that was closed and is
@@ -227,7 +230,7 @@ qps_selection_re_init(qps_selection qps)
  * Adding a file which is already a member of a selection is a FATAL error.
  */
 extern void
-qps_add_file(qps_selection qps, qps_file qf, fd_t fd, void* file_info)
+qps_add_qfile(qps_selection qps, qfile qf, fd_t fd, void* file_info)
 {
   passert((qf->selection == NULL) && (fd >= fd_first)) ;
 
@@ -235,10 +238,12 @@ qps_add_file(qps_selection qps, qps_file qf, fd_t fd, void* file_info)
 
   qf->file_info    = file_info ;
   qf->fd           = fd ;
+  qf->state        = qfUp ;
+  qf->err          = 0 ;
 
   qf->enabled_bits = 0 ;
 
-  qps_file_lookup_fd(qps, fd, qf) ;     /* Add. */
+  qps_qfile_lookup(qps, fd, qf) ;     /* Add. */
 } ;
 
 /*------------------------------------------------------------------------------
@@ -252,12 +257,15 @@ qps_add_file(qps_selection qps, qps_file qf, fd_t fd, void* file_info)
  * state to be removed from the selection.
  *
  * When the file is removed it is disabled in all modes.
+ *
+ * This does not affect the state or the err trap -- since the fd is not
+ * changed.
  */
 extern void
-qps_remove_file(qps_file qf)
+qps_remove_qfile(qfile qf)
 {
   if (qf->selection != NULL)
-    qps_file_remove(qf->selection, qf) ;
+    qps_do_remove_qfile(qf->selection, qf) ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -268,7 +276,7 @@ qps_remove_file(qps_file qf)
  * Useful for emptying out and discarding a selection:
  *
  *     while ((qf = qps_selection_ream(qps, free_it)))
- *       ... do what's required to release the qps_file
+ *       ... do what's required to release the qfile
  *
  * The file is removed from the selection before being returned.  If the caller
  * is able to release the qf, then it should do so, otherwise it can be left
@@ -282,15 +290,15 @@ qps_remove_file(qps_file qf)
  * NB: once reaming has started, the selection MUST NOT be used for anything,
  *     and the process MUST be run to completion.
  */
-extern qps_file
+extern qfile
 qps_selection_ream(qps_selection qps, free_keep_b free_structure)
 {
-  qps_file qf ;
+  qfile qf ;
 
   qf = vector_get_last_item(&qps->files) ;
 
   if (qf != NULL)
-    qps_file_remove(qps, qf) ;
+    qps_do_remove_qfile(qps, qf) ;
   else
     {
       passert(qps->fd_count == 0) ;
@@ -438,7 +446,7 @@ extern int
 qps_dispatch_next(qps_selection qps)
 {
   fd_t       fd ;
-  qps_file   qf ;
+  qfile   qf ;
   qps_mnum_t mnum ;
 
   if (qpselect_debug)
@@ -476,7 +484,7 @@ qps_dispatch_next(qps_selection qps)
   qps->pend_count -= 1 ;        /* one less pending             */
   qps->pend_fd     = fd ;       /* update scan                  */
 
-  qf = qps_file_lookup_fd(qps, fd, NULL) ;
+  qf = qps_qfile_lookup(qps, fd, NULL) ;
 
   qassert( ((qf->enabled_bits && qps_mbit(mnum)) != 0) &&
            (qf->actions[mnum] != NULL) ) ;
@@ -487,38 +495,41 @@ qps_dispatch_next(qps_selection qps)
 } ;
 
 /*==============================================================================
- * qps_file structure handling
+ * qfile structure handling
  */
 
 /*------------------------------------------------------------------------------
- * Initialise qps_file structure -- allocating one if required.
+ * Initialise qfile structure -- allocating one if required.
  *
  * If a template is given, then the action functions are copied from there to
  * the new structure.  See above for discussion of action functions.
  *
  * Once initialised, the file may be added to a selection.
  *
- * Returns the qps_file.
+ * Returns the qfile.
  */
-extern qps_file
-qps_file_init_new(qps_file qf, qps_file template)
+extern qfile
+qfile_init_new(qfile qf, qfile template)
 {
   if (qf == NULL)
-    qf = XCALLOC(MTYPE_QPS_FILE, sizeof(struct qps_file)) ;
+    qf = XCALLOC(MTYPE_QPS_FILE, sizeof(qfile_t)) ;
   else
-    memset(qf, 0, sizeof(struct qps_file)) ;
+    memset(qf, 0, sizeof(qfile_t)) ;
 
   /* Zeroising has initialised:
    *
-   *   selection     -- NULL  -- ditto
+   *   selection        -- NULL     -- none yet
    *
-   *   file_info     -- NULL  -- is set by qps_add_file()
-   *   fd            -- unset -- ditto
+   *   fd               -- X        -- set fd_undef, below
+   *   state            -- qfDown
+   *   err              -- 0        -- no error, yet
    *
-   *   enabled_bits  -- nothing enabled
+   *   enabled_bits     -- nothing enabled
    *
-   *   actions[]     -- all set to NULL
+   *   actions[]        -- all NULL -- may be copied from template, below
+   *   file_info        -- NULL
    */
+  confirm(qfDown == 0) ;
 
   qf->fd = fd_undef ;           /* no fd set yet        */
 
@@ -529,7 +540,124 @@ qps_file_init_new(qps_file qf, qps_file template)
 } ;
 
 /*------------------------------------------------------------------------------
- * Free dynamically allocated qps_file structure -- if any.
+ * Unset the 'fd' and return previous value (if any)
+ *
+ * NB: MUST qps_remove_file() first !!
+ *
+ * NB: accepts qf == NULL and returns fd_undef.
+ *
+ * Returns:  the previous fd, if any -- clears state and err if not fd_undef
+ */
+extern fd_t
+qfile_fd_unset(qfile qf)
+{
+  int fd ;
+
+  fd = qfile_fd_get(qf) ;
+  if (fd > fd_undef)
+    {
+      qf->fd    = fd_undef ;
+      qf->state = qfDown ;
+      qf->err   = 0 ;
+    } ;
+
+  return fd ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Perform a shutdown() on the given qf (if any), for the given argument
+ *
+ *Does nothing if the qf is NULL or the fd is already unset.
+ *
+ * Updates the state (unless qf NULL) and returns same.
+ *
+ * NB: does not close, even if state is now qfDown.
+ *
+ * NB: result is the same if was qps_fUP or qfUp_RDWR
+ *
+ * Returns:  new state  -- qfDown if qf NULL or fd unset
+ *
+ * NB: takes no notice of any errors returned by shutdown() -- rather like
+ *     close() we are beyond caring.
+ *
+ *     Also, takes no notice of the current state of the fd, so will happily
+ *     shutdown() more than once for RD and/or WR -- and ignore any error
+ *     that might generate.
+ */
+extern qfile_state_t
+qfile_shutdown(qfile qf, qfile_state_t shut)
+{
+  int  sock_fd ;
+  qps_mbit_t  mbits ;
+  int  what ;
+
+  sock_fd = qfile_fd_get(qf) ;
+  if (sock_fd < fd_first)
+    return qfDown;
+
+  switch (shut)
+    {
+      case qfDown:           /* bit silly, but hey           */
+        return qf->state ;
+
+      case qfUp_RD:
+        what  = SHUT_RD ;               /* what to shutdown     */
+        mbits = qps_read_mbit ;         /* what to clear        */
+        break ;
+
+      case qfUp_WR:
+        what  = SHUT_WR ;
+        mbits = qps_write_mbit ;        /* what to clear        */
+        break ;
+
+      default:
+        qassert(false) ;
+        shut  = qfUp_RDWR ;
+        fall_through ;
+
+      case qfUp_RDWR:
+        what  = SHUT_RDWR ;
+        mbits = (qps_read_mbit | qps_write_mbit) ;
+        break ;
+    } ;
+
+  shutdown(sock_fd, what) ;
+  qfile_disable_modes(qf, mbits) ;
+
+  return qf->state &= (shut ^ qfUp_RDWR) ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Close given qfile -- if any.
+ *
+ * Removes from any selection may be a member of.  Note that to be a member of
+ * a selection MUST have a valid fd -- but if is not a member, may or may not
+ * have a valid fd.
+ *
+ * If there is a valid fd -- close it !
+ *
+ * Sets qs_fDown BUT preserves any existing 'err'.
+ */
+extern void
+qfile_close(qfile qf)
+{
+  if (qf != NULL)
+    {
+      if (qf->selection != NULL)
+        qps_do_remove_qfile(qf->selection, qf) ;
+
+      if (qf->fd >= fd_first)
+        {
+          close(qf->fd) ;
+          qf->fd = fd_undef ;
+        } ;
+
+      qf->state = qfDown ;
+    } ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Free dynamically allocated qfile structure -- if any.
  *
  * Removes from any selection may be a member of.  Note that to be a member of
  * a selection MUST have a valid fd -- but if is not a member, may or may not
@@ -539,20 +667,12 @@ qps_file_init_new(qps_file qf, qps_file template)
  *
  * Returns: NULL
  */
-extern qps_file
-qps_file_free(qps_file qf)
+extern qfile
+qfile_free(qfile qf)
 {
   if (qf != NULL)
     {
-      if (qf->selection != NULL)
-        qps_file_remove(qf->selection, qf) ;
-
-      if (qf->fd >= fd_first)
-        {
-          close(qf->fd) ;
-          qf->fd = fd_undef ;
-        } ;
-
+      qfile_close(qf) ;
       XFREE(MTYPE_QPS_FILE, qf) ;
     } ;
 
@@ -562,15 +682,15 @@ qps_file_free(qps_file qf)
 /*------------------------------------------------------------------------------
  * Enable (or re-enable) file for the given mode.
  *
- * If the action argument is not NULL, set the action for the mode.
+ * If the action argument is not NULL, set new action for the mode.
  *
- * NB: It is a FATAL error to enable a mode with a NULL action.
+ * NB: It is a FATAL error to enable a mode which has a NULL action.
  *
  * NB: It is a FATAL error to enable modes for a file which is not in a
  *     selection.
  */
 extern void
-qps_enable_mode(qps_file qf, qps_mnum_t mnum, qps_action* action)
+qfile_enable_mode(qfile qf, qps_mnum_t mnum, qps_action* action)
 {
   qps_mbit_t    mbit = qps_mbit(mnum) ;
   qps_selection qps  = qf->selection ;
@@ -604,7 +724,7 @@ qps_enable_mode(qps_file qf, qps_mnum_t mnum, qps_action* action)
  * NB: it is a fatal error to unset an action for a mode which is enabled.
  */
 extern void
-qps_set_action(qps_file qf, qps_mnum_t mnum, qps_action* action)
+qfile_set_action(qfile qf, qps_mnum_t mnum, qps_action* action)
 {
   qassert((mnum >= 0) && (mnum <= qps_mnum_count)) ;
 
@@ -642,7 +762,7 @@ static qps_mnum_t qps_first_mnum[qps_mbit(qps_mnum_count)] =
 CONFIRM(qps_mbit(qps_mnum_count) == 8) ;
 
 extern void
-qps_disable_modes(qps_file qf, qps_mbit_t mbits)
+qfile_disable_modes(qfile qf, qps_mbit_t mbits)
 {
   qps_mnum_t  mnum ;
 
@@ -689,7 +809,7 @@ qps_disable_modes(qps_file qf, qps_mbit_t mbits)
  * Comparison function for binary chop
  */
 static int
-qps_fd_cmp(const int** pp_fd, const qps_file* p_qf)
+qps_fd_cmp(const int** pp_fd, const qfile* p_qf)
 {
   if (**pp_fd  < (*p_qf)->fd)
     return -1 ;
@@ -707,10 +827,10 @@ qps_fd_cmp(const int** pp_fd, const qps_file* p_qf)
  *
  * NB: FATAL error to insert file with same fd as an existing one.
  */
-static qps_file
-qps_file_lookup_fd(qps_selection qps, fd_t fd, qps_file insert)
+static qfile
+qps_qfile_lookup(qps_selection qps, fd_t fd, qfile insert)
 {
-  qps_file qf ;
+  qfile qf ;
   vector_index_t i ;
   int   ret ;
 
@@ -777,15 +897,19 @@ qps_file_lookup_fd(qps_selection qps, fd_t fd, qps_file insert)
 } ;
 
 /*------------------------------------------------------------------------------
- * Remove file from selection.
+ * Remove file from selection -- for use by qps_remove_file and others.
+ *
+ * Does not affect the state or the err trap -- fd not changed.
+ *
+ * Clears all enabled bits.
  *
  * NB: FATAL error if file is not in the selection, or the file-descriptor
  *     is invalid (or refers to some other file !).
  */
 static void
-qps_file_remove(qps_selection qps, qps_file qf)
+qps_do_remove_qfile(qps_selection qps, qfile qf)
 {
-  qps_file qfd ;
+  qfile qfd ;
   fd_t     fd_last ;
 
   passert((qf->fd >= 0) && (qf->fd <= qps->fd_last) && (qps == qf->selection)) ;
@@ -798,7 +922,7 @@ qps_file_remove(qps_selection qps, qps_file qf)
     }
   else
     {
-      qps_file qf_last ;
+      qfile qf_last ;
       int ret ;
       vector_index_t i = vector_bsearch(&qps->files,
                                         (vector_bsearch_cmp*)qps_fd_cmp,
@@ -817,7 +941,8 @@ qps_file_remove(qps_selection qps, qps_file qf)
 
   passert(qfd == qf) ;  /* must have been there and be the expected file  */
 
-  /* Keep fd_count and fd_last up to date.                              */
+  /* Keep fd_count and fd_last up to date.
+   */
   qassert(qps->fd_count > 0) ;
   --qps->fd_count ;
 
@@ -825,10 +950,12 @@ qps_file_remove(qps_selection qps, qps_file qf)
 
   qps->fd_last = fd_last ;
 
-  /* Also, remove the from all vectors.                                 */
-  qps_disable_modes(qf, qps_all_mbits) ;
+  /* Also, remove the from all vectors.
+   */
+  qfile_disable_modes(qf, qps_all_mbits) ;
 
-  /* Is no longer in the selection.                                     */
+  /* Is no longer in the selection.
+   */
   qf->selection = NULL ;
 } ;
 
@@ -1308,7 +1435,7 @@ qps_selection_validate(qps_selection qps)
   int   enabled_count[qps_mnum_count] ;
   fd_full_set enabled ;
 
-  qps_file       qf ;
+  qfile          qf ;
   int            n, mnum, p_mnum ;
   vector_index_t i ;
 

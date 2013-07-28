@@ -22,7 +22,7 @@
  */
 #ifndef CONFIRM
 
- #define CONFIRM(e)  extern void CONFIRMATION(char CONFIRM[(e) ? 1 : -1]) ;
- #define confirm(e)  { CONFIRM(e) }
+#define CONFIRM(e)  extern void _confirm_(char confirm[(e) ? 1 : -1])
+#define confirm(e)  { CONFIRM(e) ; }
 
 #endif

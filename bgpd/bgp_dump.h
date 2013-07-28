@@ -30,9 +30,11 @@ extern void bgp_dump_cmd_init (void);
 extern void bgp_dump_init (void);
 extern void bgp_dump_finish (void);
 
-extern void bgp_dump_state (bgp_connection connection,
-                                                    bgp_fsm_state_t new_state) ;
-extern void bgp_dump_packet (bgp_connection connection) ;
+extern void bgp_dump_state (bgp_session session,
+                            bgp_fsm_state_t fsm_state_new,
+                            bgp_fsm_state_t fsm_state_was) ;
+extern void bgp_dump_packet (bgp_session session, ptr_t msg_body,
+                                      uint msg_body_length, uint msg_bgp_type) ;
 
 /*------------------------------------------------------------------------------
  * These flags are set iff the respective dump function should be called.

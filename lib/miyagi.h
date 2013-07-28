@@ -22,17 +22,23 @@
 /*==============================================================================
  * Ghastly kludge to discard "const" from pointer
  */
+Inline void* miyagi(const void* ptr) Always_Inline ;
+
 Inline void*
 miyagi(const void* ptr)
 {
+  return (void*)((uintptr_t)ptr) ;
+
+#if 0
   union {
     const void* waxon ;
           void* waxoff ;
-  } shuffle ;
+  } shammy ;
 
-  shuffle.waxon = ptr ;
+  shammy.waxon = ptr ;
 
-  return shuffle.waxoff ;
+  return shammy.waxoff ;
+#endif
 } ;
 
 #endif /* _ZEBRA_MIYAGI_H */

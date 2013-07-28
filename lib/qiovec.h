@@ -23,7 +23,7 @@
 #define _ZEBRA_QIOVEC_H
 
 #include "misc.h"
-#include <sys/uio.h>            /* iovec stuff                  */
+#include "iovec.h"
 
 /*==============================================================================
  * Alternative naming for struct iovec and its entries.
@@ -98,7 +98,6 @@ Inline void qiovec_shift(qiovec qiov, qiov_item item) ;
 Inline void qiovec_unshift(qiovec qiov, qiov_item item) ;
 
 extern int iovec_write_nb(int fd, struct iovec* p_iov, int n) ;
-Inline void iovec_set(struct iovec* p_iov, const void* base, size_t len) ;
 
 Private void qiovec_extend(qiovec qiov) ;
 Private void qiovec_shuffle(qiovec qiov) ;
@@ -227,21 +226,6 @@ qiovec_unshift(qiovec qiov, qiov_item item)
 
   if (item->len != 0)
     qiov->vec[--qiov->i_get] = *item ;
-} ;
-
-/*------------------------------------------------------------------------------
- * Set a given struct iovec
- *
- * Gets around the fact that the standard structure does not have a const
- * pointer !
- */
-#include "miyagi.h"
-
-Inline void
-iovec_set(struct iovec* p_iov, const void* base, size_t len)
-{
-  p_iov->iov_base = miyagi(base) ;
-  p_iov->iov_len  = len ;
 } ;
 
 #endif /* _ZEBRA_QIOVEC_H */

@@ -21,37 +21,100 @@ Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
 #include <zebra.h>
 
 #include "bgpd/bgp_names.h"
-
+#include "bgpd/bgp_common.h"
 #include "bgpd/bgp_connection.h"
 #include "bgpd/bgp_notification.h"
 
 /*------------------------------------------------------------------------------
- * Names of FSM status values
+ * Names of FSM state values
  */
-static const char* const bgp_fsm_status_map_body[] =
+static const char* const bgp_fsm_state_map_body[] =
 {
-  [bgp_fsm_sInitial]      = "Initial",
-  [bgp_fsm_sIdle]         = "Idle",
-  [bgp_fsm_sConnect]      = "Connect",
-  [bgp_fsm_sActive]       = "Active",
-  [bgp_fsm_sOpenSent]     = "OpenSent",
-  [bgp_fsm_sOpenConfirm]  = "OpenConfirm",
-  [bgp_fsm_sEstablished]  = "Established",
-  [bgp_fsm_sStopping]     = "Stopping",
+  [bgp_fsNULL]         = "Initial",
+  [bgp_fsIdle]         = "Idle",
+  [bgp_fsConnect]      = "Connect",
+  [bgp_fsActive]       = "Active",
+  [bgp_fsOpenSent]     = "OpenSent",
+  [bgp_fsOpenConfirm]  = "OpenConfirm",
+  [bgp_fsEstablished]  = "Established",
+  [bgp_fsStop]         = "Stop",
 } ;
 
-const map_direct_t bgp_fsm_status_map =
-      map_direct_s(bgp_fsm_status_map_body, "unknown(%d)") ;
+const map_direct_t bgp_fsm_state_map =
+      map_direct_s(bgp_fsm_state_map_body, "unknown(%d)") ;
+
+/*------------------------------------------------------------------------------
+ * Names of FSM event values
+ */
+static const char* const bgp_fsm_event_map_body[] =
+{
+  [bgp_feNULL]                        = "NULL",
+  [bgp_feManualStart]                 = "ManualStart",
+  [bgp_feManualStop]                  = "ManualStop",
+  [bgp_feAutomaticStart]              = "AutomaticStart",
+  [bgp_feManualStart_with_Passive]    = "ManualStart_with_Passive",
+  [bgp_feAutomaticStart_with_Passive] = "AutomaticStart_with_Passive",
+  [bgp_feAutomaticStart_with_Damp]    = "AutomaticStart_with_Damp",
+  [bgp_feAutomaticStart_with_Damp_and_Passive]
+                                      = "AutomaticStart_with_Damp_and_Passive",
+  [bgp_feAutomaticStop]               = "AutomaticStop",
+  [bgp_feConnectRetryTimer_Expires]   = "ConnectRetryTimer_Expires",
+  [bgp_feHoldTimer_Expires]           = "HoldTimer_Expires",
+  [bgp_feKeepaliveTimer_Expires]      = "KeepaliveTimer_Expires",
+  [bgp_feDelayOpenTimer_Expires]      = "DelayOpenTimer_Expires",
+  [bgp_feIdleHoldTimer_Expires]       = "IdleHoldTimer_Expires",
+  [bgp_feTcpConnection_Valid]         = "TcpConnection_Valid",
+  [bgp_feTcp_CR_Invalid]              = "Tcp_CR_Invalid",
+#if 0
+  /* We have a local alias for these -- see below
+   */
+  [bgp_feTcp_CR_Acked]                = "Tcp_CR_Acked",
+  [bgp_feTcpConnectionConfirmed]      = "TcpConnectionConfirmed",
+  [bgp_feTcpConnectionFails]          = "TcpConnectionFails",
+#endif
+
+  [bgp_feBGPOpen]                     = "BGPOpen",
+  [bgp_feBGPOpen_with_DelayOpenTimer] = "BGPOpen_with_DelayOpenTimer",
+  [bgp_feBGPHeaderErr]                = "BGPHeaderErr",
+  [bgp_feBGPOpenMsgErr]               = "BGPOpenMsgErr",
+  [bgp_feOpenCollisionDump]           = "OpenCollisionDump",
+  [bgp_feNotifyMsgVerErr]             = "NotifyMsgVerErr",
+  [bgp_feNotifyMsg]                   = "NotifyMsg",
+  [bgp_feKeepAliveMsg]                = "KeepAliveMsg",
+  [bgp_feUpdateMsg]                   = "UpdateMsg",
+  [bgp_feUpdateMsgErr]                = "UpdateMsgErr",
+
+  [bgp_feError]                  = "TCP_Failed",
+  [bgp_feConnectFailed]          = "TCP_Connect_Failed",
+  [bgp_feConnected]               = "TCP_Connected (Tcp_CR_Acked)",
+  [bgp_feAccepted]                = "TCP_Accepted (TcpConnectionConfirmed)",
+  [bgp_feDown]                    = "TCP_Down (TcpConnectionFails)",
+  [bgp_feRRMsg]                       = "RRMsg",
+  [bgp_feRRMsgErr]                    = "RRMsgErr",
+  [bgp_feAcceptOPEN]               = "Accepted_OPEN",
+  [bgp_feRestart]                 = "Established",
+  [bgp_feShut_RD]                     = "Shut_RD (internal)",
+  [bgp_feShut_WR]                     = "Shut_WR (internal)",
+
+  [bgp_feIO]                          = "I/O (internal)",
+} ;
+
+const map_direct_t bgp_fsm_event_map =
+      map_direct_s(bgp_fsm_event_map_body, "unknown(%d)") ;
 
 /*------------------------------------------------------------------------------
  * Names of Peer status values
  */
 const char* const bgp_peer_status_map_body[] =
 {
-  [bgp_peer_pIdle]         = "Idle",
-  [bgp_peer_pEstablished]  = "Established",
-  [bgp_peer_pClearing]     = "Clearing",
-  [bgp_peer_pDeleting]     = "Deleting",
+//[bgp_peer_pClearing]     = "Clearing",
+
+  [bgp_pDisabled]     = "Idle (Disabled)",
+  [bgp_pEnabled]      = "Idle (Enabled)",
+  [bgp_pEstablished]  = "Established",
+  [bgp_pLimping]      = "Down (Limping)",
+  [bgp_pDown]         = "Down",
+  [bgp_pDeleting]     = "Deleting",
 };
 
 const map_direct_t bgp_peer_status_map =
@@ -81,109 +144,122 @@ const map_direct_t bgp_message_type_map =
  */
 static const char* const bgp_notify_msg_map_body[] =
 {
-  [BGP_NOTIFY_HEADER_ERR]      = "Message Header Error",
-  [BGP_NOTIFY_OPEN_ERR]        = "OPEN Message Error",
-  [BGP_NOTIFY_UPDATE_ERR]      = "UPDATE Message Error",
-  [BGP_NOTIFY_HOLD_ERR]        = "Hold Timer Expired",
-  [BGP_NOTIFY_FSM_ERR]         = "Finite State Machine Error",
-  [BGP_NOTIFY_CEASE]           = "Cease",
-  [BGP_NOTIFY_CAPABILITY_ERR]  = "CAPABILITY Message Error",
+  [BGP_NOMC_HEADER]        = "Message Header Error",
+  [BGP_NOMC_OPEN]          = "OPEN Message Error",
+  [BGP_NOMC_UPDATE]        = "UPDATE Message Error",
+  [BGP_NOMC_HOLD_EXP]      = "Hold Timer Expired",
+  [BGP_NOMC_FSM]           = "Finite State Machine Error",
+  [BGP_NOMC_CEASE]         = "Cease",
+  [BGP_NOMC_DYN_CAP]       = "CAPABILITY Message Error",
 } ;
 
 const map_direct_t bgp_notify_msg_map =
       map_direct_s(bgp_notify_msg_map_body, "Unknown(%d)") ;
 
-/* BGP_NOTIFY_HEADER_ERR subtypes
+/* BGP_NOMC_HEADER subtypes
  */
 static const char* const bgp_notify_head_msg_map_body[] =
 {
-  [0]                              = "/Unspecific",
-  [BGP_NOTIFY_HEADER_NOT_SYNC]     = "/Connection Not Synchronized",
-  [BGP_NOTIFY_HEADER_BAD_MESLEN]   = "/Bad Message Length",
-  [BGP_NOTIFY_HEADER_BAD_MESTYPE]  = "/Bad Message Type",
+  [BGP_NOMS_UNSPECIFIC]    = "/Unspecific",
+  [BGP_NOMS_H_NOT_SYNC]    = "/Connection Not Synchronized",
+  [BGP_NOMS_H_BAD_LEN]     = "/Bad Message Length",
+  [BGP_NOMS_H_BAD_TYPE]    = "/Bad Message Type",
 };
 
 const map_direct_t bgp_notify_head_msg_map =
       map_direct_s(bgp_notify_head_msg_map_body, "/Unknown(%d)") ;
 
-/* BGP_NOTIFY_OPEN_ERR subtypes
+/* BGP_NOMC_OPEN subtypes
  */
 static const char* const bgp_notify_open_msg_map_body[] =
 {
-  [0]                                = "/Unspecific",
-  [BGP_NOTIFY_OPEN_UNSUP_VERSION]    = "/Unsupported Version Number",
-  [BGP_NOTIFY_OPEN_BAD_PEER_AS]      = "/Bad Peer AS",
-  [BGP_NOTIFY_OPEN_BAD_BGP_IDENT]    = "/Bad BGP Identifier",
-  [BGP_NOTIFY_OPEN_UNSUP_PARAM]      = "/Unsupported Optional Parameter",
-  [BGP_NOTIFY_OPEN_AUTH_FAILURE]     = "/Authentication Failure",
-  [BGP_NOTIFY_OPEN_UNACEP_HOLDTIME]  = "/Unacceptable Hold Time",
-  [BGP_NOTIFY_OPEN_UNSUP_CAPBL]      = "/Unsupported Capability",
-};
+  [BGP_NOMS_UNSPECIFIC]    = "/Unspecific",
+  [BGP_NOMS_O_VERSION]     = "/Unsupported Version Number",
+  [BGP_NOMS_O_BAD_AS]      = "/Bad Peer AS",
+  [BGP_NOMS_O_BAD_ID]      = "/Bad BGP Identifier",
+  [BGP_NOMS_O_OPTION]      = "/Unsupported Optional Parameter",
+  [BGP_NOMS_O_AUTH]        = "/Authentication Failure",
+  [BGP_NOMS_O_H_TIME]      = "/Unacceptable Hold Time",
+  [BGP_NOMS_O_CAPABILITY]  = "/Unsupported Capability",
+} ;
 
 const map_direct_t bgp_notify_open_msg_map =
       map_direct_s(bgp_notify_open_msg_map_body, "/Unknown(%d)") ;
 
-/* BGP_NOTIFY_UPDATE_ERR subtypes
+/* BGP_NOMC_UPDATE subtypes
  */
 static const char* const bgp_notify_update_msg_map_body[] =
 {
-  [0]                                 = "/Unspecific",
-  [BGP_NOTIFY_UPDATE_MAL_ATTR]        = "/Malformed Attribute List",
-  [BGP_NOTIFY_UPDATE_UNREC_ATTR]      = "/Unrecognized Well-known Attribute",
-  [BGP_NOTIFY_UPDATE_MISS_ATTR]       = "/Missing Well-known Attribute",
-  [BGP_NOTIFY_UPDATE_ATTR_FLAG_ERR]   = "/Attribute Flags Error",
-  [BGP_NOTIFY_UPDATE_ATTR_LENG_ERR]   = "/Attribute Length Error",
-  [BGP_NOTIFY_UPDATE_INVAL_ORIGIN]    = "/Invalid ORIGIN Attribute",
-  [BGP_NOTIFY_UPDATE_AS_ROUTE_LOOP]   = "/AS Routing Loop",
-  [BGP_NOTIFY_UPDATE_INVAL_NEXT_HOP]  = "/Invalid NEXT_HOP Attribute",
-  [BGP_NOTIFY_UPDATE_OPT_ATTR_ERR]    = "/Optional Attribute Error",
-  [BGP_NOTIFY_UPDATE_INVAL_NETWORK]   = "/Invalid Network Field",
-  [BGP_NOTIFY_UPDATE_MAL_AS_PATH]     = "/Malformed AS_PATH",
+  [BGP_NOMS_UNSPECIFIC]    = "/Unspecific",
+  [BGP_NOMS_U_MAL_ATTR]    = "/Malformed Attribute List",
+  [BGP_NOMS_U_UNKNOWN]     = "/Unknown Well-known Attribute",
+  [BGP_NOMS_U_MISSING]     = "/Missing Well-known Attribute",
+  [BGP_NOMS_U_A_FLAGS]     = "/Attribute Flags Error",
+  [BGP_NOMS_U_A_LENGTH]    = "/Attribute Length Error",
+  [BGP_NOMS_U_ORIGIN]      = "/Invalid ORIGIN Attribute",
+  [BGP_NOMS_U_AS_LOOP]     = "/AS Routing Loop",
+  [BGP_NOMS_U_NEXT_HOP]    = "/Invalid NEXT_HOP Attribute",
+  [BGP_NOMS_U_OPTIONAL]    = "/Optional Attribute Error",
+  [BGP_NOMS_U_NETWORK]     = "/Invalid Network Field",
+  [BGP_NOMS_U_MAL_AS_PATH] = "/Malformed AS_PATH",
 };
 
 const map_direct_t bgp_notify_update_msg_map =
       map_direct_s(bgp_notify_update_msg_map_body, "/Unknown(%d)") ;
 
-/* BGP_NOTIFY_CEASE_ERR subtypes
+/* BGP_NOMC_FSM subtypes
+ */
+static const char* const bgp_notify_fsm_msg_map_body[] =
+{
+  [BGP_NOMS_UNSPECIFIC]        = "/Unspecific",
+  [BGP_NOMS_F_IN_OPEN_SENT]    = "/Unexpected message in OpenSent state",
+  [BGP_NOMS_F_IN_OPEN_CONFIRM] = "/Unexpected message in OpenConfirm",
+  [BGP_NOMS_F_IN_ESTABLISHED]  = "/Unexpected message in Established",
+} ;
+
+const map_direct_t bgp_notify_fsm_msg_map =
+      map_direct_s(bgp_notify_fsm_msg_map_body, "/Unknown(%d)") ;
+
+/* BGP_NOMC_CEASE subtypes
  */
 static const char* const bgp_notify_cease_msg_map_body[] =
 {
-  [0]                                   = "/Unspecific",
-  [BGP_NOTIFY_CEASE_MAX_PREFIX]         = "/Maximum Number of Prefixes Reached",
-  [BGP_NOTIFY_CEASE_ADMIN_SHUTDOWN]     = "/Administratively Shutdown",
-  [BGP_NOTIFY_CEASE_PEER_UNCONFIG]      = "/Peer Unconfigured",
-  [BGP_NOTIFY_CEASE_ADMIN_RESET]        = "/Administratively Reset",
-  [BGP_NOTIFY_CEASE_CONNECT_REJECT]     = "/Connection Rejected",
-  [BGP_NOTIFY_CEASE_CONFIG_CHANGE]      = "/Other Configuration Change",
-  [BGP_NOTIFY_CEASE_COLLISION_RESOLUTION] = "/Connection collision resolution",
-  [BGP_NOTIFY_CEASE_OUT_OF_RESOURCE]    = "/Out of Resource",
+  [BGP_NOMS_UNSPECIFIC]    = "/Unspecific",
+  [BGP_NOMS_C_MAX_PREF]    = "/Maximum Number of Prefixes Reached",
+  [BGP_NOMS_C_SHUTDOWN]    = "/Administratively Shutdown",
+  [BGP_NOMS_C_DECONFIG]    = "/Peer Unconfigured",
+  [BGP_NOMS_C_RESET]       = "/Administratively Reset",
+  [BGP_NOMS_C_REJECTED]    = "/Connection Rejected",
+  [BGP_NOMS_C_CONFIG]      = "/Other Configuration Change",
+  [BGP_NOMS_C_COLLISION]   = "/Connection collision resolution",
+  [BGP_NOMS_C_RESOURCES]   = "/Out of Resource",
 };
 
 const map_direct_t bgp_notify_cease_msg_map =
       map_direct_s(bgp_notify_cease_msg_map_body, "/Unknown(%d)") ;
 
-/* BGP_NOTIFY_CAPABILITY_ERR subtypes
+/* BGP_NOMC_DYN_CAP subtypes
  */
 static const char* const bgp_notify_capability_msg_map_body[] =
 {
-  [0]                                     = "/Unspecific",
-  [BGP_NOTIFY_CAPABILITY_INVALID_ACTION]  = "/Invalid Action Value",
-  [BGP_NOTIFY_CAPABILITY_INVALID_LENGTH]  = "/Invalid Capability Length",
-  [BGP_NOTIFY_CAPABILITY_MALFORMED_CODE]  = "/Malformed Capability Value",
-  [4]                                     = "/Unsupported Capability",
+  [BGP_NOMS_UNSPECIFIC]    = "/Unspecific",
+  [BGP_NOMS_D_UNKN_SEQ]    = "/Umknown Sequence Number",
+  [BGP_NOMS_D_INV_LEN]     = "/Invalid Capability Length",
+  [BGP_NOMS_D_MALFORM]     = "/Malformed Capability Value",
+  [BGP_NOMS_D_UNSUP]       = "/Unsupported Capability Code",
 };
 
 const map_direct_t bgp_notify_capability_msg_map =
       map_direct_s(bgp_notify_capability_msg_map_body, "/Unknown(%d)") ;
 
-/* BGP_NOTIFY_HOLD_ERR and BGP_NOTIFY_FSM_ERR subtypes
+/* BGP_NOMC_HOLD_EXP subtypes
  *
- * These have no subtypes, so should always be unspecific, but that is not
- * worth remarking on.
+ * This is a common table for any notification code for which there are no
+ * subtypes.
  */
 static const char* const bgp_notify_unspecific_msg_map_body[] =
 {
-  [0] = "",
+  [BGP_NOMS_UNSPECIFIC] = "",
 };
 
 const map_direct_t bgp_notify_unspecific_msg_map =
@@ -195,6 +271,40 @@ static const char* const bgp_notify_unknown_msg_map_body[] = {} ;
 
 const map_direct_t bgp_notify_unknown_msg_map =
       map_direct_s(bgp_notify_unknown_msg_map_body, "/Unknown(%d)") ;
+
+/*------------------------------------------------------------------------------
+ * Select message map for notification subcode, based on code.
+ */
+extern map_direct_p
+bgp_notify_subcode_msg_map(uint code)
+{
+  switch (code)
+    {
+    case BGP_NOMC_HEADER:
+      return bgp_notify_head_msg_map ;
+
+    case BGP_NOMC_OPEN:
+      return bgp_notify_open_msg_map ;
+
+    case BGP_NOMC_UPDATE:
+      return bgp_notify_update_msg_map ;
+
+    case BGP_NOMC_HOLD_EXP:
+      return bgp_notify_unspecific_msg_map ;
+
+    case BGP_NOMC_FSM:
+      return bgp_notify_fsm_msg_map ;
+
+    case BGP_NOMC_CEASE:
+      return bgp_notify_cease_msg_map ;
+
+    case BGP_NOMC_DYN_CAP:
+      return bgp_notify_capability_msg_map ;
+
+    default:
+      return bgp_notify_unknown_msg_map ;
+    }
+} ;
 
 /*------------------------------------------------------------------------------
  * Origin names -- short and long
@@ -224,52 +334,77 @@ const map_direct_t bgp_origin_long_map =
  */
 const char* const bgp_attr_name_map_body[] =
 {
-  [BGP_ATTR_ORIGIN]           = "ORIGIN",
-  [BGP_ATTR_AS_PATH]          = "AS_PATH",
-  [BGP_ATTR_NEXT_HOP]         = "NEXT_HOP",
-  [BGP_ATTR_MULTI_EXIT_DISC]  = "MULTI_EXIT_DISC",
-  [BGP_ATTR_LOCAL_PREF]       = "LOCAL_PREF",
-  [BGP_ATTR_ATOMIC_AGGREGATE] = "ATOMIC_AGGREGATE",
-  [BGP_ATTR_AGGREGATOR]       = "AGGREGATOR",
-  [BGP_ATTR_COMMUNITIES]      = "COMMUNITY",
-  [BGP_ATTR_ORIGINATOR_ID]    = "ORIGINATOR_ID",
-  [BGP_ATTR_CLUSTER_LIST]     = "CLUSTER_LIST",
-  [BGP_ATTR_DPA]              = "DPA",
-  [BGP_ATTR_ADVERTISER]       = "ADVERTISER" ,
-  [BGP_ATTR_RCID_PATH]        = "RCID_PATH",
-  [BGP_ATTR_MP_REACH_NLRI]    = "MP_REACH_NLRI",
-  [BGP_ATTR_MP_UNREACH_NLRI]  = "MP_UNREACH_NLRI",
-  [BGP_ATTR_EXT_COMMUNITIES]  = "EXT_COMMUNITIES",
-  [BGP_ATTR_AS4_PATH]         = "AS4_PATH",
-  [BGP_ATTR_AS4_AGGREGATOR]   = "AS4_AGGREGATOR",
-  [BGP_ATTR_AS_PATHLIMIT]     = "AS_PATHLIMIT",
+  [BGP_ATT_ORIGIN]           = "ORIGIN",
+  [BGP_ATT_AS_PATH]          = "AS_PATH",
+  [BGP_ATT_NEXT_HOP]         = "NEXT_HOP",
+  [BGP_ATT_MED]              = "MULTI_EXIT_DISC",
+  [BGP_ATT_LOCAL_PREF]       = "LOCAL_PREF",
+  [BGP_ATT_ATOMIC_AGGREGATE] = "ATOMIC_AGGREGATE",
+  [BGP_ATT_AGGREGATOR]       = "AGGREGATOR",
+  [BGP_ATT_COMMUNITIES]      = "COMMUNITY",
+  [BGP_ATT_ORIGINATOR_ID]    = "ORIGINATOR_ID",
+  [BGP_ATT_CLUSTER_LIST]     = "CLUSTER_LIST",
+  [BGP_ATT_DPA]              = "DPA",
+  [BGP_ATT_ADVERTISER]       = "ADVERTISER" ,
+  [BGP_ATT_RCID_PATH]        = "RCID_PATH",
+  [BGP_ATT_MP_REACH_NLRI]    = "MP_REACH_NLRI",
+  [BGP_ATT_MP_UNREACH_NLRI]  = "MP_UNREACH_NLRI",
+  [BGP_ATT_ECOMMUNITIES]     = "EXT_COMMUNITIES",
+  [BGP_ATT_AS4_PATH]         = "AS4_PATH",
+  [BGP_ATT_AS4_AGGREGATOR]   = "AS4_AGGREGATOR",
+  [BGP_ATT_AS_PATHLIMIT]     = "AS_PATHLIMIT",
 };
 
 const map_direct_t bgp_attr_name_map =
       map_direct_s(bgp_attr_name_map_body, "unknown(%u)") ;
 
 /*------------------------------------------------------------------------------
- * AFI names
+ * AFI names -- Internet AFI  TODO *********************************************
  */
 const char* const bgp_afi_name_map_body[] =
 {
-  [AFI_IP]                    = "AFI_IP",
-  [AFI_IP6]                   = "AFI_IP6",
+  [iAFI_IP]                   = "AFI_IP",
+  [iAFI_IP6]                  = "AFI_IP6",
 };
 
 const map_direct_t bgp_afi_name_map =
       map_direct_s(bgp_afi_name_map_body, "unknown AFI(%u)") ;
 
 /*------------------------------------------------------------------------------
- * SAFI names
+ * SAFI names -- Internet SAFI TODO ********************************************
  */
 const char* const bgp_safi_name_map_body[] =
 {
-  [SAFI_UNICAST]              = "SAFI_UNICAST",
-  [SAFI_MULTICAST]            = "SAFI_MULTICAST",
-  [SAFI_MPLS_VPN]             = "SAFI_MPLS_VPN",
+  [iSAFI_Unicast]             = "SAFI_UNICAST",
+  [iSAFI_Multicast]           = "SAFI_MULTICAST",
+  [qSAFI_MPLS_VPN]            = "SAFI_MPLS_VPN",        // XXX .................
+  [iSAFI_MPLS_VPN]            = "SAFI_MPLS_VPN",
 };
 
 const map_direct_t bgp_safi_name_map =
       map_direct_s(bgp_safi_name_map_body, "unknown SAFI(%u)") ;
+
+/*------------------------------------------------------------------------------
+ * Capability codes
+ */
+const char* const bgp_capcode_name_map_body[] =
+{
+  [BGP_CAN_MP_EXT]          = "MultiProtocol Extensions",
+  [BGP_CAN_R_REFRESH]       = "Route Refresh",
+  [BGP_CAN_ORF]             = "Cooperative Route Filtering",
+  [BGP_CAN_M_ROUTES]        = "Multiple Routes",
+  [BGP_CAN_E_NEXT_HOP]      = "Extended Next Hop Encoding",
+  [BGP_CAN_G_RESTART]       = "Graceful Restart",
+  [BGP_CAN_AS4]             = "4-octet AS number",
+  [BGP_CAN_DYNAMIC_CAP_dep] = "Dynamic Capabilities (Deprecated)",
+  [BGP_CAN_DYNAMIC_CAP]     = "Dynamic Capabilities",
+  [BGP_CAN_MULTI_SESS]      = "Multi-Session",
+  [BGP_CAN_ADD_PATH]        = "Add-Paths",
+  [BGP_CAN_R_REFRESH_pre]   = "Route Refresh (pre-RFC)",
+  [BGP_CAN_ORF_pre]         = "ORF (pre-RFC)",
+};
+
+const map_direct_t bgp_capcode_name_map =
+      map_direct_s(bgp_capcode_name_map_body, "unknown Capability(%u)") ;
+
 

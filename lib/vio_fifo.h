@@ -135,9 +135,9 @@ extern void vio_fifo_put_string(vio_fifo vff, const char* src) ;
 extern void vio_fifo_put_bytes(vio_fifo vff, const char* src, ulen n) ;
 Inline void vio_fifo_put_byte(vio_fifo vff, char b) ;
 
-extern int vio_fifo_printf(vio_fifo vff, const char* format, ...)
+extern uint vio_fifo_printf(vio_fifo vff, const char* format, ...)
                                                         PRINTF_ATTRIBUTE(2, 3) ;
-extern int vio_fifo_vprintf(vio_fifo vff, const char *format, va_list args) ;
+extern uint vio_fifo_vprintf(vio_fifo vff, const char *format, va_list args) ;
 extern int vio_fifo_read_nb(vio_fifo vff, int fd, ulen require, ulen request) ;
 extern void vio_fifo_trim(vio_fifo vff, bool term) ;
 

@@ -187,7 +187,7 @@ qpn_add_hook_function(qpn_hook_list list, void* hook)
 extern qpn_nexus
 qpn_reset(qpn_nexus qpn, free_keep_b free_structure)
 {
-  qps_file qf;
+  qfile  qf;
   qtimer qtr;
 
   if (qpn == NULL)
@@ -296,15 +296,9 @@ static void*
 qpn_loop(qpt_thread qpth)
 {
   qpn_nexus qpn ;
-  mqueue_block mqb;
-  int actions;
-  qtime_mono_t now ;
-  qtime_t      max_wait ;
   unsigned i;
   bool this ;
   bool prev ;
-  bool wait_mq ;
-  bool idle ;
 
   /* First things absolutely first
    */
@@ -323,87 +317,16 @@ qpn_loop(qpt_thread qpth)
    */
   prev = true ;
   this = true ;
-  idle = false ;
+
   while (!qpn->terminate)
     {
+      mqueue_block mqb;
+      qtime_mono_t now ;
+      qtime_t      max_wait ;
+      int  actions;
+      bool idle ;
+
       ++qpn->raw.cycles ;
-
-      /* Signals are highest priority -- only execute for main thread
-       */
-      if (qpn->main_thread)
-        {
-          int ret = quagga_sigevent_process() ;
-          if (ret != 0)
-            {
-              this = true ;
-              ++qpn->raw.signals ;
-            } ;
-        } ;
-
-      /* Foreground hooks, if any.
-       */
-      for (i = 0; i < qpn->foreground.count ; ++i)
-        {
-          int ret = ((qpn_hook_function*)(qpn->foreground.hooks[i]))() ;
-          if (ret != 0)
-            {
-              this = true ;
-              ++qpn->raw.foreg ;
-            } ;
-        } ;
-
-      /* take stuff from the message queue
-       *
-       * If nothing done this time and last time around the loop then will
-       * arrange to wait iff the queue is empty first time through.
-       *
-       * If there is nothing on the queue, then "wait" => the queue is set so
-       * that anything added to the queue will generate a signal.
-       *
-       * If there is something in the queue, then we are not "idle".
-       */
-      wait_mq = !this && !prev ;
-      mqb = mqueue_dequeue(qpn->queue, wait_mq, qpn->mts) ;
-
-      if (mqb != NULL)
-        {
-          uint done ;
-
-          this    = true ;
-          wait_mq = false ;
-
-          done = 0 ;
-          do
-            {
-              mqb_dispatch(mqb, mqb_action);
-              ++done ;
-
-              if (done == 200)
-                break ;
-
-              mqb = mqueue_dequeue(qpn->queue, wait_mq, NULL) ;
-            } while (mqb != NULL) ;
-
-          qpn->raw.dispatch += done ;
-        } ;
-
-      /* If we have done nothing this time around, see if anything in the
-       * background.
-       *
-       * If do something in the background, then set "this".
-       */
-      if (!this)
-        {
-          for (i = 0; i < qpn->background.count ; ++i)
-            {
-              int ret = ((qpn_hook_function*)(qpn->background.hooks[i]))() ;
-              if (ret != 0)
-                {
-                  this = true ;
-                  ++qpn->raw.backg ;
-                } ;
-            } ;
-        } ;
 
       /* Prepare to block for some input, output, signal or timeout
        *
@@ -412,7 +335,7 @@ qpn_loop(qpt_thread qpth)
        */
       now = qt_get_monotonic() ;
 
-      idle = (!this && !prev) ;
+      idle = (!this && !prev) && mqueue_set_signal(qpn->queue, qpn->mts) ;
       if (idle)
         max_wait = qtimer_pile_top_wait(qpn->pile, qpn_max_pselect_wait, now) ;
       else
@@ -457,14 +380,30 @@ qpn_loop(qpt_thread qpth)
               qpn->idleness = 0 ;
               qpt_spin_unlock(qpn->stats_slk) ;
             } ;
-        } ;
 
-      if (wait_mq)
-        mqueue_done_waiting(qpn->queue, qpn->mts) ;
+          mqueue_done_waiting(qpn->queue, qpn->mts) ;
+        } ;
 
       prev = this ;
       this = (actions != 0) ;           /* actions < 0 => Signal        */
 
+      /* Signals are highest priority -- only execute for main thread
+       */
+      if (qpn->main_thread)
+        {
+          int ret = quagga_sigevent_process() ;
+          if (ret != 0)
+            {
+              this = true ;
+              ++qpn->raw.signals ;
+            } ;
+        } ;
+
+      /* Process I/O, if any
+       *
+       * Note that we process all pending I/O -- no matter how long it takes to
+       * process each one.
+       */
       if (actions > 0)
         {
           qpn->raw.io_acts += actions ;
@@ -474,12 +413,85 @@ qpn_loop(qpt_thread qpth)
           while (actions > 0) ;
         } ;
 
-      /* process timers -- also counts as one activity
+      /* Process timers -- also counts as one activity
+       *
+       * Note that we empty out all timers up to the time we returned from
+       * qps_pselect() -- no matter how long it takes to process each one.
        */
       while (qtimer_pile_dispatch_next(qpn->pile, now))
         {
           ++qpn->raw.timers ;
           this = true ;                 /* done something in this pass  */
+        } ;
+
+      /* Foreground hooks, if any.
+       *
+       * Note that we process all foreground items -- no matter how long it
+       * takes to process each one.
+       */
+      for (i = 0; i < qpn->foreground.count ; ++i)
+        {
+          int ret = ((qpn_hook_function*)(qpn->foreground.hooks[i]))() ;
+          if (ret != 0)
+            {
+              this = true ;
+              ++qpn->raw.foreg ;
+            } ;
+        } ;
+
+      /* Take stuff from the message queue or from the background queue.
+       *
+       * Now we set a limit on how much time to use before returning to see
+       * if I/O or timers etc require attention.
+       */
+      mqb = mqueue_dequeue(qpn->queue, false, NULL) ;
+
+      if (mqb != NULL)
+        {
+          /* We have at least one item on the message queue.
+           *
+           * Process at least one item, and continue until either the message
+           * queue is empty, or the time since we returned from qps_pselect()
+           * exceeds 10ms.
+           */
+          qtime_t yield_time ;
+          uint    done ;
+
+          this = true ;
+
+          yield_time = now + QTIME(0.01) ;
+          done = 0 ;
+          do
+            {
+              mqb_dispatch(mqb, mqb_action);
+              done += 1 ;
+
+              now = qt_get_monotonic() ;
+              if (now >= yield_time)
+                break ;
+
+              mqb = mqueue_dequeue(qpn->queue, false, NULL) ;
+            }
+          while (mqb != NULL) ;
+
+          qpn->raw.dispatch += done ;
+        }
+      else if (!this)
+        {
+          /* If we have done nothing this time around, see if anything in the
+           * background.
+           *
+           * If do something in the background, then set "this".
+           */
+          for (i = 0; i < qpn->background.count ; ++i)
+            {
+              int ret = ((qpn_hook_function*)(qpn->background.hooks[i]))() ;
+              if (ret != 0)
+                {
+                  this = true ;
+                  ++qpn->raw.backg ;
+                } ;
+            } ;
         } ;
     } ;
 

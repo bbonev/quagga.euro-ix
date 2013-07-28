@@ -24,6 +24,7 @@ Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
 #include "prefix.h"
 #include "command.h"
 
+#include "bgpd/bgp.h"
 #include "bgpd/bgpd.h"
 #include "bgpd/bgp_dump.h"
 #include "bgpd/bgp_attr.h"
@@ -73,14 +74,14 @@ attr_parse (struct stream *s, u_int16_t len)
 
       switch (type)
         {
-        case BGP_ATTR_ORIGIN:
+        case BGP_ATT_ORIGIN:
           {
             u_char origin;
             origin = stream_getc (s);
             printf ("ORIGIN: %d\n", origin);
           }
           break;
-        case BGP_ATTR_AS_PATH:
+        case BGP_ATT_AS_PATH:
           {
             struct aspath aspath;
 
@@ -93,7 +94,7 @@ attr_parse (struct stream *s, u_int16_t len)
             stream_forward (s, length);
           }
           break;
-        case BGP_ATTR_NEXT_HOP:
+        case BGP_ATT_NEXT_HOP:
           {
             struct in_addr nexthop;
             nexthop.s_addr = stream_get_ipv4 (s);

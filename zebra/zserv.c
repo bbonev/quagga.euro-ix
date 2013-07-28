@@ -283,7 +283,7 @@ zsend_interface_address (int cmd, struct zserv *client,
   /* Prefix information. */
   p = ifc->address;
   stream_putc (s, p->family);
-  blen = prefix_blen (p);
+  blen = prefix_byte_len (p);
   stream_put (s, &p->u.prefix, blen);
 
   /*
@@ -682,7 +682,7 @@ zsend_router_id_update (struct zserv *client, struct prefix *p)
 
   /* Prefix information. */
   stream_putc (s, p->family);
-  blen = prefix_blen (p);
+  blen = prefix_byte_len (p);
   stream_put (s, &p->u.prefix, blen);
   stream_putc (s, p->prefixlen);
 

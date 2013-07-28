@@ -407,8 +407,8 @@ struct vio_vf
 
   vio_vfd   vfd ;               /* vty_io_basic "file descriptor"       */
 
-  vio_timer_time  read_timeout ;
-  vio_timer_time  write_timeout ;
+  vio_timer_time_t  read_timeout ;
+  vio_timer_time_t  write_timeout ;
 
   /* Pipe extras -- child and pipe returns
    *
@@ -1012,8 +1012,8 @@ VTY_ASSERT_CAN_CLOSE_VF(vio_vf vf)
  * Functions
  */
 
-extern int uty_out (vty_io vio, const char* format, ...) PRINTF_ATTRIBUTE(2, 3);
-Inline int uty_vprintf(vty_io vio, const char *format, va_list args) ;
+extern uint uty_out(vty_io vio, const char* format, ...) PRINTF_ATTRIBUTE(2, 3);
+Inline uint uty_vprintf(vty_io vio, const char *format, va_list args) ;
 
 Inline void uty_out_clear(vty_io vio) ;
 Inline void uty_out_accept(vty_io vio) ;
@@ -1026,7 +1026,7 @@ extern void uty_close_reason_set(vty_io vio, const char* why, bool replace) ;
 extern void uty_suspend_reason_set(vty_io vio, const char* why) ;
 extern void uty_suspend_reason_clear(vty_io vio) ;
 
-extern void uty_set_timeout(vty_io vio, vio_timer_time timeout) ;
+extern void uty_set_timeout(vty_io vio, vio_timer_time_t timeout) ;
 
 extern void uty_vin_push(vty_io vio, vio_vf vf, vio_in_type_t type,
                                           vio_vfd_action* read_action,
@@ -1059,8 +1059,8 @@ extern verr_mess_t uty_error_message(vio_vf vf, vio_err_type_t err_type,
                                                             int err, bool log) ;
 extern vio_child uty_child_register(pid_t pid, vio_vf parent) ;
 extern void vty_child_close_register(void) ;
-extern void uty_child_awaited(vio_child child, vio_timer_time timeout) ;
-extern bool uty_child_collect(vio_child child, vio_timer_time timeout,
+extern void uty_child_awaited(vio_child child, vio_timer_time_t timeout) ;
+extern bool uty_child_collect(vio_child child, vio_timer_time_t timeout,
                                                                    bool final) ;
 extern void uty_child_dismiss(vio_child child, bool final) ;
 extern void uty_sigchld(void) ;
@@ -1154,8 +1154,10 @@ uty_is_shell_client(struct vty *vty)
 
 /*------------------------------------------------------------------------------
  * Command output -- append to output buffer.
+ *
+ * Returns:  number of bytes written
  */
-Inline int
+Inline uint
 uty_vprintf(vty_io vio, const char *format, va_list args)
 {
   return vio_fifo_vprintf(vio->obuf, format, args) ;

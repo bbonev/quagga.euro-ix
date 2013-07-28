@@ -27,6 +27,59 @@
 #include "pthread_safe.h"
 
 /*------------------------------------------------------------------------------
+ * getsockopt -- SO_ERROR
+ *
+ * NB: does not distinguish between errors raised by the getsockopt() and
+ *     errors it returns...
+ *
+ *     getsockopt() can return:
+ *
+ *       EBADF       -- same-like a read() or write() -- not logged
+ *
+ *       EACCES      -- unlikely -- but would be logged
+ *       EINVAL      -- unlikely -- but would be logged
+ *       ENOTSOCK    -- unlikely -- but would be logged
+ *
+ *       EINVAL      -- "impossible" -- but would be logged
+ *       ENOPROTOOPT -- "impossible" -- but would be logged
+ *       ENOBUFS     -- "impossible" -- but would be logged
+ *
+ * Returns:  == 0   => OK (and errno == 0)
+ *            < 0   => some error.  errno == error
+ *
+ * NB: if OK, returns 0 -- same like a read(..., 0).
+ *
+ * NB: according to "Unix Network Programming" (ISBN 0-13-141155-1) Solaris
+ *     can return -1 from getsockopt(), setting errno to the pending so_error.
+ *
+ *     This sounds nuts, but apart from some extra logging, this code will
+ *     cope.
+ */
+extern int
+getsockopt_so_error (int sock_fd)
+{
+  int       err;
+  socklen_t optlen ;
+  int       ret ;
+
+  optlen = sizeof(err) ;
+  err = 0 ;
+  ret    = getsockopt (sock_fd, SOL_SOCKET, SO_ERROR, &err, &optlen) ;
+  if (ret >= 0)
+    ret = 0 ;
+  else
+    {
+      err = errno ;
+      if (err != EBADF)
+        zlog_err ("cannot get sockopt SO_ERROR on socket %d: %s",
+                                                  sock_fd, errtoa(err, 0).str) ;
+    } ;
+
+  errno = err ;
+  return ret ;
+} ;
+
+/*------------------------------------------------------------------------------
  * Set socket SO_REUSEADDR option
  *
  * Returns: >= 0 => OK
@@ -178,7 +231,7 @@ setsockopt_ttl (int sock_fd, int ttl)
         {
           case AF_INET:
 #ifdef IP_TTL
-            ret  = setsockopt (sock_fd, IPPROTO_IP, IP_TTL, &ttl, sizeof(ttl));
+            ret  = setsockopt(sock_fd, IPPROTO_IP, IP_TTL, &ttl, sizeof(ttl)) ;
             name = "IP_TTL" ;
 #endif /* IP_TTL */
             break ;
@@ -186,7 +239,7 @@ setsockopt_ttl (int sock_fd, int ttl)
 #ifdef HAVE_IPV6
           case AF_INET6:
             ret  = setsockopt (sock_fd, IPPROTO_IPV6, IPV6_UNICAST_HOPS,
-                                                            &ttl, sizeof(ttl));
+                                                           &ttl, sizeof(ttl)) ;
             name = "IPV6_UNICAST_HOPS" ;
 
             if (ret < 0)
@@ -222,14 +275,18 @@ setsockopt_ttl (int sock_fd, int ttl)
  * The ttl given is the maximum number of hops to allow -- so will generally
  * be 1 -- which is the same as IP_TTL/IPV6_UNICAST_HOPS.
  *
- * NB: to turn off GTSM, need to set ttl = MAXTTL.  This code treats any ttl
- *     outside the range 1..MAXTTL as MAXTTL.
+ * To turn off GTSM, need to ask for ttl = 0 (or < 0 !).
  *
- *     The underlying mechanics want MAX_TTL - (ttl - 1) -- and may not
- *     accept a value of zero.
+ * Any ttl greater than MAX_TTL is clapped to MAX_TTL.
  *
- * Returns: >= 0 => OK
- *           < 0 => failed or not supported -- see errno
+ * The underlying mechanics take "minttl" value, which is:
+ *
+ *   minttl = 0 => turn off GTSM
+ *
+ *   minttl = MAX_TTL - (ttl - 1)   -- ie MAX_TTL..1 for hop count 1..MAX_TTL.
+ *
+ * Returns: >= 0 => OK == the minttl actually set
+ *           < 0 => failed or not supported -- see errno -- WARNINGS issued
  *                                             EOPNOTSUPP if not supported
  *
  * Logs a LOG_WARNING message if fails (including not supported).
@@ -246,7 +303,7 @@ setsockopt_minttl (int sock_fd, int ttl)
   const char* name ;
   int   af ;
   int   minttl ;
-  int   ret ;
+  int   ret, err ;
 
   af = sockunion_getsockfamily(sock_fd) ;
   if (af < 0)
@@ -255,11 +312,23 @@ setsockopt_minttl (int sock_fd, int ttl)
   ret  = 0 ;
   name = NULL ;
 
-  if ((ttl < 1) || (ttl > MAXTTL))
-    ttl = MAXTTL ;
+  if (ttl < 1)
+    minttl = 0 ;
+  else
+    {
+      if (ttl > MAXTTL)
+        minttl = 1 ;
+      else
+        minttl = MAXTTL - (ttl - 1) ;
+    } ;
 
-  minttl = MAXTTL - (ttl - 1) ;
-
+  /* We have a while(1) loop so that for an IPv6 family socket, can try first
+   * with an IPPROTO_IPV6 operation, but if that fails, can try again with
+   * IPPROTO_IP iff we have a mapped IPv4 address.
+   *
+   * The scope for confusion here just emphasises what a BAD IDEA mapped IPv4
+   * addresses are :-(
+   */
   while (1)
     {
       enum
@@ -285,8 +354,7 @@ setsockopt_minttl (int sock_fd, int ttl)
    *
    * However, this trick does not always work... for example, if linux/in6.h
    * redefines "extern const struct in6_addr in6addr_any" !!  Do not know
-   * any way to fix that, so -DNO_LINUX_IN6_H will turn this off -- and will
-   * have to live without IPV6_MINHOPCOUNT pro tem.
+   * any way to fix that, so -DNO_LINUX_IN6_H can be set to turn this off !
    */
 #  if defined(GNU_LINUX) && !defined(NO_LINUX_IN6_H)
     #include <linux/in6.h>
@@ -310,8 +378,10 @@ setsockopt_minttl (int sock_fd, int ttl)
           case AF_INET:
             name = "IP_MINTTL" ;
             if (have_ip_minttl)
-              ret  = setsockopt (sock_fd, IPPROTO_IP, ip_minttl,
-                                                      &minttl, sizeof(minttl));
+              {
+                ret = setsockopt(sock_fd, IPPROTO_IP, ip_minttl,
+                                                      &minttl, sizeof(minttl)) ;
+              }
             else
               {
                 ret   = -1 ;
@@ -324,8 +394,10 @@ setsockopt_minttl (int sock_fd, int ttl)
           case AF_INET6:
             name = "IPV6_MINHOPCOUNT" ;
             if (have_ipv6_minhopcount)
-              ret  = setsockopt (sock_fd, IPPROTO_IPV6, ipv6_minhopcount,
-                                                      &minttl, sizeof(minttl));
+              {
+                ret = setsockopt(sock_fd, IPPROTO_IPV6, ipv6_minhopcount,
+                                                      &minttl, sizeof(minttl)) ;
+              }
             else
               {
                 ret   = -1 ;
@@ -349,13 +421,13 @@ setsockopt_minttl (int sock_fd, int ttl)
       break ;
     } ;
 
-  if (ret < 0)
-    {
-      int err = errno ;
-      zlog_warn("cannot set sockopt %s to %d on socket %d: %s", name, minttl,
+  if (ret >= 0)
+    return minttl ;
+
+  err = errno ;
+  zlog_warn("cannot set sockopt %s to %d on socket %d: %s", name, minttl,
                                                   sock_fd, errtoa(err, 0).str) ;
-      errno = err ;
-    } ;
+  errno = err ;
 
   return ret ;
 } ;
@@ -375,14 +447,15 @@ setsockopt_minttl (int sock_fd, int ttl)
  * Logs a LOG_ERR message if fails (and is supported).
  */
 extern int
-setsockopt_tcp_signature (int sock_fd, sockunion su, const char *password)
+setsockopt_tcp_signature (int sock_fd, sockunion_c su, const char *password)
 {
   int ret ;
 
   if ((password != NULL) && (*password == '\0'))
     password = NULL ;
 
-  ret = 0 ;             /* so far, so good              */
+  errno = 0 ;
+  ret   = 0 ;           /* so far, so good              */
 
 #if defined(HAVE_TCP_MD5_LINUX24) && defined(GNU_LINUX)
   /* Support for the old Linux 2.4 TCP-MD5 patch, taken from Hasso Tepper's
@@ -487,8 +560,8 @@ setsockopt_tcp_signature (int sock_fd, sockunion su, const char *password)
 
 #else
 
-  /* TCP MD5 is not supported                                           */
-
+  /* TCP MD5 is not supported
+   */
   if (password != NULL)
     {
       errno = EOPNOTSUPP ;      /* manufactured error           */
@@ -509,9 +582,32 @@ setsockopt_tcp_signature (int sock_fd, sockunion su, const char *password)
 } ;
 
 /*------------------------------------------------------------------------------
+ * Set SO_RCVBUF option on socket, if not already bigger, and get result.
+ *
+ * Returns:  > 0 => OK -- the (new) current setting -- by getsockopt()
+ *             0 => not supported (or the current setting) -- see errno
+ *           < 0 => failed, see errno.
+ *
+ * Logs a LOG_ERR message if fails
+ */
+extern int
+setsockopt_so_recvbuf_x(int sock_fd, int size)
+{
+  int ret;
+
+  ret = getsockopt_so_recvbuf(sock_fd) ;
+
+  if ((ret <= 0) || (ret >= size))
+    return ret ;        /* failed, not supported, or already bigger     */
+
+  return setsockopt_so_recvbuf(sock_fd, size) ;
+} ;
+
+/*------------------------------------------------------------------------------
  * Set SO_RCVBUF option on socket.
  *
- * Returns: >= 0 => OK
+ * Returns:  > 0 => OK -- the current setting -- by getsockopt()
+ *             0 => not supported (or the current setting) -- see errno
  *           < 0 => failed, see errno.
  *
  * Logs a LOG_ERR message if fails
@@ -519,24 +615,91 @@ setsockopt_tcp_signature (int sock_fd, sockunion su, const char *password)
 extern int
 setsockopt_so_recvbuf (int sock_fd, int size)
 {
-  int ret;
+  int ret ;
 
   ret = setsockopt (sock_fd, SOL_SOCKET, SO_RCVBUF, &size, sizeof(size)) ;
-  if (ret < 0)
+
+  if      (ret >= 0)
+    return getsockopt_so_recvbuf(sock_fd) ;
+  else if (errno == ENOPROTOOPT)
+    ret = 0 ;
+  else
     {
-      int err = errno ;
+      int err ;
+      err = errno ;
+
       zlog_err ("cannot set sockopt SO_RCVBUF to %d on socket %d: %s",
                                             size, sock_fd, errtoa(err, 0).str) ;
       errno = err ;
     } ;
 
   return ret;
-}
+} ;
+
+/*------------------------------------------------------------------------------
+ * Get SO_SNDBUF option value from socket.
+ *
+ * Returns:  > 0 => OK -- the current setting -- by getsockopt()
+ *             0 => not supported (or the current setting) -- see errno
+ *           < 0 => failed, see errno.
+ *
+ * Logs a LOG_ERR message if fails
+ */
+extern int
+getsockopt_so_recvbuf (int sock_fd)
+{
+  uint32_t  optval;
+  socklen_t optlen ;
+  int       ret ;
+
+  optlen = sizeof (optval) ;
+  optval = 0 ;
+  ret    = getsockopt (sock_fd, SOL_SOCKET, SO_SNDBUF, &optval, &optlen) ;
+  if      (ret >= 0)
+    errno = 0 ;
+  else if (errno == ENOPROTOOPT)
+    optval = 0 ;
+  else
+    {
+      int err ;
+      err = errno ;
+
+      zlog_err ("cannot get sockopt SO_SNDBUF on socket %d: %s",
+                                                  sock_fd, errtoa(err, 0).str) ;
+      errno = err ;
+      return ret;
+    } ;
+
+  return optval;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Set SO_SNDBUF option on socket, if not already bigger, and get result.
+ *
+ * Returns:  > 0 => OK -- the (new) current setting -- by getsockopt()
+ *             0 => not supported (or the current setting) -- see errno
+ *           < 0 => failed, see errno.
+ *
+ * Logs a LOG_ERR message if fails
+ */
+extern int
+setsockopt_so_sendbuf_x(int sock_fd, int size)
+{
+  int ret;
+
+  ret = getsockopt_so_sendbuf(sock_fd) ;
+
+  if ((ret <= 0) || (ret >= size))
+    return ret ;        /* failed, not supported, or already bigger     */
+
+  return setsockopt_so_sendbuf(sock_fd, size) ;
+} ;
 
 /*------------------------------------------------------------------------------
  * Set SO_SNDBUF option on socket.
  *
- * Returns: >= 0 => OK
+ * Returns:  > 0 => OK -- the current setting -- by getsockopt()
+ *             0 => not supported (or the current setting) -- see errno
  *           < 0 => failed, see errno.
  *
  * Logs a LOG_ERR message if fails
@@ -548,11 +711,17 @@ setsockopt_so_sendbuf (int sock_fd, int size)
 
   ret = setsockopt (sock_fd, SOL_SOCKET, SO_SNDBUF, &size, sizeof(size));
 
-  if (ret < 0)
+  if      (ret >= 0)
+    return getsockopt_so_sendbuf(sock_fd) ;
+  else if (errno == ENOPROTOOPT)
+    ret = 0 ;
+  else
     {
-      int err = errno ;
+      int err ;
+      err = errno ;
+
       zlog_err("cannot set sockopt SO_SNDBUF to %d on socket %d: %s",
-                                            size, sock_fd, errtoa(err, 0).str) ;
+                                        size, sock_fd, errtoa(err, 0).str) ;
       errno = err ;
     } ;
 
@@ -562,7 +731,8 @@ setsockopt_so_sendbuf (int sock_fd, int size)
 /*------------------------------------------------------------------------------
  * Get SO_SNDBUF option value from socket.
  *
- * Returns: >= 0 => OK == value of option
+ * Returns:  > 0 => OK -- the current setting -- by getsockopt()
+ *             0 => not supported (or the current setting) -- see errno
  *           < 0 => failed, see errno.
  *
  * Logs a LOG_ERR message if fails
@@ -570,21 +740,100 @@ setsockopt_so_sendbuf (int sock_fd, int size)
 extern int
 getsockopt_so_sendbuf (int sock_fd)
 {
-  u_int32_t optval;
-  socklen_t optlen = sizeof (optval);
+  uint32_t  optval;
+  socklen_t optlen ;
+  int       ret ;
 
-  int ret = getsockopt (sock_fd, SOL_SOCKET, SO_SNDBUF, &optval, &optlen);
-  if (ret < 0)
-  {
-    int err = errno ;
-    zlog_err ("cannot get sockopt SO_SNDBUF on socket %d: %s",
-                                                  sock_fd, errtoa(err, 0).str) ;
-    errno = err ;
-    return ret;
-  }
+  optlen = sizeof (optval) ;
+  optval = 0 ;
+  ret    = getsockopt (sock_fd, SOL_SOCKET, SO_SNDBUF, &optval, &optlen) ;
+  if      (ret >= 0)
+    errno = 0 ;
+  else if (errno == ENOPROTOOPT)
+    optval = 0 ;
+  else
+    {
+      int err ;
+      err = errno ;
+
+      zlog_err ("cannot get sockopt SO_SNDBUF on socket %d: %s",
+                                              sock_fd, errtoa(err, 0).str) ;
+      errno = err ;
+      return ret ;
+    } ;
 
   return optval;
-}
+} ;
+
+/*------------------------------------------------------------------------------
+ * Set SO_SNDLOWAT option on socket.
+ *
+ * Returns:  > 0 => OK -- the current setting -- by getsockopt()
+ *             0 => not supported (or the current setting) -- see errno
+ *           < 0 => failed, see errno.
+ *
+ * Logs a LOG_ERR message if fails
+ */
+extern int
+setsockopt_so_sendlowat(int sock_fd, int size)
+{
+  int ret ;
+
+  ret = setsockopt (sock_fd, SOL_SOCKET, SO_SNDLOWAT, &size, sizeof(size));
+
+  if      (ret >= 0)
+    return getsockopt_so_sendlowat(sock_fd) ;
+  else if (errno == ENOPROTOOPT)
+    ret = 0 ;
+  else
+    {
+      int err ;
+      err = errno ;
+
+      zlog_err("cannot set sockopt SO_SNDLOWAT to %d on socket %d: %s",
+                                        size, sock_fd, errtoa(err, 0).str) ;
+      errno = err ;
+    } ;
+
+  return ret;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Get SO_SNDLOWAT option value from socket.
+ *
+ * Returns:  > 0 => OK -- the current setting -- by getsockopt()
+ *             0 => not supported (or the current setting) -- see errno
+ *           < 0 => failed, see errno.
+ *
+ * Logs a LOG_ERR message if fails
+ */
+extern int
+getsockopt_so_sendlowat(int sock_fd)
+{
+  uint32_t  optval;
+  socklen_t optlen ;
+  int       ret ;
+
+  optlen = sizeof(optval) ;
+  optval = 0 ;
+  ret    = getsockopt (sock_fd, SOL_SOCKET, SO_SNDLOWAT, &optval, &optlen) ;
+  if      (ret >= 0)
+    errno = 0 ;
+  else if (errno == ENOPROTOOPT)
+    optval = 0 ;
+  else
+    {
+      int err ;
+      err = errno ;
+
+      zlog_err ("cannot get sockopt SO_SNDLOWAT on socket %d: %s",
+                                              sock_fd, errtoa(err, 0).str) ;
+      errno = err ;
+      return ret ;
+    } ;
+
+  return optval;
+} ;
 
 /*------------------------------------------------------------------------------
  * Set IP_TOS option for AF_INET socket.

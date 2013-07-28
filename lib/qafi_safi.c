@@ -25,6 +25,30 @@
 #include "name_map.h"
 
 /*==============================================================================
+ * Conversion tables for: qAFI        => sa_family_t
+ *                   and: sa_family_t => qAFI
+ */
+const sa_family_t qAFI_to_family_map[qAFI_count] =
+  {
+    [qAFI_ipv4]    = AF_INET,
+#ifdef HAVE_IPV6
+    [qAFI_ipv6]    = AF_INET6,
+#endif
+    [qAFI_undef]   = AF_UNSPEC,
+  } ;
+CONFIRM(AF_UNSPEC == 0) ;       /* not known -> AF_UNSPEC       */
+
+const qAFI_t  qAFI_from_family_map[sa_family_count] =
+  {
+    [AF_INET]     = qAFI_ipv4,
+#ifdef HAVE_IPV6
+    [AF_INET6]    = qAFI_ipv6,
+#endif
+    [AF_UNSPEC]   = qAFI_undef
+  } ;
+CONFIRM(qAFI_undef == 0) ;      /* not known -> qAFI_undef      */
+
+/*==============================================================================
  * Mapping values to name strings
  */
 

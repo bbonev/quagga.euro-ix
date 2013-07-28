@@ -30,6 +30,7 @@ Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
 #include "log.h"
 #include "sockunion.h"
 #include "memory.h"
+#include "qstring.h"
 #include "qfstring.h"
 
 #include "bgpd/bgp_engine.h"
@@ -38,119 +39,130 @@ Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
 
 #include "bgpd/bgpd.h"
 #include "bgpd/bgp_peer.h"
-#include "bgpd/bgp_aspath.h"
 #include "bgpd/bgp_route.h"
-#include "bgpd/bgp_attr.h"
 #include "bgpd/bgp_debug.h"
-#include "bgpd/bgp_community.h"
 #include "bgpd/bgp_names.h"
 
-unsigned long conf_bgp_debug_as4;
-unsigned long conf_bgp_debug_fsm;
-unsigned long conf_bgp_debug_io;
-unsigned long conf_bgp_debug_events;
-unsigned long conf_bgp_debug_packet;
-unsigned long conf_bgp_debug_filter;
-unsigned long conf_bgp_debug_keepalive;
-unsigned long conf_bgp_debug_update;
-unsigned long conf_bgp_debug_normal;
-unsigned long conf_bgp_debug_zebra;
+uint conf_bgp_debug_as4;
+uint conf_bgp_debug_fsm;
+uint conf_bgp_debug_io;
+uint conf_bgp_debug_events;
+uint conf_bgp_debug_packet;
+uint conf_bgp_debug_filter;
+uint conf_bgp_debug_keepalive;
+uint conf_bgp_debug_update;
+uint conf_bgp_debug_normal;
+uint conf_bgp_debug_zebra;
 
-unsigned long term_bgp_debug_as4;
-unsigned long term_bgp_debug_fsm;
-unsigned long term_bgp_debug_io;
-unsigned long term_bgp_debug_events;
-unsigned long term_bgp_debug_packet;
-unsigned long term_bgp_debug_filter;
-unsigned long term_bgp_debug_keepalive;
-unsigned long term_bgp_debug_update;
-unsigned long term_bgp_debug_normal;
-unsigned long term_bgp_debug_zebra;
+uint term_bgp_debug_as4;
+uint term_bgp_debug_fsm;
+uint term_bgp_debug_io;
+uint term_bgp_debug_events;
+uint term_bgp_debug_packet;
+uint term_bgp_debug_filter;
+uint term_bgp_debug_keepalive;
+uint term_bgp_debug_update;
+uint term_bgp_debug_normal;
+uint term_bgp_debug_zebra;
 
 /*------------------------------------------------------------------------------
  * Dump attribute to given buffer in human readable form.
  */
-int
-bgp_dump_attr (struct peer *peer, struct attr *attr, char *buf, size_t size)
+extern qstring
+bgp_dump_attr (bgp_peer peer, attr_set attr,
+                        attr_next_hop_t* next_hop, attr_next_hop_t* mp_next_hop)
 {
-  if (! attr)
+  qstring  qs ;
+  const char* str ;
+
+  if (attr == NULL)
     return 0;
 
-  if (CHECK_FLAG (attr->flag, ATTR_FLAG_BIT (BGP_ATTR_NEXT_HOP)))
-    snprintf (buf, size, "nexthop %s", safe_inet_ntoa (attr->nexthop));
+  qs = qs_new(128) ;
 
-  if (CHECK_FLAG (attr->flag, ATTR_FLAG_BIT (BGP_ATTR_ORIGIN)))
-    snprintf (buf + strlen (buf), size - strlen (buf), ", origin %s",
+  if (next_hop != NULL)
+    {
+      qassert(next_hop->type == nh_ipv4) ;
+      qs_printf_a(qs, "nexthop ") ;
+      qs_ip_address_a(qs, &next_hop->ip.v4, pf_ipv4, 0) ;
+    } ;
+
+  confirm(BGP_ATT_ORG_MIN == 0) ;
+  if (attr->origin <= BGP_ATT_ORG_MAX)
+    qs_printf_a(qs, ", origin %s",
                           map_direct(bgp_origin_short_map, attr->origin).str) ;
 
+  if (mp_next_hop != NULL)
+    {
+      qs_printf_a(qs, ", mp_next_hop ") ;
+
+      switch (mp_next_hop->type)
+        {
+          case nh_ipv4:
+            qs_ip_address_a(qs, &mp_next_hop->ip.v4, pf_ipv4, 0) ;
+            break ;
+
 #ifdef HAVE_IPV6
-  if (attr->extra)
-    {
-      char addrbuf[BUFSIZ];
+          case nh_ipv6_1:
+            qs_ip_address_a(qs, &mp_next_hop->ip.v6[in6_global],
+                                                                   pf_ipv6, 0) ;
+            break ;
 
-      /* Add MP case. */
-      if (attr->extra->mp_nexthop_len == 16
-          || attr->extra->mp_nexthop_len == 32)
-        snprintf (buf + strlen (buf), size - strlen (buf), ", mp_nexthop %s",
-                  inet_ntop (AF_INET6, &attr->extra->mp_nexthop_global,
-                             addrbuf, BUFSIZ));
+          case nh_ipv6_2:
+            qs_ip_address_a(qs, &mp_next_hop->ip.v6[in6_global],
+                                                                   pf_ipv6, 0) ;
+            qs_append_ch(qs, '(') ;
+            qs_ip_address_a(qs, &mp_next_hop->ip.v6[in6_link_local],
+                                                                   pf_ipv6, 0) ;
+            qs_append_ch(qs, ')') ;
+            break ;
+#endif
 
-      if (attr->extra->mp_nexthop_len == 32)
-        snprintf (buf + strlen (buf), size - strlen (buf), "(%s)",
-                  inet_ntop (AF_INET6, &attr->extra->mp_nexthop_local,
-                             addrbuf, BUFSIZ));
-    }
-#endif /* HAVE_IPV6 */
+          default:
+            break ;
+        } ;
+    } ;
 
-  if (CHECK_FLAG (attr->flag, ATTR_FLAG_BIT (BGP_ATTR_LOCAL_PREF)))
-    snprintf (buf + strlen (buf), size - strlen (buf), ", localpref %d",
-              attr->local_pref);
+  if (attr->have & atb_local_pref)
+    qs_printf_a(qs, ", localpref %u", attr->local_pref) ;
 
-  if (CHECK_FLAG (attr->flag, ATTR_FLAG_BIT (BGP_ATTR_MULTI_EXIT_DISC)))
-    snprintf (buf + strlen (buf), size - strlen (buf), ", metric %d",
-              attr->med);
+  if (attr->have & atb_med)
+    qs_printf_a(qs, ", metric %u", attr->med) ;
 
-  if (CHECK_FLAG (attr->flag, ATTR_FLAG_BIT (BGP_ATTR_COMMUNITIES)))
-    snprintf (buf + strlen (buf), size - strlen (buf), ", community %s",
-              community_str (attr->community));
+  str = attr_community_str (attr->community) ;
+  if (*str != '\0')
+    qs_printf_a(qs, ", community %s", str) ;
 
-  if (CHECK_FLAG (attr->flag, ATTR_FLAG_BIT (BGP_ATTR_ATOMIC_AGGREGATE)))
-    snprintf (buf + strlen (buf), size - strlen (buf), ", atomic-aggregate");
+  str = attr_ecommunity_str (attr->ecommunity) ;
+  if (*str != '\0')
+    qs_printf_a(qs, ", extcommunity %s", str) ;
 
-  if (CHECK_FLAG (attr->flag, ATTR_FLAG_BIT (BGP_ATTR_AGGREGATOR)))
-    snprintf (buf + strlen (buf), size - strlen (buf), ", aggregated by %u %s",
-              attr->extra->aggregator_as,
-              safe_inet_ntoa (attr->extra->aggregator_addr));
+  if (attr->have & atb_atomic_aggregate)
+    qs_printf_a(qs, ", atomic-aggregate");
 
-  if (CHECK_FLAG (attr->flag, ATTR_FLAG_BIT (BGP_ATTR_ORIGINATOR_ID)))
-    snprintf (buf + strlen (buf), size - strlen (buf), ", originator %s",
-              safe_inet_ntoa (attr->extra->originator_id));
+  if (attr->aggregator_as != BGP_ASN_NULL)
+    qs_printf_a(qs, ", aggregated by %u %s", attr->aggregator_as,
+                                    siptoa(AF_INET, &attr->aggregator_ip).str) ;
 
-  if (CHECK_FLAG (attr->flag, ATTR_FLAG_BIT (BGP_ATTR_CLUSTER_LIST)))
-    {
-      int i;
+  if (attr->have & atb_originator_id)
+    qs_printf_a(qs, ", originator %s",
+                                    siptoa(AF_INET, &attr->originator_id).str) ;
 
-      snprintf (buf + strlen (buf), size - strlen (buf), ", clusterlist");
-      for (i = 0; i < attr->extra->cluster->length / 4; i++)
-        snprintf (buf + strlen (buf), size - strlen (buf), " %s",
-                  safe_inet_ntoa (attr->extra->cluster->list[i]));
-    }
+  str = attr_cluster_str (attr->cluster) ;
+  if (*str != '\0')
+    qs_printf_a(qs, ", clusterlist %s", str) ;
 
-  if (CHECK_FLAG (attr->flag, ATTR_FLAG_BIT (BGP_ATTR_AS_PATH)))
-    snprintf (buf + strlen (buf), size - strlen (buf), ", path %s",
-              aspath_print (attr->aspath));
+  str = as_path_str(attr->asp) ;
+  qs_printf_a(qs, ", path %s", (*str != '\0') ? str : "empty") ;
 
-  if (strlen (buf) > 1)
-    return 1;
-  else
-    return 0;
-}
+  return qs ;
+} ;
 
 /*------------------------------------------------------------------------------
  * Log given notification, if required.
  */
-void
-bgp_notify_print(struct peer *peer, bgp_notify notification)
+extern void
+bgp_notify_print(bgp_peer peer, bgp_notify notification)
 {
   map_direct_p subcode_map ;
   const char* hex_form ;
@@ -167,53 +179,20 @@ bgp_notify_print(struct peer *peer, bgp_notify notification)
   else
     return ;                    /* quit if nothing to do        */
 
-  /* Select map for subcode
-   */
-  switch (notification->code)
-    {
-    case BGP_NOTIFY_HEADER_ERR:
-      subcode_map = bgp_notify_head_msg_map ;
-      break;
-
-    case BGP_NOTIFY_OPEN_ERR:
-      subcode_map = bgp_notify_open_msg_map ;
-      break;
-
-    case BGP_NOTIFY_UPDATE_ERR:
-      subcode_map = bgp_notify_update_msg_map ;
-      break;
-
-    case BGP_NOTIFY_HOLD_ERR:
-    case BGP_NOTIFY_FSM_ERR:
-      subcode_map = bgp_notify_unspecific_msg_map ;
-      break;
-
-    case BGP_NOTIFY_CEASE:
-      subcode_map = bgp_notify_cease_msg_map ;
-      break;
-
-    case BGP_NOTIFY_CAPABILITY_ERR:
-      subcode_map = bgp_notify_capability_msg_map ;
-      break;
-
-    default:
-      subcode_map = bgp_notify_unknown_msg_map ;
-      break ;
-    }
-
   /* Construct hex_form of data, if required.
    */
-  length = bgp_notify_get_length(notification) ;
-  if (length != 0)
+  length = notification->length ;
+  if (notification->length != 0)
     {
       const char* form ;
-      uint8_t* p = bgp_notify_get_data(notification) ;
-      uint8_t* e = p + length ;
+      uint8_t* p = notification->data ;
+      uint8_t* e = p + notification->length ;
       char* q ;
 
-      hex_form = alloc = q = XMALLOC(MTYPE_TMP, (length * 3) + 1) ;
+      hex_form = alloc = XMALLOC(MTYPE_TMP, (notification->length * 3) + 1) ;
 
       form = "%02x" ;
+      q    = alloc ;
       while (p < e)
         {
           int n = snprintf (q, 4, form, *p++) ;
@@ -224,11 +203,13 @@ bgp_notify_print(struct peer *peer, bgp_notify notification)
   else
     {
       hex_form = "" ;
-      alloc = NULL ;
+      alloc    = NULL ;
     } ;
 
   /* Output the required logging
    */
+  subcode_map = bgp_notify_subcode_msg_map(notification->code) ;
+
   if (log_neighbor_changes)
     zlog_info("%%NOTIFICATION: %s neighbor %s %s%s (%d/%d) %d bytes %s",
               notification->received ? "received from" : "sent to", peer->host,
@@ -254,10 +235,10 @@ bgp_notify_print(struct peer *peer, bgp_notify notification)
 
 /* Debug option setting interface.
  */
-unsigned long bgp_debug_option = 0;
+uint bgp_debug_option = 0;
 
-int
-debug (unsigned int option)
+extern uint
+debug (uint option)
 {
   return bgp_debug_option & option;
 }

@@ -1,4 +1,4 @@
-/* Quagga Pthreads support -- header
+/* Quagga Pthreads Support
  * Copyright (C) 2009 Chris Hall (GMCH), Highwayman
  *
  * This file is part of GNU Zebra.
@@ -471,8 +471,8 @@ typedef enum qpthreads_enabled_state qpthreads_enabled_state_t ;
 
 static qpthreads_enabled_state_t qpthreads_enabled_state = qpt_state_unset ;
 
-bool qpthreads_enabled_flag          = false ;
-bool qpthreads_active_flag           = false ;
+bool qpthreads_enabled_flag        = false ;
+bool qpthreads_active_flag         = false ;
 bool qpthreads_main_started_flag   = false ;
 
 /* At run-time we check whether thread and/or process cpu clocks are supported.
@@ -621,7 +621,7 @@ qpt_set_new_thread_options(const char* opts)
    */
   if (qpt_use_policy == qpt_use_given_policy)
     {
-      char* end ;
+      const char* end ;
       int   ret ;
       bool  known ;
 
@@ -2686,11 +2686,11 @@ qpt_scope_name(int scope)
   switch(scope)
     {
       case PTHREAD_SCOPE_SYSTEM:
-        qfs_append(qfs, " System-Scope") ;
+        qfs_put_str(qfs, " System-Scope") ;
         break ;
 
       case PTHREAD_SCOPE_PROCESS:
-        qfs_append(qfs, " Process-Scope") ;
+        qfs_put_str(qfs, " Process-Scope") ;
         break ;
 
       default:
@@ -2714,20 +2714,20 @@ qpt_policy_name(int policy)
   switch(policy)
     {
       case SCHED_OTHER:
-        qfs_append(qfs, " SCHED_OTHER") ;
+        qfs_put_str(qfs, " SCHED_OTHER") ;
         break ;
 
       case SCHED_FIFO:
-        qfs_append(qfs, " SCHED_FIFO") ;
+        qfs_put_str(qfs, " SCHED_FIFO") ;
         break ;
 
       case SCHED_RR:
-        qfs_append(qfs, " SCHED_RR") ;
+        qfs_put_str(qfs, " SCHED_RR") ;
         break ;
 
 #ifdef SCHED_SPORADIC
       case SCHED_SPORADIC:
-        qfs_append(qfs, " SCHED_SPORADIC") ;
+        qfs_put_str(qfs, " SCHED_SPORADIC") ;
         break ;
 #endif
 
@@ -3547,7 +3547,7 @@ qpt_mutex_new(qpt_mutex_options_t opts, const char* name)
 
   /* Set the name
    */
-  strncpy(mx->name, name, sizeof(mx->name) - 1) ;
+  strncpy_x(mx->name, name, sizeof(mx->name)) ;
 
   /* Set up attributes so we can set the mutex type
    */
@@ -4005,10 +4005,36 @@ qpt_cond_timedwait(qpt_cond cv, qpt_mutex mx, qtime_mono_t abs_timeout)
  * Spinlock initialise and destroy.
  */
 
+/*-----------------------------------------------------------------------------
+ * Zeroize Spinlock -- iff !qpthreads_enabled
+ *
+ * This is intended for the tidy-minded who wish to initialise a spinlock
+ * during first stage initialisation.
+ *
+ * This is also used when initialising a spinlock when running without pthreads.
+ *
+ * NB: does nothing if is qpthreads_enabled.
+ */
+extern void
+qpt_spin_zeroize(qpt_spin slk)
+{
+  if (!qpthreads_enabled)
+    {
+      union
+        {
+          qpt_spin  slk ;
+          void*     v ;
+        } u ;
+
+        u.slk = slk ;
+        memset(u.v, 0, sizeof(qpt_spin_t)) ;
+    } ;
+} ;
+
 /*------------------------------------------------------------------------------
  * Initialise Spinlock -- NB: no allocation option
  *
- * Does nothing if !qpthreads_enabled -- but freezes the state.
+ * Simply zeroizes the spinlock if !qpthreads_enabled -- but freezes the state.
  */
 extern void
 qpt_spin_init(qpt_spin slk)
@@ -4016,7 +4042,7 @@ qpt_spin_init(qpt_spin slk)
   int err ;
 
   if (!qpthreads_freeze())
-    return ;
+    return qpt_spin_zeroize(slk) ;
 
   enum {
 #ifndef PTHREAD_PROCESS_PRIVATE

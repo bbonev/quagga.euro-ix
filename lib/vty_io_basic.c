@@ -375,13 +375,13 @@ static void vio_vfd_mqb_free(vio_vfd vfd) ;
  * see above.
  */
 
-static void vio_vfd_qps_read_action(qps_file qf, void* file_info) ;
-static void vio_vfd_qps_write_action(qps_file qf, void* file_info) ;
+static void vio_vfd_qps_read_action(qfile qf, void* file_info) ;
+static void vio_vfd_qps_write_action(qfile qf, void* file_info) ;
 static int vio_vfd_thread_read_action(struct thread *thread) ;
 static int vio_vfd_thread_write_action(struct thread *thread) ;
-static vio_timer_time vio_vfd_read_time_out_action(vio_timer timer,
+static vio_timer_time_t vio_vfd_read_time_out_action(vio_timer timer,
                                                               void* file_info) ;
-static vio_timer_time vio_vfd_write_time_out_action(vio_timer timer,
+static vio_timer_time_t vio_vfd_write_time_out_action(vio_timer timer,
                                                               void* file_info) ;
 static void vio_vfd_set_read_off(vio_vfd vfd) ;
 static void vio_vfd_set_write_off(vio_vfd vfd) ;
@@ -470,8 +470,8 @@ vio_vfd_new(int fd, vfd_type_t type, vfd_io_type_t io_type, void* action_info)
 
       if (vty_nexus)
         {
-          vfd->f.qf = qps_file_init_new(NULL, NULL) ;
-          qps_add_file(vty_cli_nexus->selection, vfd->f.qf, vfd->fd, vfd) ;
+          vfd->f.qf = qfile_init_new(NULL, NULL) ;
+          qps_add_qfile(vty_cli_nexus->selection, vfd->f.qf, vfd->fd, vfd) ;
         } ;
 
       vfd->read_timer  = vio_timer_init_new(NULL,
@@ -658,13 +658,13 @@ vio_vfd_close(vio_vfd vfd)
       if (vfd->f.qf != NULL)
         {
           if (vfd->fd >= 0)
-            qassert(qps_file_fd(vfd->f.qf) == vfd->fd) ;
+            qassert(qfile_fd_get(vfd->f.qf) == vfd->fd) ;
           else
-            qassert(qps_file_fd(vfd->f.qf) < 0) ;
+            qassert(qfile_fd_get(vfd->f.qf) < fd_first) ;
 
-          qps_remove_file(vfd->f.qf) ;
-          qps_file_unset_fd(vfd->f.qf) ; /* so qps_file_free() does not close */
-          vfd->f.qf = qps_file_free(vfd->f.qf) ;
+          qps_remove_qfile(vfd->f.qf) ;
+          qfile_fd_unset(vfd->f.qf) ; /* so qfile_free() does not close */
+          vfd->f.qf = qfile_free(vfd->f.qf) ;
         } ;
 
       vio_vfd_mqb_free(vfd) ;
@@ -741,7 +741,7 @@ vio_vfd_close(vio_vfd vfd)
  *          Will be off if not in a suitable state to set on.
  */
 extern on_off_b
-vio_vfd_set_read(vio_vfd vfd, on_off_b how, vio_timer_time timeout)
+vio_vfd_set_read(vio_vfd vfd, on_off_b how, vio_timer_time_t timeout)
 {
   VTY_ASSERT_LOCKED() ;
 
@@ -777,7 +777,7 @@ vio_vfd_set_read(vio_vfd vfd, on_off_b how, vio_timer_time timeout)
           assert(vfd->read_action != NULL) ;
 
           if (vty_nexus)
-              qps_enable_mode(vfd->f.qf, qps_read_mnum,
+              qfile_enable_mode(vfd->f.qf, qps_read_mnum,
                                                      vio_vfd_qps_read_action) ;
           else
             {
@@ -824,7 +824,7 @@ vio_vfd_set_read_off(vio_vfd vfd)
   VTY_ASSERT_CLI_THREAD() ;
 
   if (vty_nexus)
-    qps_disable_modes(vfd->f.qf, qps_read_mbit) ;
+    qfile_disable_modes(vfd->f.qf, qps_read_mbit) ;
   else
     {
       if (vfd->f.thread.read != NULL)
@@ -855,7 +855,7 @@ vio_vfd_set_read_off(vio_vfd vfd)
  *          Will be off if not in a suitable state to set on.
  */
 extern on_off_b
-vio_vfd_set_write(vio_vfd vfd, on_off_b how, vio_timer_time timeout)
+vio_vfd_set_write(vio_vfd vfd, on_off_b how, vio_timer_time_t timeout)
 {
   VTY_ASSERT_LOCKED() ;
 
@@ -891,7 +891,7 @@ vio_vfd_set_write(vio_vfd vfd, on_off_b how, vio_timer_time timeout)
           assert(vfd->write_action != NULL) ;
 
           if (vty_nexus)
-            qps_enable_mode(vfd->f.qf, qps_write_mnum,
+            qfile_enable_mode(vfd->f.qf, qps_write_mnum,
                                                      vio_vfd_qps_write_action) ;
           else
             {
@@ -938,7 +938,7 @@ vio_vfd_set_write_off(vio_vfd vfd)
   VTY_ASSERT_CLI_THREAD() ;
 
   if (vty_nexus)
-    qps_disable_modes(vfd->f.qf, qps_write_mbit) ;
+    qfile_disable_modes(vfd->f.qf, qps_write_mbit) ;
   else
     {
       if (vfd->f.thread.write != NULL)
@@ -958,7 +958,7 @@ vio_vfd_set_write_off(vio_vfd vfd)
  * Clears read ready state and unsets any read timer.
  */
 static void
-vio_vfd_qps_read_action(qps_file qf, void* file_info)
+vio_vfd_qps_read_action(qfile qf, void* file_info)
 {
   vio_vfd vfd ;
 
@@ -1005,7 +1005,7 @@ vio_vfd_thread_read_action(struct thread *thread)
  * Clears write ready state and unsets any write timer.
  */
 static void
-vio_vfd_qps_write_action(qps_file qf, void* file_info)
+vio_vfd_qps_write_action(qfile qf, void* file_info)
 {
   vio_vfd vfd = file_info ;
 
@@ -1047,7 +1047,7 @@ vio_vfd_thread_write_action(struct thread *thread)
  *
  * Clears read ready state and unsets any read timer.
  */
-static vio_timer_time
+static vio_timer_time_t
 vio_vfd_read_time_out_action(vio_timer timer, void* file_info)
 {
   vio_vfd vfd ;
@@ -1069,7 +1069,7 @@ vio_vfd_read_time_out_action(vio_timer timer, void* file_info)
  *
  * Clears write ready state and unsets any write timer.
  */
-static vio_timer_time
+static vio_timer_time_t
 vio_vfd_write_time_out_action(vio_timer timer, void* file_info)
 {
   vio_vfd vfd = file_info ;
@@ -1141,9 +1141,9 @@ vio_vfd_mqb_free(vio_vfd vfd)
 /*------------------------------------------------------------------------------
  * Action routine for the read/write on/off setting message.
  *
- * If the mqb is marked to close, then it and any qps_file it points to have
+ * If the mqb is marked to close, then it and any qfile it points to have
  * been cut loose, and now is the time to close the fd and release the
- * qps_file, along with releasing the mqb.
+ * qfile, along with releasing the mqb.
  *
  * If the mqb is being revoked
  */
@@ -1378,7 +1378,7 @@ vio_timer_reset(vio_timer timer, free_keep_b free_structure)
  * If the time == 0, stop any current timer, do not restart.
  */
 extern void
-vio_timer_set(vio_timer timer, vio_timer_time time)
+vio_timer_set(vio_timer timer, vio_timer_time_t time)
 {
   VTY_ASSERT_CLI_THREAD_LOCKED() ;
 
@@ -1444,7 +1444,7 @@ static void
 vio_timer_qtr_action(qtimer qtr, void* timer_info, qtime_t when)
 {
   vio_timer timer ;
-  vio_timer_time time ;
+  vio_timer_time_t time ;
 
   VTY_LOCK() ;
   VTY_ASSERT_CLI_THREAD() ;
@@ -1472,7 +1472,7 @@ static int
 vio_timer_thread_action(struct thread *thread)
 {
   vio_timer      timer ;
-  vio_timer_time time ;
+  vio_timer_time_t time ;
 
   VTY_LOCK() ;
   VTY_ASSERT_CLI_THREAD() ;

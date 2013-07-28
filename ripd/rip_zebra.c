@@ -161,7 +161,7 @@ rip_routemap_set (int type, const char *name)
     free(rip->route_map[type].name);
 
   rip->route_map[type].name = strdup (name);
-  rip->route_map[type].map = route_map_lookup_by_name (name);
+  rip->route_map[type].map = route_map_lookup (name);
 }
 
 static void

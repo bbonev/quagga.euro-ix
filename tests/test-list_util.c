@@ -11,8 +11,6 @@
  */
 
 /* prototypes */
-int main(int argc, char **argv);
-
 static void test_ssl(void);
 static void test_sdl(void);
 static void test_ddl(void);
@@ -61,6 +59,40 @@ main(int argc, char **argv)
   test_ssl() ;
   test_sdl() ;
   test_ddl() ;
+
+#if 1
+  printf("Timing of qt_get_monotonic() -- %s CLOCK_MONOTONIC\n",
+                               qt_have_clock_monotonic ? "with" : "*without*") ;
+
+  {
+#include <sys/times.h>
+    struct tms start_times ;
+    struct tms end_times ;
+    clock_t start_clock, end_clock ;
+    qtime_mono_t start_mono, end_mono ;
+    volatile uint count, counter ;
+
+    count = counter = 1000000 ;
+
+    start_mono  = qt_get_monotonic() ;
+    start_clock = times(&start_times) ;
+
+    do
+      end_mono = qt_get_monotonic() ;
+    while (--counter != 0) ;
+
+    end_clock = times(&end_times) ;
+
+    printf("  %20u cycles\n", count) ;
+    printf("  %20lu elapsed clock\n", (ulong)(end_clock - start_clock)) ;
+    printf("  %20lu elapsed monotonic\n", (ulong)(end_mono - start_mono)) ;
+    printf("  %20lu elapsed user CPU\n", (ulong)(end_times.tms_utime
+                                                  - start_times.tms_utime)) ;
+    printf("  %20lu elapsed system CPU\n", (ulong)(end_times.tms_stime
+                                                    - start_times.tms_stime)) ;
+  } ;
+#endif
+
 
   return 0;
 }

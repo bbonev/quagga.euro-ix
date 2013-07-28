@@ -36,6 +36,7 @@
 /*##############################################################################
  * BGP RFC's we know about -- as of 31-Dec-2011
  *
+ *   RFC6608  Subcodes for BGP FSM Error
  *   RFC6472  Recommendation for Not Using AS_SET and AS_CONFED_SET in BGP
  *   RFC6397  Multi-Threaded Routing Toolkit (MRT) Border Gateway Protocol
  *            (BGP) Routing Information Export Format with Geo-Location
@@ -46,9 +47,11 @@
  *   RFC5668  4-Octet AS Specific BGP Extended Community
  *
  *   RFC5566  BGP IPSec Tunnel Encapsulation Attribute
+ *   RFC5549  Advertising IPv4 NLRI with an IPv6 Next Hop
  *   RFC5543  BGP Traffic Engineering Attribute
  *   RFC5512  BGP Encapsulation SAFI and the BGP Tunnel Encapsulation Attribute
  *   RFC5492  Capabilities Advertisement       -- obsoletes RFC3392
+ *   RFC5396  Textual Representation of AS Numbers
  *   RFC5292  Address-Prefix Outbound Route Filter
  *   RFC5291  Outbound Route Filtering
  *   RFC5195  BGP-Based Auto-Discovery for Layer-1 VPNs
@@ -100,13 +103,15 @@
  *   RFC3345  BGP Persistent Route Oscillation Condition
  *   RFC3107  Carrying Label Information in BGP
  *   RFC3065 ...see RFC5065                    -- obsoletes RFC1965
+ *   RFC3032  MPLS Label Stack Encoding        -- updated by RFC4182 & RFC5462
+ *                                                           and others
  *   RFC2918  Route Refresh Capability
  *   RFC2858 ...see RFC4760                    -- obsoletes RFC2283
  *   RFC2842 ...see RFC3392
  *   RFC2796 ...see RFC4456
  *   RFC2547 ...see RFC4364
  *   RFC2545  Use of BGP MP Extensions for IPv6
- *   RFC2439  Route Flap Dampening
+ *   RFC2439  Route Flap Damping
  *   RFC2385  Protection of BGP Sessions via TCP MD5 Option
  *   RFC2283 ...see RFC2858
  *   RFC2042  Registering New BGP Attribute Types
@@ -132,7 +137,7 @@ typedef uint32_t  U32 ;
 typedef uint16_t  U16 ;
 typedef uint8_t   U8 ;
 typedef U8        UB ;
-typedef U8        UBX[] ;
+typedef U8        UBX[0] ;
 
 #define VALUE(X) enum { X }
 
@@ -151,15 +156,16 @@ enum asn_type
   AS4 = 4
 } ;
 
-/* Other stuff....       */
-
+/* Other stuff....
+ */
 typedef uint32_t  bgp_id_t ;    /* actually an IPv4 IP Address          */
 
 typedef bgp_id_t  bgp_id_ht ;   /* in host order                        */
 typedef bgp_id_t  bgp_id_nt ;   /* in network order                     */
 
-/* Size of BGP packets or thing in such                                 */
-typedef uint16_t bgp_size_t;
+/* Size of BGP packets or thing in such
+ */
+typedef uint16_t bgp_size_t ;
 
 VALUE(BGP_NEXT_HOP_MAX_L    = 32) ; /* maximum expected Next Hop address length  */
 
@@ -167,33 +173,34 @@ VALUE(BGP_NEXT_HOP_MAX_L    = 32) ; /* maximum expected Next Hop address length 
  * BGP Message Structure
  */
 
+VALUE(BGP_MSG_MIN_L       =   19) ; /* RFC4271 hard limit on message length */
 VALUE(BGP_MSG_MAX_L       = 4096) ; /* RFC4271 hard limit on message length */
 
 /* Message Header Format  ----------------------------------------------------*/
 
 typedef UB  BGP_MH_MARKER_T[16] ;   /* marker -- 16-octets of all 1's         */
-typedef U16 BGP_MH_LEN_T ;          /* length of message inc. header: octets  */
+typedef U16 BGP_MH_LENGTH_T ;       /* length of message inc. header: octets  */
 typedef U8  BGP_MH_TYPE_T ;         /* BGP message type                       */
 typedef UBX BGP_MH_BODY_T ;         /* rest is body of message                */
 
 VALUE(BGP_MH_MARKER_L       = sizeof(BGP_MH_MARKER_T)) ;
-VALUE(BGP_MH_HEAD_L         =       /* message header length    */
+VALUE(BGP_MSG_HEAD_L        =       /* message header length    */
                                 BGP_MH_MARKER_L
-                              + sizeof(BGP_MH_LEN_T)
+                              + sizeof(BGP_MH_LENGTH_T)
                               + sizeof(BGP_MH_TYPE_T) ) ;
-CONFIRM(BGP_MH_HEAD_L == 19) ;      /* well known value !       */
+CONFIRM(BGP_MSG_HEAD_L == (uint)BGP_MSG_MIN_L) ;
 
-VALUE(BGP_MSG_BODY_MAX_L    = BGP_MSG_MAX_L - BGP_MH_HEAD_L) ;
+VALUE(BGP_MSG_BODY_MAX_L    = BGP_MSG_MAX_L - BGP_MSG_HEAD_L) ;
 
-enum            /* order of entries in Message Header     */
+enum            /* offsets of entries in Message Header         */
 {
   BGP_MH_MARKER  = 0,
-  BGP_MH_LEN     = BGP_MH_MARKER + sizeof(BGP_MH_MARKER_T),
-  BGP_MH_TYPE    = BGP_MH_LEN    + sizeof(BGP_MH_LEN_T),
+  BGP_MH_LENGTH  = BGP_MH_MARKER + sizeof(BGP_MH_MARKER_T),
+  BGP_MH_TYPE    = BGP_MH_LENGTH + sizeof(BGP_MH_LENGTH_T),
   BGP_MH_BODY    = BGP_MH_TYPE   + sizeof(BGP_MH_TYPE_T),
 } ;
 
-CONFIRM((uint)BGP_MH_BODY == (uint)BGP_MH_HEAD_L) ;
+CONFIRM((uint)BGP_MH_BODY == (uint)BGP_MSG_HEAD_L) ;
 
 /* Message Type Numbers ------------------------------------------------------*/
 
@@ -236,7 +243,7 @@ enum            /* order of the fields  */
 } ;
 
 VALUE(BGP_OPM_MIN_L         =       /* minimum OPEN message length      */
-                                BGP_MH_HEAD_L
+                                BGP_MSG_HEAD_L
                               + sizeof(BGP_OPM_VERSION_T)
                               + sizeof(BGP_OPM_MY_AS_T)
                               + sizeof(BGP_OPM_H_TIME_T)
@@ -254,6 +261,10 @@ VALUE(BGP_OPM_P_MIN_L       =       /* min len of an OPM Optional Param */
                                 sizeof(BGP_OPM_P_TYPE_T)
                               + sizeof(BGP_OPM_P_LEN_T)) ;
 VALUE(BGP_OPM_P_MAX_L       = 255); /* max len of an OPM Optional Param */
+
+VALUE(BGP_OPM_MAX_L         =       /* maximum OPEN message length      */
+                                BGP_OPM_MIN_L
+                              + BGP_OPM_P_MAX_L) ;
 
 enum            /* order */
 {
@@ -308,9 +319,12 @@ enum BGP_CAN
   BGP_CAN_G_RESTART         =  64,  /* Graceful Restart            RFC4724  */
   BGP_CAN_AS4               =  65,  /* Supports 4-octet AS number  RFC4893  */
 
-  BGP_CAN_DYNAMIC_CAP_old   =  66,  /* Dynamic Capability (draft 02) [Chen]
-                                       Deprecated  6-Apr-2003               */
-  BGP_CAN_DYNAMIC_CAP       =  67,  /* Dynamic Capability      [Chen]       */
+  BGP_CAN_DYNAMIC_CAP_dep   =  66,  /* Dynamic Capability
+                                     *        draft-ietf-idr-dynamic-cap-04
+                                     * Deprecated: 6-Mar-2003               */
+  BGP_CAN_DYNAMIC_CAP       =  67,  /* Dynamic Capability
+                                     *        draft-ietf-idr-dynamic-cap-14
+                                     * Expired: 6-Jun-2012                  */
   BGP_CAN_MULTI_SESS        =  68,  /* Multisession Capability [Appanna]    */
   BGP_CAN_ADD_PATH          =  69,  /* ADD-PATH                [draft-idr]  */
 
@@ -336,20 +350,31 @@ typedef UBX BGP_UPM_ATTR_T ;        /* variable !                           */
 typedef UBX BGP_UPM_NLRI_T ;        /* variable -- to end of message !      */
                                     /* NB: Attributes len. == 0 <=> no NLRI */
 
-VALUE(BGP_UPM_MIN_L         =       /* minimum UPDATE message length  */
-                                BGP_MH_HEAD_L
-                              + sizeof(BGP_UPM_W_LEN_T)
+VALUE(BGP_UPM_BODY_MIN_L    =       /* minimum UPDATE body length       */
+                                sizeof(BGP_UPM_W_LEN_T)
                               + sizeof(BGP_UPM_A_LEN_T) ) ;
+
+VALUE(BGP_UPM_MIN_L         =       /* minimum UPDATE message length  */
+                                BGP_MSG_HEAD_L
+                              + BGP_UPM_BODY_MIN_L ) ;
 CONFIRM(BGP_UPM_MIN_L == 23) ;      /* well known value !             */
 
-enum            /* order */
+enum                    /* order and offsets wrt start of message body  */
 {
-  BGP_UPM_W_LEN,
-  BGP_UPM_W_NLRI,
-  BGP_UPM_A_LEN,
-  BGP_UPM_ATTR,
-  BGP_UPM_NLRI
+  BGP_UPM_W_LEN       = 0,
+  BGP_UPM_W_NLRI      = BGP_UPM_W_LEN   + sizeof(BGP_UPM_W_LEN_T),
+    /* Variable length.                                                 */
+  BGP_UPM_A_LEN       = BGP_UPM_W_NLRI  + sizeof(BGP_UPM_W_NLRI_T),
+    /* True offset of BGP_UPM_A_LEN + BGP_UPM_W_LEN                     */
+  BGP_UPM_ATTR        = BGP_UPM_A_LEN   + sizeof(BGP_UPM_A_LEN_T),
+  /* Variable length.                                                   */
+  BGP_UPM_NLRI        = BGP_UPM_ATTR    + sizeof(BGP_UPM_ATTR_T),
+  /* True offset of BGP_UPM_NLRI + BGP_UPM_ATTR                         */
 } ;
+
+CONFIRM(BGP_UPM_A_LEN == 2) ;   /* Offset if no Withdrawn Routes        */
+CONFIRM(BGP_UPM_ATTR  == 4) ;   /* Offset if no Withdrawn Routes        */
+CONFIRM(BGP_UPM_ATTR  == (uint)BGP_UPM_BODY_MIN_L) ;
 
 /* Prefix format..............................................................*/
 
@@ -369,23 +394,28 @@ VALUE(BGP_ATTR_MIN_L        =       /* min len of attribute                 */
                               + sizeof(BGP_ATTR_TYPE_T)
                               + sizeof(BGP_ATTR_LEN_T) ) ;
 
-enum            /* order */
+enum                    /* order and offsets wrt start of attribute     */
 {
-  BGP_ATTR_FLAGS,
-  BGP_ATTR_TYPE,
-  BGP_ATTR_LEN,
-  BGP_ATTR_ELEN            = BGP_ATTR_LEN,
-  BGP_ATTR_VAL
+  BGP_ATTR_FLAGS        = 0,
+  BGP_ATTR_TYPE         = BGP_ATTR_FLAGS  + sizeof(BGP_ATTR_FLAGS_T),
+  BGP_ATTR_LEN          = BGP_ATTR_TYPE   + sizeof(BGP_ATTR_TYPE_T),
+  BGP_ATTR_ELEN         = BGP_ATTR_LEN,
+  BGP_ATTR_VAL          = BGP_ATTR_LEN    + sizeof(BGP_ATTR_LEN_T),
+  BGP_ATTR_EVAL         = BGP_ATTR_ELEN   + sizeof(BGP_ATTR_ELEN_T),
 } ;
 
 /* Attribute Flags Byte values................................................*/
 
 enum
 {
-  BGP_ATF_OPTIONAL          = 0x80, /* otherwise is Well Known        */
-  BGP_ATF_TRANSITIVE        = 0x40, /* MUST be set if Well Known      */
-  BGP_ATF_PARTIAL           = 0x20, /* MUST not be set if Well Known  */
-  BGP_ATF_EXTENDED          = 0x10, /* 2 octet Attribute Length       */
+  BGP_ATF_OPTIONAL          = 0x80, /* otherwise is Well Known            */
+  BGP_ATF_TRANSITIVE        = 0x40, /* MUST be set if Well Known          */
+  BGP_ATF_PARTIAL           = 0x20, /* MUST not be set if Well Known
+                                     * MUST not be set if not Transitive  */
+  BGP_ATF_EXTENDED          = 0x10, /* 2 octet Attribute Length           */
+
+  BGP_ATF_ZERO              = 0x0F, /* LS bits MUST be zero and
+                                     *         MUST be ignored            */
 } ;
 
 /* Attribute Type Byte values -- see below for specifics of each..............*/
@@ -398,25 +428,25 @@ enum BGP_ATT
   BGP_ATT_ORIGIN            =   1,
   BGP_ATT_AS_PATH           =   2,  /* AS2 or AS4, depending on context     */
   BGP_ATT_NEXT_HOP          =   3,  /* implicitly IPv4                      */
-  BGP_ATT_MEDS              =   4,  /* MULTI_EXIT_DISC                      */
-  BGP_ATT_L_PREF            =   5,  /* LOCAL_PREF                           */
-  BGP_ATT_A_AGGREGATE       =   6,  /* ATOMIC_AGGREGATE                     */
-  BGP_ATT_AGGREGATOR        =   7,
+  BGP_ATT_MED               =   4,  /* MULTI_EXIT_DISC                      */
+  BGP_ATT_LOCAL_PREF        =   5,
+  BGP_ATT_ATOMIC_AGGREGATE  =   6,
+  BGP_ATT_AGGREGATOR        =   7,  /* AS2 or AS4, depending on context     */
 
-  BGP_ATT_COMMUNITY         =   8,  /*                              RFC1997 */
-  BGP_ATT_ORIG_ID           =   9,  /* ORIGINATOR_ID : Route Refl.  RFC4456 */
-  BGP_ATT_CLUSTER_LIST      =  10,  /* CLUSTER_LIST  : Route Refl.  RFC4456 */
+  BGP_ATT_COMMUNITIES       =   8,  /*                              RFC1997 */
+  BGP_ATT_ORIGINATOR_ID     =   9,  /* Route Reflector              RFC4456 */
+  BGP_ATT_CLUSTER_LIST      =  10,  /* Route Reflector              RFC4456 */
 
   BGP_ATT_DPA               =  11,  /* [Chen]                               */
   BGP_ATT_ADVERTISER        =  12,  /* RFC1863 -- historic per RFC4223      */
   BGP_ATT_RCID_PATH         =  13,  /* RFC1863 -- historic per RFC4223      */
 
-  BGP_ATT_MP_REACH          =  14,  /* MP_REACH_NRLI   MP Ext.      RFC4760 */
-  BGP_ATT_MP_UNREACH        =  15,  /* MP_UNREACH_NRLI MP Ext.      RFC4760 */
+  BGP_ATT_MP_REACH_NLRI     =  14,  /* Multi-Protocol Extensions    RFC4760 */
+  BGP_ATT_MP_UNREACH_NLRI   =  15,  /* Multi-Protocol Extensions    RFC4760 */
 
-  BGP_ATT_EXT_COMMS         =  16,  /* EXTENDED_COMMUNITIES         RFC4360 */
+  BGP_ATT_ECOMMUNITIES      =  16,  /* EXTENDED_COMMUNITIES         RFC4360 */
   BGP_ATT_AS4_PATH          =  17,  /* AS4 stuff                    RFC4893 */
-  BGP_ATT_AS4_AGGR          =  18,  /* AS4 stuff (AS4_AGGREGATOR)   RFC4893 */
+  BGP_ATT_AS4_AGGREGATOR    =  18,  /* AS4 stuff (AS4_AGGREGATOR)   RFC4893 */
 
   BGP_ATT_SSA               =  19,  /* SAFI Specific Attribute   [Nalawade] */
   BGP_ATT_CONNECTOR         =  20,  /* Connector Attribute       [Nalawade] */
@@ -424,11 +454,13 @@ enum BGP_ATT
   BGP_ATT_PMSI_TUNNEL       =  22,  /*                      [l3vpn-2547bis] */
   BGP_ATT_TUNNEL_ENCAP      =  23,  /* Tunnel Encapsulation Attrib  RFC5512 */
   BGP_ATT_TRAFFIC_ENG       =  24,  /* Traffic Engineering          RFC5543 */
-  BGP_ATT_IPV6_EXT_COMMS    =  25,  /* IPv6 Ext. Community       [l3vpn-v6] */
+  BGP_ATT_IPV6_EXT_COMM     =  25,  /* IPv6 Ext. Community       [l3vpn-v6] */
 
   BGP_ATT_MAX               =  25,  /* last attribute known to us           */
 
   BGP_ATT_RESERVED          = 255,  /* reserved by IANA                     */
+
+  BGP_ATT_COUNT             = 256,  /* number of possible types             */
 } ;
 
 /* Notification Message (type = BGP_MT_NOTIFICATION) -------------------------*/
@@ -437,18 +469,22 @@ typedef U8  BGP_NOM_CODE_T ;        /* see below for Error Code values      */
 typedef U8  BGP_NOM_SUBCODE_T ;     /* see below for Error Subcode value    */
 typedef UBX BGP_NOM_DATA_T ;        /* variable -- to end of message !      */
 
-VALUE(BGP_NOM_MIN_L         =       /* minimum NOTIFICATION length          */
-                                BGP_MH_HEAD_L
-                              + sizeof(BGP_NOM_CODE_T)
+VALUE(BGP_NOM_BODY_MIN_L    =       /* minimum NOTIFICATION body            */
+                                sizeof(BGP_NOM_CODE_T)
                               + sizeof(BGP_NOM_SUBCODE_T) ) ;
+VALUE(BGP_NOM_MIN_L         =       /* minimum NOTIFICATION length          */
+                                BGP_MSG_HEAD_L
+                              + BGP_NOM_BODY_MIN_L ) ;
 CONFIRM(BGP_NOM_MIN_L == 21) ;      /* well known value !                   */
 
-enum            /* order */
+enum                    /* order and offsets from start of body */
 {
-  BGP_NOM_CODE,
-  BGP_NOM_SUBCODE,
-  BGP_NOM_DATA,
+  BGP_NOM_CODE        = 0,
+  BGP_NOM_SUBCODE     = BGP_NOM_CODE    + sizeof(BGP_NOM_CODE_T),
+  BGP_NOM_DATA        = BGP_NOM_SUBCODE + sizeof(BGP_NOM_SUBCODE_T),
 } ;
+
+CONFIRM(BGP_NOM_DATA == (BGP_NOM_MIN_L - BGP_MSG_HEAD_L)) ;
 
 /* Notification Message Error Codes...........................................*/
 enum BGP_NOMC
@@ -505,8 +541,7 @@ enum BGP_NOMS_OPEN                  /* BGP_NOMC_OPEN subcodes               */
 
 enum BGP_NOMS_UPDATE                /* BGP_NOMC_UPDATE subcodes             */
 {
-  BGP_NOMS_U_A_LIST         =  1,   /* Malformed Attribute List             */
-                                    /* (Attribute repeated)                 */
+  BGP_NOMS_U_MAL_ATTR       =  1,   /* Malformed Attribute List             */
   BGP_NOMS_U_UNKNOWN        =  2,   /* Unrecognised Well-known Attrib       */
                                     /* DATA: erroneous attribute            */
   BGP_NOMS_U_MISSING        =  3,   /* Missing Well-known Attrib.           */
@@ -524,7 +559,7 @@ enum BGP_NOMS_UPDATE                /* BGP_NOMC_UPDATE subcodes             */
                                     /* DATA: erroneous attribute            */
   BGP_NOMS_U_NETWORK        = 10,   /* Invalid Network Field                */
                                     /* (badly formed NLRI)                  */
-  BGP_NOMS_U_AS_PATH        = 11,   /* Malformed AS Path                    */
+  BGP_NOMS_U_MAL_AS_PATH    = 11,   /* Malformed AS Path                    */
 
   BGP_NOMS_U_MAX            = 11,   /* max known subcode                    */
 } ;
@@ -534,9 +569,13 @@ enum BGP_NOMS_HOLD_EXP              /* BGP_NOMC_HOLD_EXP subcodes           */
   BGP_NOMS_HE_MAX           =  0    /* max known subcode                    */
 } ;
 
-enum BGP_NOMC_FSM                   /* BGP_NOMC_FSM subcodes                */
+enum BGP_NOMC_FSM                   /* BGP_NOMC_FSM subcodes        RFC6608 */
 {
-  BGP_NOMS_F_MAX            =  0    /* max known subcode                    */
+  BGP_NOMS_F_IN_OPEN_SENT   =  1,   /* Unexpected message in OpenSent state */
+  BGP_NOMS_F_IN_OPEN_CONFIRM=  2,   /* Unexpected message in OpenConfirm    */
+  BGP_NOMS_F_IN_ESTABLISHED =  3,   /* Unexpected message in Established    */
+
+  BGP_NOMS_F_MAX            =  3    /* max known subcode                    */
 } ;
 
 enum BGP_NOMS_CEASE                 /* BGP_NOMC_CEASE subcodes      RFC4486 */
@@ -560,14 +599,14 @@ enum BGP_DYN_CAP                    /* BGP_NOMC_DYN_CAP subcodes
   BGP_NOMS_D_UNKN_SEQ       =  1,   /* Unknown Sequence Number         MUST */
   BGP_NOMS_D_INV_LEN        =  2,   /* Invalid Capability Length       MUST */
   BGP_NOMS_D_MALFORM        =  3,   /* Malformed Capability Length     MUST */
-  BGP_NOMS_D_UNSUP          =  4,   /* Unsupported Capability          MUST */
+  BGP_NOMS_D_UNSUP          =  4,   /* Unsupported Capability Code     MUST */
 
   BGP_NOMS_D_MAX            =  4    /* max known subcode                    */
 } ;
 
 /* Keepalive Message (type = BGP_MT_KEEPALIVE) -------------------------------*/
 
-VALUE(BGP_KAM_L = BGP_MH_HEAD_L) ;  /* Keepalive message is entirely empty  */
+VALUE(BGP_KAM_L = BGP_MSG_HEAD_L) ;  /* Keepalive message is entirely empty  */
 
 /* Route Refresh Message (type = BGP_MT_ROUTE_REFRESH) -------------------------
  *
@@ -579,7 +618,7 @@ typedef U8  BGP_RRM_RES_T ;         /* reserved = 0 */
 typedef U8  BGP_RRM_SAFI_T ;        /* Subsequent Address Family Identifier */
 
 VALUE(BGP_RRM_MIN_L         =       /* Route Refresh length */
-                                BGP_MH_HEAD_L
+                                BGP_MSG_HEAD_L
                               + sizeof(BGP_RRM_AFI_T)
                               + sizeof(BGP_RRM_RES_T)
                               + sizeof(BGP_RRM_SAFI_T) ) ;
@@ -588,13 +627,15 @@ CONFIRM(BGP_RRM_MIN_L == 23) ;      /* well known value ! */
 typedef U8  BGP_RRM_ORF_WHEN_T ;    /* when to refresh -- see RFC5291 */
 typedef UBX BGP_RRM_ORFS_T ;        /* variable... see below */
 
-enum            /* order */
+enum                    /* order and offsets wrt start of body  */
 {
-  BGP_RRM_AFI,
-  BGP_RRM_RES,
-  BGP_RRM_SAFI,
-  BGP_RRM_ORF_WHEN,         /* start of ORF message                         */
-  BGP_RRM_ORFS,             /* start of ORF collections -- *one* or more    */
+  BGP_RRM_AFI       = 0,
+  BGP_RRM_RES       = BGP_RRM_AFI      + sizeof(BGP_RRM_AFI_T),
+  BGP_RRM_SAFI      = BGP_RRM_RES      + sizeof(BGP_RRM_RES_T),
+  BGP_RRM_ORF_WHEN  = BGP_RRM_SAFI     + sizeof(BGP_RRM_SAFI_T),
+                        /* start of ORF message                         */
+  BGP_RRM_ORFS      = BGP_RRM_ORF_WHEN + sizeof(BGP_RRM_ORF_WHEN_T),
+                        /* start of ORF collections -- *one* or more    */
 } ;
 
 enum                                /* values for the BGP_RRM_ORF_WHEN byte */
@@ -612,12 +653,14 @@ typedef UBX BGP_ORF_ENTRIES_T ;     /* variable: ORF entry collection(s)    */
 VALUE(BGP_ORF_MIN_L         = sizeof(BGP_ORF_TYPE_T) + sizeof(BGP_ORF_LEN_T)) ;
                                     /* min len of ORF                       */
 
-enum            /* order */
+enum                    /* order  and offsets wrt start of collection   */
 {
-  BGP_ORF_TYPE,
-  BGP_ORF_LEN,
-  BGP_ORF_ENTRIES,
+  BGP_ORF_TYPE      = 0,
+  BGP_ORF_LEN       = BGP_ORF_TYPE     + sizeof(BGP_ORF_TYPE_T),
+  BGP_ORF_ENTRIES   = BGP_ORF_LEN      + sizeof(BGP_ORF_LEN_T),
 } ;
+
+CONFIRM(BGP_ORF_ENTRIES == (uint)BGP_ORF_MIN_L) ;
 
 /* Shape of ORF Entries depends on the ORF Type, but start with a common part */
 
@@ -628,14 +671,12 @@ VALUE(BGP_ORF_E_COM_L       = sizeof(BGP_ORF_E_ACTION_T)) ;
 
 /* Known BGP_ORF_TYPE values..................................................*/
 
-enum BGP_ORF {
-  BGP_ORF_T_MIN             =  64,
+enum BGP_ORF
+{
+  BGP_ORF_T_PFX       =  64,        /* Address Prefix ORF           RFC5292 */
+  BGP_ORF_T_PFX_pre   = 128,        /* pre RFC value                        */
 
-  BGP_ORF_T_PREFIX          =  64,  /* Address Prefix ORF           RFC5292 */
-
-  BGP_ORF_T_MAX             =  64,
-
-  BGP_ORF_T_PREFIX_pre      = 128   /* pre RFC value                        */
+  BGP_ORF_T_MAX       = 255,        /* byte value                           */
 } ;
 
 /* Known BGP_ORF_E_ACTION bits................................................*/
@@ -651,7 +692,7 @@ enum {
   BGP_ORF_EA_DENY     =   1 << 5,   /* Match: DENY                          */
 } ;
 
-/* Address Prefix ORF (BGP_ORF_T_PREFIX) type specific entry part.............*/
+/* Address Prefix ORF (BGP_ORF_T_PFX) type specific entry part................*/
 
 typedef U32 BGP_ORF_E_P_SEQ_T ;     /* Sequence number                      */
 typedef U8  BGP_ORF_E_P_MIN_T ;     /* Minlen                               */
@@ -692,6 +733,7 @@ VALUE(BGP_CAP_MPE_L         = 4) ;  /* Fixed length == 4 !                  */
 VALUE(BGP_CAP_RRF_L         = 0) ;  /* no value part                        */
 
 /* Outbound Route Filtering -- BGP_CAN_ORF -- RFC5291 --------------------------
+ *                        also BGP_CAN_ORF_pre -- pre-RFC version
  *
  * The capability value is *one* or more of the following entries:
  */
@@ -732,19 +774,25 @@ enum            /* order */
   BGP_CAP_ORFT_MODE,
 } ;
 
-/* Values for the BGP_CAP_ORFT_TYPE field                                     */
+/* Values for the BGP_CAP_ORFT_TYPE field -- same as BGP_ORF_TYPE             */
 enum
 {
-  BGP_CAP_ORFT_T_PFIX       =  64,  /* Address Prefix ORF                   */
-  BGP_CAP_ORFT_T_PFIX_pre   = 128,  /* Address Prefix ORF, pre-RFC          */
+  BGP_CAP_ORFT_T_PFX        = BGP_ORF_T_PFX,
+  BGP_CAP_ORFT_T_PFX_pre    = BGP_ORF_T_PFX_pre,
+
+  BGP_CAP_ORF_ORFT_T_MAX    = BGP_ORF_T_MAX,
 } ;
 
 /* Values for the BGP_CAP_ORFT_MODE field                                     */
 enum
 {
+  BGP_CAP_ORFT_M_FIRST      = 1,    /* at least this to be valid            */
+
   BGP_CAP_ORFT_M_RECV       = 1,    /* willing to receive                   */
   BGP_CAP_ORFT_M_SEND       = 2,    /* would like to send                   */
-  BGP_CAP_ORFT_M_BOTH       = 3     /* may be combined                      */
+  BGP_CAP_ORFT_M_BOTH       = 3,    /* may be combined                      */
+
+  BGP_CAP_ORFT_M_LAST       = 3,    /* at most this to be valid             */
 } ;
 
 /* Multiple Routes to a Destination (Labels) -- BGP_CAN_M_ROUTES -- RFC3107 ----
@@ -865,10 +913,18 @@ typedef U32 BGP_ATT_ASPS_AS4_T ;
 
 enum BGP_AS_SEG
 {
+  BGP_AS_SEG_NULL           = 0,    /* unused           */
+
+  BGP_AS_SEG_VALID_MIN      = 1,    /* _VALID_MIN.._VALID_MAX are valid */
+
   BGP_AS_SET                = 1,
   BGP_AS_SEQUENCE           = 2,
-  BGP_AS_CONFED_SEQUENCE    = 3,    /* RFC5065 */
-  BGP_AS_CONFED_SET         = 4,    /* RFC5065 */
+  BGP_AS_CONFED_SEQUENCE    = 3,    /* RFC5065          */
+  BGP_AS_CONFED_SET         = 4,    /* RFC5065          */
+
+  BGP_AS_SEG_VALID_MAX      = 4,
+
+  BGP_AS_SEG_MAX            = 255,  /* byte value       */
 } ;
 
 /* Special value AS numbers...................................................*/
@@ -877,35 +933,41 @@ enum BGP_AS_SEG
 
 enum BGP_ASN
 {
-  BGP_ASN_NULL      = 0,            /* Reserved */
+  BGP_ASN_NULL      = 0,            /* Reserved
+                                     *  -- *invalid*  per draft-ietf-idr-as0  */
+  BGP_ASN_FIRST     = 1,            /* First valid ASN                        */
 
-  BGP_ASN_RES1_S    = 64496,        /* Start of Reservation 1        (0xFBF0) */
+  BGP_ASN_RES1_MIN  = 64496,        /* First of Reservation 1        (0xFBF0) */
 
-  BGP_AS2_DOC_S     = 64496,        /* Start of Docm. & Samples AS2  (0xFBF0) */
-  BGP_AS2_DOC_E     = 64511,        /* End                           (0xFBFF) */
+  BGP_AS2_DOC_MIN   = 64496,        /* First of Docm. & Samples AS2  (0xFBF0) */
+  BGP_AS2_DOC_MAX   = 64511,        /* Last                          (0xFBFF) */
 
-  BGP_ASN_RES1_E    = 64511,        /* End   of Reservation 1        (0xFBFF) */
+  BGP_ASN_RES1_MAX  = 64511,        /* Last  of Reservation 1        (0xFBFF) */
 
-  BGP_ASN_PRIV_S    = 64512,        /* Start of Private Use ASN      (0xFC00) */
-  BGP_ASN_PRIV_E    = 65534,        /* End                           (0xFFFE) */
+  BGP_ASN_PRIV_MIN  = 64512,        /* First of Private Use ASN      (0xFC00) */
+  BGP_ASN_PRIV_MAX  = 65534,        /* Last                          (0xFFFE) */
 
   BGP_AS2_RES2      = 65535,        /* Last AS2 value is reserved    (0xFFFF) */
   BGP_AS2_MAX       = 65535,        /* Last of the Mohicans          (0xFFFF) */
 
-  BGP_ASN_RES2_S    = 65535,        /* Start of Reservation 2        (0xFFFF) */
+  BGP_ASN_RES2_MIN  = 65535,        /* Start of Reservation 2        (0xFFFF) */
 
-  BGP_AS4_DOC_S     = AS4(1,0),     /* Start of Docm. & Samples AS4   (65536) */
-  BGP_AS4_DOC_E     = AS4(1,15),    /* End                            (65531) */
+  BGP_AS4_DOC_MIN   = AS4(1,0),     /* Start of Docm. & Samples AS4   (65536) */
+  BGP_AS4_DOC_MAX   = AS4(1,15),    /* End                            (65531) */
 
-  BGP_ASN_RES2_E    = AS4(1,65535), /* End   of Reservation 2        (131071) */
+  BGP_ASN_RES2_MAX  = AS4(1,65535), /* End   of Reservation 2        (131071) */
 
-  BGP_AS4_KNOWN_S   = AS4(2,0),     /* Start of known AS4 space      (131072) */
-  BGP_AS4_KNOWN_E   = AS4(6,65535), /* End                           (394239) */
+  BGP_AS4_KNOWN_MIN = AS4(2,0),     /* Start of known AS4 space      (131072) */
+  BGP_AS4_KNOWN_MAX = AS4(6,65535), /* End                           (394239) */
 
-  BGP_ASN_UNKNOWN_S = AS4(7,0),     /* Start of uncharted AS4 space  (394240) */
+  BGP_ASN_UNKNOWN_MIN = AS4(7,0),   /* Start of uncharted AS4 space  (394240) */
                                     /* (as of 12-Mar-2009)                    */
 
+  BGP_ASN_LAST      = 0xFFFFFFFE,   /* Last valid ASN                         */
+
   BGP_ASN_RES3      = 0xFFFFFFFF,   /* Reserved 3                             */
+  BGP_AS4_MAX       = 0xFFFFFFFF,   /* World's End                            */
+
 
   BGP_ASN_TRANS     = 23456,        /* place-holder for AS4 ASN      (0x5BA0) */
 } ;
@@ -921,7 +983,7 @@ typedef U32 BGP_ATT_NEXT_HOP_T ;    /* 4 bytes of IPv4                      */
 
 VALUE(BGP_ATT_NEXT_HOP_L   = sizeof(BGP_ATT_NEXT_HOP_T)) ;
 
-/* MULTI_EXIT_DISC Attribute -- BGP_ATT_MEDS ---------------------------------*/
+/* MULTI_EXIT_DISC Attribute -- BGP_ATT_MED ---------------------------------*/
 
 VALUE(BGP_ATT_MEDS_IS      = BGP_AT_IS_OPTIONAL) ;  /* non-transitive */
 
@@ -929,7 +991,7 @@ typedef U32 BGP_ATT_MEDS_T  ;       /* 4 bytes of "metric"                  */
 
 VALUE(BGP_ATT_MEDS_L       = sizeof(BGP_ATT_MEDS_T)) ;
 
-/* LOCAL_PREF Attribute -- BGP_ATT_L_PREF ------------------------------------*/
+/* LOCAL_PREF Attribute -- BGP_ATT_LOCAL_PREF ------------------------------------*/
 
 VALUE(BGP_ATT_L_PREF_IS     = BGP_AT_IS_WELL_KNOWN | BGP_AT_IS_MANDATORY
                                                    | BGP_AT_IS_IGP_ONLY) ;
@@ -938,7 +1000,7 @@ typedef U32 BGP_ATT_L_PREF_T ;      /* 4 bytes of "metric"                  */
 
 VALUE(BGP_ATT_L_PREF_L     = sizeof(BGP_ATT_L_PREF_T)) ;
 
-/* ATOMIC_AGGREGATE -- BGP_ATT_A_AGGREGATE -----------------------------------*/
+/* ATOMIC_AGGREGATE -- BGP_ATT_ATOMIC_AGGREGATE -----------------------------------*/
 
 VALUE(BGP_ATT_A_AGGREGATE_IS= BGP_AT_IS_WELL_KNOWN) ;
                                     /* discretionary -- SHOULD pass on      */
@@ -960,7 +1022,7 @@ VALUE(BGP_ATT_AGR_AS2_L     = sizeof(BGP_ATT_AGR_AS_AS2_T)
 VALUE(BGP_ATT_AGR_AS4_L     = sizeof(BGP_ATT_AGR_AS_AS4_T)
                                                    + sizeof(BGP_ATT_AGR_ID_T)) ;
 
-/* COMMUNITIES -- BGP_ATT_COMMUNITY -- RFC1997 ---------------------------------
+/* COMMUNITIES -- BGP_ATT_COMMUNITIES -- RFC1997 -------------------------------
  *
  * MS half of a Community is expected to be AS number of "owner" of same, so
  * this is implicitly AS2 -- see Extended Communities
@@ -978,22 +1040,32 @@ enum
 
 enum BGP_COMM
 {
+  /* Community values 0:0x0000..0:0xFFFF are "reserved" by RFC 1997
+   *
+   * It is commonly supposed that 0:0 is the "well-known" "internet" community.
+   * This is not the case: there is no such well-known community.  In router
+   * configuration-speak it may look like a "well-known" community, but it
+   * is, in fact, a "wild-card" which matches all communities.
+   */
   BGP_ATT_COM_RES1_S        = 0x00000000,
-
-  BGP_ATT_COM_INTERNET      = 0x00000000,
-
   BGP_ATT_COM_RES1_E        = 0x0000FFFF,
 
   BGP_ATT_COM_RES2_S        = 0xFFFF0000,
+
+  BGP_ATT_COM_KNOWN_FIRST   = 0xFFFFFF01,       /* First "well-known"   */
 
   BGP_ATT_COM_NO_EXPORT     = 0xFFFFFF01,
   BGP_ATT_COM_NO_ADVERTISE  = 0xFFFFFF02,
   BGP_ATT_COM_NO_EXPORT_SUBCONFED = 0xFFFFFF03,
 
+  BGP_ATT_COM_LOCAL_AS      = BGP_ATT_COM_NO_EXPORT_SUBCONFED,  /* AKA  */
+
+  BGP_ATT_COM_KNOWN_LAST    = 0xFFFFFF03,       /* Last "well-known"    */
+
   BGP_ATT_COM_RES2_E        = 0xFFFFFFFF,
 } ;
 
-/* ORIGINATOR_ID -- BGP_ATT_ORIG_ID -- RFC4456: BGP Route Reflection ---------*/
+/* ORIGINATOR_ID -- BGP_ATT_ORIGINATOR_ID -- RFC4456: BGP Route Reflection ---*/
 
 VALUE(BGP_ATT_ORIG_ID_IS    = BGP_AT_IS_OPTIONAL) ;
 
@@ -1007,7 +1079,7 @@ VALUE(BGP_ATT_CLUSTER_LIST_IS = BGP_AT_IS_OPTIONAL) ;
 
 typedef U32 BGP_ATT_CLUSTER_ID_T ;  /* attribute is list of these CLUSTER_IDs */
 
-/* MP_REACH_NLRI ---- BGP_ATT_MP_REACH ---- RFC4760: Multiprotocol Extensions --
+/* MP_REACH_NLRI -- BGP_ATT_MP_REACH_NLRI -- RFC4760: Multiprotocol Extensions -
  *
  * Attribute augments the reachable NLRI in the body of the UPDATE Message
  *
@@ -1044,17 +1116,21 @@ VALUE(BGP_ATT_MPR_MIN_L     =       /* min len of attribute                 */
                               + sizeof(BGP_ATT_MPR_NH_LEN_T)
                               + sizeof(BGP_ATT_MPR_RES_T) ) ;
 
-enum            /* order */
+enum                    /* order and offsets from start of attribute    */
 {
-  BGP_ATT_MPR_AFI,
-  BGP_ATT_MPR_SAFI,
-  BGP_ATT_MPR_NH_LEN,
-  BGP_ATT_MPR_NH,
-  BGP_ATT_MPR_RES,
-  BGP_ATT_MPR_NLRI
+  BGP_ATT_MPR_AFI     = 0,
+  BGP_ATT_MPR_SAFI    = BGP_ATT_MPR_AFI    + sizeof(BGP_ATT_MPR_AFI_T),
+  BGP_ATT_MPR_NH_LEN  = BGP_ATT_MPR_SAFI   + sizeof(BGP_ATT_MPR_SAFI_T),
+  BGP_ATT_MPR_NH      = BGP_ATT_MPR_NH_LEN + sizeof(BGP_ATT_MPR_NH_LEN_T),
+    /* NB: length of BGP_ATT_MPR_NH is variable                         */
+  BGP_ATT_MPR_RES     = BGP_ATT_MPR_NH     + sizeof(BGP_ATT_MPR_NH_T),
+    /* NB: true offset of BGP_ATT_MPR_RES  is + length of next hop      */
+  BGP_ATT_MPR_NLRI    = BGP_ATT_MPR_RES    + sizeof(BGP_ATT_MPR_RES_T),
+    /* NB: true offset of BGP_ATT_MPR_NLRI is + length of next hop      */
 } ;
 
-/* MP_UNREACH_NLRI -- BGP_ATT_MP_UNREACH -- RFC4760: Multiprotocol Extensions --
+/* MP_UNREACH_NLRI -- BGP_ATT_MP_UNREACH_NLRI
+ *                                       -- RFC4760: Multiprotocol Extensions --
  *
  * NB: there can be at most one MP_UNREACH_NLRI attribute in a given UPDATE
  *     Message.
@@ -1067,7 +1143,6 @@ enum            /* order */
  *     So: UPDATE message carries withdrawn NLRI for IPv4 plus one other
  *     AFI/SAFI -- at most (which may be different to the MP_REACH_NLRI).
  */
-
 VALUE(BGP_ATT_MP_UNREACH_IS = BGP_AT_IS_OPTIONAL) ;
 
 typedef U16 BGP_ATT_MPU_AFI_T ;     /* Address Family                       */
@@ -1079,14 +1154,15 @@ typedef UBX BGP_ATT_MPU_NLRI_T ;    /* NLRIs now unreachable -- variable    */
 VALUE(BGP_ATT_MPU_MIN_L     =   sizeof(BGP_ATT_MPU_AFI_T)
                               + sizeof(BGP_ATT_MPU_SAFI_T) ) ;
 
-enum            /* order */
+enum                    /* order and offsets from start of attribute    */
 {
-  BGP_ATT_MPU_AFI,
-  BGP_ATT_MPU_SAFI,
-  BGP_ATT_MPU_NLRI
+  BGP_ATT_MPU_AFI     = 0,
+  BGP_ATT_MPU_SAFI    = BGP_ATT_MPU_AFI    + sizeof(BGP_ATT_MPU_AFI_T),
+  BGP_ATT_MPU_NLRI    = BGP_ATT_MPU_SAFI   + sizeof(BGP_ATT_MPU_SAFI_T),
 } ;
+CONFIRM(BGP_ATT_MPU_MIN_L == (uint)BGP_ATT_MPU_NLRI) ;
 
-/* EXTENDED_COMMUNITIES -- BGP_ATT_EXT_COMMS -- RFC4360 ----------------------*/
+/* EXTENDED_COMMUNITIES -- BGP_ATT_ECOMMUNITIES -- RFC4360 -------------------*/
 
 #define BGP_ATT_EXT_COMMS_IS (BGP_AT_IS_OPTIONAL | BGP_AT_IS_TRANSITIVE)
 
@@ -1107,11 +1183,14 @@ enum
   BGP_EXCT_MASK             = 0x3F, /* the Type                             */
 
   /* The following are the MS part of an extended type              RFC4360 */
-  BGP_EXCT_AS2              = 0,    /* AS Specific Ext. Community           */
+  BGP_EXCT_AS2              = 0,    /* AS2 Specific Ext. Community          */
   BGP_EXCT_IPV4             = 1,    /* IPv4 Specific Ext. Community         */
   BGP_EXCT_OPAQUE           = 3,    /* Opaque Ext. Community                */
 
+  BGP_EXCT_AS4              = 2,    /* AS4 Specific Ext. Community  RFC5668 */
+
   /* The following are the LS part of an extended type              RFC4360 */
+  /* where the MS part is 0 (AS2), 1 (IP) or 2 (AS4)                        */
   BGP_EXCS_R_TARGET         = 2,    /* Route Target                         */
   BGP_EXCS_R_ORIGIN         = 3,    /* Route Origin                         */
 
@@ -1128,10 +1207,9 @@ enum
  *
  * Takes the same form as an AS_PATH for an AS4 speaker -- ie 4 byte ASN
  */
-
 VALUE(BGP_ATT_AS4_PATH_IS   = BGP_AT_IS_OPTIONAL | BGP_AT_IS_TRANSITIVE) ;
 
-/* AS4_AGGREGATOR -- BGP_ATT_AS4_AGGR -- RFC4893 -------------------------------
+/* AS4_AGGREGATOR -- BGP_ATT_AS4_AGGREGATOR -- RFC4893 -------------------------------
  *
  * Sent by AS4 speaker to non-AS4 speaker.
  * NOT sent by AS4 speaker to AS4 speaker.
@@ -1140,5 +1218,44 @@ VALUE(BGP_ATT_AS4_PATH_IS   = BGP_AT_IS_OPTIONAL | BGP_AT_IS_TRANSITIVE) ;
  * Takes the same form as an AS_AGGREGATOR for an AS4 speaker -- ie 4 byte ASN
  */
 VALUE(BGP_ATT_AS4_AGGR_IS   = BGP_AT_IS_OPTIONAL | BGP_AT_IS_TRANSITIVE) ;
+
+/*==============================================================================
+ * MPLS Label Stack, Tags and Label Values -- RFC3032 and RFC3107
+ *
+ * RFC3032: Label Stack contains 4 octet entries, which from MS to LS are:
+ *
+ *    20 bits: Label
+ *     3 bits: "Traffic Class" -- per RFC5462
+ *     1 bit : Bottom of Stack
+ *     8 bits: TTL
+ *
+ * RFC3017: "Label" is 3 octets, which from MS to LS are:
+ *
+ *    20 bits: Label Value
+ *     3 bits: unspecified
+ *     1 bit : Bottom of Stack
+ *
+ * ...so similar to the Label Stack entry, apart from the TTL.
+ */
+enum
+{
+  MPLS_LABEL_NULL_IPV4      =  0,   /* legal anywhere               RFC4182 */
+  MPLS_LABEL_ROUTER_ALERT   =  1,   /* legal except at BoS                  */
+  MPLS_LABEL_NULL_IPV6      =  2,   /* legal anywhere               RFC4182 */
+  MPLS_LABEL_NULL_IMPLICIT  =  3,   /* for use by LDP                       */
+
+  MPLS_LABEL_RES_S          =  4,   /* start of reserved values             */
+  MPLS_LABEL_RES_E          = 15,   /* end of reserved values               */
+
+  MPLS_LABEL_FIRST          = 16,   /* first real MPLS Label                */
+  MPLS_LABEL_LAST      = 0xFFFFF,   /* last real MPLS Label                 */
+
+  MPLS_LABEL_BOS      = 0x000001,   /* of first 3 bytes, anyway             */
+  MPLS_LABEL_CLASS    = 0x00000E,   /* likewise                             */
+  MPLS_LABEL_VALUE    = 0xFFFFF0,
+} ;
+
+CONFIRM(MPLS_LABEL_LAST  == (BIT(20) - 1)) ;
+CONFIRM(MPLS_LABEL_VALUE == (MPLS_LABEL_LAST << 4)) ;
 
 #endif /* _GMCH_BGP_H */

@@ -19,6 +19,7 @@ Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
 02111-1307, USA.  */
 
 #include <zebra.h>
+#include "misc.h"
 
 #include "command.h"
 #include "vty.h"
@@ -34,7 +35,7 @@ Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
 
 #include "bgpd/bgpd.h"
 #include "bgpd/bgp_peer.h"
-#include "bgpd/bgp_advertise.h"
+#include "bgpd/bgp_peer_vty.h"
 #include "bgpd/bgp_attr.h"
 #include "bgpd/bgp_aspath.h"
 #include "bgpd/bgp_community.h"
@@ -55,25 +56,54 @@ Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
 
 extern struct in_addr router_id_zebra;
 
-/* Utility function to get address family from current node.  */
-afi_t
+/* Utility function to get address family from current node.
+ */
+extern qAFI_t
 bgp_node_afi (struct vty *vty)
 {
-  if (vty->node == BGP_IPV6_NODE || vty->node == BGP_IPV6M_NODE)
-    return AFI_IP6;
-  return AFI_IP;
-}
+  switch (vty->node)
+    {
+      case BGP_NODE:
+      case BGP_IPV4_NODE:
+      case BGP_IPV4M_NODE:
+      case BGP_VPNV4_NODE:
+      default:
+        return qAFI_IP ;
 
-/* Utility function to get subsequent address family from current
-   node.  */
-safi_t
+      case BGP_IPV6_NODE:
+      case BGP_IPV6M_NODE:
+        return qAFI_IP6 ;
+    } ;
+} ;
+
+/* Utility function to get subsequent address family from current node.
+ */
+extern qSAFI_t
 bgp_node_safi (struct vty *vty)
 {
-  if (vty->node == BGP_VPNV4_NODE)
-    return SAFI_MPLS_VPN;
-  if (vty->node == BGP_IPV4M_NODE || vty->node == BGP_IPV6M_NODE)
-    return SAFI_MULTICAST;
-  return SAFI_UNICAST;
+  switch (vty->node)
+    {
+      case BGP_NODE:
+      case BGP_IPV4_NODE:
+      case BGP_IPV6_NODE:
+      default:
+        return qSAFI_Unicast;
+
+      case BGP_IPV4M_NODE:
+      case BGP_IPV6M_NODE:
+        return qSAFI_Multicast;
+
+      case BGP_VPNV4_NODE:
+        return qSAFI_MPLS_VPN;
+    } ;
+} ;
+
+/* Utility function to get qafx from current node.
+ */
+extern qafx_t
+bgp_node_qafx (struct vty *vty)
+{
+  return qafx_from_q(bgp_node_afi(vty), bgp_node_safi(vty));
 }
 
 static int
@@ -94,56 +124,62 @@ peer_address_self_check (union sockunion *su)
   return 0;
 }
 
-/* Utility function for looking up peer from VTY.  */
-static struct peer *
-peer_lookup_vty (struct vty *vty, const char *ip_str)
+/*------------------------------------------------------------------------------
+ * Utility function for looking up peer from VTY.
+ *
+ * Takes an IPv4 or an IPv6 (if supported) address.
+ *
+ * vty->index is the current bgp instance or NULL for all instances.
+ *
+ * Returns:  address of *real* peer (not a group) if exists in the bgp instance
+ */
+static bgp_peer
+peer_lookup_vty_index (struct vty *vty, const char* ip_str)
 {
-  int ret;
-  struct bgp *bgp;
-  union sockunion su;
-  struct peer *peer;
+  sockunion_t su[1] ;
+  bgp_peer    peer ;
 
-  bgp = vty->index;
-
-  ret = str2sockunion (ip_str, &su);
-  if (ret < 0)
+  if (str2sockunion (ip_str, su) != 0)
     {
       vty_out (vty, "%% Malformed address: %s%s", ip_str, VTY_NEWLINE);
       return NULL;
     }
 
-  peer = peer_lookup (bgp, &su);
-  if (! peer)
-    {
-      vty_out (vty, "%% Specify remote-as or peer-group commands first%s", VTY_NEWLINE);
-      return NULL;
-    }
-  return peer;
+  peer = peer_lookup (vty->index, su);
+  if (peer == NULL)
+    vty_out (vty, "%% Specify remote-as or peer-group commands first%s",
+                                                                  VTY_NEWLINE);
+
+  return peer ;
 }
 
-/* Utility function for looking up peer or peer group.  */
+/*------------------------------------------------------------------------------
+ * Utility function for looking up peer or peer group from VTY.
+ *
+ * Takes an IPv4 or an IPv6 (if supported) address.
+ *
+ * vty->index is the current bgp instance or NULL for all instances.
+ *
+ * Returns:  address of peer or peer group if exists in the bgp instance
+ */
 static struct peer *
 peer_and_group_lookup_vty (struct vty *vty, const char *peer_str)
 {
-  int ret;
-  struct bgp *bgp;
-  union sockunion su;
-  struct peer *peer;
-  struct peer_group *group;
+  sockunion_t su[1] ;
+  bgp_peer    peer ;
 
-  bgp = vty->index;
-
-  ret = str2sockunion (peer_str, &su);
-  if (ret == 0)
+  if (str2sockunion (peer_str, su) == 0)
     {
-      peer = peer_lookup (bgp, &su);
-      if (peer)
+      peer = peer_lookup (vty->index, su);
+      if (peer != NULL)
         return peer;
     }
   else
     {
-      group = peer_group_lookup (bgp, peer_str);
-      if (group)
+      struct peer_group *group;
+
+      group = peer_group_lookup (vty->index, peer_str);
+      if (group != NULL)
         return group->conf;
     }
 
@@ -151,7 +187,7 @@ peer_and_group_lookup_vty (struct vty *vty, const char *peer_str)
            VTY_NEWLINE);
 
   return NULL;
-}
+} ;
 
 static int
 bgp_vty_return (struct vty *vty, int ret)
@@ -178,8 +214,15 @@ bgp_vty_return (struct vty *vty, int ret)
     case BGP_ERR_PEER_GROUP_HAS_THE_FLAG:
       str = "This peer is a peer-group member.  Please change peer-group configuration";
       break;
-    case BGP_ERR_PEER_FLAG_CONFLICT:
-      str = "Can't set override-capability and strict-capability-match at the same time";
+    case BGP_ERR_PEER_FLAG_CONFLICT_1:
+      str = "Can't set strict-capability-match with dont-capability-negotiate"
+                                                  "and/or override-capability";
+      break;
+    case BGP_ERR_PEER_FLAG_CONFLICT_2:
+      str = "Can't set override-capability with strict-capability-match";
+      break;
+    case BGP_ERR_PEER_FLAG_CONFLICT_3:
+      str = "Can't set dont-capability-negotiate with strict-capability-match";
       break;
     case BGP_ERR_PEER_GROUP_MEMBER_EXISTS:
       str = "No activate for peergroup can be given only if peer-group has no members";
@@ -333,12 +376,12 @@ DEFUN_ATTR (router_bgp,
             AS_STR,
             CMD_ATTR_NODE + BGP_NODE)
 {
-  int ret;
+  bgp_ret_t ret;
   as_t as;
   struct bgp *bgp;
   const char *name = NULL;
 
-  VTY_GET_INTEGER_RANGE ("AS", as, argv[0], 1, BGP_AS4_MAX);
+  VTY_GET_INTEGER_RANGE ("AS", as, argv[0], BGP_ASN_FIRST, BGP_ASN_LAST);
 
   if (argc == 2)
     name = argv[1];
@@ -346,7 +389,7 @@ DEFUN_ATTR (router_bgp,
   ret = bgp_get (&bgp, &as, name);
   switch (ret)
     {
-      case 0:
+      case BGP_SUCCESS :
         break ;
 
       case BGP_ERR_MULTIPLE_INSTANCE_NOT_SET:
@@ -398,7 +441,7 @@ DEFUN (no_router_bgp,
   struct bgp *bgp;
   const char *name = NULL;
 
-  VTY_GET_INTEGER_RANGE ("AS", as, argv[0], 1, BGP_AS4_MAX);
+  VTY_GET_INTEGER_RANGE ("AS", as, argv[0], BGP_ASN_FIRST, BGP_ASN_LAST);
 
   if (argc == 2)
     name = argv[1];
@@ -442,14 +485,13 @@ DEFUN (bgp_router_id,
   bgp = vty->index;
 
   ret = inet_aton (argv[0], &id);
-  if (! ret)
+  if ((ret == 0) || IPV4_N_NET0(id.s_addr))
     {
       vty_out (vty, "%% Malformed bgp router identifier%s", VTY_NEWLINE);
       return CMD_WARNING;
     }
 
-  bgp->router_id_static = id;
-  bgp_router_id_set (bgp, &id);
+  bgp_router_id_set (bgp, id.s_addr, true /* set */);
 
   return CMD_SUCCESS;
 }
@@ -470,21 +512,26 @@ DEFUN (no_bgp_router_id,
   if (argc == 1)
     {
       ret = inet_aton (argv[0], &id);
-      if (! ret)
+      if ((ret == 0) || IPV4_N_NET0(id.s_addr))
         {
           vty_out (vty, "%% Malformed BGP router identifier%s", VTY_NEWLINE);
           return CMD_WARNING;
         }
 
-      if (! IPV4_ADDR_SAME (&bgp->router_id_static, &id))
+      if (!(bgp->config & BGP_CONFIG_ROUTER_ID))
+        {
+          vty_out (vty, "%% BGP router-id is not set%s", VTY_NEWLINE);
+          return CMD_WARNING;
+        } ;
+
+      if (bgp->router_id != id.s_addr)
         {
           vty_out (vty, "%% BGP router-id doesn't match%s", VTY_NEWLINE);
           return CMD_WARNING;
-        }
-    }
+        } ;
+    } ;
 
-  bgp->router_id_static.s_addr = 0;
-  bgp_router_id_set (bgp, &router_id_zebra);
+  bgp_router_id_set (bgp, 0, false /* unset */);
 
   return CMD_SUCCESS;
 }
@@ -497,8 +544,12 @@ ALIAS (no_bgp_router_id,
        "Override configured router identifier\n"
        "Manually configured router identifier\n")
 
-/* BGP Cluster ID.  */
-
+/*------------------------------------------------------------------------------
+ * BGP Cluster ID.
+ *
+ * Where the cluster-id is defined as an integer, that is handled by inet_aton()
+ * as a single part address and stored in Network Order.
+ */
 DEFUN (bgp_cluster_id,
        bgp_cluster_id_cmd,
        "bgp cluster-id A.B.C.D",
@@ -506,20 +557,15 @@ DEFUN (bgp_cluster_id,
        "Configure Route-Reflector Cluster-id\n"
        "Route-Reflector Cluster-id in IP address format\n")
 {
-  int ret;
-  struct bgp *bgp;
   struct in_addr cluster;
 
-  bgp = vty->index;
-
-  ret = inet_aton (argv[0], &cluster);
-  if (! ret)
+  if (inet_aton (argv[0], &cluster) == 0)
     {
       vty_out (vty, "%% Malformed bgp cluster identifier%s", VTY_NEWLINE);
       return CMD_WARNING;
     }
 
-  bgp_cluster_id_set (bgp, &cluster);
+  bgp_cluster_id_set (vty->index, cluster.s_addr, true /* set */) ;
 
   return CMD_SUCCESS;
 }
@@ -538,23 +584,18 @@ DEFUN (no_bgp_cluster_id,
        BGP_STR
        "Configure Route-Reflector Cluster-id\n")
 {
-  int ret;
-  struct bgp *bgp;
   struct in_addr cluster;
-
-  bgp = vty->index;
 
   if (argc == 1)
     {
-      ret = inet_aton (argv[0], &cluster);
-      if (! ret)
+      if (inet_aton (argv[0], &cluster) == 0)
         {
           vty_out (vty, "%% Malformed bgp cluster identifier%s", VTY_NEWLINE);
           return CMD_WARNING;
         }
     }
 
-  bgp_cluster_id_unset (bgp);
+  bgp_cluster_id_set (vty->index, 0, false /* unset */) ;
 
   return CMD_SUCCESS;
 }
@@ -576,13 +617,13 @@ DEFUN (bgp_confederation_identifier,
        "Set routing domain confederation AS\n")
 {
   struct bgp *bgp;
-  as_t as;
+  as_t confed_id;
 
   bgp = vty->index;
 
-  VTY_GET_INTEGER_RANGE ("AS", as, argv[0], 1, BGP_AS4_MAX);
+  VTY_GET_INTEGER_RANGE ("AS", confed_id, argv[0], BGP_ASN_FIRST, BGP_ASN_LAST);
 
-  bgp_confederation_id_set (bgp, as);
+  bgp_confederation_id_set (bgp, confed_id);
 
   return CMD_SUCCESS;
 }
@@ -601,7 +642,8 @@ DEFUN (no_bgp_confederation_identifier,
   bgp = vty->index;
 
   if (argc == 1)
-    VTY_GET_INTEGER_RANGE ("AS", as, argv[0], 1, BGP_AS4_MAX);
+    VTY_GET_INTEGER_RANGE ("AS", as, argv[0], BGP_ASN_FIRST, BGP_ASN_LAST);
+  qassert(as != 0) ;            /* "use" the as to silence compiler     */
 
   bgp_confederation_id_unset (bgp);
 
@@ -632,8 +674,11 @@ DEFUN (bgp_confederation_peers,
   bgp = vty->index;
 
   for (i = 0; i < argc; i++)
+    VTY_GET_INTEGER_RANGE ("AS", as, argv[i], BGP_ASN_FIRST, BGP_ASN_LAST);
+
+  for (i = 0; i < argc; i++)
     {
-      VTY_GET_INTEGER_RANGE ("AS", as, argv[i], 1, BGP_AS4_MAX);
+      VTY_GET_INTEGER_RANGE ("AS", as, argv[i], BGP_ASN_FIRST, BGP_ASN_LAST);
 
       if (bgp->as == as)
         {
@@ -642,8 +687,11 @@ DEFUN (bgp_confederation_peers,
           continue;
         }
 
-      bgp_confederation_peers_add (bgp, as);
+      bgp_confederation_peers_add (bgp, as);    /* update confed_peers  */
     }
+
+  bgp_confederation_peers_scan(bgp) ;           /* complete the process */
+
   return CMD_SUCCESS;
 }
 
@@ -663,16 +711,29 @@ DEFUN (no_bgp_confederation_peers,
   bgp = vty->index;
 
   for (i = 0; i < argc; i++)
-    {
-      VTY_GET_INTEGER_RANGE ("AS", as, argv[i], 1, BGP_AS4_MAX);
+    VTY_GET_INTEGER_RANGE ("AS", as, argv[i], BGP_ASN_FIRST, BGP_ASN_LAST);
 
-      bgp_confederation_peers_remove (bgp, as);
+  for (i = 0; i < argc; i++)
+    {
+      VTY_GET_INTEGER_RANGE ("AS", as, argv[i], BGP_ASN_FIRST, BGP_ASN_LAST);
+
+      bgp_confederation_peers_remove (bgp, as); /* update confed_peers  */
     }
+
+  bgp_confederation_peers_scan(bgp) ;           /* complete the process */
+
   return CMD_SUCCESS;
 }
 
-/* BGP timers.  */
-
+/*------------------------------------------------------------------------------
+ * BGP timers.
+ *
+ * Sets the default values for session keepalive and holdtime.  These values
+ * are used where a peer does not have its own setting, or a peer is a member
+ * of a group which does not have its own setting.
+ *
+ * NB: changing the default does not affect any existing sessions.
+ */
 DEFUN (bgp_timers,
        bgp_timers_cmd,
        "timers bgp <0-65535> <0-65535>",
@@ -681,17 +742,17 @@ DEFUN (bgp_timers,
        "Keepalive interval\n"
        "Holdtime\n")
 {
-  struct bgp *bgp;
-  unsigned long keepalive = 0;
-  unsigned long holdtime = 0;
+  bgp_inst bgp;
+  uint keepalive, holdtime ;
 
   bgp = vty->index;
 
   VTY_GET_INTEGER ("keepalive", keepalive, argv[0]);
-  VTY_GET_INTEGER ("holdtime", holdtime, argv[1]);
+  VTY_GET_INTEGER ("holdtime",  holdtime,  argv[1]);
 
-  /* Holdtime value check. */
-  if (holdtime < 3 && holdtime != 0)
+  /* Holdtime value check.
+   */
+  if ((holdtime < 3) && (holdtime != 0))
     {
       vty_out (vty, "%% hold time value must be either 0 or greater than 3%s",
                VTY_NEWLINE);
@@ -1082,7 +1143,10 @@ DEFUN (bgp_bestpath_med,
   if (strncmp (argv[0], "confed", 1) == 0)
     bgp_flag_set (bgp, BGP_FLAG_MED_CONFED);
   else
-    bgp_flag_set (bgp, BGP_FLAG_MED_MISSING_AS_WORST);
+    {
+      bgp_flag_set (bgp, BGP_FLAG_MED_MISSING_AS_WORST);
+      bgp->default_med = BGP_MED_MAX ;
+    } ;
 
   return CMD_SUCCESS;
 }
@@ -1101,6 +1165,7 @@ DEFUN (bgp_bestpath_med2,
   bgp = vty->index;
   bgp_flag_set (bgp, BGP_FLAG_MED_CONFED);
   bgp_flag_set (bgp, BGP_FLAG_MED_MISSING_AS_WORST);
+  bgp->default_med = BGP_MED_MAX ;
   return CMD_SUCCESS;
 }
 
@@ -1130,7 +1195,10 @@ DEFUN (no_bgp_bestpath_med,
   if (strncmp (argv[0], "confed", 1) == 0)
     bgp_flag_unset (bgp, BGP_FLAG_MED_CONFED);
   else
-    bgp_flag_unset (bgp, BGP_FLAG_MED_MISSING_AS_WORST);
+    {
+      bgp_flag_unset (bgp, BGP_FLAG_MED_MISSING_AS_WORST);
+      bgp->default_med = BGP_MED_MIN ;
+    } ;
 
   return CMD_SUCCESS;
 }
@@ -1150,6 +1218,7 @@ DEFUN (no_bgp_bestpath_med2,
   bgp = vty->index;
   bgp_flag_unset (bgp, BGP_FLAG_MED_CONFED);
   bgp_flag_unset (bgp, BGP_FLAG_MED_MISSING_AS_WORST);
+  bgp->default_med = BGP_MED_MIN ;
   return CMD_SUCCESS;
 }
 
@@ -1267,25 +1336,24 @@ ALIAS (no_bgp_default_local_preference,
        "local preference (higher=more preferred)\n"
        "Configure default local preference value\n")
 
-static int
+static cmd_ret_t
 peer_remote_as_vty (struct vty *vty, const char *peer_str,
-                    const char *as_str, afi_t afi, safi_t safi)
+                                                const char *as_str, qafx_t qafx)
 {
-  int ret;
-  struct bgp *bgp;
+  bgp_ret_t ret;
   as_t as;
-  union sockunion su;
+  sockunion_t su[1] ;
 
-  bgp = vty->index;
+  /* Get AS number.
+   */
+  VTY_GET_INTEGER_RANGE ("AS", as, as_str, BGP_ASN_FIRST, BGP_ASN_LAST);
 
-  /* Get AS number.  */
-  VTY_GET_INTEGER_RANGE ("AS", as, as_str, 1, BGP_AS4_MAX);
-
-  /* If peer is peer group, call proper function.  */
-  ret = str2sockunion (peer_str, &su);
-  if (ret < 0)
+  /* If peer is peer group, call proper function.
+   */
+  if (str2sockunion (peer_str, su) != 0)
     {
-      ret = peer_group_remote_as (bgp, peer_str, &as);
+      ret = peer_group_remote_as (vty->index, peer_str, &as);
+
       if (ret < 0)
         {
           vty_out (vty, "%% Create the peer-group first%s", VTY_NEWLINE);
@@ -1294,27 +1362,34 @@ peer_remote_as_vty (struct vty *vty, const char *peer_str,
       return CMD_SUCCESS;
     }
 
-  if (peer_address_self_check (&su))
+  if (peer_address_self_check (su))
     {
       vty_out (vty, "%% Can not configure the local system as neighbor%s",
                VTY_NEWLINE);
       return CMD_WARNING;
     }
 
-  ret = peer_remote_as (bgp, &su, &as, afi, safi);
+  ret = peer_remote_as (vty->index, su, &as, qafx);
 
-  /* This peer belongs to peer group.  */
+  /* This peer belongs to peer group.
+   */
   switch (ret)
     {
-    case BGP_ERR_PEER_GROUP_MEMBER:
-      vty_out (vty, "%% Peer-group AS %u. Cannot configure remote-as for member%s", as, VTY_NEWLINE);
-      return CMD_WARNING;
-    case BGP_ERR_PEER_GROUP_PEER_TYPE_DIFFERENT:
-      vty_out (vty, "%% The AS# can not be changed from %u to %s, peer-group members must be all internal or all external%s", as, as_str, VTY_NEWLINE);
-      return CMD_WARNING;
-    default:
-      break ;
-    }
+      case BGP_ERR_PEER_GROUP_MEMBER:
+        vty_out (vty, "%% Peer-group AS %u.  "
+                   "Cannot configure remote-as for member%s", as, VTY_NEWLINE);
+        return CMD_WARNING;
+
+      case BGP_ERR_PEER_GROUP_PEER_TYPE_DIFFERENT:
+        vty_out (vty, "%% The AS# can not be changed from %u to %s, "
+            "peer-group members must be all internal or all external%s",
+                                                      as, as_str, VTY_NEWLINE);
+        return CMD_WARNING;
+
+      default:
+        break ;
+    } ;
+
   return bgp_vty_return (vty, ret);
 }
 
@@ -1326,7 +1401,7 @@ DEFUN (neighbor_remote_as,
        "Specify a BGP neighbor\n"
        AS_STR)
 {
-  return peer_remote_as_vty (vty, argv[0], argv[1], AFI_IP, SAFI_UNICAST);
+  return peer_remote_as_vty (vty, argv[0], argv[1], qafx_ipv4_unicast);
 }
 
 DEFUN (neighbor_peer_group,
@@ -1361,23 +1436,23 @@ DEFUN (no_neighbor,
   struct peer *peer;
 
   ret = str2sockunion (argv[0], &su);
-  if (ret < 0)
+  if (ret == 0)
+    {
+      peer = peer_lookup (vty->index, &su);
+      if (peer != NULL)
+        bgp_peer_delete (peer);
+    }
+  else
     {
       group = peer_group_lookup (vty->index, argv[0]);
-      if (group)
+      if (group != NULL)
         peer_group_delete (group);
       else
         {
           vty_out (vty, "%% Create the peer-group first%s", VTY_NEWLINE);
           return CMD_WARNING;
         }
-    }
-  else
-    {
-      peer = peer_lookup (vty->index, &su);
-      if (peer)
-        bgp_peer_delete (peer);
-    }
+    } ;
 
   return CMD_SUCCESS;
 }
@@ -1449,7 +1524,7 @@ DEFUN (neighbor_local_as,
   if (! peer)
     return CMD_WARNING;
 
-  ret = peer_local_as_set (peer, atoi (argv[1]), 0);
+  ret = peer_local_as_set (peer, strtoul_s(argv[1]), false /* no-prepend */);
   return bgp_vty_return (vty, ret);
 }
 
@@ -1469,7 +1544,7 @@ DEFUN (neighbor_local_as_no_prepend,
   if (! peer)
     return CMD_WARNING;
 
-  ret = peer_local_as_set (peer, atoi (argv[1]), 1);
+  ret = peer_local_as_set (peer, strtoul_s(argv[1]), true /* no-prepend */);
   return bgp_vty_return (vty, ret);
 }
 
@@ -1549,6 +1624,14 @@ DEFUN (no_neighbor_password,
   return bgp_vty_return (vty, ret);
 }
 
+/*==============================================================================
+ * Activate and de-activate peer or peer-group in the current afi/safi.
+ *
+ * For activate:
+ *
+ *
+ */
+
 DEFUN (neighbor_activate,
        neighbor_activate_cmd,
        NEIGHBOR_CMD2 "activate",
@@ -1562,7 +1645,7 @@ DEFUN (neighbor_activate,
   if (! peer)
     return CMD_WARNING;
 
-  peer_activate (peer, bgp_node_afi (vty), bgp_node_safi (vty));
+  peer_activate (peer, bgp_node_qafx(vty));
 
   return CMD_SUCCESS;
 }
@@ -1583,10 +1666,25 @@ DEFUN (no_neighbor_activate,
   if (! peer)
     return CMD_WARNING;
 
-  ret = peer_deactivate (peer, bgp_node_afi (vty), bgp_node_safi (vty));
+  ret = peer_deactivate (peer, bgp_node_qafx(vty));
 
   return bgp_vty_return (vty, ret);
 }
+
+/*==============================================================================
+ * Add/remove given peer to/from the given peer-group in the current afi/safi.
+ *
+ * For add:
+ *
+ *   * if the peer does not exist, will create it iff the group has an AS
+ *
+ *   * if the peer exists, but is not activated for the afi/safi, this
+ *     implicitly activates it -- *after* updating its configuration.
+ *
+ * For remove:
+ *
+ *   * has no effect at all if the peer is not activated for the afi/safi.
+ */
 
 DEFUN (neighbor_set_peer_group,
        neighbor_set_peer_group_cmd,
@@ -1625,8 +1723,7 @@ DEFUN (neighbor_set_peer_group,
       return CMD_WARNING;
     }
 
-  ret = peer_group_bind (bgp, &su, group, bgp_node_afi (vty),
-                         bgp_node_safi (vty), &as);
+  ret = peer_group_bind (bgp, &su, group, bgp_node_qafx(vty), &as);
 
   if (ret == BGP_ERR_PEER_GROUP_PEER_TYPE_DIFFERENT)
     {
@@ -1648,25 +1745,21 @@ DEFUN (no_neighbor_set_peer_group,
        "peer-group name\n")
 {
   int ret;
-  struct bgp *bgp;
   struct peer *peer;
   struct peer_group *group;
 
-  bgp = vty->index;
-
-  peer = peer_lookup_vty (vty, argv[0]);
-  if (! peer)
+  peer = peer_lookup_vty_index (vty, argv[0]);
+  if (peer == NULL)
     return CMD_WARNING;
 
-  group = peer_group_lookup (bgp, argv[1]);
+  group = peer_group_lookup (peer->bgp, argv[1]);
   if (! group)
     {
       vty_out (vty, "%% Configure the peer-group first%s", VTY_NEWLINE);
       return CMD_WARNING;
     }
 
-  ret = peer_group_unbind (bgp, peer, group, bgp_node_afi (vty),
-                           bgp_node_safi (vty));
+  ret = peer_group_unbind (peer, group, bgp_node_qafx(vty));
 
   return bgp_vty_return (vty, ret);
 }
@@ -1724,6 +1817,23 @@ DEFUN (no_neighbor_passive,
   return peer_flag_unset_vty (vty, argv[0], PEER_FLAG_PASSIVE);
 }
 
+/*==============================================================================
+ * Peer/Peer-Group shutdown
+ *
+ * For peer:
+ *
+ *   * can shutdown a peer which is a member of a group, separately from all
+ *     other members of the group.
+ *
+ *   * shutdown will disable any running session, and leave peer disabled.
+ *
+ *   * startup (no shutdown) reverses any shutdown.
+ *
+ *
+ * For group:
+ *
+ */
+
 /* neighbor shutdown. */
 DEFUN (neighbor_shutdown,
        neighbor_shutdown_cmd,
@@ -1745,6 +1855,15 @@ DEFUN (no_neighbor_shutdown,
 {
   return peer_flag_unset_vty (vty, argv[0], PEER_FLAG_SHUTDOWN);
 }
+
+ALIAS (no_neighbor_shutdown,
+       neighbor_startup_cmd,
+       NEIGHBOR_CMD2 "startup",
+       NEIGHBOR_STR
+       NEIGHBOR_ADDR_STR2
+       "Administratively start this neighbor (reverse shut down)\n") ;
+
+
 
 /* Deprecated neighbor capability route-refresh. */
 DEFUN_DEPRECATED (neighbor_capability_route_refresh,
@@ -1817,8 +1936,8 @@ DEFUN (no_neighbor_dont_capability_negotiate,
 }
 
 static int
-peer_af_flag_modify_vty (struct vty *vty, const char *peer_str, afi_t afi,
-                         safi_t safi, u_int32_t flag, bool set)
+peer_af_flag_modify_vty (struct vty *vty, const char *peer_str, qafx_t qafx,
+                                                        uint32_t flag, bool set)
 {
   int ret;
   struct peer *peer;
@@ -1827,23 +1946,23 @@ peer_af_flag_modify_vty (struct vty *vty, const char *peer_str, afi_t afi,
   if (! peer)
     return CMD_WARNING;
 
-  ret = peer_af_flag_modify(peer, afi, safi, flag, set);
+  ret = peer_af_flag_modify(peer, qafx, flag, set);
 
   return bgp_vty_return (vty, ret);
 }
 
 static int
-peer_af_flag_set_vty (struct vty *vty, const char *peer_str, afi_t afi,
-                      safi_t safi, u_int32_t flag)
+peer_af_flag_set_vty (struct vty *vty, const char *peer_str, qafx_t qafx,
+                                                                 uint32_t flag)
 {
-  return peer_af_flag_modify_vty (vty, peer_str, afi, safi, flag, true);
+  return peer_af_flag_modify_vty (vty, peer_str, qafx, flag, true);
 }
 
 static int
-peer_af_flag_unset_vty (struct vty *vty, const char *peer_str, afi_t afi,
-                        safi_t safi, u_int32_t flag)
+peer_af_flag_unset_vty (struct vty *vty, const char *peer_str, qafx_t qafx,
+                                                                 uint32_t flag)
 {
-  return peer_af_flag_modify_vty (vty, peer_str, afi, safi, flag, false);
+  return peer_af_flag_modify_vty (vty, peer_str, qafx, flag, false);
 }
 
 /* neighbor capability orf prefix-list. */
@@ -1859,19 +1978,18 @@ DEFUN (neighbor_capability_orf_prefix,
        "Capability to RECEIVE the ORF from this neighbor\n"
        "Capability to SEND the ORF to this neighbor\n")
 {
-  u_int16_t flag = 0;
+  peer_af_flag_bits_t flag = 0;
 
   if (strncmp (argv[1], "s", 1) == 0)
-    flag = PEER_FLAG_ORF_PREFIX_SM;
+    flag = PEER_AFF_ORF_PFX_SM;
   else if (strncmp (argv[1], "r", 1) == 0)
-    flag = PEER_FLAG_ORF_PREFIX_RM;
+    flag = PEER_AFF_ORF_PFX_RM;
   else if (strncmp (argv[1], "b", 1) == 0)
-    flag = PEER_FLAG_ORF_PREFIX_SM|PEER_FLAG_ORF_PREFIX_RM;
+    flag = PEER_AFF_ORF_PFX_SM | PEER_AFF_ORF_PFX_RM;
   else
     return CMD_WARNING;
 
-  return peer_af_flag_set_vty (vty, argv[0], bgp_node_afi (vty),
-                               bgp_node_safi (vty), flag);
+  return peer_af_flag_set_vty (vty, argv[0], bgp_node_qafx(vty), flag);
 }
 
 DEFUN (no_neighbor_capability_orf_prefix,
@@ -1890,16 +2008,15 @@ DEFUN (no_neighbor_capability_orf_prefix,
   u_int16_t flag = 0;
 
   if (strncmp (argv[1], "s", 1) == 0)
-    flag = PEER_FLAG_ORF_PREFIX_SM;
+    flag = PEER_AFF_ORF_PFX_SM;
   else if (strncmp (argv[1], "r", 1) == 0)
-    flag = PEER_FLAG_ORF_PREFIX_RM;
+    flag = PEER_AFF_ORF_PFX_RM;
   else if (strncmp (argv[1], "b", 1) == 0)
-    flag = PEER_FLAG_ORF_PREFIX_SM|PEER_FLAG_ORF_PREFIX_RM;
+    flag = PEER_AFF_ORF_PFX_SM|PEER_AFF_ORF_PFX_RM;
   else
     return CMD_WARNING;
 
-  return peer_af_flag_unset_vty (vty, argv[0], bgp_node_afi (vty),
-                                 bgp_node_safi (vty), flag);
+  return peer_af_flag_unset_vty (vty, argv[0], bgp_node_qafx(vty), flag);
 }
 
 /* neighbor next-hop-self. */
@@ -1910,8 +2027,8 @@ DEFUN (neighbor_nexthop_self,
        NEIGHBOR_ADDR_STR2
        "Disable the next hop calculation for this neighbor\n")
 {
-  return peer_af_flag_set_vty (vty, argv[0], bgp_node_afi (vty),
-                               bgp_node_safi (vty), PEER_FLAG_NEXTHOP_SELF);
+  return peer_af_flag_set_vty (vty, argv[0], bgp_node_qafx(vty),
+                                                       PEER_AFF_NEXTHOP_SELF);
 }
 
 DEFUN (no_neighbor_nexthop_self,
@@ -1922,8 +2039,8 @@ DEFUN (no_neighbor_nexthop_self,
        NEIGHBOR_ADDR_STR2
        "Disable the next hop calculation for this neighbor\n")
 {
-  return peer_af_flag_unset_vty (vty, argv[0], bgp_node_afi (vty),
-                                 bgp_node_safi (vty), PEER_FLAG_NEXTHOP_SELF);
+  return peer_af_flag_unset_vty (vty, argv[0], bgp_node_qafx(vty),
+                                                        PEER_AFF_NEXTHOP_SELF);
 }
 
 /* neighbor remove-private-AS. */
@@ -1934,9 +2051,8 @@ DEFUN (neighbor_remove_private_as,
        NEIGHBOR_ADDR_STR2
        "Remove private AS number from outbound updates\n")
 {
-  return peer_af_flag_set_vty (vty, argv[0], bgp_node_afi (vty),
-                               bgp_node_safi (vty),
-                               PEER_FLAG_REMOVE_PRIVATE_AS);
+  return peer_af_flag_set_vty (vty, argv[0], bgp_node_qafx(vty),
+                                                   PEER_AFF_REMOVE_PRIVATE_AS);
 }
 
 DEFUN (no_neighbor_remove_private_as,
@@ -1947,9 +2063,8 @@ DEFUN (no_neighbor_remove_private_as,
        NEIGHBOR_ADDR_STR2
        "Remove private AS number from outbound updates\n")
 {
-  return peer_af_flag_unset_vty (vty, argv[0], bgp_node_afi (vty),
-                                 bgp_node_safi (vty),
-                                 PEER_FLAG_REMOVE_PRIVATE_AS);
+  return peer_af_flag_unset_vty (vty, argv[0], bgp_node_qafx(vty),
+                                                   PEER_AFF_REMOVE_PRIVATE_AS);
 }
 
 /* neighbor send-community. */
@@ -1960,9 +2075,8 @@ DEFUN (neighbor_send_community,
        NEIGHBOR_ADDR_STR2
        "Send Community attribute to this neighbor\n")
 {
-  return peer_af_flag_set_vty (vty, argv[0], bgp_node_afi (vty),
-                               bgp_node_safi (vty),
-                               PEER_FLAG_SEND_COMMUNITY);
+  return peer_af_flag_set_vty (vty, argv[0], bgp_node_qafx(vty),
+                                                     PEER_AFF_SEND_COMMUNITY);
 }
 
 DEFUN (no_neighbor_send_community,
@@ -1973,9 +2087,8 @@ DEFUN (no_neighbor_send_community,
        NEIGHBOR_ADDR_STR2
        "Send Community attribute to this neighbor\n")
 {
-  return peer_af_flag_unset_vty (vty, argv[0], bgp_node_afi (vty),
-                                 bgp_node_safi (vty),
-                                 PEER_FLAG_SEND_COMMUNITY);
+  return peer_af_flag_unset_vty (vty, argv[0], bgp_node_qafx(vty),
+                                                     PEER_AFF_SEND_COMMUNITY);
 }
 
 /* neighbor send-community extended. */
@@ -1990,18 +2103,14 @@ DEFUN (neighbor_send_community_type,
        "Send Standard Community attributes\n")
 {
   if (strncmp (argv[1], "s", 1) == 0)
-    return peer_af_flag_set_vty (vty, argv[0], bgp_node_afi (vty),
-                                 bgp_node_safi (vty),
-                                 PEER_FLAG_SEND_COMMUNITY);
+    return peer_af_flag_set_vty (vty, argv[0], bgp_node_qafx(vty),
+                                                     PEER_AFF_SEND_COMMUNITY);
   if (strncmp (argv[1], "e", 1) == 0)
-    return peer_af_flag_set_vty (vty, argv[0], bgp_node_afi (vty),
-                                 bgp_node_safi (vty),
-                                 PEER_FLAG_SEND_EXT_COMMUNITY);
+    return peer_af_flag_set_vty (vty, argv[0], bgp_node_qafx(vty),
+                                                 PEER_AFF_SEND_EXT_COMMUNITY);
 
-  return peer_af_flag_set_vty (vty, argv[0], bgp_node_afi (vty),
-                               bgp_node_safi (vty),
-                               (PEER_FLAG_SEND_COMMUNITY|
-                                PEER_FLAG_SEND_EXT_COMMUNITY));
+  return peer_af_flag_set_vty (vty, argv[0], bgp_node_qafx(vty),
+                    (PEER_AFF_SEND_COMMUNITY | PEER_AFF_SEND_EXT_COMMUNITY));
 }
 
 DEFUN (no_neighbor_send_community_type,
@@ -2016,18 +2125,14 @@ DEFUN (no_neighbor_send_community_type,
        "Send Standard Community attributes\n")
 {
   if (strncmp (argv[1], "s", 1) == 0)
-    return peer_af_flag_unset_vty (vty, argv[0], bgp_node_afi (vty),
-                                   bgp_node_safi (vty),
-                                   PEER_FLAG_SEND_COMMUNITY);
+    return peer_af_flag_unset_vty (vty, argv[0],bgp_node_qafx(vty),
+                                                      PEER_AFF_SEND_COMMUNITY);
   if (strncmp (argv[1], "e", 1) == 0)
-    return peer_af_flag_unset_vty (vty, argv[0], bgp_node_afi (vty),
-                                   bgp_node_safi (vty),
-                                   PEER_FLAG_SEND_EXT_COMMUNITY);
+    return peer_af_flag_unset_vty (vty, argv[0], bgp_node_qafx(vty),
+                                                  PEER_AFF_SEND_EXT_COMMUNITY);
 
-  return peer_af_flag_unset_vty (vty, argv[0], bgp_node_afi (vty),
-                                 bgp_node_safi (vty),
-                                 (PEER_FLAG_SEND_COMMUNITY |
-                                  PEER_FLAG_SEND_EXT_COMMUNITY));
+  return peer_af_flag_unset_vty (vty, argv[0], bgp_node_qafx(vty),
+                     (PEER_AFF_SEND_COMMUNITY | PEER_AFF_SEND_EXT_COMMUNITY));
 }
 
 /* neighbor soft-reconfig. */
@@ -2039,9 +2144,8 @@ DEFUN (neighbor_soft_reconfiguration,
        "Per neighbor soft reconfiguration\n"
        "Allow inbound soft reconfiguration for this neighbor\n")
 {
-  return peer_af_flag_set_vty (vty, argv[0],
-                               bgp_node_afi (vty), bgp_node_safi (vty),
-                               PEER_FLAG_SOFT_RECONFIG);
+  return peer_af_flag_set_vty (vty, argv[0], bgp_node_qafx(vty),
+                                                      PEER_AFF_SOFT_RECONFIG);
 }
 
 DEFUN (no_neighbor_soft_reconfiguration,
@@ -2053,9 +2157,8 @@ DEFUN (no_neighbor_soft_reconfiguration,
        "Per neighbor soft reconfiguration\n"
        "Allow inbound soft reconfiguration for this neighbor\n")
 {
-  return peer_af_flag_unset_vty (vty, argv[0],
-                                 bgp_node_afi (vty), bgp_node_safi (vty),
-                                 PEER_FLAG_SOFT_RECONFIG);
+  return peer_af_flag_unset_vty (vty, argv[0], bgp_node_qafx(vty),
+                                                      PEER_AFF_SOFT_RECONFIG);
 }
 
 DEFUN (neighbor_route_reflector_client,
@@ -2072,9 +2175,8 @@ DEFUN (neighbor_route_reflector_client,
   if (! peer)
     return CMD_WARNING;
 
-  return peer_af_flag_set_vty (vty, argv[0], bgp_node_afi (vty),
-                               bgp_node_safi (vty),
-                               PEER_FLAG_REFLECTOR_CLIENT);
+  return peer_af_flag_set_vty (vty, argv[0], bgp_node_qafx(vty),
+                                                   PEER_AFF_REFLECTOR_CLIENT);
 }
 
 DEFUN (no_neighbor_route_reflector_client,
@@ -2085,14 +2187,12 @@ DEFUN (no_neighbor_route_reflector_client,
        NEIGHBOR_ADDR_STR2
        "Configure a neighbor as Route Reflector client\n")
 {
-  return peer_af_flag_unset_vty (vty, argv[0], bgp_node_afi (vty),
-                                 bgp_node_safi (vty),
-                                 PEER_FLAG_REFLECTOR_CLIENT);
+  return peer_af_flag_unset_vty (vty, argv[0], bgp_node_qafx(vty),
+                                                   PEER_AFF_REFLECTOR_CLIENT);
 }
 
 static int
-peer_rsclient_set_vty (struct vty *vty, const char *peer_str,
-                       int afi, int safi)
+peer_rsclient_set_vty (struct vty *vty, const char *peer_str, qafx_t qafx)
 {
   int ret;
   struct bgp *bgp;
@@ -2101,79 +2201,74 @@ peer_rsclient_set_vty (struct vty *vty, const char *peer_str,
   struct listnode *node, *nnode;
   struct bgp_filter *pfilter;
   struct bgp_filter *gfilter;
-  bool was_active ;
 
-  bgp = vty->index;
+  if ((qafx < qafx_first) || (qafx > qafx_last))
+    {
+      vty_out (vty, "%% unknown qafx %u -- BUG", qafx) ;
+      return CMD_WARNING ;
+    } ;
+
+  bgp = vty->index ;
 
   peer = peer_and_group_lookup_vty (vty, peer_str);
   if ( ! peer )
     return CMD_WARNING;
 
-  /* If it is already a RS-Client, don't do anything. */
-  if ( CHECK_FLAG (peer->af_flags[afi][safi], PEER_FLAG_RSERVER_CLIENT) )
+  /* If it is already a RS-Client, don't do anything.
+   */
+  if ( xxx )
     return CMD_SUCCESS;
 
-  was_active = peer_rsclient_active(peer) ;
-
-  ret = peer_af_flag_set (peer, afi, safi, PEER_FLAG_RSERVER_CLIENT);
+  ret = peer_af_flag_set (peer, qafx, PEER_AFF_RSERVER_CLIENT);
   if (ret < 0)
     return bgp_vty_return (vty, ret);
 
-  if (!was_active)
+  peer->prib[qafx] = bgp_table_init (qafx);
+  peer->prib[qafx]->rib_type = BGP_TABLE_RSCLIENT;
+
+  /* RIB peer reference.  Released when table is free'd in bgp_table_free.
+   */
+  peer->prib[qafx]->owner = bgp_peer_lock (peer);
+
+  /* Check for existing 'network' and 'redistribute' routes.
+   */
+  bgp_check_local_routes_rsclient (peer, qafx);
+
+  /* Check for routes for peers configured with 'soft-reconfiguration'.
+   */
+  bgp_soft_reconfig_rsclient_in (peer, qafx);
+
+  if (peer->type == PEER_TYPE_GROUP_CONF)
     {
-      bgp_peer_lock (peer);             /* rsclient peer list reference */
-      listnode_add_sort (bgp->rsclient, peer);
-    } ;
-
-  peer->rib[afi][safi] = bgp_table_init (afi, safi);
-  peer->rib[afi][safi]->type = BGP_TABLE_RSCLIENT;
-  /* RIB peer reference.  Released when table is free'd in bgp_table_free. */
-  peer->rib[afi][safi]->owner = bgp_peer_lock (peer);
-
-  /* Check for existing 'network' and 'redistribute' routes. */
-  bgp_check_local_routes_rsclient (peer, afi, safi);
-
-  /* Check for routes for peers configured with 'soft-reconfiguration'. */
-  bgp_soft_reconfig_rsclient (peer, afi, safi);
-
-  if (CHECK_FLAG(peer->sflags, PEER_STATUS_GROUP))
-    {
-      group = peer->group;
-      gfilter = &peer->filter[afi][safi];
+      group   = peer->group;
+      gfilter = &group->conf->filter[qafx];
 
       for (ALL_LIST_ELEMENTS (group->peer, node, nnode, peer))
         {
-          pfilter = &peer->filter[afi][safi];
+          pfilter = &peer->filter[qafx];
 
           /* Members of a non-RS-Client group should not be RS-Clients, as that
-             is checked when the become part of the peer-group */
-          ret = peer_af_flag_set (peer, afi, safi, PEER_FLAG_RSERVER_CLIENT);
+           * is checked when the become part of the peer-group
+           */
+          ret = peer_af_flag_set (peer, qafx, PEER_AFF_RSERVER_CLIENT);
           if (ret < 0)
             return bgp_vty_return (vty, ret);
 
-          /* Make peer's RIB point to group's RIB. */
-          peer->rib[afi][safi] = group->conf->rib[afi][safi];
+          /* Make peer's RIB point to group's RIB.
+           */
+          peer->prib[qafx] = group->conf->prib[qafx];
 
-          /* Import policy. */
-          if (pfilter->map[RMAP_IMPORT].name)
-            free (pfilter->map[RMAP_IMPORT].name);
-          if (gfilter->map[RMAP_IMPORT].name)
-            {
-              pfilter->map[RMAP_IMPORT].name = strdup (gfilter->map[RMAP_IMPORT].name);
-              pfilter->map[RMAP_IMPORT].map = gfilter->map[RMAP_IMPORT].map;
-            }
-          else
-            {
-              pfilter->map[RMAP_IMPORT].name = NULL;
-              pfilter->map[RMAP_IMPORT].map =NULL;
-            }
+          /* Import policy.
+           */
+          route_map_clear_ref(pprib->filter.rmap[RMAP_IMPORT]) ;
+          pprib->filter.rmap[RMAP_IMPORT]
+                          = route_map_set_ref(gprib->filter.rmap[RMAP_IMPORT]) ;
 
-          /* Export policy. */
-          if (gfilter->map[RMAP_EXPORT].name && ! pfilter->map[RMAP_EXPORT].name)
-            {
-              pfilter->map[RMAP_EXPORT].name = strdup (gfilter->map[RMAP_EXPORT].name);
-              pfilter->map[RMAP_EXPORT].map = gfilter->map[RMAP_EXPORT].map;
-            }
+          /* Export policy.
+           */
+          if (pprib->filter.rmap[RMAP_EXPORT] == NULL)
+            pprib->filter.rmap[RMAP_EXPORT]
+                               = route_map_set_ref(gprib->filter.rmap[RMAP_EXPORT]) ;
         }
     }
   return CMD_SUCCESS;
@@ -2181,13 +2276,16 @@ peer_rsclient_set_vty (struct vty *vty, const char *peer_str,
 
 static int
 peer_rsclient_unset_vty (struct vty *vty, const char *peer_str,
-                         int afi, int safi)
+                         qAFI_t q_afi, qSAFI_t q_safi)
 {
   int ret;
   struct bgp *bgp;
   struct peer *peer;
   struct peer_group *group;
   struct listnode *node, *nnode;
+  qafx_t qafx ;
+
+  qafx = qafx_from_q(q_afi, q_safi) ;
 
   bgp = vty->index;
 
@@ -2198,7 +2296,7 @@ peer_rsclient_unset_vty (struct vty *vty, const char *peer_str,
   assert(bgp == peer->bgp) ;
 
   /* If it is not a RS-Client, don't do anything. */
-  if ( ! CHECK_FLAG (peer->af_flags[afi][safi], PEER_FLAG_RSERVER_CLIENT) )
+  if ( ! xxx )
     return CMD_SUCCESS;
 
   /* If this is a Peer Group, then need to undo the relevant rsclient state
@@ -2206,19 +2304,19 @@ peer_rsclient_unset_vty (struct vty *vty, const char *peer_str,
    *
    * That means clearing the state flag and the pointer to the shared RIB.
    *
-   * TODO: peer_af_flag_unset PEER_FLAG_RSERVER_CLIENT fails for group members ?
+   * TODO: peer_af_flag_unset PEER_AFF_RSERVER_CLIENT fails for group members ?
    */
-  if (CHECK_FLAG(peer->sflags, PEER_STATUS_GROUP))
+  if (peer->type == PEER_TYPE_GROUP_CONF)
     {
       group = peer->group;
 
       for (ALL_LIST_ELEMENTS (group->peer, node, nnode, peer))
         {
-          ret = peer_af_flag_unset (peer, afi, safi, PEER_FLAG_RSERVER_CLIENT);
+          ret = peer_af_flag_unset (peer, qafx, PEER_AFF_RSERVER_CLIENT);
           if (ret < 0)
             return bgp_vty_return (vty, ret);
 
-          peer->rib[afi][safi] = NULL;
+          peer->prib[qafx] = NULL;
         }
 
         peer = group->conf;
@@ -2229,58 +2327,14 @@ peer_rsclient_unset_vty (struct vty *vty, const char *peer_str,
    *
    * NB: this takes care of downing the peer, if required.
    */
-  ret = peer_af_flag_unset (peer, afi, safi, PEER_FLAG_RSERVER_CLIENT);
+  ret = peer_af_flag_unset (peer, qafx, PEER_AFF_RSERVER_CLIENT);
   if (ret < 0)
     return bgp_vty_return (vty, ret);
 
   /* Now tidy up the data structures.                                   */
-  peer_rsclient_unset(peer, afi, safi, false) ;
+  peer_rsclient_unset(peer, qafx, false) ;
 
   return CMD_SUCCESS;
-}
-
-/* Have unset rsclient state for a peer that was a distinct rsclient.
- *
- * Tidy up the data structures.
- *
- * NB: does not down the peer or deal with other consequences.
- */
-void
-peer_rsclient_unset(struct peer* peer, int afi, int safi, bool keep_export)
-{
-  assert(peer->rib[afi][safi] != NULL) ;
-
-  /* If the peer is no longer a distinct rsclient, remove from list of same. */
-  if (! peer_rsclient_active (peer))
-    {
-      struct listnode *pn;
-      pn = listnode_lookup (peer->bgp->rsclient, peer) ;
-
-      assert(pn != NULL) ;
-
-      bgp_peer_unlock (peer); /* peer rsclient reference */
-      list_delete_node (peer->bgp->rsclient, pn);
-    }
-
-  /* Discard the rsclient rib                                           */
-  bgp_clear_rsclient_rib (peer, afi, safi);
-  bgp_table_finish (&peer->rib[afi][safi]);
-
-  /* Discard import policy unconditionally                              */
-  if (peer->filter[afi][safi].map[RMAP_IMPORT].name)
-    {
-      free (peer->filter[afi][safi].map[RMAP_IMPORT].name);
-      peer->filter[afi][safi].map[RMAP_IMPORT].name = NULL;
-      peer->filter[afi][safi].map[RMAP_IMPORT].map = NULL;
-    }
-
-  /* Discard export policy unless should be kept.                       */
-  if (peer->filter[afi][safi].map[RMAP_EXPORT].name && !keep_export)
-    {
-      free (peer->filter[afi][safi].map[RMAP_EXPORT].name);
-      peer->filter[afi][safi].map[RMAP_EXPORT].name = NULL;
-      peer->filter[afi][safi].map[RMAP_EXPORT].map = NULL;
-    }
 }
 
 /* neighbor route-server-client. */
@@ -2291,8 +2345,7 @@ DEFUN (neighbor_route_server_client,
        NEIGHBOR_ADDR_STR2
        "Configure a neighbor as Route Server client\n")
 {
-  return peer_rsclient_set_vty (vty, argv[0], bgp_node_afi(vty),
-                  bgp_node_safi(vty));
+  return peer_rsclient_set_vty (vty, argv[0], bgp_node_qafx(vty));
 }
 
 DEFUN (no_neighbor_route_server_client,
@@ -2315,9 +2368,8 @@ DEFUN (neighbor_nexthop_local_unchanged,
        "Configure treatment of outgoing link-local nexthop attribute\n"
        "Leave link-local nexthop unchanged for this peer\n")
 {
-  return peer_af_flag_set_vty (vty, argv[0], bgp_node_afi (vty),
-                                bgp_node_safi (vty),
-                                PEER_FLAG_NEXTHOP_LOCAL_UNCHANGED );
+  return peer_af_flag_set_vty (vty, argv[0], bgp_node_qafx(vty),
+                                           PEER_AFF_NEXTHOP_LOCAL_UNCHANGED );
 }
 
 DEFUN (no_neighbor_nexthop_local_unchanged,
@@ -2329,9 +2381,8 @@ DEFUN (no_neighbor_nexthop_local_unchanged,
        "Configure treatment of outgoing link-local-nexthop attribute\n"
        "Leave link-local nexthop unchanged for this peer\n")
 {
-  return peer_af_flag_unset_vty (vty, argv[0], bgp_node_afi (vty),
-                                 bgp_node_safi (vty),
-                                PEER_FLAG_NEXTHOP_LOCAL_UNCHANGED );
+  return peer_af_flag_unset_vty (vty, argv[0], bgp_node_qafx(vty),
+                                           PEER_AFF_NEXTHOP_LOCAL_UNCHANGED );
 }
 
 DEFUN (neighbor_attr_unchanged,
@@ -2341,11 +2392,10 @@ DEFUN (neighbor_attr_unchanged,
        NEIGHBOR_ADDR_STR2
        "BGP attribute is propagated unchanged to this neighbor\n")
 {
-  return peer_af_flag_set_vty (vty, argv[0], bgp_node_afi (vty),
-                               bgp_node_safi (vty),
-                               (PEER_FLAG_AS_PATH_UNCHANGED |
-                                PEER_FLAG_NEXTHOP_UNCHANGED |
-                                PEER_FLAG_MED_UNCHANGED));
+  return peer_af_flag_set_vty (vty, argv[0], bgp_node_qafx(vty),
+                                        (PEER_AFF_AS_PATH_UNCHANGED |
+                                         PEER_AFF_NEXTHOP_UNCHANGED |
+                                         PEER_AFF_MED_UNCHANGED));
 }
 
 DEFUN (neighbor_attr_unchanged1,
@@ -2361,14 +2411,13 @@ DEFUN (neighbor_attr_unchanged1,
   u_int16_t flags = 0;
 
   if (strncmp (argv[1], "as-path", 1) == 0)
-    SET_FLAG (flags, PEER_FLAG_AS_PATH_UNCHANGED);
+    SET_FLAG (flags, PEER_AFF_AS_PATH_UNCHANGED);
   else if (strncmp (argv[1], "next-hop", 1) == 0)
-    SET_FLAG (flags, PEER_FLAG_NEXTHOP_UNCHANGED);
+    SET_FLAG (flags, PEER_AFF_NEXTHOP_UNCHANGED);
   else if (strncmp (argv[1], "med", 1) == 0)
-    SET_FLAG (flags, PEER_FLAG_MED_UNCHANGED);
+    SET_FLAG (flags, PEER_AFF_MED_UNCHANGED);
 
-  return peer_af_flag_set_vty (vty, argv[0], bgp_node_afi (vty),
-                               bgp_node_safi (vty), flags);
+  return peer_af_flag_set_vty (vty, argv[0], bgp_node_qafx(vty), flags);
 }
 
 DEFUN (neighbor_attr_unchanged2,
@@ -2381,15 +2430,14 @@ DEFUN (neighbor_attr_unchanged2,
        "Nexthop attribute\n"
        "Med attribute\n")
 {
-  u_int16_t flags = PEER_FLAG_AS_PATH_UNCHANGED;
+  u_int16_t flags = PEER_AFF_AS_PATH_UNCHANGED;
 
   if (strncmp (argv[1], "next-hop", 1) == 0)
-    SET_FLAG (flags, PEER_FLAG_NEXTHOP_UNCHANGED);
+    SET_FLAG (flags, PEER_AFF_NEXTHOP_UNCHANGED);
   else if (strncmp (argv[1], "med", 1) == 0)
-    SET_FLAG (flags, PEER_FLAG_MED_UNCHANGED);
+    SET_FLAG (flags, PEER_AFF_MED_UNCHANGED);
 
-  return peer_af_flag_set_vty (vty, argv[0], bgp_node_afi (vty),
-                               bgp_node_safi (vty), flags);
+  return peer_af_flag_set_vty (vty, argv[0], bgp_node_qafx(vty), flags);
 
 }
 
@@ -2403,15 +2451,14 @@ DEFUN (neighbor_attr_unchanged3,
        "As-path attribute\n"
        "Med attribute\n")
 {
-  u_int16_t flags = PEER_FLAG_NEXTHOP_UNCHANGED;
+  u_int16_t flags = PEER_AFF_NEXTHOP_UNCHANGED;
 
   if (strncmp (argv[1], "as-path", 1) == 0)
-    SET_FLAG (flags, PEER_FLAG_AS_PATH_UNCHANGED);
+    SET_FLAG (flags, PEER_AFF_AS_PATH_UNCHANGED);
   else if (strncmp (argv[1], "med", 1) == 0)
-    SET_FLAG (flags, PEER_FLAG_MED_UNCHANGED);
+    SET_FLAG (flags, PEER_AFF_MED_UNCHANGED);
 
-  return peer_af_flag_set_vty (vty, argv[0], bgp_node_afi (vty),
-                               bgp_node_safi (vty), flags);
+  return peer_af_flag_set_vty (vty, argv[0], bgp_node_qafx(vty), flags);
 }
 
 DEFUN (neighbor_attr_unchanged4,
@@ -2424,15 +2471,14 @@ DEFUN (neighbor_attr_unchanged4,
        "As-path attribute\n"
        "Nexthop attribute\n")
 {
-  u_int16_t flags = PEER_FLAG_MED_UNCHANGED;
+  u_int16_t flags = PEER_AFF_MED_UNCHANGED;
 
   if (strncmp (argv[1], "as-path", 1) == 0)
-    SET_FLAG (flags, PEER_FLAG_AS_PATH_UNCHANGED);
+    SET_FLAG (flags, PEER_AFF_AS_PATH_UNCHANGED);
   else if (strncmp (argv[1], "next-hop", 1) == 0)
-    SET_FLAG (flags, PEER_FLAG_NEXTHOP_UNCHANGED);
+    SET_FLAG (flags, PEER_AFF_NEXTHOP_UNCHANGED);
 
-  return peer_af_flag_set_vty (vty, argv[0], bgp_node_afi (vty),
-                               bgp_node_safi (vty), flags);
+  return peer_af_flag_set_vty (vty, argv[0], bgp_node_qafx(vty), flags);
 }
 
 ALIAS (neighbor_attr_unchanged,
@@ -2503,11 +2549,10 @@ DEFUN (no_neighbor_attr_unchanged,
        NEIGHBOR_ADDR_STR2
        "BGP attribute is propagated unchanged to this neighbor\n")
 {
-  return peer_af_flag_unset_vty (vty, argv[0], bgp_node_afi (vty),
-                                 bgp_node_safi (vty),
-                                 (PEER_FLAG_AS_PATH_UNCHANGED |
-                                  PEER_FLAG_NEXTHOP_UNCHANGED |
-                                  PEER_FLAG_MED_UNCHANGED));
+  return peer_af_flag_unset_vty (vty, argv[0], bgp_node_qafx(vty),
+                                 (PEER_AFF_AS_PATH_UNCHANGED |
+                                  PEER_AFF_NEXTHOP_UNCHANGED |
+                                  PEER_AFF_MED_UNCHANGED));
 }
 
 DEFUN (no_neighbor_attr_unchanged1,
@@ -2524,14 +2569,13 @@ DEFUN (no_neighbor_attr_unchanged1,
   u_int16_t flags = 0;
 
   if (strncmp (argv[1], "as-path", 1) == 0)
-    SET_FLAG (flags, PEER_FLAG_AS_PATH_UNCHANGED);
+    SET_FLAG (flags, PEER_AFF_AS_PATH_UNCHANGED);
   else if (strncmp (argv[1], "next-hop", 1) == 0)
-    SET_FLAG (flags, PEER_FLAG_NEXTHOP_UNCHANGED);
+    SET_FLAG (flags, PEER_AFF_NEXTHOP_UNCHANGED);
   else if (strncmp (argv[1], "med", 1) == 0)
-    SET_FLAG (flags, PEER_FLAG_MED_UNCHANGED);
+    SET_FLAG (flags, PEER_AFF_MED_UNCHANGED);
 
-  return peer_af_flag_unset_vty (vty, argv[0], bgp_node_afi (vty),
-                                 bgp_node_safi (vty), flags);
+  return peer_af_flag_unset_vty (vty, argv[0], bgp_node_qafx(vty), flags);
 }
 
 DEFUN (no_neighbor_attr_unchanged2,
@@ -2545,15 +2589,14 @@ DEFUN (no_neighbor_attr_unchanged2,
        "Nexthop attribute\n"
        "Med attribute\n")
 {
-  u_int16_t flags = PEER_FLAG_AS_PATH_UNCHANGED;
+  u_int16_t flags = PEER_AFF_AS_PATH_UNCHANGED;
 
   if (strncmp (argv[1], "next-hop", 1) == 0)
-    SET_FLAG (flags, PEER_FLAG_NEXTHOP_UNCHANGED);
+    SET_FLAG (flags, PEER_AFF_NEXTHOP_UNCHANGED);
   else if (strncmp (argv[1], "med", 1) == 0)
-    SET_FLAG (flags, PEER_FLAG_MED_UNCHANGED);
+    SET_FLAG (flags, PEER_AFF_MED_UNCHANGED);
 
-  return peer_af_flag_unset_vty (vty, argv[0], bgp_node_afi (vty),
-                               bgp_node_safi (vty), flags);
+  return peer_af_flag_unset_vty (vty, argv[0], bgp_node_qafx(vty), flags);
 }
 
 DEFUN (no_neighbor_attr_unchanged3,
@@ -2567,15 +2610,14 @@ DEFUN (no_neighbor_attr_unchanged3,
        "As-path attribute\n"
        "Med attribute\n")
 {
-  u_int16_t flags = PEER_FLAG_NEXTHOP_UNCHANGED;
+  u_int16_t flags = PEER_AFF_NEXTHOP_UNCHANGED;
 
   if (strncmp (argv[1], "as-path", 1) == 0)
-    SET_FLAG (flags, PEER_FLAG_AS_PATH_UNCHANGED);
+    SET_FLAG (flags, PEER_AFF_AS_PATH_UNCHANGED);
   else if (strncmp (argv[1], "med", 1) == 0)
-    SET_FLAG (flags, PEER_FLAG_MED_UNCHANGED);
+    SET_FLAG (flags, PEER_AFF_MED_UNCHANGED);
 
-  return peer_af_flag_unset_vty (vty, argv[0], bgp_node_afi (vty),
-                                 bgp_node_safi (vty), flags);
+  return peer_af_flag_unset_vty (vty, argv[0], bgp_node_qafx(vty), flags);
 }
 
 DEFUN (no_neighbor_attr_unchanged4,
@@ -2589,15 +2631,14 @@ DEFUN (no_neighbor_attr_unchanged4,
        "As-path attribute\n"
        "Nexthop attribute\n")
 {
-  u_int16_t flags = PEER_FLAG_MED_UNCHANGED;
+  u_int16_t flags = PEER_AFF_MED_UNCHANGED;
 
   if (strncmp (argv[1], "as-path", 1) == 0)
-    SET_FLAG (flags, PEER_FLAG_AS_PATH_UNCHANGED);
+    SET_FLAG (flags, PEER_AFF_AS_PATH_UNCHANGED);
   else if (strncmp (argv[1], "next-hop", 1) == 0)
-    SET_FLAG (flags, PEER_FLAG_NEXTHOP_UNCHANGED);
+    SET_FLAG (flags, PEER_AFF_NEXTHOP_UNCHANGED);
 
-  return peer_af_flag_unset_vty (vty, argv[0], bgp_node_afi (vty),
-                               bgp_node_safi (vty), flags);
+  return peer_af_flag_unset_vty (vty, argv[0], bgp_node_qafx(vty), flags);
 }
 
 ALIAS (no_neighbor_attr_unchanged,
@@ -2674,9 +2715,8 @@ DEFUN_DEPRECATED (neighbor_transparent_as,
                   NEIGHBOR_ADDR_STR
                   "Do not append my AS number even peer is EBGP peer\n")
 {
-  return peer_af_flag_set_vty (vty, argv[0], bgp_node_afi (vty),
-                               bgp_node_safi (vty),
-                               PEER_FLAG_AS_PATH_UNCHANGED);
+  return peer_af_flag_set_vty (vty, argv[0], bgp_node_qafx(vty),
+                                                  PEER_AFF_AS_PATH_UNCHANGED);
 }
 
 DEFUN_DEPRECATED (neighbor_transparent_nexthop,
@@ -2686,9 +2726,8 @@ DEFUN_DEPRECATED (neighbor_transparent_nexthop,
                   NEIGHBOR_ADDR_STR
                   "Do not change nexthop even peer is EBGP peer\n")
 {
-  return peer_af_flag_set_vty (vty, argv[0], bgp_node_afi (vty),
-                               bgp_node_safi (vty),
-                               PEER_FLAG_NEXTHOP_UNCHANGED);
+  return peer_af_flag_set_vty (vty, argv[0], bgp_node_qafx(vty),
+                                                  PEER_AFF_NEXTHOP_UNCHANGED);
 }
 
 /* EBGP multihop configuration. */
@@ -2864,26 +2903,23 @@ static int
 peer_update_source_vty (struct vty *vty, const char *peer_str,
                         const char *source_str)
 {
-  struct peer *peer;
-  union sockunion *su;
+  bgp_peer peer;
 
   peer = peer_and_group_lookup_vty (vty, peer_str);
-  if (! peer)
+  if (peer == NULL)
     return CMD_WARNING;
 
-  if (source_str)
+  if (source_str == NULL)
+    peer_update_source_unset (peer);
+  else
     {
-      su = sockunion_str2su (source_str);
-      if (su)
-        {
-          peer_update_source_addr_set (peer, su);
-          sockunion_free (su);
-        }
+      sockunion_t su[1] ;
+
+      if (sockunion_str2su (su, source_str))
+        peer_update_source_addr_set (peer, su);
       else
         peer_update_source_if_set (peer, source_str);
-    }
-  else
-    peer_update_source_unset (peer);
+    } ;
 
   return CMD_SUCCESS;
 }
@@ -2918,8 +2954,7 @@ DEFUN (no_neighbor_update_source,
 
 static int
 peer_default_originate_set_vty (struct vty *vty, const char *peer_str,
-                                afi_t afi, safi_t safi,
-                                const char *rmap, int set)
+                                qafx_t qafx, const char *rmap_name, bool set)
 {
   int ret;
   struct peer *peer;
@@ -2929,9 +2964,9 @@ peer_default_originate_set_vty (struct vty *vty, const char *peer_str,
     return CMD_WARNING;
 
   if (set)
-    ret = peer_default_originate_set (peer, afi, safi, rmap);
+    ret = peer_default_originate_set (peer, qafx, rmap_name);
   else
-    ret = peer_default_originate_unset (peer, afi, safi);
+    ret = peer_default_originate_unset (peer, qafx);
 
   return bgp_vty_return (vty, ret);
 }
@@ -2944,8 +2979,8 @@ DEFUN (neighbor_default_originate,
        NEIGHBOR_ADDR_STR2
        "Originate default route to this neighbor\n")
 {
-  return peer_default_originate_set_vty (vty, argv[0], bgp_node_afi (vty),
-                                         bgp_node_safi (vty), NULL, 1);
+  return peer_default_originate_set_vty (vty, argv[0], bgp_node_qafx(vty),
+                                                         NULL, true /* set */) ;
 }
 
 DEFUN (neighbor_default_originate_rmap,
@@ -2957,8 +2992,8 @@ DEFUN (neighbor_default_originate_rmap,
        "Route-map to specify criteria to originate default\n"
        "route-map name\n")
 {
-  return peer_default_originate_set_vty (vty, argv[0], bgp_node_afi (vty),
-                                         bgp_node_safi (vty), argv[1], 1);
+  return peer_default_originate_set_vty (vty, argv[0], bgp_node_qafx(vty),
+                                                      argv[1], true /* set */);
 }
 
 DEFUN (no_neighbor_default_originate,
@@ -2969,8 +3004,8 @@ DEFUN (no_neighbor_default_originate,
        NEIGHBOR_ADDR_STR2
        "Originate default route to this neighbor\n")
 {
-  return peer_default_originate_set_vty (vty, argv[0], bgp_node_afi (vty),
-                                         bgp_node_safi (vty), NULL, 0);
+  return peer_default_originate_set_vty (vty, argv[0], bgp_node_qafx(vty),
+                                                      NULL, false /* clear */);
 }
 
 ALIAS (no_neighbor_default_originate,
@@ -2983,8 +3018,14 @@ ALIAS (no_neighbor_default_originate,
        "Route-map to specify criteria to originate default\n"
        "route-map name\n")
 
-/* Set neighbor's BGP port.  */
-static int
+/*------------------------------------------------------------------------------
+ * Set/Unset neighbor's BGP port.
+ *
+ * NB: this cannot be set/unset for a *group*.
+ *
+ *     BUT... can be set/unset for a *group* *member*
+ */
+static cmd_ret_t
 peer_port_vty (struct vty *vty, const char *ip_str, int afi,
                const char *port_str)
 {
@@ -2992,11 +3033,11 @@ peer_port_vty (struct vty *vty, const char *ip_str, int afi,
   u_int16_t port;
   struct servent *sp;
 
-  peer = peer_lookup_vty (vty, ip_str);
-  if (! peer)
+  peer = peer_lookup_vty_index (vty, ip_str);
+  if (peer == NULL)
     return CMD_WARNING;
 
-  if (! port_str)
+  if (port_str == NULL)
     {
       sp = getservbyname ("bgp", "tcp");
       port = (sp == NULL) ? BGP_PORT_DEFAULT : ntohs (sp->s_port);
@@ -3048,9 +3089,9 @@ static int
 peer_weight_set_vty (struct vty *vty, const char *ip_str,
                      const char *weight_str)
 {
-  int ret  Unused ;
-  struct peer *peer;
-  unsigned long weight;
+  bgp_peer peer;
+  uint     weight;
+  int      ret ;
 
   peer = peer_and_group_lookup_vty (vty, ip_str);
   if (! peer)
@@ -3058,9 +3099,9 @@ peer_weight_set_vty (struct vty *vty, const char *ip_str,
 
   VTY_GET_INTEGER_RANGE("weight", weight, weight_str, 0, 65535);
 
-  ret = peer_weight_set (peer, weight);         /* TODO: use ret ??     */
+  ret = peer_weight_set (peer, weight);
 
-  return CMD_SUCCESS;
+  return bgp_vty_return (vty, ret);
 }
 
 static int
@@ -3151,14 +3192,18 @@ DEFUN (no_neighbor_strict_capability,
   return peer_flag_unset_vty (vty, argv[0], PEER_FLAG_STRICT_CAP_MATCH);
 }
 
+/*------------------------------------------------------------------------------
+ * Set neighbor's or group's timers.
+ *
+ * Sets the given values for KeepAliveTime and HoldTime
+ */
 static int
 peer_timers_set_vty (struct vty *vty, const char *ip_str,
                      const char *keep_str, const char *hold_str)
 {
-  int ret;
-  struct peer *peer;
-  u_int32_t keepalive;
-  u_int32_t holdtime;
+  bgp_ret_t ret;
+  bgp_peer  peer;
+  uint keepalive, holdtime;
 
   peer = peer_and_group_lookup_vty (vty, ip_str);
   if (! peer)
@@ -3172,13 +3217,18 @@ peer_timers_set_vty (struct vty *vty, const char *ip_str,
   return bgp_vty_return (vty, ret);
 }
 
+/*------------------------------------------------------------------------------
+ * Unset neighbor's or group's timers.
+ *
+ * Sets the default values for KeepAliveTime and HoldTime
+ */
 static int
 peer_timers_unset_vty (struct vty *vty, const char *ip_str)
 {
-  int ret;
-  struct peer *peer;
+  bgp_ret_t ret;
+  bgp_peer  peer;
 
-  peer = peer_lookup_vty (vty, ip_str);
+  peer = peer_and_group_lookup_vty (vty, ip_str);
   if (! peer)
     return CMD_WARNING;
 
@@ -3210,45 +3260,50 @@ DEFUN (no_neighbor_timers,
   return peer_timers_unset_vty (vty, argv[0]);
 }
 
+/*------------------------------------------------------------------------------
+ * Set neighbor's or group's connect timer.
+ *
+ * Sets the given values for ConnectTime
+ */
 static int
 peer_timers_connect_set_vty (struct vty *vty, const char *ip_str,
                              const char *time_str)
 {
-  int ret  Unused ;
-  struct peer *peer;
-  u_int32_t connect;
-
-  peer = peer_lookup_vty (vty, ip_str);
-  if (! peer)
-    return CMD_WARNING;
-
-  VTY_GET_INTEGER_RANGE ("Connect time", connect, time_str, 0, 65535);
-
-  ret = peer_timers_connect_set (peer, connect);        /* TODO use ret ?? */
-
-  return CMD_SUCCESS;
-}
-
-static int
-peer_timers_connect_unset_vty (struct vty *vty, const char *ip_str)
-{
-  int ret  Unused ;
-  struct peer *peer;
+  bgp_ret_t ret ;
+  bgp_peer  peer;
+  uint      connect;
 
   peer = peer_and_group_lookup_vty (vty, ip_str);
   if (! peer)
     return CMD_WARNING;
 
-  ret = peer_timers_connect_unset (peer);       /* TODO use ret ??      */
+  VTY_GET_INTEGER_RANGE ("Connect time", connect, time_str, 0, 65535);
 
-  return CMD_SUCCESS;
+  ret = peer_timers_connect_set (peer, connect) ;
+
+  return bgp_vty_return (vty, ret);
 }
+
+static int
+peer_timers_connect_unset_vty (struct vty *vty, const char *ip_str)
+{
+  bgp_ret_t ret ;
+  bgp_peer  peer;
+
+  peer = peer_and_group_lookup_vty (vty, ip_str);
+  if (! peer)
+    return CMD_WARNING;
+
+  ret = peer_timers_connect_unset (peer);
+
+  return bgp_vty_return (vty, ret);
+} ;
 
 DEFUN (neighbor_timers_connect,
        neighbor_timers_connect_cmd,
-       NEIGHBOR_CMD "timers connect <0-65535>",
+       NEIGHBOR_CMD2 "timers connect <0-65535>",
        NEIGHBOR_STR
-       NEIGHBOR_ADDR_STR
+       NEIGHBOR_ADDR_STR2
        "BGP per neighbor timers\n"
        "BGP connect timer\n"
        "Connect timer\n")
@@ -3258,10 +3313,10 @@ DEFUN (neighbor_timers_connect,
 
 DEFUN (no_neighbor_timers_connect,
        no_neighbor_timers_connect_cmd,
-       NO_NEIGHBOR_CMD "timers connect",
+       NO_NEIGHBOR_CMD2 "timers connect",
        NO_STR
        NEIGHBOR_STR
-       NEIGHBOR_ADDR_STR
+       NEIGHBOR_ADDR_STR2
        "BGP per neighbor timers\n"
        "BGP connect timer\n")
 {
@@ -3270,42 +3325,47 @@ DEFUN (no_neighbor_timers_connect,
 
 ALIAS (no_neighbor_timers_connect,
        no_neighbor_timers_connect_val_cmd,
-       NO_NEIGHBOR_CMD "timers connect <0-65535>",
+       NO_NEIGHBOR_CMD2 "timers connect <0-65535>",
        NO_STR
        NEIGHBOR_STR
-       NEIGHBOR_ADDR_STR
+       NEIGHBOR_ADDR_STR2
        "BGP per neighbor timers\n"
        "BGP connect timer\n"
        "Connect timer\n")
 
-static int
+/*------------------------------------------------------------------------------
+ * Set or clear the advertisement-interval for the given peer or group.
+ */
+static cmd_ret_t
 peer_advertise_interval_vty (struct vty *vty, const char *ip_str,
-                             const char *time_str, int set)
+                             const char *time_str, bool set)
 {
-  int ret  Unused ;
-  struct peer *peer;
-  u_int32_t routeadv = 0;
+  bgp_ret_t ret ;
+  bgp_peer  peer ;
+  uint      routeadv ;
 
-  peer = peer_lookup_vty (vty, ip_str);
-  if (! peer)
+  peer = peer_and_group_lookup_vty (vty, ip_str);
+  if (peer == NULL)
     return CMD_WARNING;
 
-  if (time_str)
+  if (time_str != NULL)
     VTY_GET_INTEGER_RANGE ("advertise interval", routeadv, time_str, 0, 600);
+  else
+    routeadv = 0 ;
 
   if (set)
-    ret = peer_advertise_interval_set (peer, routeadv); /* TODO use ret ?? */
+    ret = peer_advertise_interval_set (peer, routeadv) ;
   else
-    ret = peer_advertise_interval_unset (peer);         /* TODO use ret ?? */
+    ret = peer_advertise_interval_unset (peer) ;
 
-  return CMD_SUCCESS;
+  return bgp_vty_return (vty, ret);
 }
 
 DEFUN (neighbor_advertise_interval,
        neighbor_advertise_interval_cmd,
-       NEIGHBOR_CMD "advertisement-interval <0-600>",
+       NEIGHBOR_CMD2 "advertisement-interval <0-600>",
        NEIGHBOR_STR
-       NEIGHBOR_ADDR_STR
+       NEIGHBOR_ADDR_STR2
        "Minimum interval between sending BGP routing updates\n"
        "time in seconds\n")
 {
@@ -3314,10 +3374,10 @@ DEFUN (neighbor_advertise_interval,
 
 DEFUN (no_neighbor_advertise_interval,
        no_neighbor_advertise_interval_cmd,
-       NO_NEIGHBOR_CMD "advertisement-interval",
+       NO_NEIGHBOR_CMD2 "advertisement-interval",
        NO_STR
        NEIGHBOR_STR
-       NEIGHBOR_ADDR_STR
+       NEIGHBOR_ADDR_STR2
        "Minimum interval between sending BGP routing updates\n")
 {
   return peer_advertise_interval_vty (vty, argv[0], NULL, 0);
@@ -3325,30 +3385,34 @@ DEFUN (no_neighbor_advertise_interval,
 
 ALIAS (no_neighbor_advertise_interval,
        no_neighbor_advertise_interval_val_cmd,
-       NO_NEIGHBOR_CMD "advertisement-interval <0-600>",
+       NO_NEIGHBOR_CMD2 "advertisement-interval <0-600>",
        NO_STR
        NEIGHBOR_STR
-       NEIGHBOR_ADDR_STR
+       NEIGHBOR_ADDR_STR2
        "Minimum interval between sending BGP routing updates\n"
        "time in seconds\n")
 
-/* neighbor interface */
-static int
+/*------------------------------------------------------------------------------
+ * Set or clear the interface for the given peer.
+ *
+ * NB: this cannot be set/cleared for a *group*.
+ */
+static cmd_ret_t
 peer_interface_vty (struct vty *vty, const char *ip_str, const char *str)
 {
   int ret  Unused ;
   struct peer *peer;
 
-  peer = peer_lookup_vty (vty, ip_str);
-  if (! peer)
+  peer = peer_lookup_vty_index (vty, ip_str);
+  if (peer == NULL)
     return CMD_WARNING;
 
-  if (str)
+  if (str != NULL)
     ret = peer_interface_set (peer, str);       /* TODO use ret ??      */
   else
     ret = peer_interface_unset (peer);          /* TODO use ret ??      */
 
-  return CMD_SUCCESS;
+  return bgp_vty_return (vty, ret);
 }
 
 DEFUN (neighbor_interface,
@@ -3376,8 +3440,7 @@ DEFUN (no_neighbor_interface,
 
 /* Set distribute list to the peer. */
 static int
-peer_distribute_set_vty (struct vty *vty, const char *ip_str,
-                         afi_t afi, safi_t safi,
+peer_distribute_set_vty (struct vty *vty, const char *ip_str, qafx_t qafx,
                          const char *name_str, const char *direct_str)
 {
   int ret;
@@ -3394,14 +3457,14 @@ peer_distribute_set_vty (struct vty *vty, const char *ip_str,
   else if (strncmp (direct_str, "o", 1) == 0)
     direct = FILTER_OUT;
 
-  ret = peer_distribute_set (peer, afi, safi, direct, name_str);
+  ret = peer_distribute_set (peer, qafx, direct, name_str);
 
   return bgp_vty_return (vty, ret);
 }
 
 static int
-peer_distribute_unset_vty (struct vty *vty, const char *ip_str, afi_t afi,
-                           safi_t safi, const char *direct_str)
+peer_distribute_unset_vty (struct vty *vty, const char *ip_str, qafx_t qafx,
+                                                         const char *direct_str)
 {
   int ret;
   struct peer *peer;
@@ -3417,7 +3480,7 @@ peer_distribute_unset_vty (struct vty *vty, const char *ip_str, afi_t afi,
   else if (strncmp (direct_str, "o", 1) == 0)
     direct = FILTER_OUT;
 
-  ret = peer_distribute_unset (peer, afi, safi, direct);
+  ret = peer_distribute_unset (peer, qafx, direct);
 
   return bgp_vty_return (vty, ret);
 }
@@ -3434,8 +3497,8 @@ DEFUN (neighbor_distribute_list,
        "Filter incoming updates\n"
        "Filter outgoing updates\n")
 {
-  return peer_distribute_set_vty (vty, argv[0], bgp_node_afi (vty),
-                                  bgp_node_safi (vty), argv[1], argv[2]);
+  return peer_distribute_set_vty (vty, argv[0], bgp_node_qafx(vty),
+                                                              argv[1], argv[2]);
 }
 
 DEFUN (no_neighbor_distribute_list,
@@ -3451,15 +3514,13 @@ DEFUN (no_neighbor_distribute_list,
        "Filter incoming updates\n"
        "Filter outgoing updates\n")
 {
-  return peer_distribute_unset_vty (vty, argv[0], bgp_node_afi (vty),
-                                    bgp_node_safi (vty), argv[2]);
+  return peer_distribute_unset_vty (vty, argv[0], bgp_node_qafx(vty), argv[2]);
 }
 
 /* Set prefix list to the peer. */
 static int
-peer_prefix_list_set_vty (struct vty *vty, const char *ip_str, afi_t afi,
-                          safi_t safi, const char *name_str,
-                          const char *direct_str)
+peer_prefix_list_set_vty (struct vty *vty, const char *ip_str, qafx_t qafx,
+                                   const char *name_str, const char *direct_str)
 {
   int ret;
   struct peer *peer;
@@ -3475,14 +3536,14 @@ peer_prefix_list_set_vty (struct vty *vty, const char *ip_str, afi_t afi,
   else if (strncmp (direct_str, "o", 1) == 0)
     direct = FILTER_OUT;
 
-  ret = peer_prefix_list_set (peer, afi, safi, direct, name_str);
+  ret = peer_prefix_list_set (peer, qafx, direct, name_str);
 
   return bgp_vty_return (vty, ret);
 }
 
 static int
-peer_prefix_list_unset_vty (struct vty *vty, const char *ip_str, afi_t afi,
-                            safi_t safi, const char *direct_str)
+peer_prefix_list_unset_vty (struct vty *vty, const char *ip_str, qafx_t qafx,
+                                                         const char *direct_str)
 {
   int ret;
   struct peer *peer;
@@ -3498,7 +3559,7 @@ peer_prefix_list_unset_vty (struct vty *vty, const char *ip_str, afi_t afi,
   else if (strncmp (direct_str, "o", 1) == 0)
     direct = FILTER_OUT;
 
-  ret = peer_prefix_list_unset (peer, afi, safi, direct);
+  ret = peer_prefix_list_unset (peer, qafx, direct);
 
   return bgp_vty_return (vty, ret);
 }
@@ -3513,8 +3574,8 @@ DEFUN (neighbor_prefix_list,
        "Filter incoming updates\n"
        "Filter outgoing updates\n")
 {
-  return peer_prefix_list_set_vty (vty, argv[0], bgp_node_afi (vty),
-                                   bgp_node_safi (vty), argv[1], argv[2]);
+  return peer_prefix_list_set_vty (vty, argv[0], bgp_node_qafx(vty),
+                                                              argv[1], argv[2]);
 }
 
 DEFUN (no_neighbor_prefix_list,
@@ -3528,13 +3589,11 @@ DEFUN (no_neighbor_prefix_list,
        "Filter incoming updates\n"
        "Filter outgoing updates\n")
 {
-  return peer_prefix_list_unset_vty (vty, argv[0], bgp_node_afi (vty),
-                                     bgp_node_safi (vty), argv[2]);
+  return peer_prefix_list_unset_vty (vty, argv[0], bgp_node_qafx(vty), argv[2]);
 }
 
 static int
-peer_aslist_set_vty (struct vty *vty, const char *ip_str,
-                     afi_t afi, safi_t safi,
+peer_aslist_set_vty (struct vty *vty, const char *ip_str, qafx_t qafx,
                      const char *name_str, const char *direct_str)
 {
   int ret;
@@ -3551,15 +3610,14 @@ peer_aslist_set_vty (struct vty *vty, const char *ip_str,
   else if (strncmp (direct_str, "o", 1) == 0)
     direct = FILTER_OUT;
 
-  ret = peer_aslist_set (peer, afi, safi, direct, name_str);
+  ret = peer_aslist_set (peer, qafx, direct, name_str);
 
   return bgp_vty_return (vty, ret);
 }
 
 static int
-peer_aslist_unset_vty (struct vty *vty, const char *ip_str,
-                       afi_t afi, safi_t safi,
-                       const char *direct_str)
+peer_aslist_unset_vty (struct vty *vty, const char *ip_str, qafx_t qafx,
+                                                         const char *direct_str)
 {
   int ret;
   struct peer *peer;
@@ -3575,7 +3633,7 @@ peer_aslist_unset_vty (struct vty *vty, const char *ip_str,
   else if (strncmp (direct_str, "o", 1) == 0)
     direct = FILTER_OUT;
 
-  ret = peer_aslist_unset (peer, afi, safi, direct);
+  ret = peer_aslist_unset (peer, qafx, direct);
 
   return bgp_vty_return (vty, ret);
 }
@@ -3590,8 +3648,8 @@ DEFUN (neighbor_filter_list,
        "Filter incoming routes\n"
        "Filter outgoing routes\n")
 {
-  return peer_aslist_set_vty (vty, argv[0], bgp_node_afi (vty),
-                              bgp_node_safi (vty), argv[1], argv[2]);
+  return peer_aslist_set_vty (vty, argv[0], bgp_node_qafx(vty),
+                                                             argv[1], argv[2]);
 }
 
 DEFUN (no_neighbor_filter_list,
@@ -3605,15 +3663,13 @@ DEFUN (no_neighbor_filter_list,
        "Filter incoming routes\n"
        "Filter outgoing routes\n")
 {
-  return peer_aslist_unset_vty (vty, argv[0], bgp_node_afi (vty),
-                                bgp_node_safi (vty), argv[2]);
+  return peer_aslist_unset_vty (vty, argv[0], bgp_node_qafx(vty), argv[2]);
 }
 
 /* Set route-map to the peer. */
 static int
-peer_route_map_set_vty (struct vty *vty, const char *ip_str,
-                        afi_t afi, safi_t safi,
-                        const char *name_str, const char *direct_str)
+peer_route_map_set_vty (struct vty *vty, const char *ip_str, qafx_t qafx,
+                                  const char *name_str, const char *direct_str)
 {
   int ret;
   struct peer *peer;
@@ -3635,14 +3691,14 @@ peer_route_map_set_vty (struct vty *vty, const char *ip_str,
   else if (strncmp (direct_str, "r", 1) == 0)
     direct = RMAP_RS_IN;
 
-  ret = peer_route_map_set (peer, afi, safi, direct, name_str);
+  ret = peer_route_map_set (peer, qafx, direct, name_str);
 
   return bgp_vty_return (vty, ret);
 }
 
 static int
-peer_route_map_unset_vty (struct vty *vty, const char *ip_str, afi_t afi,
-                          safi_t safi, const char *direct_str)
+peer_route_map_unset_vty (struct vty *vty, const char *ip_str, qafx_t qafx,
+                                                         const char *direct_str)
 {
   int ret;
   struct peer *peer;
@@ -3664,7 +3720,7 @@ peer_route_map_unset_vty (struct vty *vty, const char *ip_str, afi_t afi,
   else if (strncmp (direct_str, "r", 1) == 0)
     direct = RMAP_RS_IN;
 
-  ret = peer_route_map_unset (peer, afi, safi, direct);
+  ret = peer_route_map_unset (peer, qafx, direct);
 
   return bgp_vty_return (vty, ret);
 }
@@ -3682,8 +3738,8 @@ DEFUN (neighbor_route_map,
        "Apply map to routes going into a Route-Server client's table\n"
        "Apply map to routes coming from a Route-Server client")
 {
-  return peer_route_map_set_vty (vty, argv[0], bgp_node_afi (vty),
-                                 bgp_node_safi (vty), argv[1], argv[2]);
+  return peer_route_map_set_vty (vty, argv[0], bgp_node_qafx(vty),
+                                                              argv[1], argv[2]);
 }
 
 DEFUN (no_neighbor_route_map,
@@ -3700,14 +3756,13 @@ DEFUN (no_neighbor_route_map,
        "Apply map to routes going into a Route-Server client's table\n"
        "Apply map to routes coming from a Route-Server client")
 {
-  return peer_route_map_unset_vty (vty, argv[0], bgp_node_afi (vty),
-                                   bgp_node_safi (vty), argv[2]);
+  return peer_route_map_unset_vty (vty, argv[0], bgp_node_qafx(vty), argv[2]);
 }
 
 /* Set unsuppress-map to the peer. */
 static int
-peer_unsuppress_map_set_vty (struct vty *vty, const char *ip_str, afi_t afi,
-                             safi_t safi, const char *name_str)
+peer_unsuppress_map_set_vty (struct vty *vty, const char *ip_str, qafx_t qafx,
+                                                           const char *name_str)
 {
   int ret;
   struct peer *peer;
@@ -3716,15 +3771,14 @@ peer_unsuppress_map_set_vty (struct vty *vty, const char *ip_str, afi_t afi,
   if (! peer)
     return CMD_WARNING;
 
-  ret = peer_unsuppress_map_set (peer, afi, safi, name_str);
+  ret = peer_unsuppress_map_set (peer, qafx, name_str);
 
   return bgp_vty_return (vty, ret);
 }
 
 /* Unset route-map from the peer. */
 static int
-peer_unsuppress_map_unset_vty (struct vty *vty, const char *ip_str, afi_t afi,
-                               safi_t safi)
+peer_unsuppress_map_unset_vty (struct vty *vty, const char *ip_str, qafx_t qafx)
 {
   int ret;
   struct peer *peer;
@@ -3733,7 +3787,7 @@ peer_unsuppress_map_unset_vty (struct vty *vty, const char *ip_str, afi_t afi,
   if (! peer)
     return CMD_WARNING;
 
-  ret = peer_unsuppress_map_unset (peer, afi, safi);
+  ret = peer_unsuppress_map_unset (peer, qafx);
 
   return bgp_vty_return (vty, ret);
 }
@@ -3746,8 +3800,8 @@ DEFUN (neighbor_unsuppress_map,
        "Route-map to selectively unsuppress suppressed routes\n"
        "Name of route map\n")
 {
-  return peer_unsuppress_map_set_vty (vty, argv[0], bgp_node_afi (vty),
-                                      bgp_node_safi (vty), argv[1]);
+  return peer_unsuppress_map_set_vty (vty, argv[0], bgp_node_qafx(vty),
+                                                                      argv[1]) ;
 }
 
 DEFUN (no_neighbor_unsuppress_map,
@@ -3759,21 +3813,19 @@ DEFUN (no_neighbor_unsuppress_map,
        "Route-map to selectively unsuppress suppressed routes\n"
        "Name of route map\n")
 {
-  return peer_unsuppress_map_unset_vty (vty, argv[0], bgp_node_afi (vty),
-                                        bgp_node_safi (vty));
+  return peer_unsuppress_map_unset_vty (vty, argv[0], bgp_node_qafx(vty));
 }
 
 static int
-peer_maximum_prefix_set_vty (struct vty *vty, const char *ip_str, afi_t afi,
-                             safi_t safi, const char *num_str,
-                             const char *threshold_str, int warning,
-                             const char *restart_str)
+peer_maximum_prefix_set_vty (struct vty *vty, const char *ip_str, qafx_t qafx,
+                                const char *num_str, const char *threshold_str,
+                                          bool warning, const char *restart_str)
 {
   int ret;
-  struct peer *peer;
-  u_int32_t max;
-  u_char threshold;
-  u_int16_t restart;
+  bgp_peer peer;
+  uint32_t max;
+  byte     threshold;
+  uint16_t restart;
 
   peer = peer_and_group_lookup_vty (vty, ip_str);
   if (! peer)
@@ -3790,14 +3842,13 @@ peer_maximum_prefix_set_vty (struct vty *vty, const char *ip_str, afi_t afi,
   else
     restart = 0;
 
-  ret = peer_maximum_prefix_set (peer, afi, safi, max, threshold, warning, restart);
+  ret = peer_maximum_prefix_set (peer, qafx, max, threshold, warning, restart);
 
   return bgp_vty_return (vty, ret);
 }
 
 static int
-peer_maximum_prefix_unset_vty (struct vty *vty, const char *ip_str, afi_t afi,
-                               safi_t safi)
+peer_maximum_prefix_unset_vty (struct vty *vty, const char *ip_str, qafx_t qafx)
 {
   int ret;
   struct peer *peer;
@@ -3806,7 +3857,7 @@ peer_maximum_prefix_unset_vty (struct vty *vty, const char *ip_str, afi_t afi,
   if (! peer)
     return CMD_WARNING;
 
-  ret = peer_maximum_prefix_unset (peer, afi, safi);
+  ret = peer_maximum_prefix_unset (peer, qafx);
 
   return bgp_vty_return (vty, ret);
 }
@@ -3822,9 +3873,8 @@ DEFUN (neighbor_maximum_prefix,
        "Maximum number of prefix accept from this peer\n"
        "maximum no. of prefix limit\n")
 {
-  return peer_maximum_prefix_set_vty (vty, argv[0], bgp_node_afi (vty),
-                                      bgp_node_safi (vty), argv[1], NULL, 0,
-                                      NULL);
+  return peer_maximum_prefix_set_vty (vty, argv[0], bgp_node_qafx(vty),
+                                                    argv[1], NULL, false, NULL);
 }
 
 DEFUN (neighbor_maximum_prefix_threshold,
@@ -3836,9 +3886,8 @@ DEFUN (neighbor_maximum_prefix_threshold,
        "maximum no. of prefix limit\n"
        "Threshold value (%) at which to generate a warning msg\n")
 {
-  return peer_maximum_prefix_set_vty (vty, argv[0], bgp_node_afi (vty),
-                                      bgp_node_safi (vty), argv[1], argv[2], 0,
-                                      NULL);
+  return peer_maximum_prefix_set_vty (vty, argv[0], bgp_node_qafx(vty),
+                                                 argv[1], argv[2], false, NULL);
 }
 
 DEFUN (neighbor_maximum_prefix_warning,
@@ -3850,9 +3899,8 @@ DEFUN (neighbor_maximum_prefix_warning,
        "maximum no. of prefix limit\n"
        "Only give warning message when limit is exceeded\n")
 {
-  return peer_maximum_prefix_set_vty (vty, argv[0], bgp_node_afi (vty),
-                                      bgp_node_safi (vty), argv[1], NULL, 1,
-                                      NULL);
+  return peer_maximum_prefix_set_vty (vty, argv[0], bgp_node_qafx(vty),
+                                                     argv[1], NULL, true, NULL);
 }
 
 DEFUN (neighbor_maximum_prefix_threshold_warning,
@@ -3865,8 +3913,8 @@ DEFUN (neighbor_maximum_prefix_threshold_warning,
        "Threshold value (%) at which to generate a warning msg\n"
        "Only give warning message when limit is exceeded\n")
 {
-  return peer_maximum_prefix_set_vty (vty, argv[0], bgp_node_afi (vty),
-                                      bgp_node_safi (vty), argv[1], argv[2], 1, NULL);
+  return peer_maximum_prefix_set_vty (vty, argv[0], bgp_node_qafx(vty),
+                                                  argv[1], argv[2], true, NULL);
 }
 
 DEFUN (neighbor_maximum_prefix_restart,
@@ -3879,8 +3927,8 @@ DEFUN (neighbor_maximum_prefix_restart,
        "Restart bgp connection after limit is exceeded\n"
        "Restart interval in minutes")
 {
-  return peer_maximum_prefix_set_vty (vty, argv[0], bgp_node_afi (vty),
-                                      bgp_node_safi (vty), argv[1], NULL, 0, argv[2]);
+  return peer_maximum_prefix_set_vty (vty, argv[0], bgp_node_qafx(vty),
+                                                 argv[1], NULL, false, argv[2]);
 }
 
 DEFUN (neighbor_maximum_prefix_threshold_restart,
@@ -3894,8 +3942,8 @@ DEFUN (neighbor_maximum_prefix_threshold_restart,
        "Restart bgp connection after limit is exceeded\n"
        "Restart interval in minutes")
 {
-  return peer_maximum_prefix_set_vty (vty, argv[0], bgp_node_afi (vty),
-                                      bgp_node_safi (vty), argv[1], argv[2], 0, argv[3]);
+  return peer_maximum_prefix_set_vty (vty, argv[0], bgp_node_qafx(vty),
+                                              argv[1], argv[2], false, argv[3]);
 }
 
 DEFUN (no_neighbor_maximum_prefix,
@@ -3906,8 +3954,7 @@ DEFUN (no_neighbor_maximum_prefix,
        NEIGHBOR_ADDR_STR2
        "Maximum number of prefix accept from this peer\n")
 {
-  return peer_maximum_prefix_unset_vty (vty, argv[0], bgp_node_afi (vty),
-                                        bgp_node_safi (vty));
+  return peer_maximum_prefix_unset_vty (vty, argv[0], bgp_node_qafx(vty));
 }
 
 ALIAS (no_neighbor_maximum_prefix,
@@ -3994,8 +4041,7 @@ DEFUN (neighbor_allowas_in,
   else
     VTY_GET_INTEGER_RANGE ("AS number", allow_num, argv[1], 1, 10);
 
-  ret = peer_allowas_in_set (peer, bgp_node_afi (vty), bgp_node_safi (vty),
-                             allow_num);
+  ret = peer_allowas_in_set (peer, bgp_node_qafx(vty), allow_num);
 
   return bgp_vty_return (vty, ret);
 }
@@ -4023,7 +4069,7 @@ DEFUN (no_neighbor_allowas_in,
   if (! peer)
     return CMD_WARNING;
 
-  ret = peer_allowas_in_unset (peer, bgp_node_afi (vty), bgp_node_safi (vty));
+  ret = peer_allowas_in_unset (peer, bgp_node_qafx(vty));
 
   return bgp_vty_return (vty, ret);
 }
@@ -4189,165 +4235,206 @@ typedef enum
   clear_as
 } clear_sort_t ;
 
-static void
-bgp_clear_vty_error (struct vty *vty, struct peer *peer, afi_t afi,
-                     safi_t safi, int error)
+static cmd_ret_t
+bgp_clear_vty_error (vty vty, bgp_peer peer, qafx_t qafx, bgp_ret_t error)
 {
   switch (error)
     {
-    case BGP_ERR_AF_UNCONFIGURED:
-      vty_out (vty,
-               "%%BGP: Enable %s %s address family for the neighbor %s%s",
-               afi == AFI_IP6 ? "IPv6" : safi == SAFI_MPLS_VPN ? "VPNv4" : "IPv4",
-               safi == SAFI_MULTICAST ? "Multicast" : "Unicast",
-               peer->host, VTY_NEWLINE);
-      break;
-    case BGP_ERR_SOFT_RECONFIG_UNCONFIGURED:
-      vty_out (vty, "%%BGP: Inbound soft reconfig for %s not possible as it%s      has neither refresh capability, nor inbound soft reconfig%s", peer->host, VTY_NEWLINE, VTY_NEWLINE);
-      break;
-    default:
-      break;
-    }
-}
+      case BGP_ERR_AF_UNCONFIGURED:
+        vty_out (vty,
+           "%%BGP: neighbor %s is not enabled for %s\n",
+                                               peer->host, get_qafx_name(qafx));
+        break;
 
-/* `clear ip bgp' functions. */
+      case BGP_ERR_SOFT_RECONFIG_UNCONFIGURED:
+        vty_out (vty, "%%BGP: Inbound soft reconfig for %s not possible as it\n"
+                      "      has neither refresh capability, nor inbound soft"
+                                                    " reconfig\n", peer->host);
+        break;
+
+      default:
+        vty_out (vty, "%%BGP: unknown issue clear for %s\n", peer->host);
+        break;
+    } ;
+
+  return CMD_WARNING ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * `clear ip bgp' functions.
+ *
+ *   * sort   -- clear_all        -- clear all peers
+ *            -- clear_peer       -- clear the peer given by 'arg'
+ *            -- clear_group      -- clear the group given by 'arg'
+ *            -- clear_external   -- clear all external peers
+ *            -- clear_as         -- clear all peers with AS given by 'arg'
+ *
+ *   * type   -- BGP_CLEAR_HARD   -- hard reset of peer(s) -- ignores qafx
+ *
+ *            -- BGP_CLEAR_SOFT_OUT            ) attempt soft reset of the
+ *            -- BGP_CLEAR_SOFT_IN             ) given qafx
+ *            -- BGP_CLEAR_SOFT_BOTH           )
+ *            -- BGP_CLEAR_SOFT_IN_ORF_PREFIX  )
+ *            -- BGP_CLEAR_SOFT_RSCLIENT       )
+ */
 static int
-bgp_clear (struct vty *vty, struct bgp *bgp,  afi_t afi, safi_t safi,
+bgp_clear (struct vty *vty, struct bgp *bgp, qafx_t qafx,
            clear_sort_t sort, bgp_clear_type_t stype, const char *arg)
 {
+  cmd_ret_t cret ;
+  bgp_peer  peer ;
   int ret;
-  struct peer *peer;
+  union sockunion su;
   struct listnode *node, *nnode;
+  struct peer_group *group;
+  as_t as ;
+  bool found ;
 
-  /* Clear all neighbors. */
-  if (sort == clear_all)
+  cret = CMD_SUCCESS ;
+
+  switch (sort)
     {
-      for (ALL_LIST_ELEMENTS (bgp->peer, node, nnode, peer))
-        {
-          if (stype == BGP_CLEAR_SOFT_NONE)
-            ret = peer_clear (peer);
-          else
-            ret = peer_clear_soft (peer, afi, safi, stype);
+      case clear_all:
+        for (ALL_LIST_ELEMENTS (bgp->peer, node, nnode, peer))
+          {
+            if (stype == BGP_CLEAR_HARD)
+              peer_clear (peer);
+            else
+              {
+                ret = peer_clear_soft (peer, qafx, stype);
 
-          if (ret < 0)
-            bgp_clear_vty_error (vty, peer, afi, safi, ret);
-        }
-      return CMD_SUCCESS;
-    }
+                if (ret < 0)
+                  cret =  bgp_clear_vty_error (vty, peer, qafx, ret);
+              } ;
+          } ;
+        break ;
 
-  /* Clear specified neighbors. */
-  if (sort == clear_peer)
-    {
-      union sockunion su;
-      int ret;
+      case clear_peer:
+        ret = str2sockunion (arg, &su);
+        if (ret < 0)
+          {
+            vty_out (vty, "Malformed address: %s\n", arg);
+            return CMD_WARNING;
+          }
 
-      /* Make sockunion for lookup. */
-      ret = str2sockunion (arg, &su);
-      if (ret < 0)
-        {
-          vty_out (vty, "Malformed address: %s%s", arg, VTY_NEWLINE);
-          return CMD_WARNING;
-        }
-      peer = peer_lookup (bgp, &su);
-      if (! peer)
-        {
-          vty_out (vty, "%%BGP: Unknown neighbor - \"%s\"%s", arg, VTY_NEWLINE);
-          return CMD_WARNING;
-        }
+        peer = peer_lookup (bgp, &su);
+        if (! peer)
+          {
+            vty_out (vty, "%%BGP: Unknown neighbor - \"%s\"\n", arg);
+            return CMD_WARNING;
+          }
 
-      if (stype == BGP_CLEAR_SOFT_NONE)
-        ret = peer_clear (peer);
-      else
-        ret = peer_clear_soft (peer, afi, safi, stype);
+        if (stype == BGP_CLEAR_HARD)
+          peer_clear (peer);
+        else
+          {
+            ret = peer_clear_soft (peer, qafx, stype);
 
-      if (ret < 0)
-        bgp_clear_vty_error (vty, peer, afi, safi, ret);
+            if (ret < 0)
+              cret =  bgp_clear_vty_error (vty, peer, qafx, ret);
+          } ;
+        break ;
 
-      return CMD_SUCCESS;
-    }
+      case clear_group:
+        group = peer_group_lookup (bgp, arg);
+        if (! group)
+          {
+            vty_out (vty, "%%BGP: No such peer-group %s\n", arg);
+            return CMD_WARNING;
+          }
 
-  /* Clear all peer-group members. */
-  if (sort == clear_group)
-    {
-      struct peer_group *group;
+        for (ALL_LIST_ELEMENTS (group->peer, node, nnode, peer))
+          {
+            if    (stype == BGP_CLEAR_HARD)
+              peer_clear (peer);
+            else
+              {
+                peer_rib  prib ;
 
-      group = peer_group_lookup (bgp, arg);
-      if (! group)
-        {
-          vty_out (vty, "%%BGP: No such peer-group %s%s", arg, VTY_NEWLINE);
-          return CMD_WARNING;
-        }
+                prib = peer_family_prib(peer, qafx) ;
 
-      for (ALL_LIST_ELEMENTS (group->peer, node, nnode, peer))
-        {
-          if (stype == BGP_CLEAR_SOFT_NONE)
-            {
-              ret = peer_clear (peer);
+                if ((prib != NULL) && prib->af_group_member)
+                  {
+                    ret = peer_clear_soft (peer, qafx, stype);
+
+                    if (ret < 0)
+                      cret =  bgp_clear_vty_error (vty, peer, qafx, ret);
+                  } ;
+              } ;
+          } ;
+        break ;
+
+      case clear_external:
+        for (ALL_LIST_ELEMENTS (bgp->peer, node, nnode, peer))
+          {
+            if (peer->sort == BGP_PEER_IBGP)
               continue;
-            }
 
-          if (! peer->af_group[afi][safi])
-            continue;
+            if (stype == BGP_CLEAR_HARD)
+              peer_clear (peer);
+            else
+              {
+                ret = peer_clear_soft (peer, qafx, stype);
 
-          ret = peer_clear_soft (peer, afi, safi, stype);
+                if (ret < 0)
+                  cret =  bgp_clear_vty_error (vty, peer, qafx, ret);
+              } ;
+          } ;
+        break ;
 
-          if (ret < 0)
-            bgp_clear_vty_error (vty, peer, afi, safi, ret);
-        }
-      return CMD_SUCCESS;
+      case clear_as:
+        VTY_GET_INTEGER_RANGE ("AS", as, arg, 1, BGP_AS4_MAX);
+
+        found = false ;
+
+        for (ALL_LIST_ELEMENTS (bgp->peer, node, nnode, peer))
+          {
+            if (peer->as != as)
+              continue;
+
+            found = true;
+
+            if (stype == BGP_CLEAR_HARD)
+              peer_clear (peer);
+            else
+              {
+                ret = peer_clear_soft (peer, qafx, stype);
+
+                if (ret < 0)
+                  cret =  bgp_clear_vty_error (vty, peer, qafx, ret);
+              } ;
+          } ;
+
+        if (! found)
+          {
+            vty_out (vty, "%%BGP: No peer is configured with AS %s\n", arg);
+            cret = CMD_WARNING ;
+          } ;
+
+        break ;
+
+      default:
+        vty_out(vty, "%% unknown clear_xx in %s() -- BUG\n", __func__) ;
+        return CMD_ERROR ;
     }
 
-  if (sort == clear_external)
-    {
-      for (ALL_LIST_ELEMENTS (bgp->peer, node, nnode, peer))
-        {
-          if (peer_sort (peer) == BGP_PEER_IBGP)
-            continue;
+  return cret;
+} ;
 
-          if (stype == BGP_CLEAR_SOFT_NONE)
-            ret = peer_clear (peer);
-          else
-            ret = peer_clear_soft (peer, afi, safi, stype);
-
-          if (ret < 0)
-            bgp_clear_vty_error (vty, peer, afi, safi, ret);
-        }
-      return CMD_SUCCESS;
-    }
-
-  if (sort == clear_as)
-    {
-      as_t as;
-      int find = 0;
-
-      VTY_GET_INTEGER_RANGE ("AS", as, arg, 1, BGP_AS4_MAX);
-
-      for (ALL_LIST_ELEMENTS (bgp->peer, node, nnode, peer))
-        {
-          if (peer->as != as)
-            continue;
-
-          find = 1;
-          if (stype == BGP_CLEAR_SOFT_NONE)
-            ret = peer_clear (peer);
-          else
-            ret = peer_clear_soft (peer, afi, safi, stype);
-
-          if (ret < 0)
-            bgp_clear_vty_error (vty, peer, afi, safi, ret);
-        }
-      if (! find)
-        vty_out (vty, "%%BGP: No peer is configured with AS %s%s", arg,
-                 VTY_NEWLINE);
-      return CMD_SUCCESS;
-    }
-
-  return CMD_SUCCESS;
-}
-
+/*------------------------------------------------------------------------------
+ * Perform a bgp clear operation
+ *
+ *   * name  -- NULL => default bgp instance
+ *              otherwise, name of BGP instance
+ *
+ *   * qafx   )
+ *   * sort   ) see bgp_clear()
+ *   * type   )
+ *   * arg    )
+ */
 static int
-bgp_clear_vty (struct vty *vty, const char *name, afi_t afi, safi_t safi,
-                        clear_sort_t sort, bgp_clear_type_t stype, const char *arg)
+bgp_clear_vty (struct vty *vty, const char *name, qafx_t qafx,
+                     clear_sort_t sort, bgp_clear_type_t stype, const char *arg)
 {
   struct bgp *bgp;
 
@@ -4371,8 +4458,20 @@ bgp_clear_vty (struct vty *vty, const char *name, afi_t afi, safi_t safi,
         }
     }
 
-  return bgp_clear (vty, bgp, afi, safi, sort, stype, arg);
+  return bgp_clear (vty, bgp, qafx, sort, stype, arg);
 }
+
+/*------------------------------------------------------------------------------
+ * Select unicast or multicast qafx, according to "m" (or "u")
+ */
+static qafx_t
+bgp_clear_qafx_how_cast(const char* opt, qafx_t unicast, qafx_t multicast)
+{
+  if (*opt == 'm')
+    return multicast ;
+  else
+    return unicast ;
+} ;
 
 DEFUN (clear_ip_bgp_all,
        clear_ip_bgp_all_cmd,
@@ -4382,10 +4481,10 @@ DEFUN (clear_ip_bgp_all,
        BGP_STR
        "Clear all peers\n")
 {
-  if (argc == 1)
-    return bgp_clear_vty (vty, argv[0], 0, 0, clear_all, BGP_CLEAR_SOFT_NONE, NULL);
+  const char* name = (argc == 1) ? argv[0] : NULL ;
 
-  return bgp_clear_vty (vty, NULL, 0, 0, clear_all, BGP_CLEAR_SOFT_NONE, NULL);
+  return bgp_clear_vty (vty, name, qafx_undef, clear_all, BGP_CLEAR_HARD,
+                                                                         NULL);
 }
 
 ALIAS (clear_ip_bgp_all,
@@ -4431,7 +4530,8 @@ DEFUN (clear_ip_bgp_peer,
        "BGP neighbor IP address to clear\n"
        "BGP IPv6 neighbor to clear\n")
 {
-  return bgp_clear_vty (vty, NULL, 0, 0, clear_peer, BGP_CLEAR_SOFT_NONE, argv[0]);
+  return bgp_clear_vty (vty, NULL, qafx_undef, clear_peer, BGP_CLEAR_HARD,
+                                                                       argv[0]);
 }
 
 ALIAS (clear_ip_bgp_peer,
@@ -4460,7 +4560,8 @@ DEFUN (clear_ip_bgp_peer_group,
        "Clear all members of peer-group\n"
        "BGP peer-group name\n")
 {
-  return bgp_clear_vty (vty, NULL, 0, 0, clear_group, BGP_CLEAR_SOFT_NONE, argv[0]);
+  return bgp_clear_vty (vty, NULL, qafx_undef, clear_group, BGP_CLEAR_HARD,
+                                                                       argv[0]);
 }
 
 ALIAS (clear_ip_bgp_peer_group,
@@ -4488,7 +4589,8 @@ DEFUN (clear_ip_bgp_external,
        BGP_STR
        "Clear all external peers\n")
 {
-  return bgp_clear_vty (vty, NULL, 0, 0, clear_external, BGP_CLEAR_SOFT_NONE, NULL);
+  return bgp_clear_vty (vty, NULL, qafx_undef, clear_external,
+                                                    BGP_CLEAR_HARD, NULL);
 }
 
 ALIAS (clear_ip_bgp_external,
@@ -4514,7 +4616,8 @@ DEFUN (clear_ip_bgp_as,
        BGP_STR
        "Clear peers with the AS number\n")
 {
-  return bgp_clear_vty (vty, NULL, 0, 0, clear_as, BGP_CLEAR_SOFT_NONE, argv[0]);
+  return bgp_clear_vty (vty, NULL, qafx_undef, clear_as,
+                                                  BGP_CLEAR_HARD, argv[0]);
 }
 
 ALIAS (clear_ip_bgp_as,
@@ -4543,12 +4646,10 @@ DEFUN (clear_ip_bgp_all_soft_out,
        "Soft reconfig\n"
        "Soft reconfig outbound update\n")
 {
-  if (argc == 1)
-    return bgp_clear_vty (vty, argv[0], AFI_IP, SAFI_UNICAST, clear_all,
-                          BGP_CLEAR_SOFT_OUT, NULL);
+  const char* name = (argc == 1) ? argv[0] : NULL ;
 
-  return bgp_clear_vty (vty, NULL, AFI_IP, SAFI_UNICAST, clear_all,
-                        BGP_CLEAR_SOFT_OUT, NULL);
+  return bgp_clear_vty (vty, name, qafx_ipv4_unicast, clear_all,
+                                                      BGP_CLEAR_SOFT_OUT, NULL);
 }
 
 ALIAS (clear_ip_bgp_all_soft_out,
@@ -4585,12 +4686,9 @@ DEFUN (clear_ip_bgp_all_ipv4_soft_out,
        "Soft reconfig\n"
        "Soft reconfig outbound update\n")
 {
-  if (strncmp (argv[0], "m", 1) == 0)
-    return bgp_clear_vty (vty, NULL, AFI_IP, SAFI_MULTICAST, clear_all,
-                          BGP_CLEAR_SOFT_OUT, NULL);
-
-  return bgp_clear_vty (vty, NULL, AFI_IP, SAFI_UNICAST, clear_all,
-                        BGP_CLEAR_SOFT_OUT, NULL);
+  qafx_t qafx = bgp_clear_qafx_how_cast(argv[0], qafx_ipv4_unicast,
+                                                 qafx_ipv4_multicast) ;
+  return bgp_clear_vty (vty, NULL, qafx, clear_all, BGP_CLEAR_SOFT_OUT, NULL);
 }
 
 ALIAS (clear_ip_bgp_all_ipv4_soft_out,
@@ -4619,12 +4717,10 @@ DEFUN (clear_ip_bgp_instance_all_ipv4_soft_out,
        "Address Family modifier\n"
        "Soft reconfig outbound update\n")
 {
-  if (strncmp (argv[1], "m", 1) == 0)
-    return bgp_clear_vty (vty, argv[0], AFI_IP, SAFI_MULTICAST, clear_all,
-                          BGP_CLEAR_SOFT_OUT, NULL);
-
-  return bgp_clear_vty (vty, argv[0], AFI_IP, SAFI_UNICAST, clear_all,
-                        BGP_CLEAR_SOFT_OUT, NULL);
+  qafx_t qafx = bgp_clear_qafx_how_cast(argv[1], qafx_ipv4_unicast,
+                                                 qafx_ipv4_multicast) ;
+  return bgp_clear_vty (vty, argv[0], qafx, clear_all,
+                                                     BGP_CLEAR_SOFT_OUT, NULL) ;
 }
 
 DEFUN (clear_ip_bgp_all_vpnv4_soft_out,
@@ -4639,8 +4735,8 @@ DEFUN (clear_ip_bgp_all_vpnv4_soft_out,
        "Soft reconfig\n"
        "Soft reconfig outbound update\n")
 {
-  return bgp_clear_vty (vty, NULL, AFI_IP, SAFI_MPLS_VPN, clear_all,
-                        BGP_CLEAR_SOFT_OUT, NULL);
+  return bgp_clear_vty (vty, NULL, qafx_ipv4_mpls_vpn, clear_all,
+                                                      BGP_CLEAR_SOFT_OUT, NULL);
 }
 
 ALIAS (clear_ip_bgp_all_vpnv4_soft_out,
@@ -4663,12 +4759,10 @@ DEFUN (clear_bgp_all_soft_out,
        "Soft reconfig\n"
        "Soft reconfig outbound update\n")
 {
-  if (argc == 1)
-    return bgp_clear_vty (vty, argv[0], AFI_IP6, SAFI_UNICAST, clear_all,
-                          BGP_CLEAR_SOFT_OUT, NULL);
+  const char* name = (argc == 1) ? argv[0] : NULL ;
 
-  return bgp_clear_vty (vty, NULL, AFI_IP6, SAFI_UNICAST, clear_all,
-                        BGP_CLEAR_SOFT_OUT, NULL);
+  return bgp_clear_vty (vty, name, qafx_ipv6_unicast, clear_all,
+                                                      BGP_CLEAR_SOFT_OUT, NULL);
 }
 
 ALIAS (clear_bgp_all_soft_out,
@@ -4719,8 +4813,8 @@ DEFUN (clear_ip_bgp_peer_soft_out,
        "Soft reconfig\n"
        "Soft reconfig outbound update\n")
 {
-  return bgp_clear_vty (vty, NULL, AFI_IP, SAFI_UNICAST, clear_peer,
-                        BGP_CLEAR_SOFT_OUT, argv[0]);
+  return bgp_clear_vty (vty, NULL, qafx_ipv4_unicast, clear_peer,
+                                                  BGP_CLEAR_SOFT_OUT, argv[0]);
 }
 
 ALIAS (clear_ip_bgp_peer_soft_out,
@@ -4745,12 +4839,10 @@ DEFUN (clear_ip_bgp_peer_ipv4_soft_out,
        "Soft reconfig\n"
        "Soft reconfig outbound update\n")
 {
-  if (strncmp (argv[1], "m", 1) == 0)
-    return bgp_clear_vty (vty, NULL, AFI_IP, SAFI_MULTICAST, clear_peer,
-                          BGP_CLEAR_SOFT_OUT, argv[0]);
-
-  return bgp_clear_vty (vty, NULL, AFI_IP, SAFI_UNICAST, clear_peer,
-                        BGP_CLEAR_SOFT_OUT, argv[0]);
+  qafx_t qafx = bgp_clear_qafx_how_cast(argv[1], qafx_ipv4_unicast,
+                                                 qafx_ipv4_multicast) ;
+  return bgp_clear_vty (vty, NULL, qafx, clear_peer,
+                                                   BGP_CLEAR_SOFT_OUT, argv[0]);
 }
 
 ALIAS (clear_ip_bgp_peer_ipv4_soft_out,
@@ -4777,8 +4869,8 @@ DEFUN (clear_ip_bgp_peer_vpnv4_soft_out,
        "Soft reconfig\n"
        "Soft reconfig outbound update\n")
 {
-  return bgp_clear_vty (vty, NULL, AFI_IP, SAFI_MPLS_VPN, clear_peer,
-                        BGP_CLEAR_SOFT_OUT, argv[0]);
+  return bgp_clear_vty (vty, NULL, qafx_ipv4_mpls_vpn, clear_peer,
+                                                   BGP_CLEAR_SOFT_OUT, argv[0]);
 }
 
 ALIAS (clear_ip_bgp_peer_vpnv4_soft_out,
@@ -4802,8 +4894,8 @@ DEFUN (clear_bgp_peer_soft_out,
        "Soft reconfig\n"
        "Soft reconfig outbound update\n")
 {
-  return bgp_clear_vty (vty, NULL, AFI_IP6, SAFI_UNICAST, clear_peer,
-                        BGP_CLEAR_SOFT_OUT, argv[0]);
+  return bgp_clear_vty (vty, NULL, qafx_ipv6_unicast, clear_peer,
+                                                   BGP_CLEAR_SOFT_OUT, argv[0]);
 }
 
 ALIAS (clear_bgp_peer_soft_out,
@@ -4847,8 +4939,8 @@ DEFUN (clear_ip_bgp_peer_group_soft_out,
        "Soft reconfig\n"
        "Soft reconfig outbound update\n")
 {
-  return bgp_clear_vty (vty, NULL, AFI_IP, SAFI_UNICAST, clear_group,
-                        BGP_CLEAR_SOFT_OUT, argv[0]);
+  return bgp_clear_vty (vty, NULL, qafx_ipv4_unicast, clear_group,
+                                                   BGP_CLEAR_SOFT_OUT, argv[0]);
 }
 
 ALIAS (clear_ip_bgp_peer_group_soft_out,
@@ -4875,12 +4967,10 @@ DEFUN (clear_ip_bgp_peer_group_ipv4_soft_out,
        "Soft reconfig\n"
        "Soft reconfig outbound update\n")
 {
-  if (strncmp (argv[1], "m", 1) == 0)
-    return bgp_clear_vty (vty, NULL, AFI_IP, SAFI_MULTICAST, clear_group,
-                          BGP_CLEAR_SOFT_OUT, argv[0]);
-
-  return bgp_clear_vty (vty, NULL, AFI_IP, SAFI_UNICAST, clear_group,
-                        BGP_CLEAR_SOFT_OUT, argv[0]);
+  qafx_t qafx = bgp_clear_qafx_how_cast(argv[1], qafx_ipv4_unicast,
+                                                 qafx_ipv4_multicast) ;
+  return bgp_clear_vty (vty, NULL, qafx, clear_group,
+                                                   BGP_CLEAR_SOFT_OUT, argv[0]);
 }
 
 ALIAS (clear_ip_bgp_peer_group_ipv4_soft_out,
@@ -4906,8 +4996,8 @@ DEFUN (clear_bgp_peer_group_soft_out,
        "Soft reconfig\n"
        "Soft reconfig outbound update\n")
 {
-  return bgp_clear_vty (vty, NULL, AFI_IP6, SAFI_UNICAST, clear_group,
-                        BGP_CLEAR_SOFT_OUT, argv[0]);
+  return bgp_clear_vty (vty, NULL, qafx_ipv6_unicast, clear_group,
+                                                  BGP_CLEAR_SOFT_OUT, argv[0]);
 }
 
 ALIAS (clear_bgp_peer_group_soft_out,
@@ -4950,8 +5040,8 @@ DEFUN (clear_ip_bgp_external_soft_out,
        "Soft reconfig\n"
        "Soft reconfig outbound update\n")
 {
-  return bgp_clear_vty (vty, NULL, AFI_IP, SAFI_UNICAST, clear_external,
-                        BGP_CLEAR_SOFT_OUT, NULL);
+  return bgp_clear_vty (vty, NULL, qafx_ipv4_unicast, clear_external,
+                                                     BGP_CLEAR_SOFT_OUT, NULL);
 }
 
 ALIAS (clear_ip_bgp_external_soft_out,
@@ -4976,12 +5066,10 @@ DEFUN (clear_ip_bgp_external_ipv4_soft_out,
        "Soft reconfig\n"
        "Soft reconfig outbound update\n")
 {
-  if (strncmp (argv[0], "m", 1) == 0)
-    return bgp_clear_vty (vty, NULL, AFI_IP, SAFI_MULTICAST, clear_external,
-                          BGP_CLEAR_SOFT_OUT, NULL);
-
-  return bgp_clear_vty (vty, NULL, AFI_IP, SAFI_UNICAST, clear_external,
-                        BGP_CLEAR_SOFT_OUT, NULL);
+  qafx_t qafx = bgp_clear_qafx_how_cast(argv[0], qafx_ipv4_unicast,
+                                                 qafx_ipv4_multicast) ;
+  return bgp_clear_vty (vty, NULL, qafx, clear_external,
+                                                      BGP_CLEAR_SOFT_OUT, NULL);
 }
 
 ALIAS (clear_ip_bgp_external_ipv4_soft_out,
@@ -5005,8 +5093,8 @@ DEFUN (clear_bgp_external_soft_out,
        "Soft reconfig\n"
        "Soft reconfig outbound update\n")
 {
-  return bgp_clear_vty (vty, NULL, AFI_IP6, SAFI_UNICAST, clear_external,
-                        BGP_CLEAR_SOFT_OUT, NULL);
+  return bgp_clear_vty (vty, NULL, qafx_ipv6_unicast, clear_external,
+                                                      BGP_CLEAR_SOFT_OUT, NULL);
 }
 
 ALIAS (clear_bgp_external_soft_out,
@@ -5046,8 +5134,8 @@ DEFUN (clear_ip_bgp_as_soft_out,
        "Soft reconfig\n"
        "Soft reconfig outbound update\n")
 {
-  return bgp_clear_vty (vty, NULL, AFI_IP, SAFI_UNICAST, clear_as,
-                        BGP_CLEAR_SOFT_OUT, argv[0]);
+  return bgp_clear_vty (vty, NULL, qafx_ipv4_unicast, clear_as,
+                                                   BGP_CLEAR_SOFT_OUT, argv[0]);
 }
 
 ALIAS (clear_ip_bgp_as_soft_out,
@@ -5072,12 +5160,9 @@ DEFUN (clear_ip_bgp_as_ipv4_soft_out,
        "Soft reconfig\n"
        "Soft reconfig outbound update\n")
 {
-  if (strncmp (argv[1], "m", 1) == 0)
-    return bgp_clear_vty (vty, NULL, AFI_IP, SAFI_MULTICAST, clear_as,
-                          BGP_CLEAR_SOFT_OUT, argv[0]);
-
-  return bgp_clear_vty (vty, NULL, AFI_IP, SAFI_UNICAST, clear_as,
-                        BGP_CLEAR_SOFT_OUT, argv[0]);
+  qafx_t qafx = bgp_clear_qafx_how_cast(argv[1], qafx_ipv4_unicast,
+                                                 qafx_ipv4_multicast) ;
+  return bgp_clear_vty (vty, NULL, qafx, clear_as, BGP_CLEAR_SOFT_OUT, argv[0]);
 }
 
 ALIAS (clear_ip_bgp_as_ipv4_soft_out,
@@ -5104,8 +5189,8 @@ DEFUN (clear_ip_bgp_as_vpnv4_soft_out,
        "Soft reconfig\n"
        "Soft reconfig outbound update\n")
 {
-  return bgp_clear_vty (vty, NULL, AFI_IP, SAFI_MPLS_VPN, clear_as,
-                        BGP_CLEAR_SOFT_OUT, argv[0]);
+  return bgp_clear_vty (vty, NULL, qafx_ipv4_mpls_vpn, clear_as,
+                                                   BGP_CLEAR_SOFT_OUT, argv[0]);
 }
 
 ALIAS (clear_ip_bgp_as_vpnv4_soft_out,
@@ -5128,8 +5213,8 @@ DEFUN (clear_bgp_as_soft_out,
        "Soft reconfig\n"
        "Soft reconfig outbound update\n")
 {
-  return bgp_clear_vty (vty, NULL, AFI_IP6, SAFI_UNICAST, clear_as,
-                        BGP_CLEAR_SOFT_OUT, argv[0]);
+  return bgp_clear_vty (vty, NULL, qafx_ipv6_unicast, clear_as,
+                                                 BGP_CLEAR_SOFT_OUT, argv[0]);
 }
 
 ALIAS (clear_bgp_as_soft_out,
@@ -5170,12 +5255,10 @@ DEFUN (clear_ip_bgp_all_soft_in,
        "Soft reconfig\n"
        "Soft reconfig inbound update\n")
 {
-  if (argc == 1)
-    return bgp_clear_vty (vty, argv[0], AFI_IP, SAFI_UNICAST, clear_all,
-                          BGP_CLEAR_SOFT_IN, NULL);
+  const char* name = (argc == 1) ? argv[0] : NULL ;
 
-  return bgp_clear_vty (vty, NULL, AFI_IP, SAFI_UNICAST, clear_all,
-                        BGP_CLEAR_SOFT_IN, NULL);
+  return bgp_clear_vty (vty, name, qafx_ipv4_unicast, clear_all,
+                                                       BGP_CLEAR_SOFT_IN, NULL);
 }
 
 ALIAS (clear_ip_bgp_all_soft_in,
@@ -5209,12 +5292,10 @@ DEFUN (clear_ip_bgp_all_in_prefix_filter,
        "Soft reconfig inbound update\n"
        "Push out prefix-list ORF and do inbound soft reconfig\n")
 {
-  if (argc== 1)
-    return bgp_clear_vty (vty, argv[0], AFI_IP, SAFI_UNICAST, clear_all,
-                          BGP_CLEAR_SOFT_IN_ORF_PREFIX, NULL);
+  const char* name = (argc == 1) ? argv[0] : NULL ;
 
-  return bgp_clear_vty (vty, NULL, AFI_IP, SAFI_UNICAST, clear_all,
-                        BGP_CLEAR_SOFT_IN_ORF_PREFIX, NULL);
+  return bgp_clear_vty (vty, name, qafx_ipv4_unicast, clear_all,
+                                            BGP_CLEAR_SOFT_IN_ORF_PREFIX, NULL);
 }
 
 ALIAS (clear_ip_bgp_all_in_prefix_filter,
@@ -5243,12 +5324,9 @@ DEFUN (clear_ip_bgp_all_ipv4_soft_in,
        "Soft reconfig\n"
        "Soft reconfig inbound update\n")
 {
-  if (strncmp (argv[0], "m", 1) == 0)
-    return bgp_clear_vty (vty, NULL, AFI_IP, SAFI_MULTICAST, clear_all,
-                          BGP_CLEAR_SOFT_IN, NULL);
-
-  return bgp_clear_vty (vty, NULL, AFI_IP, SAFI_UNICAST, clear_all,
-                        BGP_CLEAR_SOFT_IN, NULL);
+  qafx_t qafx = bgp_clear_qafx_how_cast(argv[0], qafx_ipv4_unicast,
+                                                 qafx_ipv4_multicast) ;
+  return bgp_clear_vty (vty, NULL, qafx, clear_all, BGP_CLEAR_SOFT_IN, NULL);
 }
 
 ALIAS (clear_ip_bgp_all_ipv4_soft_in,
@@ -5278,12 +5356,9 @@ DEFUN (clear_ip_bgp_instance_all_ipv4_soft_in,
        "Soft reconfig\n"
        "Soft reconfig inbound update\n")
 {
-  if (strncmp (argv[1], "m", 1) == 0)
-    return bgp_clear_vty (vty, argv[0], AFI_IP, SAFI_MULTICAST, clear_all,
-                          BGP_CLEAR_SOFT_IN, NULL);
-
-  return bgp_clear_vty (vty, argv[0], AFI_IP, SAFI_UNICAST, clear_all,
-                        BGP_CLEAR_SOFT_IN, NULL);
+  qafx_t qafx = bgp_clear_qafx_how_cast(argv[1], qafx_ipv4_unicast,
+                                                 qafx_ipv4_multicast) ;
+  return bgp_clear_vty (vty, argv[0], qafx, clear_all, BGP_CLEAR_SOFT_IN, NULL);
 }
 
 DEFUN (clear_ip_bgp_all_ipv4_in_prefix_filter,
@@ -5299,12 +5374,10 @@ DEFUN (clear_ip_bgp_all_ipv4_in_prefix_filter,
        "Soft reconfig inbound update\n"
        "Push out prefix-list ORF and do inbound soft reconfig\n")
 {
-  if (strncmp (argv[0], "m", 1) == 0)
-    return bgp_clear_vty (vty, NULL, AFI_IP, SAFI_MULTICAST, clear_all,
-                          BGP_CLEAR_SOFT_IN_ORF_PREFIX, NULL);
-
-  return bgp_clear_vty (vty, NULL, AFI_IP, SAFI_UNICAST, clear_all,
-                        BGP_CLEAR_SOFT_IN_ORF_PREFIX, NULL);
+  qafx_t qafx = bgp_clear_qafx_how_cast(argv[0], qafx_ipv4_unicast,
+                                                 qafx_ipv4_multicast) ;
+  return bgp_clear_vty (vty, NULL, qafx, clear_all,
+                                            BGP_CLEAR_SOFT_IN_ORF_PREFIX, NULL);
 }
 
 DEFUN (clear_ip_bgp_instance_all_ipv4_in_prefix_filter,
@@ -5320,12 +5393,10 @@ DEFUN (clear_ip_bgp_instance_all_ipv4_in_prefix_filter,
        "Soft reconfig inbound update\n"
        "Push out prefix-list ORF and do inbound soft reconfig\n")
 {
-  if (strncmp (argv[1], "m", 1) == 0)
-    return bgp_clear_vty (vty, argv[0], AFI_IP, SAFI_MULTICAST, clear_all,
-                          BGP_CLEAR_SOFT_IN_ORF_PREFIX, NULL);
-
-  return bgp_clear_vty (vty, argv[0], AFI_IP, SAFI_UNICAST, clear_all,
-                        BGP_CLEAR_SOFT_IN_ORF_PREFIX, NULL);
+  qafx_t qafx = bgp_clear_qafx_how_cast(argv[1], qafx_ipv4_unicast,
+                                                 qafx_ipv4_multicast) ;
+  return bgp_clear_vty (vty, argv[0], qafx, clear_all,
+                                            BGP_CLEAR_SOFT_IN_ORF_PREFIX, NULL);
 }
 
 DEFUN (clear_ip_bgp_all_vpnv4_soft_in,
@@ -5340,8 +5411,8 @@ DEFUN (clear_ip_bgp_all_vpnv4_soft_in,
        "Soft reconfig\n"
        "Soft reconfig inbound update\n")
 {
-  return bgp_clear_vty (vty, NULL, AFI_IP, SAFI_MPLS_VPN, clear_all,
-                        BGP_CLEAR_SOFT_IN, NULL);
+  return bgp_clear_vty (vty, NULL, qafx_ipv4_mpls_vpn, clear_all,
+                                                       BGP_CLEAR_SOFT_IN, NULL);
 }
 
 ALIAS (clear_ip_bgp_all_vpnv4_soft_in,
@@ -5364,12 +5435,10 @@ DEFUN (clear_bgp_all_soft_in,
        "Soft reconfig\n"
        "Soft reconfig inbound update\n")
 {
-  if (argc == 1)
-    return bgp_clear_vty (vty, argv[0], AFI_IP6, SAFI_UNICAST, clear_all,
-                        BGP_CLEAR_SOFT_IN, NULL);
+  const char* name = (argc == 1) ? argv[0] : NULL ;
 
-  return bgp_clear_vty (vty, NULL, AFI_IP6, SAFI_UNICAST, clear_all,
-                        BGP_CLEAR_SOFT_IN, NULL);
+  return bgp_clear_vty (vty, name, qafx_ipv6_unicast, clear_all,
+                                                       BGP_CLEAR_SOFT_IN, NULL);
 }
 
 ALIAS (clear_bgp_all_soft_in,
@@ -5419,8 +5488,8 @@ DEFUN (clear_bgp_all_in_prefix_filter,
        "Soft reconfig inbound update\n"
        "Push out prefix-list ORF and do inbound soft reconfig\n")
 {
-  return bgp_clear_vty (vty, NULL, AFI_IP6, SAFI_UNICAST, clear_all,
-                        BGP_CLEAR_SOFT_IN_ORF_PREFIX, NULL);
+  return bgp_clear_vty (vty, NULL, qafx_ipv6_unicast, clear_all,
+                                            BGP_CLEAR_SOFT_IN_ORF_PREFIX, NULL);
 }
 
 ALIAS (clear_bgp_all_in_prefix_filter,
@@ -5443,8 +5512,8 @@ DEFUN (clear_ip_bgp_peer_soft_in,
        "Soft reconfig\n"
        "Soft reconfig inbound update\n")
 {
-  return bgp_clear_vty (vty, NULL, AFI_IP, SAFI_UNICAST, clear_peer,
-                        BGP_CLEAR_SOFT_IN, argv[0]);
+  return bgp_clear_vty (vty, NULL, qafx_ipv4_unicast, clear_peer,
+                                                    BGP_CLEAR_SOFT_IN, argv[0]);
 }
 
 ALIAS (clear_ip_bgp_peer_soft_in,
@@ -5466,8 +5535,8 @@ DEFUN (clear_ip_bgp_peer_in_prefix_filter,
        "Soft reconfig inbound update\n"
        "Push out the existing ORF prefix-list\n")
 {
-  return bgp_clear_vty (vty, NULL, AFI_IP, SAFI_UNICAST, clear_peer,
-                        BGP_CLEAR_SOFT_IN_ORF_PREFIX, argv[0]);
+  return bgp_clear_vty (vty, NULL, qafx_ipv4_unicast, clear_peer,
+                                         BGP_CLEAR_SOFT_IN_ORF_PREFIX, argv[0]);
 }
 
 DEFUN (clear_ip_bgp_peer_ipv4_soft_in,
@@ -5483,12 +5552,10 @@ DEFUN (clear_ip_bgp_peer_ipv4_soft_in,
        "Soft reconfig\n"
        "Soft reconfig inbound update\n")
 {
-  if (strncmp (argv[1], "m", 1) == 0)
-    return bgp_clear_vty (vty, NULL, AFI_IP, SAFI_MULTICAST, clear_peer,
-                          BGP_CLEAR_SOFT_IN, argv[0]);
-
-  return bgp_clear_vty (vty, NULL, AFI_IP, SAFI_UNICAST, clear_peer,
-                        BGP_CLEAR_SOFT_IN, argv[0]);
+  qafx_t qafx = bgp_clear_qafx_how_cast(argv[1], qafx_ipv4_unicast,
+                                                 qafx_ipv4_multicast) ;
+  return bgp_clear_vty (vty, NULL, qafx, clear_peer,
+                                                    BGP_CLEAR_SOFT_IN, argv[0]);
 }
 
 ALIAS (clear_ip_bgp_peer_ipv4_soft_in,
@@ -5516,12 +5583,10 @@ DEFUN (clear_ip_bgp_peer_ipv4_in_prefix_filter,
        "Soft reconfig inbound update\n"
        "Push out the existing ORF prefix-list\n")
 {
-  if (strncmp (argv[1], "m", 1) == 0)
-    return bgp_clear_vty (vty, NULL, AFI_IP, SAFI_MULTICAST, clear_peer,
-                          BGP_CLEAR_SOFT_IN_ORF_PREFIX, argv[0]);
-
-  return bgp_clear_vty (vty, NULL, AFI_IP, SAFI_UNICAST, clear_peer,
-                        BGP_CLEAR_SOFT_IN_ORF_PREFIX, argv[0]);
+  qafx_t qafx = bgp_clear_qafx_how_cast(argv[1], qafx_ipv4_unicast,
+                                                 qafx_ipv4_multicast) ;
+  return bgp_clear_vty (vty, NULL, qafx, clear_peer,
+                                        BGP_CLEAR_SOFT_IN_ORF_PREFIX, argv[0]);
 }
 
 DEFUN (clear_ip_bgp_peer_vpnv4_soft_in,
@@ -5536,8 +5601,8 @@ DEFUN (clear_ip_bgp_peer_vpnv4_soft_in,
        "Soft reconfig\n"
        "Soft reconfig inbound update\n")
 {
-  return bgp_clear_vty (vty, NULL, AFI_IP, SAFI_MPLS_VPN, clear_peer,
-                        BGP_CLEAR_SOFT_IN, argv[0]);
+  return bgp_clear_vty (vty, NULL, qafx_ipv4_mpls_vpn, clear_peer,
+                                                    BGP_CLEAR_SOFT_IN, argv[0]);
 }
 
 ALIAS (clear_ip_bgp_peer_vpnv4_soft_in,
@@ -5561,8 +5626,8 @@ DEFUN (clear_bgp_peer_soft_in,
        "Soft reconfig\n"
        "Soft reconfig inbound update\n")
 {
-  return bgp_clear_vty (vty, NULL, AFI_IP6, SAFI_UNICAST, clear_peer,
-                        BGP_CLEAR_SOFT_IN, argv[0]);
+  return bgp_clear_vty (vty, NULL, qafx_ipv6_unicast, clear_peer,
+                                                    BGP_CLEAR_SOFT_IN, argv[0]);
 }
 
 ALIAS (clear_bgp_peer_soft_in,
@@ -5605,8 +5670,8 @@ DEFUN (clear_bgp_peer_in_prefix_filter,
        "Soft reconfig inbound update\n"
        "Push out the existing ORF prefix-list\n")
 {
-  return bgp_clear_vty (vty, NULL, AFI_IP6, SAFI_UNICAST, clear_peer,
-                        BGP_CLEAR_SOFT_IN_ORF_PREFIX, argv[0]);
+  return bgp_clear_vty (vty, NULL, qafx_ipv6_unicast, clear_peer,
+                                         BGP_CLEAR_SOFT_IN_ORF_PREFIX, argv[0]);
 }
 
 ALIAS (clear_bgp_peer_in_prefix_filter,
@@ -5631,8 +5696,8 @@ DEFUN (clear_ip_bgp_peer_group_soft_in,
        "Soft reconfig\n"
        "Soft reconfig inbound update\n")
 {
-  return bgp_clear_vty (vty, NULL, AFI_IP, SAFI_UNICAST, clear_group,
-                        BGP_CLEAR_SOFT_IN, argv[0]);
+  return bgp_clear_vty (vty, NULL, qafx_ipv4_unicast, clear_group,
+                                                   BGP_CLEAR_SOFT_IN, argv[0]);
 }
 
 ALIAS (clear_ip_bgp_peer_group_soft_in,
@@ -5656,8 +5721,8 @@ DEFUN (clear_ip_bgp_peer_group_in_prefix_filter,
        "Soft reconfig inbound update\n"
        "Push out prefix-list ORF and do inbound soft reconfig\n")
 {
-  return bgp_clear_vty (vty, NULL, AFI_IP, SAFI_UNICAST, clear_group,
-                        BGP_CLEAR_SOFT_IN_ORF_PREFIX, argv[0]);
+  return bgp_clear_vty (vty, NULL, qafx_ipv4_unicast, clear_group,
+                                         BGP_CLEAR_SOFT_IN_ORF_PREFIX, argv[0]);
 }
 
 DEFUN (clear_ip_bgp_peer_group_ipv4_soft_in,
@@ -5674,12 +5739,10 @@ DEFUN (clear_ip_bgp_peer_group_ipv4_soft_in,
        "Soft reconfig\n"
        "Soft reconfig inbound update\n")
 {
-  if (strncmp (argv[1], "m", 1) == 0)
-    return bgp_clear_vty (vty, NULL, AFI_IP, SAFI_MULTICAST, clear_group,
-                          BGP_CLEAR_SOFT_IN, argv[0]);
-
-  return bgp_clear_vty (vty, NULL, AFI_IP, SAFI_UNICAST, clear_group,
-                        BGP_CLEAR_SOFT_IN, argv[0]);
+  qafx_t qafx = bgp_clear_qafx_how_cast(argv[1], qafx_ipv4_unicast,
+                                                 qafx_ipv4_multicast) ;
+  return bgp_clear_vty (vty, NULL, qafx, clear_group,
+                                                    BGP_CLEAR_SOFT_IN, argv[0]);
 }
 
 ALIAS (clear_ip_bgp_peer_group_ipv4_soft_in,
@@ -5709,12 +5772,10 @@ DEFUN (clear_ip_bgp_peer_group_ipv4_in_prefix_filter,
        "Soft reconfig inbound update\n"
        "Push out prefix-list ORF and do inbound soft reconfig\n")
 {
-  if (strncmp (argv[1], "m", 1) == 0)
-    return bgp_clear_vty (vty, NULL, AFI_IP, SAFI_MULTICAST, clear_group,
-                          BGP_CLEAR_SOFT_IN_ORF_PREFIX, argv[0]);
-
-  return bgp_clear_vty (vty, NULL, AFI_IP, SAFI_UNICAST, clear_group,
-                        BGP_CLEAR_SOFT_IN_ORF_PREFIX, argv[0]);
+  qafx_t qafx = bgp_clear_qafx_how_cast(argv[1], qafx_ipv4_unicast,
+                                                 qafx_ipv4_multicast) ;
+  return bgp_clear_vty (vty, NULL, qafx, clear_group,
+                                        BGP_CLEAR_SOFT_IN_ORF_PREFIX, argv[0]);
 }
 
 DEFUN (clear_bgp_peer_group_soft_in,
@@ -5727,8 +5788,8 @@ DEFUN (clear_bgp_peer_group_soft_in,
        "Soft reconfig\n"
        "Soft reconfig inbound update\n")
 {
-  return bgp_clear_vty (vty, NULL, AFI_IP6, SAFI_UNICAST, clear_group,
-                        BGP_CLEAR_SOFT_IN, argv[0]);
+  return bgp_clear_vty (vty, NULL, qafx_ipv6_unicast, clear_group,
+                                                    BGP_CLEAR_SOFT_IN, argv[0]);
 }
 
 ALIAS (clear_bgp_peer_group_soft_in,
@@ -5771,8 +5832,8 @@ DEFUN (clear_bgp_peer_group_in_prefix_filter,
        "Soft reconfig inbound update\n"
        "Push out prefix-list ORF and do inbound soft reconfig\n")
 {
-  return bgp_clear_vty (vty, NULL, AFI_IP6, SAFI_UNICAST, clear_group,
-                        BGP_CLEAR_SOFT_IN_ORF_PREFIX, argv[0]);
+  return bgp_clear_vty (vty, NULL, qafx_ipv6_unicast, clear_group,
+                                         BGP_CLEAR_SOFT_IN_ORF_PREFIX, argv[0]);
 }
 
 ALIAS (clear_bgp_peer_group_in_prefix_filter,
@@ -5796,8 +5857,8 @@ DEFUN (clear_ip_bgp_external_soft_in,
        "Soft reconfig\n"
        "Soft reconfig inbound update\n")
 {
-  return bgp_clear_vty (vty, NULL, AFI_IP, SAFI_UNICAST, clear_external,
-                        BGP_CLEAR_SOFT_IN, NULL);
+  return bgp_clear_vty (vty, NULL, qafx_ipv4_unicast, clear_external,
+                                                       BGP_CLEAR_SOFT_IN, NULL);
 }
 
 ALIAS (clear_ip_bgp_external_soft_in,
@@ -5819,8 +5880,8 @@ DEFUN (clear_ip_bgp_external_in_prefix_filter,
        "Soft reconfig inbound update\n"
        "Push out prefix-list ORF and do inbound soft reconfig\n")
 {
-  return bgp_clear_vty (vty, NULL, AFI_IP, SAFI_UNICAST, clear_external,
-                        BGP_CLEAR_SOFT_IN_ORF_PREFIX, NULL);
+  return bgp_clear_vty (vty, NULL, qafx_ipv4_unicast, clear_external,
+                                            BGP_CLEAR_SOFT_IN_ORF_PREFIX, NULL);
 }
 
 DEFUN (clear_ip_bgp_external_ipv4_soft_in,
@@ -5836,12 +5897,10 @@ DEFUN (clear_ip_bgp_external_ipv4_soft_in,
        "Soft reconfig\n"
        "Soft reconfig inbound update\n")
 {
-  if (strncmp (argv[0], "m", 1) == 0)
-    return bgp_clear_vty (vty, NULL, AFI_IP, SAFI_MULTICAST, clear_external,
-                          BGP_CLEAR_SOFT_IN, NULL);
-
-  return bgp_clear_vty (vty, NULL, AFI_IP, SAFI_UNICAST, clear_external,
-                        BGP_CLEAR_SOFT_IN, NULL);
+  qafx_t qafx = bgp_clear_qafx_how_cast(argv[0], qafx_ipv4_unicast,
+                                                 qafx_ipv4_multicast) ;
+  return bgp_clear_vty (vty, NULL, qafx, clear_external,
+                                                       BGP_CLEAR_SOFT_IN, NULL);
 }
 
 ALIAS (clear_ip_bgp_external_ipv4_soft_in,
@@ -5869,12 +5928,10 @@ DEFUN (clear_ip_bgp_external_ipv4_in_prefix_filter,
        "Soft reconfig inbound update\n"
        "Push out prefix-list ORF and do inbound soft reconfig\n")
 {
-  if (strncmp (argv[0], "m", 1) == 0)
-    return bgp_clear_vty (vty, NULL, AFI_IP, SAFI_MULTICAST, clear_external,
-                          BGP_CLEAR_SOFT_IN_ORF_PREFIX, NULL);
-
-  return bgp_clear_vty (vty, NULL, AFI_IP, SAFI_UNICAST, clear_external,
-                        BGP_CLEAR_SOFT_IN_ORF_PREFIX, NULL);
+  qafx_t qafx = bgp_clear_qafx_how_cast(argv[0], qafx_ipv4_unicast,
+                                                 qafx_ipv4_multicast) ;
+  return bgp_clear_vty (vty, NULL, qafx, clear_external,
+                                            BGP_CLEAR_SOFT_IN_ORF_PREFIX, NULL);
 }
 
 DEFUN (clear_bgp_external_soft_in,
@@ -5886,8 +5943,8 @@ DEFUN (clear_bgp_external_soft_in,
        "Soft reconfig\n"
        "Soft reconfig inbound update\n")
 {
-  return bgp_clear_vty (vty, NULL, AFI_IP6, SAFI_UNICAST, clear_external,
-                        BGP_CLEAR_SOFT_IN, NULL);
+  return bgp_clear_vty (vty, NULL, qafx_ipv6_unicast, clear_external,
+                                                       BGP_CLEAR_SOFT_IN, NULL);
 }
 
 ALIAS (clear_bgp_external_soft_in,
@@ -5926,8 +5983,8 @@ DEFUN (clear_bgp_external_in_prefix_filter,
        "Soft reconfig inbound update\n"
        "Push out prefix-list ORF and do inbound soft reconfig\n")
 {
-  return bgp_clear_vty (vty, NULL, AFI_IP6, SAFI_UNICAST, clear_external,
-                        BGP_CLEAR_SOFT_IN_ORF_PREFIX, NULL);
+  return bgp_clear_vty (vty, NULL, qafx_ipv6_unicast, clear_external,
+                                            BGP_CLEAR_SOFT_IN_ORF_PREFIX, NULL);
 }
 
 ALIAS (clear_bgp_external_in_prefix_filter,
@@ -5950,8 +6007,8 @@ DEFUN (clear_ip_bgp_as_soft_in,
        "Soft reconfig\n"
        "Soft reconfig inbound update\n")
 {
-  return bgp_clear_vty (vty, NULL, AFI_IP, SAFI_UNICAST, clear_as,
-                        BGP_CLEAR_SOFT_IN, argv[0]);
+  return bgp_clear_vty (vty, NULL, qafx_ipv4_unicast, clear_as,
+                                                    BGP_CLEAR_SOFT_IN, argv[0]);
 }
 
 ALIAS (clear_ip_bgp_as_soft_in,
@@ -5973,8 +6030,8 @@ DEFUN (clear_ip_bgp_as_in_prefix_filter,
        "Soft reconfig inbound update\n"
        "Push out prefix-list ORF and do inbound soft reconfig\n")
 {
-  return bgp_clear_vty (vty, NULL, AFI_IP, SAFI_UNICAST, clear_as,
-                        BGP_CLEAR_SOFT_IN_ORF_PREFIX, argv[0]);
+  return bgp_clear_vty (vty, NULL, qafx_ipv4_unicast, clear_as,
+                                         BGP_CLEAR_SOFT_IN_ORF_PREFIX, argv[0]);
 }
 
 DEFUN (clear_ip_bgp_as_ipv4_soft_in,
@@ -5990,12 +6047,9 @@ DEFUN (clear_ip_bgp_as_ipv4_soft_in,
        "Soft reconfig\n"
        "Soft reconfig inbound update\n")
 {
-  if (strncmp (argv[1], "m", 1) == 0)
-    return bgp_clear_vty (vty, NULL, AFI_IP, SAFI_MULTICAST, clear_as,
-                          BGP_CLEAR_SOFT_IN, argv[0]);
-
-  return bgp_clear_vty (vty, NULL, AFI_IP, SAFI_UNICAST, clear_as,
-                        BGP_CLEAR_SOFT_IN, argv[0]);
+  qafx_t qafx = bgp_clear_qafx_how_cast(argv[1], qafx_ipv4_unicast,
+                                                 qafx_ipv4_multicast) ;
+  return bgp_clear_vty (vty, NULL, qafx, clear_as, BGP_CLEAR_SOFT_IN, argv[0]);
 }
 
 ALIAS (clear_ip_bgp_as_ipv4_soft_in,
@@ -6023,12 +6077,10 @@ DEFUN (clear_ip_bgp_as_ipv4_in_prefix_filter,
        "Soft reconfig inbound update\n"
        "Push out prefix-list ORF and do inbound soft reconfig\n")
 {
-  if (strncmp (argv[1], "m", 1) == 0)
-    return bgp_clear_vty (vty, NULL, AFI_IP, SAFI_MULTICAST, clear_as,
-                          BGP_CLEAR_SOFT_IN_ORF_PREFIX, argv[0]);
-
-  return bgp_clear_vty (vty, NULL, AFI_IP, SAFI_UNICAST, clear_as,
-                        BGP_CLEAR_SOFT_IN_ORF_PREFIX, argv[0]);
+  qafx_t qafx = bgp_clear_qafx_how_cast(argv[1], qafx_ipv4_unicast,
+                                                 qafx_ipv4_multicast) ;
+  return bgp_clear_vty (vty, NULL, qafx, clear_as,
+                                         BGP_CLEAR_SOFT_IN_ORF_PREFIX, argv[0]);
 }
 
 DEFUN (clear_ip_bgp_as_vpnv4_soft_in,
@@ -6043,8 +6095,8 @@ DEFUN (clear_ip_bgp_as_vpnv4_soft_in,
        "Soft reconfig\n"
        "Soft reconfig inbound update\n")
 {
-  return bgp_clear_vty (vty, NULL, AFI_IP, SAFI_MPLS_VPN, clear_as,
-                        BGP_CLEAR_SOFT_IN, argv[0]);
+  return bgp_clear_vty (vty, NULL, qafx_ipv4_mpls_vpn, clear_as,
+                                                    BGP_CLEAR_SOFT_IN, argv[0]);
 }
 
 ALIAS (clear_ip_bgp_as_vpnv4_soft_in,
@@ -6067,8 +6119,8 @@ DEFUN (clear_bgp_as_soft_in,
        "Soft reconfig\n"
        "Soft reconfig inbound update\n")
 {
-  return bgp_clear_vty (vty, NULL, AFI_IP6, SAFI_UNICAST, clear_as,
-                        BGP_CLEAR_SOFT_IN, argv[0]);
+  return bgp_clear_vty (vty, NULL, qafx_ipv6_unicast, clear_as,
+                                                    BGP_CLEAR_SOFT_IN, argv[0]);
 }
 
 ALIAS (clear_bgp_as_soft_in,
@@ -6107,8 +6159,8 @@ DEFUN (clear_bgp_as_in_prefix_filter,
        "Soft reconfig inbound update\n"
        "Push out prefix-list ORF and do inbound soft reconfig\n")
 {
-  return bgp_clear_vty (vty, NULL, AFI_IP6, SAFI_UNICAST, clear_as,
-                        BGP_CLEAR_SOFT_IN_ORF_PREFIX, argv[0]);
+  return bgp_clear_vty (vty, NULL, qafx_ipv6_unicast, clear_as,
+                                         BGP_CLEAR_SOFT_IN_ORF_PREFIX, argv[0]);
 }
 
 ALIAS (clear_bgp_as_in_prefix_filter,
@@ -6131,12 +6183,10 @@ DEFUN (clear_ip_bgp_all_soft,
        "Clear all peers\n"
        "Soft reconfig\n")
 {
-  if (argc == 1)
-    return bgp_clear_vty (vty, argv[0], AFI_IP, SAFI_UNICAST, clear_all,
-                        BGP_CLEAR_SOFT_BOTH, NULL);
+  const char* name = (argc == 1) ? argv[0] : NULL ;
 
-  return bgp_clear_vty (vty, NULL, AFI_IP, SAFI_UNICAST, clear_all,
-                        BGP_CLEAR_SOFT_BOTH, NULL);
+  return bgp_clear_vty (vty, name, qafx_ipv4_unicast, clear_all,
+                                                     BGP_CLEAR_SOFT_BOTH, NULL);
 }
 
 ALIAS (clear_ip_bgp_all_soft,
@@ -6163,12 +6213,10 @@ DEFUN (clear_ip_bgp_all_ipv4_soft,
        "Address Family Modifier\n"
        "Soft reconfig\n")
 {
-  if (strncmp (argv[0], "m", 1) == 0)
-    return bgp_clear_vty (vty, NULL, AFI_IP, SAFI_MULTICAST, clear_all,
-                          BGP_CLEAR_SOFT_BOTH, NULL);
-
-  return bgp_clear_vty (vty, NULL, AFI_IP, SAFI_UNICAST, clear_all,
-                        BGP_CLEAR_SOFT_BOTH, NULL);
+  qafx_t qafx = bgp_clear_qafx_how_cast(argv[0], qafx_ipv4_unicast,
+                                                 qafx_ipv4_multicast) ;
+  return bgp_clear_vty (vty, NULL, qafx, clear_all,
+                                                     BGP_CLEAR_SOFT_BOTH, NULL);
 }
 
 DEFUN (clear_ip_bgp_instance_all_ipv4_soft,
@@ -6185,12 +6233,10 @@ DEFUN (clear_ip_bgp_instance_all_ipv4_soft,
        "Address Family Modifier\n"
        "Soft reconfig\n")
 {
-  if (strncmp (argv[1], "m", 1) == 0)
-    return bgp_clear_vty (vty, NULL, AFI_IP, SAFI_MULTICAST, clear_all,
-                          BGP_CLEAR_SOFT_BOTH, NULL);
-
-  return bgp_clear_vty (vty, NULL, AFI_IP, SAFI_UNICAST, clear_all,
-                        BGP_CLEAR_SOFT_BOTH, NULL);
+  qafx_t qafx = bgp_clear_qafx_how_cast(argv[1], qafx_ipv4_unicast,
+                                                 qafx_ipv4_multicast) ;
+  return bgp_clear_vty (vty, argv[0], qafx, clear_all,
+                                                    BGP_CLEAR_SOFT_BOTH, NULL);
 }
 
 DEFUN (clear_ip_bgp_all_vpnv4_soft,
@@ -6204,8 +6250,8 @@ DEFUN (clear_ip_bgp_all_vpnv4_soft,
        "Address Family Modifier\n"
        "Soft reconfig\n")
 {
-  return bgp_clear_vty (vty, NULL, AFI_IP, SAFI_MPLS_VPN, clear_all,
-                        BGP_CLEAR_SOFT_BOTH, argv[0]);
+  return bgp_clear_vty (vty, NULL, qafx_ipv4_mpls_vpn, clear_all,
+                                                  BGP_CLEAR_SOFT_BOTH, argv[0]);
 }
 
 DEFUN (clear_bgp_all_soft,
@@ -6216,12 +6262,10 @@ DEFUN (clear_bgp_all_soft,
        "Clear all peers\n"
        "Soft reconfig\n")
 {
-  if (argc == 1)
-    return bgp_clear_vty (vty, argv[0], AFI_IP6, SAFI_UNICAST, clear_all,
-                        BGP_CLEAR_SOFT_BOTH, argv[0]);
+  const char* name = (argc == 1) ? argv[0] : NULL ;
 
-  return bgp_clear_vty (vty, NULL, AFI_IP6, SAFI_UNICAST, clear_all,
-                        BGP_CLEAR_SOFT_BOTH, argv[0]);
+  return bgp_clear_vty (vty, name, qafx_ipv6_unicast, clear_all,
+                                                 BGP_CLEAR_SOFT_BOTH, argv[0]);
 }
 
 ALIAS (clear_bgp_all_soft,
@@ -6252,8 +6296,8 @@ DEFUN (clear_ip_bgp_peer_soft,
        "BGP neighbor address to clear\n"
        "Soft reconfig\n")
 {
-  return bgp_clear_vty (vty, NULL, AFI_IP, SAFI_UNICAST, clear_peer,
-                        BGP_CLEAR_SOFT_BOTH, argv[0]);
+  return bgp_clear_vty (vty, NULL, qafx_ipv4_unicast, clear_peer,
+                                                  BGP_CLEAR_SOFT_BOTH, argv[0]);
 }
 
 DEFUN (clear_ip_bgp_peer_ipv4_soft,
@@ -6268,12 +6312,10 @@ DEFUN (clear_ip_bgp_peer_ipv4_soft,
        "Address Family Modifier\n"
        "Soft reconfig\n")
 {
-  if (strncmp (argv[1], "m", 1) == 0)
-    return bgp_clear_vty (vty, NULL, AFI_IP, SAFI_MULTICAST, clear_peer,
-                          BGP_CLEAR_SOFT_BOTH, argv[0]);
-
-  return bgp_clear_vty (vty, NULL, AFI_IP, SAFI_UNICAST, clear_peer,
-                        BGP_CLEAR_SOFT_BOTH, argv[0]);
+  qafx_t qafx = bgp_clear_qafx_how_cast(argv[1], qafx_ipv4_unicast,
+                                                 qafx_ipv4_multicast) ;
+  return bgp_clear_vty (vty, NULL, qafx, clear_peer,
+                                                  BGP_CLEAR_SOFT_BOTH, argv[0]);
 }
 
 DEFUN (clear_ip_bgp_peer_vpnv4_soft,
@@ -6287,8 +6329,8 @@ DEFUN (clear_ip_bgp_peer_vpnv4_soft,
        "Address Family Modifier\n"
        "Soft reconfig\n")
 {
-  return bgp_clear_vty (vty, NULL, AFI_IP, SAFI_MPLS_VPN, clear_peer,
-                        BGP_CLEAR_SOFT_BOTH, argv[0]);
+  return bgp_clear_vty (vty, NULL, qafx_ipv4_mpls_vpn, clear_peer,
+                                                  BGP_CLEAR_SOFT_BOTH, argv[0]);
 }
 
 DEFUN (clear_bgp_peer_soft,
@@ -6300,8 +6342,8 @@ DEFUN (clear_bgp_peer_soft,
        "BGP IPv6 neighbor to clear\n"
        "Soft reconfig\n")
 {
-  return bgp_clear_vty (vty, NULL, AFI_IP6, SAFI_UNICAST, clear_peer,
-                        BGP_CLEAR_SOFT_BOTH, argv[0]);
+  return bgp_clear_vty (vty, NULL, qafx_ipv6_unicast, clear_peer,
+                                                  BGP_CLEAR_SOFT_BOTH, argv[0]);
 }
 
 ALIAS (clear_bgp_peer_soft,
@@ -6324,8 +6366,8 @@ DEFUN (clear_ip_bgp_peer_group_soft,
        "BGP peer-group name\n"
        "Soft reconfig\n")
 {
-  return bgp_clear_vty (vty, NULL, AFI_IP, SAFI_UNICAST, clear_group,
-                        BGP_CLEAR_SOFT_BOTH, argv[0]);
+  return bgp_clear_vty (vty, NULL, qafx_ipv4_unicast, clear_group,
+                                                  BGP_CLEAR_SOFT_BOTH, argv[0]);
 }
 
 DEFUN (clear_ip_bgp_peer_group_ipv4_soft,
@@ -6341,12 +6383,10 @@ DEFUN (clear_ip_bgp_peer_group_ipv4_soft,
        "Address Family modifier\n"
        "Soft reconfig\n")
 {
-  if (strncmp (argv[1], "m", 1) == 0)
-    return bgp_clear_vty (vty, NULL, AFI_IP, SAFI_MULTICAST, clear_group,
-                          BGP_CLEAR_SOFT_BOTH, argv[0]);
-
-  return bgp_clear_vty (vty, NULL, AFI_IP, SAFI_UNICAST, clear_group,
-                        BGP_CLEAR_SOFT_BOTH, argv[0]);
+  qafx_t qafx = bgp_clear_qafx_how_cast(argv[1], qafx_ipv4_unicast,
+                                                 qafx_ipv4_multicast) ;
+  return bgp_clear_vty (vty, NULL, qafx, clear_group,
+                                                  BGP_CLEAR_SOFT_BOTH, argv[0]);
 }
 
 DEFUN (clear_bgp_peer_group_soft,
@@ -6358,8 +6398,8 @@ DEFUN (clear_bgp_peer_group_soft,
        "BGP peer-group name\n"
        "Soft reconfig\n")
 {
-  return bgp_clear_vty (vty, NULL, AFI_IP6, SAFI_UNICAST, clear_group,
-                        BGP_CLEAR_SOFT_BOTH, argv[0]);
+  return bgp_clear_vty (vty, NULL, qafx_ipv6_unicast, clear_group,
+                                                  BGP_CLEAR_SOFT_BOTH, argv[0]);
 }
 
 ALIAS (clear_bgp_peer_group_soft,
@@ -6381,8 +6421,8 @@ DEFUN (clear_ip_bgp_external_soft,
        "Clear all external peers\n"
        "Soft reconfig\n")
 {
-  return bgp_clear_vty (vty, NULL, AFI_IP, SAFI_UNICAST, clear_external,
-                        BGP_CLEAR_SOFT_BOTH, NULL);
+  return bgp_clear_vty (vty, NULL, qafx_ipv4_unicast, clear_external,
+                                                     BGP_CLEAR_SOFT_BOTH, NULL);
 }
 
 DEFUN (clear_ip_bgp_external_ipv4_soft,
@@ -6397,12 +6437,10 @@ DEFUN (clear_ip_bgp_external_ipv4_soft,
        "Address Family modifier\n"
        "Soft reconfig\n")
 {
-  if (strncmp (argv[0], "m", 1) == 0)
-    return bgp_clear_vty (vty, NULL, AFI_IP, SAFI_MULTICAST, clear_external,
-                          BGP_CLEAR_SOFT_BOTH, NULL);
-
-  return bgp_clear_vty (vty, NULL, AFI_IP, SAFI_UNICAST, clear_external,
-                        BGP_CLEAR_SOFT_BOTH, NULL);
+  qafx_t qafx = bgp_clear_qafx_how_cast(argv[0], qafx_ipv4_unicast,
+                                                 qafx_ipv4_multicast) ;
+  return bgp_clear_vty (vty, NULL, qafx, clear_external,
+                                                     BGP_CLEAR_SOFT_BOTH, NULL);
 }
 
 DEFUN (clear_bgp_external_soft,
@@ -6413,8 +6451,8 @@ DEFUN (clear_bgp_external_soft,
        "Clear all external peers\n"
        "Soft reconfig\n")
 {
-  return bgp_clear_vty (vty, NULL, AFI_IP6, SAFI_UNICAST, clear_external,
-                        BGP_CLEAR_SOFT_BOTH, NULL);
+  return bgp_clear_vty (vty, NULL, qafx_ipv6_unicast, clear_external,
+                                                     BGP_CLEAR_SOFT_BOTH, NULL);
 }
 
 ALIAS (clear_bgp_external_soft,
@@ -6435,8 +6473,8 @@ DEFUN (clear_ip_bgp_as_soft,
        "Clear peers with the AS number\n"
        "Soft reconfig\n")
 {
-  return bgp_clear_vty (vty, NULL, AFI_IP, SAFI_UNICAST, clear_as,
-                        BGP_CLEAR_SOFT_BOTH, argv[0]);
+  return bgp_clear_vty (vty, NULL, qafx_ipv4_unicast, clear_as,
+                                                 BGP_CLEAR_SOFT_BOTH, argv[0]);
 }
 
 DEFUN (clear_ip_bgp_as_ipv4_soft,
@@ -6451,12 +6489,11 @@ DEFUN (clear_ip_bgp_as_ipv4_soft,
        "Address Family Modifier\n"
        "Soft reconfig\n")
 {
-  if (strncmp (argv[1], "m", 1) == 0)
-    return bgp_clear_vty (vty, NULL, AFI_IP, SAFI_MULTICAST, clear_as,
-                          BGP_CLEAR_SOFT_BOTH, argv[0]);
+  qafx_t qafx = bgp_clear_qafx_how_cast(argv[1], qafx_ipv4_unicast,
+                                                 qafx_ipv4_multicast) ;
 
-  return bgp_clear_vty (vty, NULL,AFI_IP, SAFI_UNICAST, clear_as,
-                        BGP_CLEAR_SOFT_BOTH, argv[0]);
+  return bgp_clear_vty (vty, NULL, qafx, clear_as,
+                                                  BGP_CLEAR_SOFT_BOTH, argv[0]);
 }
 
 DEFUN (clear_ip_bgp_as_vpnv4_soft,
@@ -6470,8 +6507,8 @@ DEFUN (clear_ip_bgp_as_vpnv4_soft,
        "Address Family Modifier\n"
        "Soft reconfig\n")
 {
-  return bgp_clear_vty (vty, NULL, AFI_IP, SAFI_MPLS_VPN, clear_as,
-                        BGP_CLEAR_SOFT_BOTH, argv[0]);
+  return bgp_clear_vty (vty, NULL, qafx_ipv4_mpls_vpn, clear_as,
+                                                  BGP_CLEAR_SOFT_BOTH, argv[0]);
 }
 
 DEFUN (clear_bgp_as_soft,
@@ -6482,8 +6519,8 @@ DEFUN (clear_bgp_as_soft,
        "Clear peers with the AS number\n"
        "Soft reconfig\n")
 {
-  return bgp_clear_vty (vty, NULL, AFI_IP6, SAFI_UNICAST, clear_as,
-                        BGP_CLEAR_SOFT_BOTH, argv[0]);
+  return bgp_clear_vty (vty, NULL, qafx_ipv6_unicast, clear_as,
+                                                  BGP_CLEAR_SOFT_BOTH, argv[0]);
 }
 
 ALIAS (clear_bgp_as_soft,
@@ -6505,12 +6542,10 @@ DEFUN (clear_bgp_all_rsclient,
        "Clear all peers\n"
        "Soft reconfig for rsclient RIB\n")
 {
-  if (argc == 1)
-    return bgp_clear_vty (vty, argv[0], AFI_IP6, SAFI_UNICAST, clear_all,
-                          BGP_CLEAR_SOFT_RSCLIENT, NULL);
+  const char* name = (argc == 1) ? argv[0] : NULL ;
 
-  return bgp_clear_vty (vty, NULL, AFI_IP6, SAFI_UNICAST, clear_all,
-                        BGP_CLEAR_SOFT_RSCLIENT, NULL);
+  return bgp_clear_vty (vty, name, qafx_ipv6_unicast, clear_all,
+                                                 BGP_CLEAR_SOFT_RSCLIENT, NULL);
 }
 
 ALIAS (clear_bgp_all_rsclient,
@@ -6553,12 +6588,10 @@ DEFUN (clear_ip_bgp_all_rsclient,
        "Clear all peers\n"
        "Soft reconfig for rsclient RIB\n")
 {
-  if (argc == 1)
-    return bgp_clear_vty (vty, argv[0], AFI_IP, SAFI_UNICAST, clear_all,
-                          BGP_CLEAR_SOFT_RSCLIENT, NULL);
+  const char* name = (argc == 1) ? argv[0] : NULL ;
 
-  return bgp_clear_vty (vty, NULL, AFI_IP, SAFI_UNICAST, clear_all,
-                        BGP_CLEAR_SOFT_RSCLIENT, NULL);
+  return bgp_clear_vty (vty, name, qafx_ipv4_unicast, clear_all,
+                                                 BGP_CLEAR_SOFT_RSCLIENT, NULL);
 }
 
 ALIAS (clear_ip_bgp_all_rsclient,
@@ -6582,12 +6615,11 @@ DEFUN (clear_bgp_peer_rsclient,
        "BGP IPv6 neighbor to clear\n"
        "Soft reconfig for rsclient RIB\n")
 {
-  if (argc == 2)
-    return bgp_clear_vty (vty, argv[0], AFI_IP6, SAFI_UNICAST, clear_peer,
-                          BGP_CLEAR_SOFT_RSCLIENT, argv[1]);
+  const char* name   = (argc == 2) ? argv[0] : NULL ;
+  const char* client = (argc == 2) ? argv[1] : argv[0] ;
 
-  return bgp_clear_vty (vty, NULL, AFI_IP6, SAFI_UNICAST, clear_peer,
-                        BGP_CLEAR_SOFT_RSCLIENT, argv[0]);
+  return bgp_clear_vty (vty, name, qafx_ipv6_unicast, clear_peer,
+                                               BGP_CLEAR_SOFT_RSCLIENT, client);
 }
 
 ALIAS (clear_bgp_peer_rsclient,
@@ -6634,12 +6666,11 @@ DEFUN (clear_ip_bgp_peer_rsclient,
        "BGP IPv6 neighbor to clear\n"
        "Soft reconfig for rsclient RIB\n")
 {
-  if (argc == 2)
-    return bgp_clear_vty (vty, argv[0], AFI_IP, SAFI_UNICAST, clear_peer,
-                          BGP_CLEAR_SOFT_RSCLIENT, argv[1]);
+  const char* name   = (argc == 2) ? argv[0] : NULL ;
+  const char* client = (argc == 2) ? argv[1] : argv[0] ;
 
-  return bgp_clear_vty (vty, NULL, AFI_IP, SAFI_UNICAST, clear_peer,
-                        BGP_CLEAR_SOFT_RSCLIENT, argv[0]);
+  return bgp_clear_vty (vty, name, qafx_ipv4_unicast, clear_peer,
+                                              BGP_CLEAR_SOFT_RSCLIENT, client);
 }
 
 ALIAS (clear_ip_bgp_peer_rsclient,
@@ -6689,7 +6720,7 @@ DEFUN (show_bgp_memory,
 {
   mem_stats_t mst[1] ;
   char memstrbuf[MTYPE_MEMSTR_LEN];
-  unsigned long count;
+  ulong count;
 
   mem_get_stats(mst) ;
 
@@ -6742,49 +6773,45 @@ DEFUN (show_bgp_memory,
              VTY_NEWLINE);
 
   /* Attributes */
-  count = attr_count();
+  count = bgp_attr_count();
   vty_out (vty, "%ld BGP attributes, using %s of memory%s", count,
            mtype_memstr (memstrbuf, sizeof (memstrbuf),
-                         count * sizeof(struct attr)),
+                         count * sizeof(attr_set_t)),
            VTY_NEWLINE);
-  if ((count = mem_get_alloc(mst, MTYPE_ATTR_EXTRA)))
-    vty_out (vty, "%ld BGP extra attributes, using %s of memory%s", count,
-             mtype_memstr (memstrbuf, sizeof (memstrbuf),
-                           count * sizeof(struct attr_extra)),
-             VTY_NEWLINE);
 
-  if ((count = attr_unknown_count()))
+  if ((count = mem_get_alloc(mst, MTYPE_BGP_UNKNOWN_ATTR)))
     vty_out (vty, "%ld unknown attributes%s", count, VTY_NEWLINE);
 
   /* AS_PATH attributes */
-  count = aspath_count ();
+  count = as_path_count ();
   vty_out (vty, "%ld BGP AS-PATH entries, using %s of memory%s", count,
            mtype_memstr (memstrbuf, sizeof (memstrbuf),
-                         count * sizeof (struct aspath)),
+                         count * sizeof (as_path_t)),
            VTY_NEWLINE);
 
-  count = mem_get_alloc(mst, MTYPE_AS_SEG);
-  vty_out (vty, "%ld BGP AS-PATH segments, using %s of memory%s", count,
+  count = mem_get_alloc(mst, MTYPE_AS_PATH_BODY);
+  vty_out (vty, "%ld BGP AS-PATH bodies, using %s of memory%s", count,
            mtype_memstr (memstrbuf, sizeof (memstrbuf),
-                         count * sizeof (struct assegment)),
+                         count * sizeof (as_path_t)),    /* TODO fix !  */
            VTY_NEWLINE);
 
   /* Other attributes */
-  if ((count = community_count ()))
+  if ((count = mem_get_alloc(mst, MTYPE_COMMUNITY)))
     vty_out (vty, "%ld BGP community entries, using %s of memory%s", count,
              mtype_memstr (memstrbuf, sizeof (memstrbuf),
-                         count * sizeof (struct community)),
+                         count * sizeof (attr_community_t)),
              VTY_NEWLINE);
+
   if ((count = mem_get_alloc(mst, MTYPE_ECOMMUNITY)))
     vty_out (vty, "%ld BGP community entries, using %s of memory%s", count,
              mtype_memstr (memstrbuf, sizeof (memstrbuf),
-                         count * sizeof (struct ecommunity)),
+                         count * sizeof (attr_ecommunity_t)),
              VTY_NEWLINE);
 
   if ((count = mem_get_alloc(mst, MTYPE_CLUSTER)))
     vty_out (vty, "%ld Cluster lists, using %s of memory%s", count,
              mtype_memstr (memstrbuf, sizeof (memstrbuf),
-                         count * sizeof (struct cluster_list)),
+                         count * sizeof (attr_cluster_t)),
              VTY_NEWLINE);
 
   /* Peer related usage */
@@ -6821,7 +6848,7 @@ DEFUN (show_bgp_memory,
 
 /* Show BGP peer's summary information. */
 static int
-bgp_show_summary (struct vty *vty, struct bgp *bgp, int afi, int safi)
+bgp_show_summary (struct vty *vty, struct bgp *bgp, qafx_t qafx)
 {
   struct peer *peer;
   struct listnode *node, *nnode;
@@ -6831,111 +6858,124 @@ bgp_show_summary (struct vty *vty, struct bgp *bgp, int afi, int safi)
   struct bgp_session_stats stats;
 
   /* Header string for each address family. */
-  static char header[] = "Neighbor        V    AS MsgRcvd MsgSent   TblVer  InQ OutQ Up/Down  State/PfxRcd";
+  static const char header[] =
+    "Neighbor        V    AS MsgRcvd MsgSent   TblVer  InQ OutQ Up/Down"
+                                                               "  State/PfxRcd";
 
   for (ALL_LIST_ELEMENTS (bgp->peer, node, nnode, peer))
     {
+      peer_rib prib ;
+
+      prib = peer_family_prib(peer, qafx) ;
+      if (prib == NULL)
+        continue ;
+
       bgp_session_get_stats(peer->session, &stats);
 
-      if (peer->afc[afi][safi])
+      if (count == 0)
         {
-          if (!count)
-            {
-              unsigned long ents;
-              char memstrbuf[MTYPE_MEMSTR_LEN];
+          ulong ents;
+          char memstrbuf[MTYPE_MEMSTR_LEN];
 
-              /* Usage summary and header */
-              vty_out (vty,
-                       "BGP router identifier %s, local AS number %u%s",
-                       safe_inet_ntoa (bgp->router_id), bgp->as, VTY_NEWLINE);
+          /* Usage summary and header */
+          vty_out (vty,
+                   "BGP router identifier %s, local AS number %u%s",
+                siptoa(AF_INET, &bgp->router_id).str, bgp->as, VTY_NEWLINE);
 
-              ents = bgp_table_count (bgp->rib[afi][safi]);
-              vty_out (vty, "RIB entries %ld, using %s of memory%s", ents,
-                       mtype_memstr (memstrbuf, sizeof (memstrbuf),
-                                     ents * sizeof (struct bgp_node)),
-                       VTY_NEWLINE);
+          ents = bgp_rib_count (bgp->rib[qafx][rib_main]);
+          vty_out (vty, "RIB entries %ld, using %s of memory%s", ents,
+                   mtype_memstr (memstrbuf, sizeof (memstrbuf),
+                                 ents * sizeof (bgp_rib_node_t)),
+                   VTY_NEWLINE);
 
-              /* Peer related usage */
-              ents = listcount (bgp->peer);
-              vty_out (vty, "Peers %ld, using %s of memory%s",
-                       ents,
-                       mtype_memstr (memstrbuf, sizeof (memstrbuf),
-                                     ents * sizeof (struct peer)),
-                       VTY_NEWLINE);
+          ents = bgp_rib_count (bgp->rib[qafx][rib_rs]);
+          if (ents != 0)
+            vty_out (vty, "RIB entries %ld, using %s of memory%s", ents,
+                   mtype_memstr (memstrbuf, sizeof (memstrbuf),
+                                 ents * sizeof (bgp_rib_node_t)),
+                   VTY_NEWLINE);
 
-              if ((ents = listcount (bgp->rsclient)))
-                vty_out (vty, "RS-Client peers %ld, using %s of memory%s",
-                         ents,
-                         mtype_memstr (memstrbuf, sizeof (memstrbuf),
-                                       ents * sizeof (struct peer)),
-                         VTY_NEWLINE);
+          /* Peer related usage */
+          ents = listcount (bgp->peer);
+          vty_out (vty, "Peers %ld, using %s of memory%s",
+                   ents,
+                   mtype_memstr (memstrbuf, sizeof (memstrbuf),
+                                 ents * sizeof (struct peer)),
+                   VTY_NEWLINE);
 
-              if ((ents = listcount (bgp->group)))
-                vty_out (vty, "Peer groups %ld, using %s of memory%s", ents,
-                         mtype_memstr (memstrbuf, sizeof (memstrbuf),
-                                       ents * sizeof (struct peer_group)),
-                         VTY_NEWLINE);
+#if 0
+          if ((ents = listcount (bgp->rsclient)))
+            vty_out (vty, "RS-Client peers %ld, using %s of memory%s",
+                     ents,
+                     mtype_memstr (memstrbuf, sizeof (memstrbuf),
+                                   ents * sizeof (struct peer)),
+                     VTY_NEWLINE);
+#endif
 
-              if (CHECK_FLAG (bgp->af_flags[afi][safi], BGP_CONFIG_DAMPENING))
-                vty_out (vty, "Dampening enabled.%s", VTY_NEWLINE);
-              vty_out (vty, "%s", VTY_NEWLINE);
-              vty_out (vty, "%s%s", header, VTY_NEWLINE);
-            }
+          if ((ents = listcount (bgp->group)))
+            vty_out (vty, "Peer groups %ld, using %s of memory%s", ents,
+                     mtype_memstr (memstrbuf, sizeof (memstrbuf),
+                                   ents * sizeof (struct peer_group)),
+                     VTY_NEWLINE);
 
-          count++;
-
-          vty_out (vty, "%s", peer->host);
-          len = 16 - strlen(peer->host);
-          if (len < 1)
-            vty_out (vty, "%s%*s", VTY_NEWLINE, 16, " ");
-          else
-            vty_out (vty, "%*s", len, " ");
-
-          vty_out (vty, "4 ");
-
-          vty_out (vty, "%5u %7d %7d %8d %4d %4lu ",
-                   peer->as,
-                   stats.open_in + stats.update_in + stats.keepalive_in
-                   + stats.notify_in + stats.refresh_in + stats.dynamic_cap_in,
-                   stats.open_out + stats.update_out + stats.keepalive_out
-                   + stats.notify_out + stats.refresh_out
-                   + stats.dynamic_cap_out,
-                   0, 0, (unsigned long) peer->obuf->count);
-
-          vty_out (vty, "%8s",
-                   peer_uptime (peer->uptime, timebuf, BGP_UPTIME_LEN));
-
-          if (peer->state == bgp_peer_pEstablished)
-            {
-              vty_out (vty, " %8ld", peer->pcount[afi][safi]);
-            }
-          else
-            {
-              if (CHECK_FLAG (peer->flags, PEER_FLAG_SHUTDOWN))
-                vty_out (vty, " Idle (Admin)");
-              else if (CHECK_FLAG (peer->sflags, PEER_STATUS_PREFIX_OVERFLOW))
-                vty_out (vty, " Idle (PfxCt)");
-              else
-                vty_out (vty, " %-11s",
-                             map_direct(bgp_peer_status_map, peer->state).str) ;
-            }
-
+          if (CHECK_FLAG (bgp->af_flags[qafx], BGP_CONFIG_DAMPING))
+            vty_out (vty, "Dampening enabled.%s", VTY_NEWLINE);
           vty_out (vty, "%s", VTY_NEWLINE);
+          vty_out (vty, "%s%s", header, VTY_NEWLINE);
         }
-    }
+
+      count++;
+
+      vty_out (vty, "%s", peer->host);
+      len = 16 - strlen(peer->host);
+      if (len < 1)
+        vty_out (vty, "%s%*s", VTY_NEWLINE, 16, " ");
+      else
+        vty_out (vty, "%*s", len, " ");
+
+      vty_out (vty, "4 ");
+
+      vty_out (vty, "%5u %7d %7d %8d %4d %4lu ",
+               peer->as,
+               stats.open_in + stats.update_in + stats.keepalive_in
+               + stats.notify_in + stats.refresh_in + stats.dynamic_cap_in,
+               stats.open_out + stats.update_out + stats.keepalive_out
+               + stats.notify_out + stats.refresh_out
+               + stats.dynamic_cap_out,
+               0, 0, (ulong) peer->obuf_fifo->count);
+
+      vty_out (vty, "%8s",
+               peer_uptime (peer->uptime, timebuf, BGP_UPTIME_LEN));
+
+      if (peer->state == bgp_pEstablished)
+        {
+          vty_out (vty, " %8u", prib->pcount);
+        }
+      else
+        {
+          if (CHECK_FLAG (peer->flags, PEER_FLAG_SHUTDOWN))
+            vty_out (vty, " Idle (Admin)");
+          else if (CHECK_FLAG (peer->sflags, PEER_STATUS_PREFIX_OVERFLOW))
+            vty_out (vty, " Idle (PfxCt)");
+          else
+            vty_out (vty, " %-11s",
+                         map_direct(bgp_peer_status_map, peer->state).str) ;
+        }
+
+      vty_out (vty, "\n");
+    } ;
 
   if (count)
     vty_out (vty, "%sTotal number of neighbors %d%s", VTY_NEWLINE,
              count, VTY_NEWLINE);
   else
     vty_out (vty, "No %s neighbor is configured%s",
-             afi == AFI_IP ? "IPv4" : "IPv6", VTY_NEWLINE);
+             qafx_is_ipv4(qafx) ? "IPv4" : "IPv6", VTY_NEWLINE);
   return CMD_SUCCESS;
 }
 
 static int
-bgp_show_summary_vty (struct vty *vty, const char *name,
-                      afi_t afi, safi_t safi)
+bgp_show_summary_vty (struct vty *vty, const char *name, qafx_t qafx)
 {
   struct bgp *bgp;
 
@@ -6949,14 +6989,14 @@ bgp_show_summary_vty (struct vty *vty, const char *name,
           return CMD_WARNING;
         }
 
-      bgp_show_summary (vty, bgp, afi, safi);
+      bgp_show_summary (vty, bgp, qafx);
       return CMD_SUCCESS;
     }
 
   bgp = bgp_get_default ();
 
   if (bgp)
-    bgp_show_summary (vty, bgp, afi, safi);
+    bgp_show_summary (vty, bgp, qafx);
 
   return CMD_SUCCESS;
 }
@@ -6970,7 +7010,7 @@ DEFUN (show_ip_bgp_summary,
        BGP_STR
        "Summary of BGP neighbor status\n")
 {
-  return bgp_show_summary_vty (vty, NULL, AFI_IP, SAFI_UNICAST);
+  return bgp_show_summary_vty (vty, NULL, qafx_ipv4_unicast);
 }
 
 DEFUN (show_ip_bgp_instance_summary,
@@ -6983,7 +7023,7 @@ DEFUN (show_ip_bgp_instance_summary,
        "View name\n"
        "Summary of BGP neighbor status\n")
 {
-  return bgp_show_summary_vty (vty, argv[0], AFI_IP, SAFI_UNICAST);
+  return bgp_show_summary_vty (vty, argv[0], qafx_ipv4_unicast);
 }
 
 DEFUN (show_ip_bgp_ipv4_summary,
@@ -6997,10 +7037,10 @@ DEFUN (show_ip_bgp_ipv4_summary,
        "Address Family modifier\n"
        "Summary of BGP neighbor status\n")
 {
-  if (strncmp (argv[0], "m", 1) == 0)
-    return bgp_show_summary_vty (vty, NULL, AFI_IP, SAFI_MULTICAST);
+  qafx_t qafx = (argv[0][0] == 'm') ? qafx_ipv4_multicast
+                                    : qafx_ipv4_unicast ;
 
-  return bgp_show_summary_vty (vty, NULL, AFI_IP, SAFI_UNICAST);
+  return bgp_show_summary_vty (vty, NULL, qafx);
 }
 
 ALIAS (show_ip_bgp_ipv4_summary,
@@ -7026,10 +7066,10 @@ DEFUN (show_ip_bgp_instance_ipv4_summary,
        "Address Family modifier\n"
        "Summary of BGP neighbor status\n")
 {
-  if (strncmp (argv[1], "m", 1) == 0)
-    return bgp_show_summary_vty (vty, argv[0], AFI_IP, SAFI_MULTICAST);
-  else
-    return bgp_show_summary_vty (vty, argv[0], AFI_IP, SAFI_UNICAST);
+  qafx_t qafx = (argv[1][0] == 'm') ? qafx_ipv4_multicast
+                                    : qafx_ipv4_unicast ;
+
+  return bgp_show_summary_vty (vty, argv[0], qafx);
 }
 
 ALIAS (show_ip_bgp_instance_ipv4_summary,
@@ -7054,7 +7094,7 @@ DEFUN (show_ip_bgp_vpnv4_all_summary,
        "Display information about all VPNv4 NLRIs\n"
        "Summary of BGP neighbor status\n")
 {
-  return bgp_show_summary_vty (vty, NULL, AFI_IP, SAFI_MPLS_VPN);
+  return bgp_show_summary_vty (vty, NULL, qafx_ipv4_mpls_vpn);
 }
 
 DEFUN (show_ip_bgp_vpnv4_rd_summary,
@@ -7068,17 +7108,12 @@ DEFUN (show_ip_bgp_vpnv4_rd_summary,
        "VPN Route Distinguisher\n"
        "Summary of BGP neighbor status\n")
 {
-  int ret;
   struct prefix_rd prd;
 
-  ret = str2prefix_rd (argv[0], &prd);
-  if (! ret)
-    {
-      vty_out (vty, "%% Malformed Route Distinguisher%s", VTY_NEWLINE);
-      return CMD_WARNING;
-    }
+  if (! str2prefix_rd_vty (vty, &prd, argv[0]))
+    return CMD_WARNING;
 
-  return bgp_show_summary_vty (vty, NULL, AFI_IP, SAFI_MPLS_VPN);
+  return bgp_show_summary_vty (vty, NULL, qafx_ipv4_mpls_vpn);
 }
 
 #ifdef HAVE_IPV6
@@ -7089,7 +7124,7 @@ DEFUN (show_bgp_summary,
        BGP_STR
        "Summary of BGP neighbor status\n")
 {
-  return bgp_show_summary_vty (vty, NULL, AFI_IP6, SAFI_UNICAST);
+  return bgp_show_summary_vty (vty, NULL, qafx_ipv6_unicast);
 }
 
 DEFUN (show_bgp_instance_summary,
@@ -7101,7 +7136,7 @@ DEFUN (show_bgp_instance_summary,
        "View name\n"
        "Summary of BGP neighbor status\n")
 {
-  return bgp_show_summary_vty (vty, argv[0], AFI_IP6, SAFI_UNICAST);
+  return bgp_show_summary_vty (vty, argv[0], qafx_ipv6_unicast);
 }
 
 ALIAS (show_bgp_summary,
@@ -7132,10 +7167,10 @@ DEFUN (show_bgp_ipv6_safi_summary,
        "Address Family modifier\n"
        "Summary of BGP neighbor status\n")
 {
-  if (strncmp (argv[0], "m", 1) == 0)
-    return bgp_show_summary_vty (vty, NULL, AFI_IP6, SAFI_MULTICAST);
+  qafx_t qafx = (argv[0][0] == 'm') ? qafx_ipv6_multicast
+                                    : qafx_ipv6_unicast ;
 
-  return bgp_show_summary_vty (vty, NULL, AFI_IP6, SAFI_UNICAST);
+  return bgp_show_summary_vty (vty, NULL, qafx);
 }
 
 DEFUN (show_bgp_instance_ipv6_safi_summary,
@@ -7150,10 +7185,10 @@ DEFUN (show_bgp_instance_ipv6_safi_summary,
        "Address Family modifier\n"
        "Summary of BGP neighbor status\n")
 {
-  if (strncmp (argv[1], "m", 1) == 0)
-    return bgp_show_summary_vty (vty, argv[0], AFI_IP6, SAFI_MULTICAST);
+  qafx_t qafx = (argv[1][0] == 'm') ? qafx_ipv6_multicast
+                                    : qafx_ipv6_unicast ;
 
-  return bgp_show_summary_vty (vty, argv[0], AFI_IP6, SAFI_UNICAST);
+  return bgp_show_summary_vty (vty, argv[0], qafx);
 }
 
 /* old command */
@@ -7165,7 +7200,7 @@ DEFUN (show_ipv6_bgp_summary,
        BGP_STR
        "Summary of BGP neighbor status\n")
 {
-  return bgp_show_summary_vty (vty, NULL, AFI_IP6, SAFI_UNICAST);
+  return bgp_show_summary_vty (vty, NULL, qafx_ipv6_unicast);
 }
 
 /* old command */
@@ -7177,25 +7212,39 @@ DEFUN (show_ipv6_mbgp_summary,
        MBGP_STR
        "Summary of BGP neighbor status\n")
 {
-  return bgp_show_summary_vty (vty, NULL, AFI_IP6, SAFI_MULTICAST);
+  return bgp_show_summary_vty (vty, NULL, qafx_ipv6_multicast);
 }
 #endif /* HAVE_IPV6 */
 
-const char *
-afi_safi_print (afi_t afi, safi_t safi)
+static const char *
+qafx_string(qafx_t qafx)
 {
-  if (afi == AFI_IP && safi == SAFI_UNICAST)
-    return "IPv4 Unicast";
-  else if (afi == AFI_IP && safi == SAFI_MULTICAST)
-    return "IPv4 Multicast";
-  else if (afi == AFI_IP && safi == SAFI_MPLS_VPN)
-    return "VPNv4 Unicast";
-  else if (afi == AFI_IP6 && safi == SAFI_UNICAST)
-    return "IPv6 Unicast";
-  else if (afi == AFI_IP6 && safi == SAFI_MULTICAST)
-    return "IPv6 Multicast";
-  else
-    return "Unknown";
+  switch (qafx)
+    {
+      case qafx_ipv4_unicast:
+        return "IPv4 Unicast";
+
+      case qafx_ipv4_multicast:
+        return "IPv4 Multicast";
+
+      case qafx_ipv4_mpls_vpn:
+        return "VPNv4 Unicast";
+
+      case qafx_ipv6_unicast:
+        return "IPv6 Unicast";
+
+      case qafx_ipv6_multicast:
+        return "IPv6 Multicast";
+
+      default:
+        return "Unknown";
+    } ;
+} ;
+
+const char *
+afi_safi_print (qAFI_t q_afi, qSAFI_t q_safi)
+{
+  return qafx_string(qafx_from_q(q_afi, q_safi)) ;
 }
 
 /* Show BGP peer's information. */
@@ -7206,503 +7255,597 @@ enum show_type
 };
 
 static void
-bgp_show_peer_afi_orf_cap (struct vty *vty, struct peer *p,
-                           afi_t afi, safi_t safi,
-                           u_int16_t adv_smcap, u_int16_t adv_rmcap,
-                           u_int16_t rcv_smcap, u_int16_t rcv_rmcap)
+bgp_show_peer_afi_orf_cap (vty vty, bgp_peer peer, qafx_t qafx,
+                                                       peer_af_cap_bits_t sm,
+                                                       peer_af_cap_bits_t rm)
 {
-  /* Send-Mode */
-  if (CHECK_FLAG (p->af_cap[afi][safi], adv_smcap)
-      || CHECK_FLAG (p->af_cap[afi][safi], rcv_smcap))
+  peer_rib prib ;
+
+  prib = peer_family_prib(peer, qafx) ;
+  if (prib == NULL)
+    return ;
+
+  /* Send-Mode
+   */
+  if ((prib->af_orf_pfx_adv | prib->af_orf_pfx_rcv) & sm)
     {
       vty_out (vty, "      Send-mode: ");
-      if (CHECK_FLAG (p->af_cap[afi][safi], adv_smcap))
+      if (prib->af_orf_pfx_adv & sm)
         vty_out (vty, "advertised");
-      if (CHECK_FLAG (p->af_cap[afi][safi], rcv_smcap))
-        vty_out (vty, "%sreceived",
-                 CHECK_FLAG (p->af_cap[afi][safi], adv_smcap) ?
-                 ", " : "");
+      if (prib->af_orf_pfx_rcv & sm)
+        vty_out (vty, "%sreceived", (prib->af_orf_pfx_adv & sm) ? " & " : "");
       vty_out (vty, "%s", VTY_NEWLINE);
     }
 
-  /* Receive-Mode */
-  if (CHECK_FLAG (p->af_cap[afi][safi], adv_rmcap)
-      || CHECK_FLAG (p->af_cap[afi][safi], rcv_rmcap))
+  /* Receive-Mode
+   */
+  if ((prib->af_orf_pfx_adv | prib->af_orf_pfx_rcv) & rm)
     {
       vty_out (vty, "      Receive-mode: ");
-      if (CHECK_FLAG (p->af_cap[afi][safi], adv_rmcap))
+      if (prib->af_orf_pfx_adv & rm)
         vty_out (vty, "advertised");
-      if (CHECK_FLAG (p->af_cap[afi][safi], rcv_rmcap))
-        vty_out (vty, "%sreceived",
-                 CHECK_FLAG (p->af_cap[afi][safi], adv_rmcap) ?
-                 ", " : "");
+      if (prib->af_orf_pfx_rcv & rm)
+        vty_out (vty, "%sreceived", (prib->af_orf_pfx_adv & rm) ? " & " : "");
       vty_out (vty, "%s", VTY_NEWLINE);
     }
 }
 
 static void
-bgp_show_peer_afi (struct vty *vty, struct peer *p, afi_t afi, safi_t safi)
+bgp_show_peer_afi (struct vty *vty, bgp_peer peer, qafx_t qafx)
 {
-  struct prefix_list* plist ;
-  struct bgp_filter *filter;
-  char orf_pfx_name[BUFSIZ];
+  peer_rib     prib ;
+  access_list  dlist ;
+  prefix_list  plist ;
+  as_list      flist ;
+  route_map    rmap ;
+  bgp_orf_name orf_pfx_name;
   int orf_pfx_count;
 
-  filter = &p->filter[afi][safi];
+  prib = peer_family_prib(peer, qafx) ;
+  qassert(prib != NULL) ;
+  if (prib == NULL)
+    return ;
 
-  vty_out (vty, " For address family: %s%s", afi_safi_print (afi, safi),
+  vty_out (vty, " For address family: %s%s", qafx_string(qafx),
            VTY_NEWLINE);
 
-  if (p->af_group[afi][safi])
-    vty_out (vty, "  %s peer-group member%s", p->group->name, VTY_NEWLINE);
+  if (prib->af_group_member)
+    vty_out (vty, "  %s peer-group member\n", peer->group->name);
 
-  if (CHECK_FLAG (p->af_cap[afi][safi], PEER_CAP_ORF_PREFIX_SM_ADV)
-      || CHECK_FLAG (p->af_cap[afi][safi], PEER_CAP_ORF_PREFIX_SM_RCV)
-      || CHECK_FLAG (p->af_cap[afi][safi], PEER_CAP_ORF_PREFIX_SM_OLD_RCV)
-      || CHECK_FLAG (p->af_cap[afi][safi], PEER_CAP_ORF_PREFIX_RM_ADV)
-      || CHECK_FLAG (p->af_cap[afi][safi], PEER_CAP_ORF_PREFIX_RM_RCV)
-      || CHECK_FLAG (p->af_cap[afi][safi], PEER_CAP_ORF_PREFIX_RM_OLD_RCV))
+  if (prib->af_orf_pfx_adv | prib->af_orf_pfx_rcv)
     vty_out (vty, "  AF-dependant capabilities:%s", VTY_NEWLINE);
 
-  if (CHECK_FLAG (p->af_cap[afi][safi], PEER_CAP_ORF_PREFIX_SM_ADV)
-      || CHECK_FLAG (p->af_cap[afi][safi], PEER_CAP_ORF_PREFIX_SM_RCV)
-      || CHECK_FLAG (p->af_cap[afi][safi], PEER_CAP_ORF_PREFIX_RM_ADV)
-      || CHECK_FLAG (p->af_cap[afi][safi], PEER_CAP_ORF_PREFIX_RM_RCV))
+  if ( (prib->af_orf_pfx_adv | prib->af_caps_rcv) & (ORF_SM | ORF_RM) )
     {
       vty_out (vty, "    Outbound Route Filter (ORF) type (%d) Prefix-list:%s",
-               ORF_TYPE_PREFIX, VTY_NEWLINE);
-      bgp_show_peer_afi_orf_cap (vty, p, afi, safi,
-                                 PEER_CAP_ORF_PREFIX_SM_ADV,
-                                 PEER_CAP_ORF_PREFIX_RM_ADV,
-                                 PEER_CAP_ORF_PREFIX_SM_RCV,
-                                 PEER_CAP_ORF_PREFIX_RM_RCV);
+                           BGP_ORF_T_PFX, VTY_NEWLINE);
+      bgp_show_peer_afi_orf_cap (vty, peer, qafx, ORF_SM, ORF_RM) ;
     }
-  if (CHECK_FLAG (p->af_cap[afi][safi], PEER_CAP_ORF_PREFIX_SM_ADV)
-      || CHECK_FLAG (p->af_cap[afi][safi], PEER_CAP_ORF_PREFIX_SM_OLD_RCV)
-      || CHECK_FLAG (p->af_cap[afi][safi], PEER_CAP_ORF_PREFIX_RM_ADV)
-      || CHECK_FLAG (p->af_cap[afi][safi], PEER_CAP_ORF_PREFIX_RM_OLD_RCV))
+
+  if ( (prib->af_orf_pfx_adv | prib->af_orf_pfx_rcv)
+                                                  & (ORF_SM_pre | ORF_RM_pre) )
     {
       vty_out (vty, "    Outbound Route Filter (ORF) type (%d) Prefix-list:%s",
-               ORF_TYPE_PREFIX_OLD, VTY_NEWLINE);
-      bgp_show_peer_afi_orf_cap (vty, p, afi, safi,
-                                 PEER_CAP_ORF_PREFIX_SM_ADV,
-                                 PEER_CAP_ORF_PREFIX_RM_ADV,
-                                 PEER_CAP_ORF_PREFIX_SM_OLD_RCV,
-                                 PEER_CAP_ORF_PREFIX_RM_OLD_RCV);
+                           BGP_ORF_T_PFX_pre, VTY_NEWLINE);
+      bgp_show_peer_afi_orf_cap (vty, peer, qafx, ORF_SM_pre, ORF_RM_pre);
     }
 
-  sprintf (orf_pfx_name, "%s.%d.%d", p->host, afi, safi);
-  orf_pfx_count =  prefix_bgp_show_prefix_list (NULL, afi, orf_pfx_name);
+  prefix_bgp_orf_name_set(orf_pfx_name, &peer->su_name, qafx) ;
 
-  if (CHECK_FLAG (p->af_sflags[afi][safi], PEER_STATUS_ORF_PREFIX_SEND)
+  orf_pfx_count =  prefix_bgp_show_prefix_list (NULL, orf_pfx_name);
+
+  if ((prib->af_status & PEER_STATUS_ORF_PREFIX_SENT)
       || orf_pfx_count)
     {
       vty_out (vty, "  Outbound Route Filter (ORF):");
-      if (CHECK_FLAG (p->af_sflags[afi][safi], PEER_STATUS_ORF_PREFIX_SEND))
+      if (prib->af_status & PEER_STATUS_ORF_PREFIX_SENT)
           vty_out (vty, " sent;");
       if (orf_pfx_count)
         vty_out (vty, " received (%d entries)", orf_pfx_count);
       vty_out (vty, "%s", VTY_NEWLINE);
     }
-  if (CHECK_FLAG (p->af_sflags[afi][safi], PEER_STATUS_ORF_WAIT_REFRESH))
+  if (prib->af_status & PEER_STATUS_ORF_WAIT_REFRESH)
       vty_out (vty, "  First update is deferred until ORF or ROUTE-REFRESH is received%s", VTY_NEWLINE);
 
-  if (CHECK_FLAG (p->af_flags[afi][safi], PEER_FLAG_REFLECTOR_CLIENT))
+  if (prib->af_flags & PEER_AFF_REFLECTOR_CLIENT)
     vty_out (vty, "  Route-Reflector Client%s", VTY_NEWLINE);
-  if (CHECK_FLAG (p->af_flags[afi][safi], PEER_FLAG_RSERVER_CLIENT))
+  if (prib->af_flags & PEER_AFF_RSERVER_CLIENT)
     vty_out (vty, "  Route-Server Client%s", VTY_NEWLINE);
-  if (CHECK_FLAG (p->af_flags[afi][safi], PEER_FLAG_SOFT_RECONFIG))
+  if (prib->af_flags & PEER_AFF_SOFT_RECONFIG)
     vty_out (vty, "  Inbound soft reconfiguration allowed%s", VTY_NEWLINE);
-  if (CHECK_FLAG (p->af_flags[afi][safi], PEER_FLAG_REMOVE_PRIVATE_AS))
+  if (prib->af_flags & PEER_AFF_REMOVE_PRIVATE_AS)
     vty_out (vty, "  Private AS number removed from updates to this neighbor%s", VTY_NEWLINE);
-  if (CHECK_FLAG (p->af_flags[afi][safi], PEER_FLAG_NEXTHOP_SELF))
+  if (prib->af_flags & PEER_AFF_NEXTHOP_SELF)
     vty_out (vty, "  NEXT_HOP is always this router%s", VTY_NEWLINE);
-  if (CHECK_FLAG (p->af_flags[afi][safi], PEER_FLAG_AS_PATH_UNCHANGED))
+  if (prib->af_flags & PEER_AFF_AS_PATH_UNCHANGED)
     vty_out (vty, "  AS_PATH is propagated unchanged to this neighbor%s", VTY_NEWLINE);
-  if (CHECK_FLAG (p->af_flags[afi][safi], PEER_FLAG_NEXTHOP_UNCHANGED))
+  if (prib->af_flags & PEER_AFF_NEXTHOP_UNCHANGED)
     vty_out (vty, "  NEXT_HOP is propagated unchanged to this neighbor%s", VTY_NEWLINE);
-  if (CHECK_FLAG (p->af_flags[afi][safi], PEER_FLAG_MED_UNCHANGED))
+  if (prib->af_flags & PEER_AFF_MED_UNCHANGED)
     vty_out (vty, "  MED is propagated unchanged to this neighbor%s", VTY_NEWLINE);
-  if (CHECK_FLAG (p->af_flags[afi][safi], PEER_FLAG_SEND_COMMUNITY)
-      || CHECK_FLAG (p->af_flags[afi][safi], PEER_FLAG_SEND_EXT_COMMUNITY))
+  if (prib->af_flags & PEER_AFF_SEND_COMMUNITY
+      || prib->af_flags & PEER_AFF_SEND_EXT_COMMUNITY)
     {
       vty_out (vty, "  Community attribute sent to this neighbor");
-      if (CHECK_FLAG (p->af_flags[afi][safi], PEER_FLAG_SEND_COMMUNITY)
-        && CHECK_FLAG (p->af_flags[afi][safi], PEER_FLAG_SEND_EXT_COMMUNITY))
+      if (prib->af_flags & PEER_AFF_SEND_COMMUNITY
+        && prib->af_flags & PEER_AFF_SEND_EXT_COMMUNITY)
         vty_out (vty, "(both)%s", VTY_NEWLINE);
-      else if (CHECK_FLAG (p->af_flags[afi][safi], PEER_FLAG_SEND_EXT_COMMUNITY))
+      else if (prib->af_flags & PEER_AFF_SEND_EXT_COMMUNITY)
         vty_out (vty, "(extended)%s", VTY_NEWLINE);
       else
         vty_out (vty, "(standard)%s", VTY_NEWLINE);
     }
-  if (CHECK_FLAG (p->af_flags[afi][safi], PEER_FLAG_DEFAULT_ORIGINATE))
+  if (prib->af_flags & PEER_AFF_DEFAULT_ORIGINATE)
     {
       vty_out (vty, "  Default information originate,");
 
-      if (p->default_rmap[afi][safi].name)
+      if (prib->default_rmap != NULL)
         vty_out (vty, " default route-map %s%s,",
-                 p->default_rmap[afi][safi].map ? "*" : "",
-                 p->default_rmap[afi][safi].name);
-      if (CHECK_FLAG (p->af_sflags[afi][safi], PEER_STATUS_DEFAULT_ORIGINATE))
+                 route_map_is_set(prib->default_rmap) ? "*" : "",
+                 route_map_get_name(prib->default_rmap)) ;
+      if (CHECK_FLAG (prib->af_status, PEER_STATUS_DEFAULT_ORIGINATE))
         vty_out (vty, " default sent%s", VTY_NEWLINE);
       else
         vty_out (vty, " default not sent%s", VTY_NEWLINE);
     }
 
-  if (prefix_list_ref_plist(filter->plist[FILTER_IN].ref)
-      || filter->dlist[FILTER_IN].name
-      || filter->aslist[FILTER_IN].name
-      || filter->map[RMAP_IN].name)
+  if ( (prib->plist[FILTER_IN]  != NULL)  ||
+       (prib->dlist[FILTER_IN]  != NULL)  ||
+       (prib->flist[FILTER_IN] != NULL) ||
+       (prib->rmap[RMAP_IN]     != NULL) )
     vty_out (vty, "  Inbound path policy configured%s", VTY_NEWLINE);
 
-  if (filter->map[RMAP_RS_IN].name)
-    vty_out (vty, "  RS-Inbound path policy configured%s", VTY_NEWLINE);
+  if (prib->rmap[RMAP_RS_IN] != NULL)
+    vty_out (vty, "  RS-Inbound policy configured%s", VTY_NEWLINE);
 
-  if (prefix_list_ref_plist(filter->plist[FILTER_OUT].ref)
-      || filter->dlist[FILTER_OUT].name
-      || filter->aslist[FILTER_OUT].name
-      || filter->map[RMAP_OUT].name
-      || filter->usmap.name)
+  if ( (prib->plist[FILTER_OUT]  != NULL)  ||
+       (prib->dlist[FILTER_OUT]  != NULL)  ||
+       (prib->flist[FILTER_OUT] != NULL) ||
+       (prib->rmap[RMAP_OUT]     != NULL) ||
+       (prib->us_rmap            != NULL) )
     vty_out (vty, "  Outbound path policy configured%s", VTY_NEWLINE);
 
-  if (filter->map[RMAP_IMPORT].name)
+  if (prib->rmap[RMAP_IMPORT] != NULL)
     vty_out (vty, "  Import policy for this RS-client configured%s", VTY_NEWLINE);
 
-  if (filter->map[RMAP_EXPORT].name)
+  if (prib->rmap[RMAP_EXPORT] != NULL)
     vty_out (vty, "  Export policy for this RS-client configured%s", VTY_NEWLINE);
 
   /* prefix-list */
-  plist = prefix_list_ref_plist(filter->plist[FILTER_IN].ref) ;
+  plist = prib->plist[FILTER_IN] ;
   if (plist != NULL)
     vty_out (vty, "  Incoming update prefix filter list is %s%s%s",
-             prefix_list_is_set(plist) ? "*" : "",
-             prefix_list_get_name(plist),
+             prefix_list_is_set(plist) ? "*" : "", prefix_list_get_name(plist),
              VTY_NEWLINE);
 
-  plist = prefix_list_ref_plist(filter->plist[FILTER_OUT].ref) ;
+  plist = prib->plist[FILTER_OUT] ;
   if (plist != NULL)
     vty_out (vty, "  Outgoing update prefix filter list is %s%s%s",
-             prefix_list_is_set(plist) ? "*" : "",
-             prefix_list_get_name(plist),
+             prefix_list_is_set(plist) ? "*" : "", prefix_list_get_name(plist),
              VTY_NEWLINE);
 
   /* distribute-list */
-  if (filter->dlist[FILTER_IN].name)
+  dlist = prib->dlist[FILTER_IN] ;
+  if (dlist != NULL)
     vty_out (vty, "  Incoming update network filter list is %s%s%s",
-             filter->dlist[FILTER_IN].alist ? "*" : "",
-             filter->dlist[FILTER_IN].name,
+             access_list_is_set(dlist) ? "*" : "", access_list_get_name(dlist),
              VTY_NEWLINE);
-  if (filter->dlist[FILTER_OUT].name)
+  dlist = prib->dlist[FILTER_OUT] ;
+  if (dlist != NULL)
     vty_out (vty, "  Outgoing update network filter list is %s%s%s",
-             filter->dlist[FILTER_OUT].alist ? "*" : "",
-             filter->dlist[FILTER_OUT].name,
+             access_list_is_set(dlist) ? "*" : "", access_list_get_name(dlist),
              VTY_NEWLINE);
 
   /* filter-list. */
-  if (filter->aslist[FILTER_IN].name)
+  flist = prib->flist[FILTER_IN] ;
+  if (flist != NULL)
     vty_out (vty, "  Incoming update AS path filter list is %s%s%s",
-             filter->aslist[FILTER_IN].aslist ? "*" : "",
-             filter->aslist[FILTER_IN].name,
+             as_list_is_set(flist) ? "*" : "", as_list_get_name(flist),
              VTY_NEWLINE);
-  if (filter->aslist[FILTER_OUT].name)
+  flist = prib->flist[FILTER_OUT] ;
+  if (flist != NULL)
     vty_out (vty, "  Outgoing update AS path filter list is %s%s%s",
-             filter->aslist[FILTER_OUT].aslist ? "*" : "",
-             filter->aslist[FILTER_OUT].name,
+             as_list_is_set(flist) ? "*" : "", as_list_get_name(flist),
              VTY_NEWLINE);
 
   /* route-map. */
-  if (filter->map[RMAP_IN].name)
+  rmap = prib->rmap[RMAP_IN] ;
+  if (rmap != NULL)
     vty_out (vty, "  Route map for incoming advertisements is %s%s%s",
-            filter->map[RMAP_IN].map ? "*" : "",
-            filter->map[RMAP_IN].name,
+             route_map_is_set(rmap) ? "*" : "", route_map_get_name(rmap),
              VTY_NEWLINE);
-  if (filter->map[RMAP_RS_IN].name)
+  rmap = prib->rmap[RMAP_RS_IN] ;
+  if (rmap != NULL)
     vty_out (vty, "  Route map for RS incoming advertisements is %s%s%s",
-            filter->map[RMAP_RS_IN].map ? "*" : "",
-            filter->map[RMAP_RS_IN].name,
+             route_map_is_set(rmap) ? "*" : "", route_map_get_name(rmap),
              VTY_NEWLINE);
-  if (filter->map[RMAP_OUT].name)
+  rmap = prib->rmap[RMAP_OUT] ;
+  if (rmap != NULL)
     vty_out (vty, "  Route map for outgoing advertisements is %s%s%s",
-            filter->map[RMAP_OUT].map ? "*" : "",
-            filter->map[RMAP_OUT].name,
-            VTY_NEWLINE);
-  if (filter->map[RMAP_IMPORT].name)
+             route_map_is_set(rmap) ? "*" : "", route_map_get_name(rmap),
+             VTY_NEWLINE);
+  rmap = prib->rmap[RMAP_IMPORT] ;
+  if (rmap != NULL)
     vty_out (vty, "  Route map for advertisements going into this RS-client's table is %s%s%s",
-            filter->map[RMAP_IMPORT].map ? "*" : "",
-            filter->map[RMAP_IMPORT].name,
-            VTY_NEWLINE);
-  if (filter->map[RMAP_EXPORT].name)
+             route_map_is_set(rmap) ? "*" : "", route_map_get_name(rmap),
+             VTY_NEWLINE);
+  rmap = prib->rmap[RMAP_EXPORT] ;
+  if (rmap != NULL)
     vty_out (vty, "  Route map for advertisements coming from this RS-client is %s%s%s",
-            filter->map[RMAP_EXPORT].map ? "*" : "",
-            filter->map[RMAP_EXPORT].name,
+             route_map_is_set(rmap) ? "*" : "", route_map_get_name(rmap),
              VTY_NEWLINE);
 
-  /* unsuppress-map */
-  if (filter->usmap.name)
+  /* unsuppress-map
+   */
+  rmap = prib->us_rmap ;
+  if (rmap != NULL)
     vty_out (vty, "  Route map for selective unsuppress is %s%s%s",
-             filter->usmap.map ? "*" : "",
-             filter->usmap.name, VTY_NEWLINE);
+             route_map_is_set(rmap) ? "*" : "", route_map_get_name(rmap),
+             VTY_NEWLINE);
 
-  /* Receive prefix count */
-  vty_out (vty, "  %ld accepted prefixes%s", p->pcount[afi][safi], VTY_NEWLINE);
+  /* Receive prefix count
+   */
+  vty_out (vty, "  %u accepted prefixes\n", prib->pcount);
 
-  /* Maximum prefix */
-  if (CHECK_FLAG (p->af_flags[afi][safi], PEER_FLAG_MAX_PREFIX))
+  /* Maximum prefix
+   */
+  if (prib->pmax.set)
     {
-      vty_out (vty, "  Maximum prefixes allowed %ld%s%s", p->pmax[afi][safi],
-               CHECK_FLAG (p->af_flags[afi][safi], PEER_FLAG_MAX_PREFIX_WARNING)
-               ? " (warning-only)" : "", VTY_NEWLINE);
+      vty_out (vty, "  Maximum prefixes allowed %u%s\n", prib->pmax.limit,
+                                (prib->pmax.warning) ? " (warning-only)" : "") ;
       vty_out (vty, "  Threshold for warning message %d%%",
-               p->pmax_threshold[afi][safi]);
-      if (p->pmax_restart[afi][safi])
-        vty_out (vty, ", restart interval %d min", p->pmax_restart[afi][safi]);
-      vty_out (vty, "%s", VTY_NEWLINE);
+                                                      prib->pmax.thresh_pc);
+      if (prib->pmax.restart != 0)
+        vty_out (vty, ", restart interval %d min", prib->pmax.restart);
+
+      vty_out (vty, "\n");
     }
 
-  vty_out (vty, "%s", VTY_NEWLINE);
+  vty_out (vty, "\n");
 }
 
+/*------------------------------------------------------------------------------
+ * Show state of a *real* peer
+ */
 static void
-bgp_show_peer (struct vty *vty, struct peer *p)
+bgp_show_peer (struct vty *vty, bgp_peer peer)
 {
-  struct bgp *bgp;
-  char buf[SU_ADDRSTRLEN];
+  bgp_inst bgp;
   char timebuf[BGP_UPTIME_LEN];
-  afi_t afi;
-  safi_t safi;
+  qafx_t qafx ;
   struct bgp_session_stats stats;
 
-  bgp_session_get_stats(p->session, &stats);
+  qassert(peer->type == PEER_TYPE_REAL) ;
 
-  bgp = p->bgp;
+  bgp_session_get_stats(peer->session, &stats);
 
-  /* Configured IP address. */
-  vty_out (vty, "BGP neighbor is %s, ", p->host);
-  vty_out (vty, "remote AS %u, ", p->as);
-  vty_out (vty, "local AS %u%s, ",
-           p->change_local_as ? p->change_local_as : p->local_as,
-           CHECK_FLAG (p->flags, PEER_FLAG_LOCAL_AS_NO_PREPEND) ?
-           " no-prepend" : "");
-  vty_out (vty, "%s link%s",
-           p->as == p->local_as ? "internal" : "external",
+  bgp = peer->bgp;
+
+  /* Configured IP address.
+   */
+  vty_out (vty, "BGP neighbor is %s, ", peer->host);
+  vty_out (vty, "remote AS %u, ", peer->as);
+  vty_out (vty, "local AS %u", peer->local_as) ;
+  if ((peer->sort == BGP_PEER_EBGP)
+        && (peer->change_local_as != BGP_ASN_NULL)
+        && (peer->change_local_as != bgp->ebgp_as))
+    vty_out (vty, " (changed%s)", (peer->flags & PEER_FLAG_LOCAL_AS_NO_PREPEND)
+                                                         ? " no-prepend" : "") ;
+  vty_out (vty, ", %s link%s",
+           (peer->sort == BGP_PEER_IBGP) ? "internal" : "external",
            VTY_NEWLINE);
 
-  /* Description. */
-  if (p->desc)
-    vty_out (vty, " Description: %s%s", p->desc, VTY_NEWLINE);
+  /* Description.
+   */
+  if (peer->desc)
+    vty_out (vty, " Description: %s%s", peer->desc, VTY_NEWLINE);
 
-  /* Peer-group */
-  if (p->group)
+  /* Peer-group
+   */
+  if (peer->group)
     vty_out (vty, " Member of peer-group %s for session parameters%s",
-             p->group->name, VTY_NEWLINE);
+             peer->group->name, VTY_NEWLINE);
 
-  /* Administrative shutdown. */
-  if (CHECK_FLAG (p->flags, PEER_FLAG_SHUTDOWN))
+  /* Administrative shutdown.
+   */
+  if (CHECK_FLAG (peer->flags, PEER_FLAG_SHUTDOWN))
     vty_out (vty, " Administratively shut down%s", VTY_NEWLINE);
 
-  /* BGP Version. */
+  /* BGP Version.
+   */
   vty_out (vty, "  BGP version 4");
   vty_out (vty, ", remote router ID %s%s",
-           inet_ntop (AF_INET, &p->remote_id, buf, sizeof(buf)),
-           VTY_NEWLINE);
+           siptoa(AF_INET, &peer->remote_id).str, VTY_NEWLINE);
 
-  /* Confederation */
-  if (CHECK_FLAG (bgp->config, BGP_CONFIG_CONFEDERATION)
-      && bgp_confederation_peers_check (bgp, p->as))
+  /* Confederation
+   */
+  if (bgp_confederation_peers_check (bgp, peer->as))
     vty_out (vty, "  Neighbor under common administration%s", VTY_NEWLINE);
 
-  /* Status. */
+  /* Status.
+   */
   vty_out (vty, "  BGP state = %s",
-                                map_direct(bgp_peer_status_map, p->state).str) ;
-  if (p->state == bgp_peer_pEstablished)
+                             map_direct(bgp_peer_status_map, peer->state).str) ;
+  if (peer->state == bgp_pEstablished)
     vty_out (vty, ", up for %8s",
-             peer_uptime (p->uptime, timebuf, BGP_UPTIME_LEN));
-  /* TODO: what is state "Active" now?  sEnabled? */
+             peer_uptime (peer->uptime, timebuf, BGP_UPTIME_LEN));
+  /* TODO: what is state "Active" now?  pEnabled? */
 #if 0
-  else if (p->status == Active)
+  else if (peer->status == Active)
     {
-      if (CHECK_FLAG (p->flags, PEER_FLAG_PASSIVE))
+      if (CHECK_FLAG (peer->flags, PEER_FLAG_PASSIVE))
         vty_out (vty, " (passive)");
-      else if (CHECK_FLAG (p->sflags, PEER_STATUS_NSF_WAIT))
+      else if (CHECK_FLAG (peer->sflags, PEER_STATUS_NSF_WAIT))
         vty_out (vty, " (NSF passive)");
     }
 #endif
   vty_out (vty, "%s", VTY_NEWLINE);
 
-  /* read timer */
-  vty_out (vty, "  Last read %s", peer_uptime (p->readtime, timebuf, BGP_UPTIME_LEN));
+  /* read timer
+   */
+  vty_out (vty, "  Last read %s", peer_uptime (peer->readtime, timebuf,
+                                                               BGP_UPTIME_LEN));
 
-  /* Configured timer values. */
-  vty_out (vty, ", hold time is %d, keepalive interval is %d seconds%s",
-           p->v_holdtime, p->v_keepalive, VTY_NEWLINE);
-  if (CHECK_FLAG (p->config, PEER_CONFIG_TIMER))
-    {
-      vty_out (vty, "  Configured hold time is %d", p->holdtime);
-      vty_out (vty, ", keepalive interval is %d seconds%s",
-               p->keepalive, VTY_NEWLINE);
-    }
+  /* Current and (if any) configured timer values.
+   */
+  vty_out (vty, ", hold time is %u, keepalive interval is %u seconds\n",
+                peer_get_holdtime(peer, true), peer_get_keepalive(peer, true)) ;
+  if (peer->config & PEER_CONFIG_TIMER)
+    vty_out (vty, "  Configured "
+                      "hold time is %u, keepalive interval is %u seconds\n",
+                                peer->config_holdtime, peer->config_keepalive) ;
 
-  /* Capability. */
-  if (p->state == bgp_peer_pEstablished)
+  /* Capability.
+   */
+  if (peer->state == bgp_pEstablished)
     {
-      if (p->cap
-          || p->afc_adv[AFI_IP][SAFI_UNICAST]
-          || p->afc_recv[AFI_IP][SAFI_UNICAST]
-          || p->afc_adv[AFI_IP][SAFI_MULTICAST]
-          || p->afc_recv[AFI_IP][SAFI_MULTICAST]
-#ifdef HAVE_IPV6
-          || p->afc_adv[AFI_IP6][SAFI_UNICAST]
-          || p->afc_recv[AFI_IP6][SAFI_UNICAST]
-          || p->afc_adv[AFI_IP6][SAFI_MULTICAST]
-          || p->afc_recv[AFI_IP6][SAFI_MULTICAST]
-#endif /* HAVE_IPV6 */
-          || p->afc_adv[AFI_IP][SAFI_MPLS_VPN]
-          || p->afc_recv[AFI_IP][SAFI_MPLS_VPN])
+      peer_cap_bits_t caps_adv, caps_rcv, caps ;
+
+      caps_adv  = peer->caps_adv ;
+      caps_rcv  = peer->caps_rcv ;
+
+      caps = caps_adv | caps_rcv ;
+
+      vty_out (vty, "  Neighbor capabilities:\n");
+
+      if      ((caps_adv | peer->caps_use) & PEER_CAP_NONE)
         {
-          vty_out (vty, "  Neighbor capabilities:%s", VTY_NEWLINE);
+          if (caps_adv & PEER_CAP_NONE)
+            vty_out(vty, "    'dont-capability-negotiate'") ;
+          else
+            vty_out(vty, "    peer refused capabilities") ;
 
-          /* AS4 */
-          if (CHECK_FLAG (p->cap, PEER_CAP_AS4_RCV)
-              || CHECK_FLAG (p->cap, PEER_CAP_AS4_ADV))
+          if (caps_rcv & PEER_CAP_NONE)
+            vty_out(vty, " and none received\n") ;
+          else
+            vty_out(vty, " BUT some received\n") ;
+        }
+      else if (caps_rcv & PEER_CAP_NONE)
+        vty_out(vty, "    capabilities sent, but none received") ;
+
+      /* AS4
+       */
+      if (caps & PEER_CAP_AS4)
+        {
+          vty_out (vty, "    4 Byte AS:");
+          if (caps_adv & PEER_CAP_AS4)
+            vty_out (vty, " advertised");
+          if (caps_rcv & PEER_CAP_AS4)
+            vty_out (vty, " %sreceived",
+                                 (caps_adv & PEER_CAP_AS4) ? "and " : "");
+          vty_out (vty, "%s", VTY_NEWLINE);
+        }
+
+      /* Multiprotocol Extensions
+       */
+      for (qafx = qafx_first ; qafx <= qafx_last ; ++qafx)
+        {
+          qafx_bit_t qb ;
+
+          qb = qafx_bit(qafx) ;
+
+          if ((peer->af_adv | peer->af_rcv | peer->af_use) & qb)
             {
-              vty_out (vty, "    4 Byte AS:");
-              if (CHECK_FLAG (p->cap, PEER_CAP_AS4_ADV))
-                vty_out (vty, " advertised");
-              if (CHECK_FLAG (p->cap, PEER_CAP_AS4_RCV))
-                vty_out (vty, " %sreceived",
-                         CHECK_FLAG (p->cap, PEER_CAP_AS4_ADV) ? "and " : "");
-              vty_out (vty, "%s", VTY_NEWLINE);
-            }
-          /* Dynamic */
-          if (CHECK_FLAG (p->cap, PEER_CAP_DYNAMIC_RCV)
-              || CHECK_FLAG (p->cap, PEER_CAP_DYNAMIC_ADV))
-            {
-              vty_out (vty, "    Dynamic:");
-              if (CHECK_FLAG (p->cap, PEER_CAP_DYNAMIC_ADV))
-                vty_out (vty, " advertised");
-              if (CHECK_FLAG (p->cap, PEER_CAP_DYNAMIC_RCV))
-                vty_out (vty, " %sreceived",
-                         CHECK_FLAG (p->cap, PEER_CAP_DYNAMIC_ADV) ? "and " : "");
-              vty_out (vty, "%s", VTY_NEWLINE);
-            }
+              const char* and ;
 
-          /* Route Refresh */
-          if (CHECK_FLAG (p->cap, PEER_CAP_REFRESH_ADV)
-              || CHECK_FLAG (p->cap, PEER_CAP_REFRESH_NEW_RCV)
-              || CHECK_FLAG (p->cap, PEER_CAP_REFRESH_OLD_RCV))
-            {
-              vty_out (vty, "    Route refresh:");
-              if (CHECK_FLAG (p->cap, PEER_CAP_REFRESH_ADV))
-                vty_out (vty, " advertised");
-              if (CHECK_FLAG (p->cap, PEER_CAP_REFRESH_NEW_RCV)
-                  || CHECK_FLAG (p->cap, PEER_CAP_REFRESH_OLD_RCV))
-                vty_out (vty, " %sreceived(%s)",
-                         CHECK_FLAG (p->cap, PEER_CAP_REFRESH_ADV) ? "and " : "",
-                         (CHECK_FLAG (p->cap, PEER_CAP_REFRESH_OLD_RCV)
-                          && CHECK_FLAG (p->cap, PEER_CAP_REFRESH_NEW_RCV)) ?
-                         "old & new" : CHECK_FLAG (p->cap, PEER_CAP_REFRESH_OLD_RCV) ? "old" : "new");
+              vty_out (vty, "    Address family %s:", qafx_string(qafx));
 
-              vty_out (vty, "%s", VTY_NEWLINE);
-            }
-
-          /* Multiprotocol Extensions */
-          for (afi = AFI_IP ; afi < AFI_MAX ; afi++)
-            for (safi = SAFI_UNICAST ; safi < SAFI_MAX ; safi++)
-              if (p->afc_adv[afi][safi] || p->afc_recv[afi][safi])
+              /* peer->af_adv registers which afi/safi have been advertised,
+               * explicitly by MP-Ext, implicitly (if IPv4 Unicast) or forced
+               * (otherwise).
+               */
+              and = "" ;
+              if (peer->af_adv & qb)
                 {
-                  vty_out (vty, "    Address family %s:", afi_safi_print (afi, safi));
-                  if (p->afc_adv[afi][safi])
-                    vty_out (vty, " advertised");
-                  if (p->afc_recv[afi][safi])
-                    vty_out (vty, " %sreceived", p->afc_adv[afi][safi] ? "and " : "");
-                  vty_out (vty, "%s", VTY_NEWLINE);
+                  if (caps_adv & PEER_CAP_MP_EXT)
+                    vty_out(vty, " advertised") ;
+                  else if (qafx == qafx_ipv4_unicast)
+                    vty_out(vty, " implied") ;
+                  else
+                    vty_out(vty, " forced") ;
+
+                  and = " and" ;
+                } ;
+
+              /* peer->af_rcv registers which afi/safi were announced, or
+               * implicitly announced.
+               *
+               * So, if is not af_rcv, but is af_use, then it must have been
+               * forced !
+               */
+              if      (peer->af_rcv & qb)
+                {
+                  if (caps_rcv & PEER_CAP_MP_EXT)
+                    vty_out(vty, "%s received", and) ;
+                  else
+                    vty_out(vty, "%s implied", and) ;
+                }
+              else if (peer->af_use & qb)
+                vty_out(vty, "%s forced", and) ;
+
+              /* peer->af_use is the final result.
+               */
+              if (peer->af_use & qb)
+                vty_out (vty, " -- in use") ;
+
+              vty_out (vty, "\n");
+            } ;
+        } ;
+
+      /* Route Refresh
+       */
+      if (caps & (PEER_CAP_RR | PEER_CAP_RR_old))
+        {
+          const char* adv_tag ;
+          const char* rcv_tag ;
+
+          adv_tag = "" ;
+          if ((caps_adv & (PEER_CAP_RR | PEER_CAP_RR_old))
+                                                        == PEER_CAP_RR_old)
+            adv_tag = "(old)" ;
+
+          rcv_tag = "" ;
+          if ((caps_rcv & (PEER_CAP_RR | PEER_CAP_RR_old))
+                                                        == PEER_CAP_RR_old)
+            rcv_tag = "(old)" ;
+
+          vty_out (vty, "    Route refresh:");
+          if (caps_adv & (PEER_CAP_RR | PEER_CAP_RR_old))
+            vty_out (vty, " advertised%s", adv_tag);
+          if (caps_rcv & (PEER_CAP_RR | PEER_CAP_RR_old))
+            vty_out (vty, " %sreceived%s",
+              (caps_adv & (PEER_CAP_RR | PEER_CAP_RR_old)) ? "and " : "",
+                                                                  rcv_tag) ;
+          vty_out (vty, "%s", VTY_NEWLINE);
+        }
+
+      /* Graceful Restart
+       */
+      if (caps & PEER_CAP_GR)
+        {
+          vty_out (vty, "    Graceful Restart Capabilty:");
+          if (caps_adv & PEER_CAP_GR)
+            vty_out (vty, " advertised");
+          if (caps_rcv & PEER_CAP_GR)
+            vty_out (vty, " %sreceived",
+                                  (caps_adv & PEER_CAP_GR) ? "and " : "");
+          vty_out (vty, "%s", VTY_NEWLINE);
+
+          if (caps_rcv & PEER_CAP_GR)
+            {
+              int restart_af_count = 0;
+
+              vty_out (vty, "      Remote Restart timer is %d seconds%s",
+                       peer->v_gr_restart, VTY_NEWLINE);
+              vty_out (vty, "      Address families by peer:\n"
+                            "        ") ;
+
+              for (qafx = qafx_first ; qafx <= qafx_last ; ++qafx)
+                {
+                  peer_rib prib ;
+                  prib = peer_family_prib(peer, qafx) ;
+
+                  if ((prib != NULL) &&
+                          (prib->af_caps_rcv & PEER_AF_CAP_GR_CAN_PRESERVE))
+                  {
+                    vty_out (vty, "%s%s(%s)", restart_af_count ? ", " : "",
+                             qafx_string(qafx),
+                      (prib->af_caps_rcv & PEER_AF_CAP_GR_HAS_PRESERVED) ?
+                                           "preserved" : "not preserved");
+                    restart_af_count++;
+                  }
                 }
 
-          /* Gracefull Restart */
-          if (CHECK_FLAG (p->cap, PEER_CAP_RESTART_RCV)
-              || CHECK_FLAG (p->cap, PEER_CAP_RESTART_ADV))
-            {
-              vty_out (vty, "    Graceful Restart Capabilty:");
-              if (CHECK_FLAG (p->cap, PEER_CAP_RESTART_ADV))
-                vty_out (vty, " advertised");
-              if (CHECK_FLAG (p->cap, PEER_CAP_RESTART_RCV))
-                vty_out (vty, " %sreceived",
-                         CHECK_FLAG (p->cap, PEER_CAP_RESTART_ADV) ? "and " : "");
+              if (restart_af_count == 0)
+                vty_out (vty, "none");
               vty_out (vty, "%s", VTY_NEWLINE);
-
-              if (CHECK_FLAG (p->cap, PEER_CAP_RESTART_RCV))
-                {
-                  int restart_af_count = 0;
-
-                  vty_out (vty, "      Remote Restart timer is %d seconds%s",
-                           p->v_gr_restart, VTY_NEWLINE);
-                  vty_out (vty, "      Address families by peer:%s        ", VTY_NEWLINE);
-
-                  for (afi = AFI_IP ; afi < AFI_MAX ; afi++)
-                    for (safi = SAFI_UNICAST ; safi < SAFI_MAX ; safi++)
-                      if (CHECK_FLAG (p->af_cap[afi][safi], PEER_CAP_RESTART_AF_RCV))
-                        {
-                          vty_out (vty, "%s%s(%s)", restart_af_count ? ", " : "",
-                                   afi_safi_print (afi, safi),
-                                   CHECK_FLAG (p->af_cap[afi][safi], PEER_CAP_RESTART_AF_PRESERVE_RCV) ?
-                                   "preserved" : "not preserved");
-                          restart_af_count++;
-                        }
-                  if (! restart_af_count)
-                    vty_out (vty, "none");
-                  vty_out (vty, "%s", VTY_NEWLINE);
-                }
             }
         }
-    }
 
-  /* graceful restart information */
-  if (CHECK_FLAG (p->cap, PEER_CAP_RESTART_RCV)
-      || p->t_gr_restart
-      || p->t_gr_stale)
+      /* Dynamic Deprecated
+       */
+      if (caps & PEER_CAP_DYNAMIC_dep)
+        {
+          vty_out (vty, "    Dynamic (deprecated):");
+          if (caps_adv & PEER_CAP_DYNAMIC_dep)
+            vty_out (vty, " advertised");
+          if (caps_rcv & PEER_CAP_DYNAMIC_dep)
+            vty_out (vty, " %sreceived",
+                           (caps_adv & PEER_CAP_DYNAMIC_dep) ? "and " : "");
+          vty_out (vty, "%s", VTY_NEWLINE);
+        } ;
+
+      /* Dynamic
+       */
+      if (caps & PEER_CAP_DYNAMIC)
+        {
+          vty_out (vty, "    Dynamic:");
+          if (caps_adv & PEER_CAP_DYNAMIC)
+            vty_out (vty, " advertised");
+          if (caps_rcv & PEER_CAP_DYNAMIC)
+            vty_out (vty, " %sreceived",
+                              (caps_adv & PEER_CAP_DYNAMIC) ? "and " : "");
+          vty_out (vty, "%s", VTY_NEWLINE);
+        } ;
+    } ;
+
+  /* graceful restart information
+   */
+  if ( (peer->caps_rcv & PEER_CAP_GR) || (peer->t_gr_restart != NULL)
+                                      || (peer->t_gr_stale   != NULL) )
     {
       int eor_send_af_count = 0;
       int eor_receive_af_count = 0;
 
       vty_out (vty, "  Graceful restart informations:%s", VTY_NEWLINE);
-      if (p->state == bgp_peer_pEstablished)
+      if (peer->state == bgp_pEstablished)
         {
           vty_out (vty, "    End-of-RIB send: ");
-          for (afi = AFI_IP ; afi < AFI_MAX ; afi++)
-            for (safi = SAFI_UNICAST ; safi < SAFI_MAX ; safi++)
-              if (CHECK_FLAG (p->af_sflags[afi][safi], PEER_STATUS_EOR_SEND))
+          for (qafx = qafx_first ; qafx <= qafx_last ; ++qafx)
+            {
+              peer_rib prib ;
+              prib = peer_family_prib(peer, qafx) ;
+
+              if ((prib != NULL) && (prib->af_status & PEER_STATUS_EOR_SEND))
                 {
                   vty_out (vty, "%s%s", eor_send_af_count ? ", " : "",
-                           afi_safi_print (afi, safi));
+                                                            qafx_string(qafx));
                   eor_send_af_count++;
-                }
+                } ;
+              } ;
           vty_out (vty, "%s", VTY_NEWLINE);
 
           vty_out (vty, "    End-of-RIB received: ");
-          for (afi = AFI_IP ; afi < AFI_MAX ; afi++)
-            for (safi = SAFI_UNICAST ; safi < SAFI_MAX ; safi++)
-              if (CHECK_FLAG (p->af_sflags[afi][safi], PEER_STATUS_EOR_RECEIVED))
+          for (qafx = qafx_first ; qafx <= qafx_last ; ++qafx)
+            {
+              peer_rib prib ;
+              prib = peer_family_prib(peer, qafx) ;
+
+              if ((prib != NULL) &&
+                                   (prib->af_status & PEER_STATUS_EOR_RECEIVED))
                 {
                   vty_out (vty, "%s%s", eor_receive_af_count ? ", " : "",
-                           afi_safi_print (afi, safi));
+                                                            qafx_string(qafx));
                   eor_receive_af_count++;
-                }
+                } ;
+            } ;
           vty_out (vty, "%s", VTY_NEWLINE);
         }
 
-      if (p->t_gr_restart)
+      if (peer->t_gr_restart)
         vty_out (vty, "    The remaining time of restart timer is %ld%s",
-                 thread_timer_remain_second (p->t_gr_restart), VTY_NEWLINE);
+                 thread_timer_remain_second (peer->t_gr_restart), VTY_NEWLINE);
 
-      if (p->t_gr_stale)
+      if (peer->t_gr_stale)
         vty_out (vty, "    The remaining time of stalepath timer is %ld%s",
-                 thread_timer_remain_second (p->t_gr_stale), VTY_NEWLINE);
+                 thread_timer_remain_second (peer->t_gr_stale), VTY_NEWLINE);
     }
 
-  /* Packet counts. */
+  /* Packet counts.
+   */
   vty_out (vty, "  Message statistics:%s", VTY_NEWLINE);
   vty_out (vty, "    Inq depth is 0%s", VTY_NEWLINE);
-  vty_out (vty, "    Outq depth is %lu%s", (unsigned long) p->obuf->count, VTY_NEWLINE);
+  vty_out (vty, "    Outq depth is %lu%s", (ulong) peer->obuf_fifo->count, VTY_NEWLINE);
   vty_out (vty, "                         Sent       Rcvd%s", VTY_NEWLINE);
   vty_out (vty, "    Opens:         %10d %10d%s", stats.open_out, stats.open_in, VTY_NEWLINE);
   vty_out (vty, "    Notifications: %10d %10d%s", stats.notify_out, stats.notify_in, VTY_NEWLINE);
@@ -7715,128 +7858,129 @@ bgp_show_peer (struct vty *vty, struct peer *p)
       stats.open_in + stats.notify_in + stats.update_in + stats.keepalive_in + stats.refresh_in +
       stats.dynamic_cap_in, VTY_NEWLINE);
 
-  /* advertisement-interval */
+  /* advertisement-interval
+   */
   vty_out (vty, "  Minimum time between advertisement runs is %d seconds%s",
-           p->v_routeadv, VTY_NEWLINE);
+           peer_get_mrai(peer), VTY_NEWLINE);
 
-  /* Update-source. */
-  if (p->update_if || p->update_source)
+  /* Update-source.
+   */
+  if (peer->update_if || peer->update_source)
     {
       vty_out (vty, "  Update source is ");
-      if (p->update_if)
-        vty_out (vty, "%s", p->update_if);
-      else if (p->update_source)
-        vty_out (vty, "%s", sutoa(p->update_source).str);
+      if (peer->update_if)
+        vty_out (vty, "%s", peer->update_if);
+      else if (peer->update_source)
+        vty_out (vty, "%s", sutoa(peer->update_source).str);
       vty_out (vty, "%s", VTY_NEWLINE);
     }
 
-  /* Default weight */
-  if (CHECK_FLAG (p->config, PEER_CONFIG_WEIGHT))
-    vty_out (vty, "  Default weight %d%s", p->weight,
-             VTY_NEWLINE);
+  /* Default weight
+   */
+  if (peer->config & PEER_CONFIG_WEIGHT)
+    vty_out (vty, "  Default weight %d\n", peer->weight);
 
   vty_out (vty, "%s", VTY_NEWLINE);
 
-  /* Address Family Information */
-  for (afi = AFI_IP ; afi < AFI_MAX ; afi++)
-    for (safi = SAFI_UNICAST ; safi < SAFI_MAX ; safi++)
-      if (p->afc[afi][safi])
-        bgp_show_peer_afi (vty, p, afi, safi);
+  /* Address Family Information
+   */
+  for (qafx = qafx_first ; qafx <= qafx_last ; ++qafx)
+    if (peer_family_is_active(peer, qafx))
+      bgp_show_peer_afi (vty, peer, qafx);
 
   vty_out (vty, "  Connections established %d; dropped %d%s",
-           p->established, p->dropped,
+           peer->established, peer->dropped,
            VTY_NEWLINE);
 
-  if (! p->dropped)
+  if (! peer->dropped)
     vty_out (vty, "  Last reset never%s", VTY_NEWLINE);
   else
     vty_out (vty, "  Last reset %s, due to %s%s",
-            peer_uptime (p->resettime, timebuf, BGP_UPTIME_LEN),
-            peer_down_str[(int) p->last_reset], VTY_NEWLINE);
+            peer_uptime (peer->resettime, timebuf, BGP_UPTIME_LEN),
+            peer_down_str[(int) peer->last_reset], VTY_NEWLINE);
 
-  if (CHECK_FLAG (p->sflags, PEER_STATUS_PREFIX_OVERFLOW))
+  if (CHECK_FLAG (peer->sflags, PEER_STATUS_PREFIX_OVERFLOW))
     {
       vty_out (vty, "  Peer had exceeded the max. no. of prefixes configured.%s", VTY_NEWLINE);
 
-      if (p->t_pmax_restart)
+      if (peer->t_pmax_restart)
         vty_out (vty, "  Reduce the no. of prefix from %s, will restart in %ld seconds%s",
-                 p->host, thread_timer_remain_second (p->t_pmax_restart),
+                 peer->host, thread_timer_remain_second (peer->t_pmax_restart),
                  VTY_NEWLINE);
       else
         vty_out (vty, "  Reduce the no. of prefix and clear ip bgp %s to restore peering%s",
-                 p->host, VTY_NEWLINE);
+                 peer->host, VTY_NEWLINE);
     }
 
-  /* EBGP Multihop and GTSM */
-  if (peer_sort (p) != BGP_PEER_IBGP)
+  /* EBGP Multihop and GTSM -- for these purposes eBGP includes Confed eBGP.
+   */
+  if (peer->sort != BGP_PEER_IBGP)
     {
-      if (p->gtsm)
+      if (peer->gtsm)
         vty_out (vty, "  External BGP neighbor may be up to %d hops away"
                                                             " -- using GTSM.%s",
-                 p->ttl, VTY_NEWLINE);
-      else if (p->ttl > 1)
+                 peer->ttl, VTY_NEWLINE);
+      else if (peer->ttl > 1)
         vty_out (vty, "  External BGP neighbor may be up to %d hops away.%s",
-                 p->ttl, VTY_NEWLINE);
+                 peer->ttl, VTY_NEWLINE);
     }
 
-  /* Local address. */
-  if (p->su_local)
+  /* Local address.
+   */
+  if (peer->su_local)
     {
       vty_out (vty, "Local host: %s, Local port: %d%s",
-               sutoa(p->su_local).str,
-               ntohs (p->su_local->sin.sin_port),
+               sutoa(peer->su_local).str,
+               ntohs (peer->su_local->sin.sin_port),
                VTY_NEWLINE);
     }
 
-  /* Remote address. */
-  if (p->su_remote)
+  /* Remote address.
+   */
+  if (peer->su_remote)
     {
       vty_out (vty, "Foreign host: %s, Foreign port: %d%s",
-               sutoa(p->su_remote).str,
-               ntohs (p->su_remote->sin.sin_port),
+               sutoa(peer->su_remote).str,
+               ntohs (peer->su_remote->sin.sin_port),
                VTY_NEWLINE);
     }
 
-  /* Nexthop display. */
-  if (p->su_local)
+  /* Nexthop display.
+   */
+  if (peer->su_local)
     {
-      vty_out (vty, "Nexthop: %s%s",
-               inet_ntop (AF_INET, &p->nexthop.v4, buf, sizeof(buf)),
-               VTY_NEWLINE);
+      vty_out (vty, "Nexthop: %s\n", siptoa(AF_INET, &peer->nexthop.v4).str) ;
 #ifdef HAVE_IPV6
-      vty_out (vty, "Nexthop global: %s%s",
-               inet_ntop (AF_INET6, &p->nexthop.v6_global, buf, sizeof(buf)),
-               VTY_NEWLINE);
-      vty_out (vty, "Nexthop local: %s%s",
-               inet_ntop (AF_INET6, &p->nexthop.v6_local, buf, sizeof(buf)),
-               VTY_NEWLINE);
-      vty_out (vty, "BGP connection: %s%s",
-               p->shared_network ? "shared network" : "non shared network",
-               VTY_NEWLINE);
+      vty_out (vty, "Nexthop global: %s\n",
+                                  siptoa(AF_INET6, &peer->nexthop.v6_global).str) ;
+      vty_out (vty, "Nexthop local: %s\n",
+                                  siptoa(AF_INET6, &peer->nexthop.v6_local).str) ;
+      vty_out (vty, "BGP connection: %s\n",
+               peer->shared_network ? "shared network" : "non shared network");
 #endif /* HAVE_IPV6 */
     }
 
   /* TODO: Timer information. */
 #if 0
-  if (p->t_start)
+  if (peer->t_start)
     vty_out (vty, "Next start timer due in %ld seconds%s",
-             thread_timer_remain_second (p->t_start), VTY_NEWLINE);
-  if (p->t_connect)
+             thread_timer_remain_second (peer->t_start), VTY_NEWLINE);
+  if (peer->t_connect)
     vty_out (vty, "Next connect timer due in %ld seconds%s",
-             thread_timer_remain_second (p->t_connect), VTY_NEWLINE);
+             thread_timer_remain_second (peer->t_connect), VTY_NEWLINE);
 #endif
 
 #if 0
   vty_out (vty, "Read thread: %s  Write thread: %s%s",
-           p->t_read ? "on" : "off",
-           p->t_write ? "on" : "off",
+           peer->t_read ? "on" : "off",
+           peer->t_write ? "on" : "off",
            VTY_NEWLINE);
 #endif
 
-  if (p->session != NULL && p->session->notification != NULL
-      && p->session->notification->code == BGP_NOTIFY_OPEN_ERR
-      && p->session->notification->subcode == BGP_NOTIFY_OPEN_UNSUP_CAPBL)
-    bgp_capability_vty_out (vty, p);
+  if (peer->session != NULL && peer->session->notification != NULL
+      && peer->session->notification->code    == BGP_NOMC_OPEN
+      && peer->session->notification->subcode == BGP_NOMS_O_CAPABILITY)
+    bgp_capability_vty_out (vty, peer);
 
   vty_out (vty, "%s", VTY_NEWLINE);
 }
@@ -7858,7 +8002,7 @@ bgp_show_neighbor (struct vty *vty, struct bgp *bgp,
             break;
 
           case show_peer:
-            if (sockunion_same (&peer->su, su))
+            if (sockunion_same (peer->su_name, su))
               {
                 find = 1;
                 bgp_show_peer (vty, peer);
@@ -8124,8 +8268,7 @@ DEFUN (show_ip_bgp_paths,
        BGP_STR
        "Path information\n")
 {
-  vty_out (vty, "Address Refcnt Path%s", VTY_NEWLINE);
-  aspath_print_all_vty (vty);
+  as_path_print_all_vty (vty);
   return CMD_SUCCESS;
 }
 
@@ -8140,22 +8283,8 @@ DEFUN (show_ip_bgp_ipv4_paths,
        "Address Family modifier\n"
        "Path information\n")
 {
-  vty_out (vty, "Address Refcnt Path\r\n");
-  aspath_print_all_vty (vty);
-
+  as_path_print_all_vty (vty);
   return CMD_SUCCESS;
-}
-
-#include "hash.h"
-
-static void
-community_show_all_iterator (struct hash_backet *backet, struct vty *vty)
-{
-  struct community *com;
-
-  com = (struct community *) backet->data;
-  vty_out (vty, "[%p] (%ld) %s%s", backet, com->refcnt,
-           community_str (com), VTY_NEWLINE);
 }
 
 /* Show BGP's community internal data. */
@@ -8167,15 +8296,25 @@ DEFUN (show_ip_bgp_community_info,
        BGP_STR
        "List all bgp community information\n")
 {
-  vty_out (vty, "Address Refcnt Community%s", VTY_NEWLINE);
-
-  hash_iterate (community_hash (),
-                (void (*) (struct hash_backet *, void *))
-                community_show_all_iterator,
-                vty);
+  attr_community_print_all_vty (vty) ;
 
   return CMD_SUCCESS;
 }
+
+/* Show BGP's ecommunity internal data. */
+DEFUN (show_ip_bgp_ecommunity_info,
+       show_ip_bgp_ecommunity_info_cmd,
+       "show ip bgp extcommunity-info",
+       SHOW_STR
+       IP_STR
+       BGP_STR
+       "List all bgp extcommunity information\n")
+{
+  attr_ecommunity_print_all_vty (vty) ;
+
+  return CMD_SUCCESS;
+}
+
 
 DEFUN (show_ip_bgp_attr_info,
        show_ip_bgp_attr_info_cmd,
@@ -8185,31 +8324,36 @@ DEFUN (show_ip_bgp_attr_info,
        BGP_STR
        "List all bgp attribute information\n")
 {
-  attr_show_all (vty);
+  bgp_attr_show_all (vty);
   return CMD_SUCCESS;
 }
 
 static int
-bgp_write_rsclient_summary (struct vty *vty, struct peer *rsclient,
-        afi_t afi, safi_t safi)
+bgp_write_rsclient_summary (vty vty, bgp_peer rsclient, qafx_t qafx)
 {
   char timebuf[BGP_UPTIME_LEN];
   char rmbuf[14];
   const char *rmname;
-  struct peer *peer;
   struct listnode *node, *nnode;
   int len;
   int count = 0;
+  peer_rib prib ;
 
-  if (CHECK_FLAG (rsclient->sflags, PEER_STATUS_GROUP))
+  count = 0 ;
+
+  if (rsclient->type == PEER_TYPE_GROUP_CONF)
     {
-      for (ALL_LIST_ELEMENTS (rsclient->group->peer, node, nnode, peer))
+      for (ALL_LIST_ELEMENTS (rsclient->group->peer, node, nnode, rsclient))
         {
           count++;
-          bgp_write_rsclient_summary (vty, peer, afi, safi);
+          bgp_write_rsclient_summary (vty, rsclient, qafx);
         }
       return count;
     }
+
+  prib = peer_family_prib(rsclient, qafx) ;
+  if (prib == NULL)
+    return 0 ;
 
   vty_out (vty, "%s", rsclient->host);
   len = 16 - strlen(rsclient->host) ;
@@ -8223,7 +8367,7 @@ bgp_write_rsclient_summary (struct vty *vty, struct peer *rsclient,
 
   vty_out (vty, "%11d ", rsclient->as);
 
-  rmname = ROUTE_MAP_EXPORT_NAME(&rsclient->filter[afi][safi]);
+  rmname = route_map_get_name(prib->rmap[RMAP_EXPORT]);
   if ( rmname && strlen (rmname) > 13 )
     {
       sprintf (rmbuf, "%13s", "...");
@@ -8233,7 +8377,7 @@ bgp_write_rsclient_summary (struct vty *vty, struct peer *rsclient,
     rmname = "<none>";
   vty_out (vty, " %13s ", rmname);
 
-  rmname = ROUTE_MAP_IMPORT_NAME(&rsclient->filter[afi][safi]);
+  rmname = route_map_get_name(prib->rmap[RMAP_IMPORT]);
   if ( rmname && strlen (rmname) > 13 )
     {
       sprintf (rmbuf, "%13s", "...");
@@ -8259,36 +8403,41 @@ bgp_write_rsclient_summary (struct vty *vty, struct peer *rsclient,
 }
 
 static int
-bgp_show_rsclient_summary (struct vty *vty, struct bgp *bgp,
-                           afi_t afi, safi_t safi)
+bgp_show_rsclient_summary (struct vty *vty, struct bgp *bgp, qafx_t qafx)
 {
-  struct peer *peer;
+  bgp_peer   peer ;
   struct listnode *node, *nnode;
-  int count = 0;
+  uint count = 0;
 
   /* Header string for each address family. */
-  static char header[] = "Neighbor        V    AS  Export-Policy  Import-Policy  Up/Down  State";
+  static char header[] =
+       "Neighbor        V    AS  Export-Policy  Import-Policy  Up/Down  State";
 
-  for (ALL_LIST_ELEMENTS (bgp->rsclient, node, nnode, peer))
+  for (ALL_LIST_ELEMENTS (bgp->peer, node, nnode, peer))
     {
-      if (peer->afc[afi][safi] &&
-         CHECK_FLAG (peer->af_flags[afi][safi], PEER_FLAG_RSERVER_CLIENT))
-       {
-         if (! count)
-           {
-             vty_out (vty,
-                      "Route Server's BGP router identifier %s%s",
-                      safe_inet_ntoa (bgp->router_id), VTY_NEWLINE);
-             vty_out (vty,
-              "Route Server's local AS number %u%s", bgp->as,
-                       VTY_NEWLINE);
+      peer_rib   prib ;
 
-             vty_out (vty, "%s", VTY_NEWLINE);
-             vty_out (vty, "%s%s", header, VTY_NEWLINE);
-           }
+      prib = peer_family_prib(peer, qafx) ;
+      if (prib == NULL)
+        continue ;
 
-         count += bgp_write_rsclient_summary (vty, peer, afi, safi);
-       }
+      if (!(prib->af_flags & PEER_AFF_RSERVER_CLIENT))
+        continue ;
+
+      if (count == 0)
+        {
+          vty_out (vty,
+                   "Route Server's BGP router identifier %s%s",
+                   siptoa(AF_INET, &bgp->router_id).str, VTY_NEWLINE);
+          vty_out (vty,
+           "Route Server's local AS number %u%s", bgp->as,
+                    VTY_NEWLINE);
+
+          vty_out (vty, "%s", VTY_NEWLINE);
+          vty_out (vty, "%s%s", header, VTY_NEWLINE);
+        }
+
+      count += bgp_write_rsclient_summary (vty, peer, qafx);
     }
 
   if (count)
@@ -8296,14 +8445,13 @@ bgp_show_rsclient_summary (struct vty *vty, struct bgp *bgp,
             count, VTY_NEWLINE);
   else
     vty_out (vty, "No %s Route Server Client is configured%s",
-            afi == AFI_IP ? "IPv4" : "IPv6", VTY_NEWLINE);
+                     get_qAFI(qafx) == qAFI_IP ? "IPv4" : "IPv6", VTY_NEWLINE);
 
   return CMD_SUCCESS;
 }
 
 static int
-bgp_show_rsclient_summary_vty (struct vty *vty, const char *name,
-                               afi_t afi, safi_t safi)
+bgp_show_rsclient_summary_vty (struct vty *vty, const char *name, qafx_t qafx)
 {
   struct bgp *bgp;
 
@@ -8317,14 +8465,14 @@ bgp_show_rsclient_summary_vty (struct vty *vty, const char *name,
          return CMD_WARNING;
        }
 
-      bgp_show_rsclient_summary (vty, bgp, afi, safi);
+      bgp_show_rsclient_summary (vty, bgp, qafx);
       return CMD_SUCCESS;
     }
 
   bgp = bgp_get_default ();
 
   if (bgp)
-    bgp_show_rsclient_summary (vty, bgp, afi, safi);
+    bgp_show_rsclient_summary (vty, bgp, qafx);
 
   return CMD_SUCCESS;
 }
@@ -8339,7 +8487,7 @@ DEFUN (show_ip_bgp_rsclient_summary,
        "Information about Route Server Clients\n"
        "Summary of all Route Server Clients\n")
 {
-  return bgp_show_rsclient_summary_vty (vty, NULL, AFI_IP, SAFI_UNICAST);
+  return bgp_show_rsclient_summary_vty (vty, NULL, qafx_ipv4_unicast);
 }
 
 DEFUN (show_ip_bgp_instance_rsclient_summary,
@@ -8353,7 +8501,11 @@ DEFUN (show_ip_bgp_instance_rsclient_summary,
        "Information about Route Server Clients\n"
        "Summary of all Route Server Clients\n")
 {
-  return bgp_show_rsclient_summary_vty (vty, argv[0], AFI_IP, SAFI_UNICAST);
+  const char* name ;
+
+  name = argv[0] ;
+
+  return bgp_show_rsclient_summary_vty (vty, name, qafx_ipv4_unicast);
 }
 
 DEFUN (show_ip_bgp_ipv4_rsclient_summary,
@@ -8368,10 +8520,16 @@ DEFUN (show_ip_bgp_ipv4_rsclient_summary,
        "Information about Route Server Clients\n"
        "Summary of all Route Server Clients\n")
 {
-  if (strncmp (argv[0], "m", 1) == 0)
-    return bgp_show_rsclient_summary_vty (vty, NULL, AFI_IP, SAFI_MULTICAST);
+  qafx_t qafx ;
+  const char* name ;
+  const char* cast ;
 
-  return bgp_show_rsclient_summary_vty (vty, NULL, AFI_IP, SAFI_UNICAST);
+  name = NULL ;
+  cast = argv[0] ;
+
+  qafx = (*cast == 'm') ? qafx_ipv4_multicast : qafx_ipv4_unicast ;
+
+  return bgp_show_rsclient_summary_vty (vty, name, qafx);
 }
 
 DEFUN (show_ip_bgp_instance_ipv4_rsclient_summary,
@@ -8388,10 +8546,16 @@ DEFUN (show_ip_bgp_instance_ipv4_rsclient_summary,
        "Information about Route Server Clients\n"
        "Summary of all Route Server Clients\n")
 {
-  if (strncmp (argv[1], "m", 1) == 0)
-    return bgp_show_rsclient_summary_vty (vty, argv[0], AFI_IP, SAFI_MULTICAST);
+  qafx_t qafx ;
+  const char* name ;
+  const char* cast ;
 
-  return bgp_show_rsclient_summary_vty (vty, argv[0], AFI_IP, SAFI_UNICAST);
+  name = argv[0] ;
+  cast = argv[1] ;
+
+  qafx = (*cast == 'm') ? qafx_ipv4_multicast : qafx_ipv4_unicast ;
+
+  return bgp_show_rsclient_summary_vty (vty, name, qafx);
 }
 
 DEFUN (show_bgp_instance_ipv4_safi_rsclient_summary,
@@ -8407,15 +8571,24 @@ DEFUN (show_bgp_instance_ipv4_safi_rsclient_summary,
        "Information about Route Server Clients\n"
        "Summary of all Route Server Clients\n")
 {
-  safi_t safi;
+  qafx_t qafx ;
+  const char* name ;
+  const char* cast ;
 
-  if (argc == 2) {
-    safi = (strncmp (argv[1], "m", 1) == 0) ? SAFI_MULTICAST : SAFI_UNICAST;
-    return bgp_show_rsclient_summary_vty (vty, argv[0], AFI_IP, safi);
-  } else {
-    safi = (strncmp (argv[0], "m", 1) == 0) ? SAFI_MULTICAST : SAFI_UNICAST;
-    return bgp_show_rsclient_summary_vty (vty, NULL, AFI_IP, safi);
-  }
+  if (argc == 1)
+    {
+      name = NULL ;
+      cast = argv[0] ;
+    }
+  else
+    {
+      name = argv[0] ;
+      cast = argv[1] ;
+    }
+
+  qafx = (*cast == 'm') ? qafx_ipv4_multicast : qafx_ipv4_unicast ;
+
+  return bgp_show_rsclient_summary_vty (vty, name, qafx);
 }
 
 ALIAS (show_bgp_instance_ipv4_safi_rsclient_summary,
@@ -8438,7 +8611,7 @@ DEFUN (show_bgp_rsclient_summary,
        "Information about Route Server Clients\n"
        "Summary of all Route Server Clients\n")
 {
-  return bgp_show_rsclient_summary_vty (vty, NULL, AFI_IP6, SAFI_UNICAST);
+  return bgp_show_rsclient_summary_vty (vty, NULL, qafx_ipv6_unicast);
 }
 
 DEFUN (show_bgp_instance_rsclient_summary,
@@ -8451,7 +8624,7 @@ DEFUN (show_bgp_instance_rsclient_summary,
        "Information about Route Server Clients\n"
        "Summary of all Route Server Clients\n")
 {
-  return bgp_show_rsclient_summary_vty (vty, argv[0], AFI_IP6, SAFI_UNICAST);
+  return bgp_show_rsclient_summary_vty (vty, argv[0], qafx_ipv6_unicast);
 }
 
 ALIAS (show_bgp_rsclient_summary,
@@ -8487,15 +8660,24 @@ DEFUN (show_bgp_instance_ipv6_safi_rsclient_summary,
        "Information about Route Server Clients\n"
        "Summary of all Route Server Clients\n")
 {
-  safi_t safi;
+  qafx_t qafx ;
+  const char* name ;
+  const char* cast ;
 
-  if (argc == 2) {
-    safi = (strncmp (argv[1], "m", 1) == 0) ? SAFI_MULTICAST : SAFI_UNICAST;
-    return bgp_show_rsclient_summary_vty (vty, argv[0], AFI_IP6, safi);
-  } else {
-    safi = (strncmp (argv[0], "m", 1) == 0) ? SAFI_MULTICAST : SAFI_UNICAST;
-    return bgp_show_rsclient_summary_vty (vty, NULL, AFI_IP6, safi);
-  }
+  if (argc == 1)
+    {
+      name = NULL ;
+      cast = argv[0] ;
+    }
+  else
+    {
+      name = argv[0] ;
+      cast = argv[1] ;
+    }
+
+  qafx = (*cast == 'm') ? qafx_ipv6_multicast : qafx_ipv6_unicast ;
+
+  return bgp_show_rsclient_summary_vty (vty, name, qafx);
 }
 
 ALIAS (show_bgp_instance_ipv6_safi_rsclient_summary,
@@ -8642,7 +8824,7 @@ DEFUN (no_bgp_redistribute_ipv4,
       return CMD_WARNING;
     }
 
-  return bgp_redistribute_unset (vty->index, AFI_IP, type);
+  return bgp_redistribute_unset (vty->index, qAFI_IP, type);
 }
 
 DEFUN (no_bgp_redistribute_ipv4_rmap,
@@ -8856,7 +9038,7 @@ DEFUN (no_bgp_redistribute_ipv6,
       return CMD_WARNING;
     }
 
-  return bgp_redistribute_unset (vty->index, AFI_IP6, type);
+  return bgp_redistribute_unset (vty->index, qAFI_IP6, type);
 }
 
 DEFUN (no_bgp_redistribute_ipv6_rmap,
@@ -8940,37 +9122,44 @@ ALIAS (no_bgp_redistribute_ipv6_rmap_metric,
        "Pointer to route-map entries\n")
 #endif /* HAVE_IPV6 */
 
-int
-bgp_config_write_redistribute (struct vty *vty, struct bgp *bgp, afi_t afi,
-                               safi_t safi, int *write)
+extern int
+bgp_config_write_redistribute (struct vty *vty, struct bgp *bgp, qafx_t qafx,
+                                                                   int* p_write)
 {
-  int i;
+  uint type ;
+  qAFI_t q_afi ;
 
   /* Unicast redistribution only.  */
-  if (safi != SAFI_UNICAST)
+  if (!qafx_is_unicast(qafx))
     return 0;
 
-  for (i = 0; i < ZEBRA_ROUTE_MAX; i++)
+  q_afi = get_qAFI(qafx) ;
+
+  for (type = 0; type < ZEBRA_ROUTE_MAX; type++)
     {
-      /* Redistribute BGP does not make sense.  */
-      if (bgp->redist[afi][i] && i != ZEBRA_ROUTE_BGP)
+      if (type == ZEBRA_ROUTE_BGP)
+        continue ;                      /* not to self  */
+
+      if (bgp->redist[q_afi][type])
         {
-          /* Display "address-family" when it is not yet diplayed.  */
-          bgp_config_write_family_header (vty, afi, safi, write);
+          /* Display "address-family" when it is not yet diplayed.
+           */
+          bgp_config_write_family_header (vty, qafx, p_write);
 
-          /* "redistribute" configuration.  */
-          vty_out (vty, " redistribute %s", zebra_route_string(i));
+          /* "redistribute" configuration.
+           */
+          vty_out (vty, " redistribute %s", zebra_route_string(type));
 
-          if (bgp->redist_metric_flag[afi][i])
-            vty_out (vty, " metric %d", bgp->redist_metric[afi][i]);
+          if (bgp->redist_metric_set[q_afi][type])
+            vty_out (vty, " metric %d", bgp->redist_metric[q_afi][type]);
 
-          if (bgp->rmap[afi][i].name)
-            vty_out (vty, " route-map %s", bgp->rmap[afi][i].name);
+          if (bgp->rmap[q_afi][type].name != NULL)
+            vty_out (vty, " route-map %s", bgp->rmap[q_afi][type].name);
 
           vty_out (vty, "%s", VTY_NEWLINE);
         }
     }
-  return *write;
+  return *p_write;
 }
 
 /*------------------------------------------------------------------------------
@@ -9386,6 +9575,7 @@ CMD_INSTALL_TABLE(static, bgp_vty_cmd_table, BGPD) =
   /* "neighbor shutdown" commands. */
   { BGP_NODE,        &neighbor_shutdown_cmd                             },
   { BGP_NODE,        &no_neighbor_shutdown_cmd                          },
+  { BGP_NODE,        &neighbor_startup_cmd                              },
 
   /* Deprecated "neighbor capability route-refresh" commands.*/
   { BGP_NODE,        &neighbor_capability_route_refresh_cmd             },
@@ -10034,6 +10224,10 @@ CMD_INSTALL_TABLE(static, bgp_vty_cmd_table, BGPD) =
   { VIEW_NODE,       &show_ip_bgp_community_info_cmd                    },
   { ENABLE_NODE,     &show_ip_bgp_community_info_cmd                    },
 
+  /* "show ip bgp extcommunity" commands. */
+  { VIEW_NODE,       &show_ip_bgp_ecommunity_info_cmd                   },
+  { ENABLE_NODE,     &show_ip_bgp_ecommunity_info_cmd                   },
+
   /* "show ip bgp attribute-info" commands. */
   { VIEW_NODE,       &show_ip_bgp_attr_info_cmd                         },
   { ENABLE_NODE,     &show_ip_bgp_attr_info_cmd                         },
@@ -10102,9 +10296,9 @@ bgp_vty_init (void)
 
 /* Direction value to string conversion.  */
 static const char *
-community_direct_str (int direct)
+community_action_str (clist_action_type_t action)
 {
-  switch (direct)
+  switch (action)
     {
     case COMMUNITY_DENY:
       return "deny";
@@ -10122,65 +10316,71 @@ community_list_perror (struct vty *vty, int ret)
   switch (ret)
     {
     case COMMUNITY_LIST_ERR_CANT_FIND_LIST:
-      vty_out (vty, "%% Can't find community-list%s", VTY_NEWLINE);
+      vty_out (vty, "%% Can't find community-list\n");
       break;
     case COMMUNITY_LIST_ERR_MALFORMED_VAL:
-      vty_out (vty, "%% Malformed community-list value%s", VTY_NEWLINE);
+      vty_out (vty, "%% Malformed community-list value\n");
       break;
     case COMMUNITY_LIST_ERR_STANDARD_CONFLICT:
-      vty_out (vty, "%% Community name conflict, previously defined as standard community%s", VTY_NEWLINE);
+      vty_out (vty, "%% Community name conflict, "
+                                  "previously defined as standard community\n");
       break;
     case COMMUNITY_LIST_ERR_EXPANDED_CONFLICT:
-      vty_out (vty, "%% Community name conflict, previously defined as expanded community%s", VTY_NEWLINE);
+      vty_out (vty, "%% Community name conflict, "
+                                  "previously defined as expanded community\n");
+      break;
+    case COMMUNITY_LIST_ERR_ENTRY_EXISTS:
+      vty_out (vty, "%% Community-list entry already exists\n");
       break;
     default:
       break ;
     }
 }
 
-/* VTY interface for community_set() function.
+/*------------------------------------------------------------------------------
+ * VTY interface for community_set() function.
  */
 static int
 community_list_set_vty (struct vty *vty, int argc, argv_t argv,
-                        int style, int reject_all_digit_name)
+                                     clist_entry_style_t style, bool named_list)
 {
   int ret;
-  int direct;
+  clist_action_type_t action ;
   char *str;
 
-  /* Check the list type. */
-  if (strncmp (argv[1], "p", 1) == 0)
-    direct = COMMUNITY_PERMIT;
-  else if (strncmp (argv[1], "d", 1) == 0)
-    direct = COMMUNITY_DENY;
-  else
+  /* All digit name check.
+   */
+  if (named_list && all_digit(argv[0]))
     {
-      vty_out (vty, "%% Matching condition must be permit or deny%s",
-               VTY_NEWLINE);
+      vty_out (vty, "%% Community name cannot have all digits\n");
       return CMD_WARNING;
     }
 
-  /* All digit name check.  */
-  if (reject_all_digit_name && all_digit (argv[0]))
+  /* Check the list type.
+   */
+  switch (argv[1][0])
     {
-      vty_out (vty, "%% Community name cannot have all digits%s", VTY_NEWLINE);
-      return CMD_WARNING;
-    }
+      case 'p':
+        action = COMMUNITY_PERMIT ;
+        break ;
 
-  /* Concat community string argument.  */
-  if (argc > 1)
-    str = argv_concat (argv, argc, 2);
-  else
-    str = NULL;
+      case 'd':
+        action = COMMUNITY_DENY;
+        break ;
 
-  /* When community_list_set() return nevetive value, it means
-     malformed community string.  */
-  ret = community_list_set (bgp_clist, argv[0], str, direct, style);
+      default:
+        vty_out (vty, "%% Matching condition must be permit or deny\n") ;
+        return CMD_WARNING;
+    } ;
 
-  /* Free temporary community list string allocated by
-     argv_concat().  */
-  if (str)
-    XFREE (MTYPE_TMP, str);
+  /* When community_list_set() return negative value, it means malformed
+   * community string or a clash of style.
+   */
+  str = argv_concat (argv, argc, 2);
+
+  ret = community_list_set (bgp_clist, argv[0], str, action, style);
+
+  XFREE (MTYPE_TMP, str);
 
   if (ret < 0)
     {
@@ -10190,43 +10390,57 @@ community_list_set_vty (struct vty *vty, int argc, argv_t argv,
     }
 
   return CMD_SUCCESS;
-}
+} ;
 
-/* Community-list entry delete.
+/*------------------------------------------------------------------------------
+ * Community-list entry delete.
  */
 static int
 community_list_unset_vty (struct vty *vty, int argc, argv_t argv,
-                          int style)
+                                     clist_entry_style_t style, bool named_list)
 {
   int ret;
-  int direct = 0;
-  char *str = NULL;
 
-  if (argc > 1)
+  /* All digit name check.
+   */
+  if (named_list && all_digit(argv[0]))
     {
-      /* Check the list direct. */
-      if (strncmp (argv[1], "p", 1) == 0)
-        direct = COMMUNITY_PERMIT;
-      else if (strncmp (argv[1], "d", 1) == 0)
-        direct = COMMUNITY_DENY;
-      else
-        {
-          vty_out (vty, "%% Matching condition must be permit or deny%s",
-                   VTY_NEWLINE);
-          return CMD_WARNING;
-        }
+      vty_out (vty, "%% Community name cannot have all digits\n");
+      return CMD_WARNING;
+    } ;
 
-      /* Concat community string argument.  */
-      str = argv_concat (argv, argc, 2);
+  if (argc < 2)
+    {
+      ret = community_list_unset_all (bgp_clist, argv[0]);
     }
+  else
+    {
+      clist_action_type_t action ;
+      char* str ;
 
-  /* Unset community list.  */
-  ret = community_list_unset (bgp_clist, argv[0], str, direct, style);
+      switch (argv[1][0])
+        {
+          case 'p':
+            action = COMMUNITY_PERMIT ;
+            break ;
 
-  /* Free temporary community list string allocated by
-     argv_concat().  */
-  if (str)
-    XFREE (MTYPE_TMP, str);
+          case 'd':
+            action = COMMUNITY_DENY;
+            break ;
+
+          default:
+            vty_out (vty, "%% Matching condition must be permit or deny\n") ;
+            return CMD_WARNING;
+        } ;
+
+      /* Concat community string argument and unset the relevant entry.
+       */
+      str = argv_concat (argv, argc, 2) ;
+
+      ret = community_list_unset (bgp_clist, argv[0], str, action, style);
+
+      XFREE (MTYPE_TMP, str);
+    } ;
 
   if (ret < 0)
     {
@@ -10251,7 +10465,8 @@ DEFUN (ip_community_list_standard,
        "Specify community to accept\n"
        COMMUNITY_VAL_STR)
 {
-  return community_list_set_vty (vty, argc, argv, COMMUNITY_LIST_STANDARD, 0);
+  return community_list_set_vty (vty, argc, argv, COMMUNITY_LIST_STANDARD,
+                                        false /* not a named community-list */);
 }
 
 ALIAS (ip_community_list_standard,
@@ -10273,7 +10488,8 @@ DEFUN (ip_community_list_expanded,
        "Specify community to accept\n"
        "An ordered list as a regular-expression\n")
 {
-  return community_list_set_vty (vty, argc, argv, COMMUNITY_LIST_EXPANDED, 0);
+  return community_list_set_vty (vty, argc, argv, COMMUNITY_LIST_EXPANDED,
+                                        false /* not a named community-list */);
 }
 
 DEFUN (ip_community_list_name_standard,
@@ -10287,7 +10503,8 @@ DEFUN (ip_community_list_name_standard,
        "Specify community to accept\n"
        COMMUNITY_VAL_STR)
 {
-  return community_list_set_vty (vty, argc, argv, COMMUNITY_LIST_STANDARD, 1);
+  return community_list_set_vty (vty, argc, argv, COMMUNITY_LIST_STANDARD,
+                                             true /* a named community-list */);
 }
 
 ALIAS (ip_community_list_name_standard,
@@ -10311,7 +10528,8 @@ DEFUN (ip_community_list_name_expanded,
        "Specify community to accept\n"
        "An ordered list as a regular-expression\n")
 {
-  return community_list_set_vty (vty, argc, argv, COMMUNITY_LIST_EXPANDED, 1);
+  return community_list_set_vty (vty, argc, argv, COMMUNITY_LIST_EXPANDED,
+                                             true /* a named community-list */);
 }
 
 DEFUN (no_ip_community_list_standard_all,
@@ -10322,7 +10540,8 @@ DEFUN (no_ip_community_list_standard_all,
        COMMUNITY_LIST_STR
        "Community list number (standard)\n")
 {
-  return community_list_unset_vty (vty, argc, argv, COMMUNITY_LIST_STANDARD);
+  return community_list_unset_vty (vty, argc, argv, COMMUNITY_LIST_STANDARD,
+                                        false /* not a named community-list */);
 }
 
 DEFUN (no_ip_community_list_expanded_all,
@@ -10333,7 +10552,8 @@ DEFUN (no_ip_community_list_expanded_all,
        COMMUNITY_LIST_STR
        "Community list number (expanded)\n")
 {
-  return community_list_unset_vty (vty, argc, argv, COMMUNITY_LIST_EXPANDED);
+  return community_list_unset_vty (vty, argc, argv, COMMUNITY_LIST_EXPANDED,
+                                        false /* not a named community-list */);
 }
 
 DEFUN (no_ip_community_list_name_standard_all,
@@ -10345,7 +10565,8 @@ DEFUN (no_ip_community_list_name_standard_all,
        "Add a standard community-list entry\n"
        "Community list name\n")
 {
-  return community_list_unset_vty (vty, argc, argv, COMMUNITY_LIST_STANDARD);
+  return community_list_unset_vty (vty, argc, argv, COMMUNITY_LIST_STANDARD,
+                                             true /* a named community-list */);
 }
 
 DEFUN (no_ip_community_list_name_expanded_all,
@@ -10357,7 +10578,8 @@ DEFUN (no_ip_community_list_name_expanded_all,
        "Add an expanded community-list entry\n"
        "Community list name\n")
 {
-  return community_list_unset_vty (vty, argc, argv, COMMUNITY_LIST_EXPANDED);
+  return community_list_unset_vty (vty, argc, argv, COMMUNITY_LIST_EXPANDED,
+                                             true /* a named community-list */);
 }
 
 DEFUN (no_ip_community_list_standard,
@@ -10371,7 +10593,8 @@ DEFUN (no_ip_community_list_standard,
        "Specify community to accept\n"
        COMMUNITY_VAL_STR)
 {
-  return community_list_unset_vty (vty, argc, argv, COMMUNITY_LIST_STANDARD);
+  return community_list_unset_vty (vty, argc, argv, COMMUNITY_LIST_STANDARD,
+                                        false /* not a named community-list */);
 }
 
 DEFUN (no_ip_community_list_expanded,
@@ -10385,7 +10608,8 @@ DEFUN (no_ip_community_list_expanded,
        "Specify community to accept\n"
        "An ordered list as a regular-expression\n")
 {
-  return community_list_unset_vty (vty, argc, argv, COMMUNITY_LIST_EXPANDED);
+  return community_list_unset_vty (vty, argc, argv, COMMUNITY_LIST_EXPANDED,
+                                        false /* not a named community-list */);
 }
 
 DEFUN (no_ip_community_list_name_standard,
@@ -10400,7 +10624,8 @@ DEFUN (no_ip_community_list_name_standard,
        "Specify community to accept\n"
        COMMUNITY_VAL_STR)
 {
-  return community_list_unset_vty (vty, argc, argv, COMMUNITY_LIST_STANDARD);
+  return community_list_unset_vty (vty, argc, argv, COMMUNITY_LIST_STANDARD,
+                                             true /* a named community-list */);
 }
 
 DEFUN (no_ip_community_list_name_expanded,
@@ -10415,22 +10640,89 @@ DEFUN (no_ip_community_list_name_expanded,
        "Specify community to accept\n"
        "An ordered list as a regular-expression\n")
 {
-  return community_list_unset_vty (vty, argc, argv, COMMUNITY_LIST_EXPANDED);
+  return community_list_unset_vty (vty, argc, argv, COMMUNITY_LIST_EXPANDED,
+                                             true /* a named community-list */);
 }
 
-static void
-community_list_show (struct vty *vty, struct community_list *list)
+static qstring
+community_list_entry_value(qstring qs, community_entry entry)
 {
-  struct community_entry *entry;
+  qstring     qsx ;
+  const char* what ;
 
-  for (entry = list->head; entry; entry = entry->next)
+  qsx = NULL ;
+
+  if (entry->u.any == NULL)
     {
-      if (entry == list->head)
+      switch (entry->act)
+        {
+          case act_internet:
+            what = "internet" ;
+            break ;
+
+          case act_any:
+            what = "any" ;
+            break ;
+
+          default:
+            what = "" ;
+            break ;
+        } ;
+    }
+  else
+    {
+      switch (entry->style)
+        {
+          case COMMUNITY_LIST_STANDARD:
+            what = attr_community_str(entry->u.comm) ;
+            break ;
+
+          case ECOMMUNITY_LIST_STANDARD:
+            qsx = attr_ecommunity_str_form(qsx, entry->u.ecomm,
+                                        ECOMMUNITY_FORMAT_COMMUNITY_LIST) ;
+            what = qs_string(qsx) ;
+            break ;
+
+          case COMMUNITY_LIST_EXPANDED:
+          case ECOMMUNITY_LIST_EXPANDED:
+            what = entry->raw ;
+            break ;
+
+          default:
+            what = "???" ;
+            break ;
+        } ;
+    } ;
+
+  qs = qs_set_str(qs, community_action_str (entry->action)) ;
+
+  if (*what != '\0')
+    {
+      qs_append_ch(qs, ' ') ;
+      qs_append_str(qs, what) ;
+    } ;
+
+  qs_free(qsx) ;
+
+  return qs ;
+} ;
+
+static void
+community_list_show (struct vty *vty, community_list list, const char* tag)
+{
+  community_entry entry;
+  qstring     qs ;
+
+  qs = NULL ;
+
+  for (entry = ddl_head(list->entries); entry; entry = ddl_next(entry, list))
+    {
+      if (entry == ddl_head(list->entries))
         {
           if (all_digit (list->name))
             vty_out (vty, "Community %s list %s%s",
-                     entry->style == COMMUNITY_LIST_STANDARD ?
-                     "standard" : "(expanded) access",
+                     entry->style == COMMUNITY_LIST_STANDARD ? "(standard)"
+                                                             : "(expanded)",
                      list->name, VTY_NEWLINE);
           else
             vty_out (vty, "Named Community %s list %s%s",
@@ -10438,23 +10730,12 @@ community_list_show (struct vty *vty, struct community_list *list)
                      "standard" : "expanded",
                      list->name, VTY_NEWLINE);
         }
-      if (entry->any)
-        vty_out (vty, "    %s%s",
-                 community_direct_str (entry->direct), VTY_NEWLINE);
-      else
-        vty_out (vty, "    %s %s%s",
-                 community_direct_str (entry->direct),
-                 entry->style == COMMUNITY_LIST_STANDARD
-                 ? community_str (entry->u.com) : entry->config,
-                 VTY_NEWLINE);
-    }
-}
 
-static int
-community_list_symbol_cmp(const symbol* a, const symbol* b)
-{
-  return strcmp_mixed(((struct community_list*)(*a)->body)->name,
-                      ((struct community_list*)(*b)->body)->name ) ;
+      qs = community_list_entry_value(qs, entry) ;
+      vty_out (vty, "    %s\n", qs_string(qs));
+    } ;
+
+  qs_free(qs) ;
 } ;
 
 DEFUN (show_ip_community_list,
@@ -10464,25 +10745,14 @@ DEFUN (show_ip_community_list,
        IP_STR
        "List community-list\n")
 {
-  struct symbol_table* table;
   vector extract ;
   vector_index_t i ;
-  struct symbol* sym ;
   struct community_list *list;
 
-  table = community_list_master_lookup (bgp_clist, COMMUNITY_LIST_MASTER);
-  if (table == NULL)
-    return CMD_SUCCESS;
-
-  extract = symbol_table_extract(table, NULL, NULL, 0,
-                                                    community_list_symbol_cmp) ;
-
-  for (VECTOR_ITEMS(extract, sym, i))
-    {
-      list = symbol_get_body(sym) ;
-      if (list != NULL)
-        community_list_show (vty, list);
-    } ;
+  extract = community_list_extract(bgp_clist, COMMUNITY_LIST,
+                                                           NULL, NULL, false) ;
+  for (VECTOR_ITEMS(extract, list, i))
+    community_list_show (vty, list, "Community");
 
   vector_free(extract) ;        /* discard temporary vector */
 
@@ -10500,14 +10770,14 @@ DEFUN (show_ip_community_list_arg,
 {
   struct community_list *list;
 
-  list = community_list_lookup (bgp_clist, argv[0], COMMUNITY_LIST_MASTER);
+  list = community_list_lookup (bgp_clist, COMMUNITY_LIST, argv[0]);
   if (! list)
     {
       vty_out (vty, "%% Can't find community-list%s", VTY_NEWLINE);
       return CMD_WARNING;
     }
 
-  community_list_show (vty, list);
+  community_list_show (vty, list, "Community");
 
   return CMD_SUCCESS;
 }
@@ -10520,7 +10790,8 @@ extcommunity_list_set_vty (struct vty *vty, int argc, argv_t argv,
   int direct;
   char *str;
 
-  /* Check the list type. */
+  /* Check the list type.
+   */
   if (strncmp (argv[1], "p", 1) == 0)
     direct = COMMUNITY_PERMIT;
   else if (strncmp (argv[1], "d", 1) == 0)
@@ -10532,25 +10803,19 @@ extcommunity_list_set_vty (struct vty *vty, int argc, argv_t argv,
       return CMD_WARNING;
     }
 
-  /* All digit name check.  */
+  /* All digit name check.
+   */
   if (reject_all_digit_name && all_digit (argv[0]))
     {
       vty_out (vty, "%% Community name cannot have all digits%s", VTY_NEWLINE);
       return CMD_WARNING;
     }
 
-  /* Concat community string argument.  */
-  if (argc > 1)
-    str = argv_concat (argv, argc, 2);
-  else
-    str = NULL;
+  str = argv_concat (argv, argc, 2);
 
   ret = extcommunity_list_set (bgp_clist, argv[0], str, direct, style);
 
-  /* Free temporary community list string allocated by
-     argv_concat().  */
-  if (str)
-    XFREE (MTYPE_TMP, str);
+  XFREE (MTYPE_TMP, str);
 
   if (ret < 0)
     {
@@ -10560,38 +10825,55 @@ extcommunity_list_set_vty (struct vty *vty, int argc, argv_t argv,
   return CMD_SUCCESS;
 }
 
+/*------------------------------------------------------------------------------
+ * extcommunity-list entry delete.
+ */
 static int
-extcommunity_list_unset_vty (struct vty *vty, int argc, argv_t argv, int style)
+extcommunity_list_unset_vty (struct vty *vty, int argc, argv_t argv,
+                                     clist_entry_style_t style, bool named_list)
 {
   int ret;
-  int direct = 0;
-  char *str = NULL;
 
-  if (argc > 1)
+  /* All digit name check.
+   */
+  if (named_list && all_digit(argv[0]))
     {
-      /* Check the list direct. */
-      if (strncmp (argv[1], "p", 1) == 0)
-        direct = COMMUNITY_PERMIT;
-      else if (strncmp (argv[1], "d", 1) == 0)
-        direct = COMMUNITY_DENY;
-      else
-        {
-          vty_out (vty, "%% Matching condition must be permit or deny%s",
-                   VTY_NEWLINE);
-          return CMD_WARNING;
-        }
+      vty_out (vty, "%% Community name cannot have all digits\n");
+      return CMD_WARNING;
+    } ;
 
-      /* Concat community string argument.  */
-      str = argv_concat (argv, argc, 2);
+  /* Now unset everything or just the given entry.
+   */
+  if (argc < 2)
+    {
+      ret = extcommunity_list_unset_all (bgp_clist, argv[0]);
     }
+  else
+    {
+      clist_action_type_t action ;
+      char* str ;
 
-  /* Unset community list.  */
-  ret = extcommunity_list_unset (bgp_clist, argv[0], str, direct, style);
+      switch (argv[1][0])
+        {
+          case 'p':
+            action = COMMUNITY_PERMIT ;
+            break ;
 
-  /* Free temporary community list string allocated by
-     argv_concat().  */
-  if (str)
-    XFREE (MTYPE_TMP, str);
+          case 'd':
+            action = COMMUNITY_DENY;
+            break ;
+
+          default:
+            vty_out (vty, "%% Matching condition must be permit or deny\n") ;
+            return CMD_WARNING;
+        } ;
+
+      str = argv_concat (argv, argc, 2) ;
+
+      ret = extcommunity_list_unset (bgp_clist, argv[0], str, action, style);
+
+      XFREE (MTYPE_TMP, str) ;
+    } ;
 
   if (ret < 0)
     {
@@ -10604,7 +10886,8 @@ extcommunity_list_unset_vty (struct vty *vty, int argc, argv_t argv, int style)
 
 /* "extcommunity-list" keyword help string.  */
 #define EXTCOMMUNITY_LIST_STR "Add a extended community list entry\n"
-#define EXTCOMMUNITY_VAL_STR  "Extended community attribute in 'rt aa:nn_or_IPaddr:nn' OR 'soo aa:nn_or_IPaddr:nn' format\n"
+#define EXTCOMMUNITY_VAL_STR  "Extended community attribute in "\
+                 "'rt aa:nn_or_IPaddr:nn' OR 'soo aa:nn_or_IPaddr:nn' format\n"
 
 DEFUN (ip_extcommunity_list_standard,
        ip_extcommunity_list_standard_cmd,
@@ -10616,7 +10899,8 @@ DEFUN (ip_extcommunity_list_standard,
        "Specify community to accept\n"
        EXTCOMMUNITY_VAL_STR)
 {
-  return extcommunity_list_set_vty (vty, argc, argv, EXTCOMMUNITY_LIST_STANDARD, 0);
+  return extcommunity_list_set_vty (vty, argc, argv,
+                                               ECOMMUNITY_LIST_STANDARD, false);
 }
 
 ALIAS (ip_extcommunity_list_standard,
@@ -10638,7 +10922,8 @@ DEFUN (ip_extcommunity_list_expanded,
        "Specify community to accept\n"
        "An ordered list as a regular-expression\n")
 {
-  return extcommunity_list_set_vty (vty, argc, argv, EXTCOMMUNITY_LIST_EXPANDED, 0);
+  return extcommunity_list_set_vty (vty, argc, argv,
+                                               ECOMMUNITY_LIST_EXPANDED, false);
 }
 
 DEFUN (ip_extcommunity_list_name_standard,
@@ -10652,7 +10937,8 @@ DEFUN (ip_extcommunity_list_name_standard,
        "Specify community to accept\n"
        EXTCOMMUNITY_VAL_STR)
 {
-  return extcommunity_list_set_vty (vty, argc, argv, EXTCOMMUNITY_LIST_STANDARD, 1);
+  return extcommunity_list_set_vty (vty, argc, argv,
+                                                ECOMMUNITY_LIST_STANDARD, true);
 }
 
 ALIAS (ip_extcommunity_list_name_standard,
@@ -10676,7 +10962,8 @@ DEFUN (ip_extcommunity_list_name_expanded,
        "Specify community to accept\n"
        "An ordered list as a regular-expression\n")
 {
-  return extcommunity_list_set_vty (vty, argc, argv, EXTCOMMUNITY_LIST_EXPANDED, 1);
+  return extcommunity_list_set_vty (vty, argc, argv,
+                                                ECOMMUNITY_LIST_EXPANDED, true);
 }
 
 DEFUN (no_ip_extcommunity_list_standard_all,
@@ -10687,7 +10974,8 @@ DEFUN (no_ip_extcommunity_list_standard_all,
        EXTCOMMUNITY_LIST_STR
        "Extended Community list number (standard)\n")
 {
-  return extcommunity_list_unset_vty (vty, argc, argv, EXTCOMMUNITY_LIST_STANDARD);
+  return extcommunity_list_unset_vty (vty, argc, argv,
+                                               ECOMMUNITY_LIST_STANDARD, false);
 }
 
 DEFUN (no_ip_extcommunity_list_expanded_all,
@@ -10698,7 +10986,8 @@ DEFUN (no_ip_extcommunity_list_expanded_all,
        EXTCOMMUNITY_LIST_STR
        "Extended Community list number (expanded)\n")
 {
-  return extcommunity_list_unset_vty (vty, argc, argv, EXTCOMMUNITY_LIST_EXPANDED);
+  return extcommunity_list_unset_vty (vty, argc, argv,
+                                               ECOMMUNITY_LIST_EXPANDED, false);
 }
 
 DEFUN (no_ip_extcommunity_list_name_standard_all,
@@ -10710,7 +10999,8 @@ DEFUN (no_ip_extcommunity_list_name_standard_all,
        "Specify standard extcommunity-list\n"
        "Extended Community list name\n")
 {
-  return extcommunity_list_unset_vty (vty, argc, argv, EXTCOMMUNITY_LIST_STANDARD);
+  return extcommunity_list_unset_vty (vty, argc, argv,
+                                                ECOMMUNITY_LIST_STANDARD, true);
 }
 
 DEFUN (no_ip_extcommunity_list_name_expanded_all,
@@ -10722,7 +11012,8 @@ DEFUN (no_ip_extcommunity_list_name_expanded_all,
        "Specify expanded extcommunity-list\n"
        "Extended Community list name\n")
 {
-  return extcommunity_list_unset_vty (vty, argc, argv, EXTCOMMUNITY_LIST_EXPANDED);
+  return extcommunity_list_unset_vty (vty, argc, argv,
+                                                ECOMMUNITY_LIST_EXPANDED, true);
 }
 
 DEFUN (no_ip_extcommunity_list_standard,
@@ -10736,7 +11027,8 @@ DEFUN (no_ip_extcommunity_list_standard,
        "Specify community to accept\n"
        EXTCOMMUNITY_VAL_STR)
 {
-  return extcommunity_list_unset_vty (vty, argc, argv, EXTCOMMUNITY_LIST_STANDARD);
+  return extcommunity_list_unset_vty (vty, argc, argv,
+                                               ECOMMUNITY_LIST_STANDARD, false);
 }
 
 DEFUN (no_ip_extcommunity_list_expanded,
@@ -10750,7 +11042,8 @@ DEFUN (no_ip_extcommunity_list_expanded,
        "Specify community to accept\n"
        "An ordered list as a regular-expression\n")
 {
-  return extcommunity_list_unset_vty (vty, argc, argv, EXTCOMMUNITY_LIST_EXPANDED);
+  return extcommunity_list_unset_vty (vty, argc, argv,
+                                               ECOMMUNITY_LIST_EXPANDED, false);
 }
 
 DEFUN (no_ip_extcommunity_list_name_standard,
@@ -10765,7 +11058,8 @@ DEFUN (no_ip_extcommunity_list_name_standard,
        "Specify community to accept\n"
        EXTCOMMUNITY_VAL_STR)
 {
-  return extcommunity_list_unset_vty (vty, argc, argv, EXTCOMMUNITY_LIST_STANDARD);
+  return extcommunity_list_unset_vty (vty, argc, argv,
+                                                ECOMMUNITY_LIST_STANDARD, true);
 }
 
 DEFUN (no_ip_extcommunity_list_name_expanded,
@@ -10780,39 +11074,8 @@ DEFUN (no_ip_extcommunity_list_name_expanded,
        "Specify community to accept\n"
        "An ordered list as a regular-expression\n")
 {
-  return extcommunity_list_unset_vty (vty, argc, argv, EXTCOMMUNITY_LIST_EXPANDED);
-}
-
-static void
-extcommunity_list_show (struct vty *vty, struct community_list *list)
-{
-  struct community_entry *entry;
-
-  for (entry = list->head; entry; entry = entry->next)
-    {
-      if (entry == list->head)
-        {
-          if (all_digit (list->name))
-            vty_out (vty, "Extended community %s list %s%s",
-                     entry->style == EXTCOMMUNITY_LIST_STANDARD ?
-                     "standard" : "(expanded) access",
-                     list->name, VTY_NEWLINE);
-          else
-            vty_out (vty, "Named extended community %s list %s%s",
-                     entry->style == EXTCOMMUNITY_LIST_STANDARD ?
-                     "standard" : "expanded",
-                     list->name, VTY_NEWLINE);
-        }
-      if (entry->any)
-        vty_out (vty, "    %s%s",
-                 community_direct_str (entry->direct), VTY_NEWLINE);
-      else
-        vty_out (vty, "    %s %s%s",
-                 community_direct_str (entry->direct),
-                 entry->style == EXTCOMMUNITY_LIST_STANDARD ?
-                 entry->u.ecom->str : entry->config,
-                 VTY_NEWLINE);
-    }
+  return extcommunity_list_unset_vty (vty, argc, argv,
+                                                ECOMMUNITY_LIST_EXPANDED, true);
 }
 
 DEFUN (show_ip_extcommunity_list,
@@ -10822,25 +11085,14 @@ DEFUN (show_ip_extcommunity_list,
        IP_STR
        "List extended-community list\n")
 {
-  struct symbol_table* table;
   vector extract ;
   vector_index_t i ;
-  struct symbol* sym ;
   struct community_list *list;
 
-  table = community_list_master_lookup (bgp_clist, EXTCOMMUNITY_LIST_MASTER);
-  if (table == NULL)
-    return CMD_SUCCESS;
-
-  extract = symbol_table_extract(table, NULL, NULL, 0,
-                                                    community_list_symbol_cmp) ;
-
-  for (VECTOR_ITEMS(extract, sym, i))
-    {
-      list = symbol_get_body(sym) ;
-      if (list != NULL)
-        extcommunity_list_show (vty, list);
-    } ;
+  extract = community_list_extract(bgp_clist, ECOMMUNITY_LIST,
+                                                            NULL, NULL, false) ;
+  for (VECTOR_ITEMS(extract, list, i))
+    community_list_show (vty, list, "Extended-Community");
 
   vector_free(extract) ;        /* discard temporary vector */
 
@@ -10858,61 +11110,37 @@ DEFUN (show_ip_extcommunity_list_arg,
 {
   struct community_list *list;
 
-  list = community_list_lookup (bgp_clist, argv[0], EXTCOMMUNITY_LIST_MASTER);
+  list = community_list_lookup (bgp_clist, ECOMMUNITY_LIST, argv[0]);
   if (! list)
     {
       vty_out (vty, "%% Can't find extcommunity-list%s", VTY_NEWLINE);
       return CMD_WARNING;
     }
 
-  extcommunity_list_show (vty, list);
+  community_list_show (vty, list, "Extended-Community");
 
   return CMD_SUCCESS;
 }
 
-/* Return configuration string of community-list entry.  */
-static const char *
-community_list_config_str (struct community_entry *entry)
-{
-  const char *str;
-
-  if (entry->any)
-    str = "";
-  else
-    {
-      if (entry->style == COMMUNITY_LIST_STANDARD)
-        str = community_str (entry->u.com);
-      else
-        str = entry->config;
-    }
-  return str;
-}
-
 /* Put entire community-list or extcommunity-list.      */
 static int
-community_list_config_write_list(struct vty* vty, int what)
+community_list_config_write_list(struct vty* vty, clist_type_t what)
 {
-  struct symbol_table* table;
-  struct community_list *list;
-  struct community_entry *entry;
   vector extract ;
   vector_index_t i ;
-  struct symbol* sym ;
+  community_list list;
+  qstring  qs ;
 
   int write = 0;
+  qs = NULL ;
 
-  table = community_list_master_lookup (bgp_clist, what);
-
-  extract = symbol_table_extract(table, NULL, NULL, 0,
-                                                    community_list_symbol_cmp) ;
-  for (VECTOR_ITEMS(extract, sym, i))
+  extract = community_list_extract(bgp_clist, what, NULL, NULL, false) ;
+  for (VECTOR_ITEMS(extract, list, i))
     {
-      list = symbol_get_body(sym) ;
+      community_entry entry;
 
-      if (list == NULL)
-        continue ;
-
-      for (entry = list->head; entry; entry = entry->next)
+      for (entry = ddl_head(list->entries); entry;
+                                            entry = ddl_next(entry, list))
         {
           const char* list_type  = "" ;
           const char* list_style = "" ;
@@ -10927,30 +11155,31 @@ community_list_config_write_list(struct vty* vty, int what)
                 list_type  = "community-list" ;
                 list_style = "expanded " ;
                 break ;
-              case EXTCOMMUNITY_LIST_STANDARD:
+              case ECOMMUNITY_LIST_STANDARD:
                 list_type  = "extcommunity-list" ;
                 list_style = "standard " ;
                 break ;
-              case EXTCOMMUNITY_LIST_EXPANDED:
+              case ECOMMUNITY_LIST_EXPANDED:
                 list_type  = "extcommunity-list" ;
                 list_style = "expanded " ;
                 break ;
               default:
                 break ;
             } ;
+
           if (all_digit(list->name))
             list_style = "" ;   /* squash style for all digit names     */
 
-          vty_out (vty, "ip %s %s%s %s %s%s",
-                     list_type, list_style, list->name,
-                     community_direct_str (entry->direct),
-                     community_list_config_str (entry),
-                     VTY_NEWLINE);
+          qs = community_list_entry_value(qs, entry) ;
+
+          vty_out (vty, "ip %s %s%s %s\n",
+                             list_type, list_style, list->name, qs_string(qs));
           write++;
         }
    }
 
   vector_free(extract) ;        /* discard temporary vector */
+  qs_free(qs) ;
 
   return write;
 }
@@ -10961,8 +11190,8 @@ community_list_config_write (struct vty *vty)
 {
   int write = 0;
 
-  write += community_list_config_write_list(vty, COMMUNITY_LIST_MASTER) ;
-  write += community_list_config_write_list(vty, EXTCOMMUNITY_LIST_MASTER);
+  write += community_list_config_write_list(vty, COMMUNITY_LIST) ;
+  write += community_list_config_write_list(vty, ECOMMUNITY_LIST);
 
   return write;
 }

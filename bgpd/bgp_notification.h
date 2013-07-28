@@ -27,196 +27,82 @@
 #include "lib/misc.h"
 #include "bgpd/bgp_common.h"
 
+#include "lib/qfstring.h"
+
 /*==============================================================================
  * BGP NOTIFICATION message codes.
  */
-typedef unsigned char bgp_nom_code_t ;
-typedef unsigned char bgp_nom_subcode_t ;
+typedef uint8_t bgp_nom_code_t ;
+typedef uint8_t bgp_nom_subcode_t ;
 
 /*==============================================================================
  * Structure for notification.
  *
  * Note that vast majority of notification handling concerns notifications that
  * are *sent* to the far end.  Occasionally a notification will be received.
+ *
+ * It is *screamingly* convenient to have enough space for the complete
+ * NOTIFICATION message in the bgp_notify -- so can write directly from here.
  */
-typedef struct bgp_notify* bgp_notify ;
+enum { bgp_notify_embedded_size  = ROUND_UP(BGP_NOM_MIN_L + 40, 8) } ;
+
+typedef struct bgp_notify  bgp_notify_t ;
 
 struct bgp_notify
 {
+  bool              received ;
+
   bgp_nom_code_t    code ;
   bgp_nom_subcode_t subcode ;
 
-  bool              received ;
+  ptr_t             data ;              /* pointer to data portion      */
+  uint              length ;            /* as given                     */
+  uint              size ;              /* of *data*                    */
 
-  bgp_size_t        length ;
-  bgp_size_t        size ;
-  ptr_t             data ;
+  ptr_t             msg_buff ;
+
+  byte              embedded[bgp_notify_embedded_size] ;
 } ;
 
-/*==============================================================================
- * "Legacy" definitions
+/*------------------------------------------------------------------------------
+ * qfstring for showing the state of notifications
  */
-/* BGP notify message codes.                                    */
-#define BGP_NOTIFY_HEADER_ERR                    1
-#define BGP_NOTIFY_OPEN_ERR                      2
-#define BGP_NOTIFY_UPDATE_ERR                    3
-#define BGP_NOTIFY_HOLD_ERR                      4
-#define BGP_NOTIFY_FSM_ERR                       5
-#define BGP_NOTIFY_CEASE                         6
-#define BGP_NOTIFY_CAPABILITY_ERR                7
-#define BGP_NOTIFY_MAX                           8
-
-#define BGP_NOTIFY_SUBCODE_UNSPECIFIC            0
-
-/* BGP_NOTIFY_HEADER_ERR sub codes.                             */
-#define BGP_NOTIFY_HEADER_NOT_SYNC               1
-#define BGP_NOTIFY_HEADER_BAD_MESLEN             2
-#define BGP_NOTIFY_HEADER_BAD_MESTYPE            3
-#define BGP_NOTIFY_HEADER_MAX                    4
-
-/* BGP_NOTIFY_OPEN_ERR sub codes.                               */
-#define BGP_NOTIFY_OPEN_UNSUP_VERSION            1
-#define BGP_NOTIFY_OPEN_BAD_PEER_AS              2
-#define BGP_NOTIFY_OPEN_BAD_BGP_IDENT            3
-#define BGP_NOTIFY_OPEN_UNSUP_PARAM              4
-#define BGP_NOTIFY_OPEN_AUTH_FAILURE             5
-#define BGP_NOTIFY_OPEN_UNACEP_HOLDTIME          6
-#define BGP_NOTIFY_OPEN_UNSUP_CAPBL              7
-#define BGP_NOTIFY_OPEN_MAX                      8
-
-/* BGP_NOTIFY_UPDATE_ERR sub codes.                             */
-#define BGP_NOTIFY_UPDATE_MAL_ATTR               1
-#define BGP_NOTIFY_UPDATE_UNREC_ATTR             2
-#define BGP_NOTIFY_UPDATE_MISS_ATTR              3
-#define BGP_NOTIFY_UPDATE_ATTR_FLAG_ERR          4
-#define BGP_NOTIFY_UPDATE_ATTR_LENG_ERR          5
-#define BGP_NOTIFY_UPDATE_INVAL_ORIGIN           6
-#define BGP_NOTIFY_UPDATE_AS_ROUTE_LOOP          7
-#define BGP_NOTIFY_UPDATE_INVAL_NEXT_HOP         8
-#define BGP_NOTIFY_UPDATE_OPT_ATTR_ERR           9
-#define BGP_NOTIFY_UPDATE_INVAL_NETWORK         10
-#define BGP_NOTIFY_UPDATE_MAL_AS_PATH           11
-#define BGP_NOTIFY_UPDATE_MAX                   12
-
-/* BGP_NOTIFY_CEASE sub codes (RFC 4486).                       */
-#define BGP_NOTIFY_CEASE_MAX_PREFIX              1
-#define BGP_NOTIFY_CEASE_ADMIN_SHUTDOWN          2
-#define BGP_NOTIFY_CEASE_PEER_UNCONFIG           3
-#define BGP_NOTIFY_CEASE_ADMIN_RESET             4
-#define BGP_NOTIFY_CEASE_CONNECT_REJECT          5
-#define BGP_NOTIFY_CEASE_CONFIG_CHANGE           6
-#define BGP_NOTIFY_CEASE_COLLISION_RESOLUTION    7
-#define BGP_NOTIFY_CEASE_OUT_OF_RESOURCE         8
-#define BGP_NOTIFY_CEASE_MAX                     9
-
-/* BGP_NOTIFY_CAPABILITY_ERR sub codes (draft-ietf-idr-dynamic-cap-02). */
-#define BGP_NOTIFY_CAPABILITY_INVALID_ACTION     1
-#define BGP_NOTIFY_CAPABILITY_INVALID_LENGTH     2
-#define BGP_NOTIFY_CAPABILITY_MALFORMED_CODE     3
-#define BGP_NOTIFY_CAPABILITY_MAX                4
+QFB_T(100) bgp_notify_string_t ;
 
 /*==============================================================================
  * Functions
  */
+extern bgp_notify bgp_notify_new(bgp_nom_code_t code,
+                                 bgp_nom_subcode_t subcode) ;
+extern bgp_notify bgp_notify_new_need(bgp_nom_code_t code,
+                                 bgp_nom_subcode_t subcode, uint need) ;
+extern bgp_notify bgp_notify_new_with_data(bgp_nom_code_t code,
+                                           bgp_nom_subcode_t subcode,
+                                                   const void* data, uint len) ;
+extern bgp_notify bgp_notify_free(bgp_notify notification) ;
+extern bgp_notify bgp_notify_dup(bgp_notify notification) ;
+extern void bgp_notify_unset(bgp_notify* p_notification) ;
+extern bgp_notify bgp_notify_take(bgp_notify* p_notification) ;
+extern void bgp_notify_set(bgp_notify* p_dst, bgp_notify src) ;
+extern void bgp_notify_set_dup(bgp_notify* p_dst, bgp_notify src) ;
+extern void bgp_notify_set_mov(bgp_notify* p_dst, bgp_notify* p_src) ;
 
-extern bgp_notify
-bgp_notify_new(bgp_nom_code_t code, bgp_nom_subcode_t subcode) ;
+extern bgp_notify bgp_notify_reset(bgp_notify notification,
+                               bgp_nom_code_t code, bgp_nom_subcode_t subcode) ;
+extern bgp_notify bgp_notify_default(bgp_notify notification,
+                               bgp_nom_code_t code, bgp_nom_subcode_t subcode) ;
 
-extern bgp_notify
-bgp_notify_new_expect(bgp_nom_code_t code, bgp_nom_subcode_t subcode,
-                                                            bgp_size_t expect) ;
-extern bgp_notify
-bgp_notify_new_with_data(bgp_nom_code_t code, bgp_nom_subcode_t subcode,
-                                             const void* data, bgp_size_t len) ;
-extern void
-bgp_notify_free(bgp_notify notification) ;
+extern bgp_notify bgp_notify_append_data(bgp_notify notification,
+                                                   const void* data, uint len) ;
+extern bgp_notify bgp_notify_append_b(bgp_notify notification, uint8_t b) ;
+extern bgp_notify bgp_notify_append_w(bgp_notify notification, uint16_t w) ;
 
-extern bgp_notify
-bgp_notify_dup(bgp_notify notification) ;
+extern bgp_notify bgp_notify_append_l(bgp_notify notification, uint32_t l) ;
 
-extern void
-bgp_notify_unset(bgp_notify* p_notification) ;
-
-extern bgp_notify
-bgp_notify_take(bgp_notify* p_notification) ;
-
-extern void
-bgp_notify_set(bgp_notify* p_dst, bgp_notify src) ;
-
-extern void
-bgp_notify_set_dup(bgp_notify* p_dst, bgp_notify src) ;
-
-extern void
-bgp_notify_set_mov(bgp_notify* p_dst, bgp_notify* p_src) ;
-
-/*==============================================================================
- * Access Functions -- mostly inline
- *
- * Note that the various get functions return undefined/unspecific/empty if
- * given a NULL bgp_notify.
- */
-
-Inline void
-bgp_notify_set_code(bgp_notify notification, bgp_nom_code_t code)
-{
-  notification->code = code ;
-} ;
-
-Inline void
-bgp_notify_set_subcode(bgp_notify notification, bgp_nom_subcode_t subcode)
-{
-  notification->subcode = subcode ;
-} ;
-
-Inline void
-bgp_notify_set_received(bgp_notify notification)
-{
-  notification->received = true ;
-} ;
-
-extern bgp_notify
-bgp_notify_reset(bgp_notify notification, bgp_nom_code_t code,
-                                                     bgp_nom_subcode_t subcode) ;
-extern void
-bgp_notify_append_data(bgp_notify notification, const void* data,
-                                                               bgp_size_t len) ;
-extern void
-bgp_notify_append_b(bgp_notify notification, uint8_t b) ;
-
-extern void
-bgp_notify_append_w(bgp_notify notification, uint16_t w) ;
-
-extern void
-bgp_notify_append_l(bgp_notify notification, uint32_t l) ;
-
-Inline bgp_nom_code_t
-bgp_notify_get_code(bgp_notify notification)
-{
-  return (notification != NULL) ? notification->code :    BGP_NOMC_UNDEF ;
-} ;
-
-Inline bgp_nom_subcode_t
-bgp_notify_get_subcode(bgp_notify notification)
-{
-  return (notification != NULL) ? notification->subcode : BGP_NOMS_UNSPECIFIC ;
-} ;
-
-Inline bool
-bgp_notify_get_received(bgp_notify notification)
-{
-  return (notification != NULL) ? notification->received : false ;
-} ;
-
-Inline bgp_size_t
-bgp_notify_get_length(bgp_notify notification)
-{
-  return (notification != NULL) ? notification->length  : 0 ;
-} ;
-
-Inline void*
-bgp_notify_get_data(bgp_notify notification)
-{
-  return (notification != NULL) ? notification->data    : NULL ;
-} ;
+extern ptr_t bgp_notify_message(bgp_notify notification, uint* p_msg_length) ;
+extern uint bgp_notify_msg_length(bgp_notify notification) ;
+extern uint bgp_notify_data_length(bgp_notify notification) ;
+extern void bgp_notify_put(int sock_fd, bgp_notify notification) ;
+extern bgp_notify_string_t bgp_notify_string(bgp_notify notification) ;
 
 #endif /* _QUAGGA_BGP_NOTIFY_H */

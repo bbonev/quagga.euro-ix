@@ -14,9 +14,6 @@
 /*==============================================================================
  * prototypes
  */
-
-int main(int argc, char **argv);
-
 static void assert_true(int result, const char * message);
 
 static void test_qfs_init(uint seed) ;
@@ -170,12 +167,12 @@ static const pf_flags_t flag_list[] =
 enum { flags_count = sizeof(flag_list) / sizeof(pf_flags_t) } ;
 
 /*------------------------------------------------------------------------------
- * Test qfs_dec_value()
+ * Test qfs_put_dec_value()
  */
 static void
 test_qfs_dec_value(bool show)
 {
-  enum { type = true } ;        /* qfs_dec_value()              */
+  enum { type = true } ;        /* qfs_put_dec_value()              */
 
   int decade, tests ;
   ulong v_min ;
@@ -286,12 +283,12 @@ test_qfs_dec_value(bool show)
 } ;
 
 /*------------------------------------------------------------------------------
- * Test qfs_bin_value()
+ * Test qfs_put_bin_value()
  */
 static void
 test_qfs_bin_value(bool show)
 {
-  enum { type = false } ;       /* qfs_bin_value()              */
+  enum { type = false } ;       /* qfs_put_bin_value()              */
 
   int decade, tests ;
   ulong v_min ;
@@ -415,7 +412,7 @@ test_qfs_bin_value(bool show)
 } ;
 
 /*------------------------------------------------------------------------------
- * Run qfs_dec_value()/qfs_bin_value() and compare result with what we expect
+ * Run qfs_put_dec_value()/qfs_put_bin_value() and compare result with what we expect
  * to get.
  */
 static void
@@ -439,9 +436,9 @@ test_value(long val, bool dec)
       flags = flag_list[i] ;
 
       if (dec)
-        num = qfs_dec_value(val, flags) ;
+        num = qfs_put_dec_value(val, flags) ;
       else
-        num = qfs_bin_value(val, flags) ;
+        num = qfs_put_bin_value(val, flags) ;
 
       fail = decode(&got, num.str, flags) ;
       if (fail != NULL)
@@ -780,7 +777,7 @@ c_val(char* e, ulong u, uint d, const char* t)
 /*------------------------------------------------------------------------------
  * Work out scaled encoding for given value, for decimal numbers.
  *
- * See qfs_dec_value() -- which encodes as 4 digits, with 0, 1 or 2 after
+ * See qfs_put_dec_value() -- which encodes as 4 digits, with 0, 1 or 2 after
  * decimal point -- scaling in 1000^n.
  *
  * Sets enc->s  == -1 if  < 0
@@ -857,7 +854,7 @@ encode_dec(struct encoded* enc, long val, pf_flags_t flags)
 /*------------------------------------------------------------------------------
  * Work out scaled encoding for given value, for binary numbers.
  *
- * See qfs_bin_value() -- which encodes as 4 digits, with 1, 2 or 3 after
+ * See qfs_put_bin_value() -- which encodes as 4 digits, with 1, 2 or 3 after
  * decimal point -- scaling in 1024^n.
  *
  * Sets enc->s  == -1 if  < 0
@@ -959,7 +956,7 @@ encode_bin(struct encoded* enc, long val, pf_flags_t flags)
 } ;
 
 /*------------------------------------------------------------------------------
- * Take string returned by qfs_dec_value() or qfs_bin_value(), and extract
+ * Take string returned by qfs_put_dec_value() or qfs_put_bin_value(), and extract
  *
  *   enc->s   --  0 => none
  *               -1 => '-'

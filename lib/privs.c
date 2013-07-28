@@ -772,13 +772,15 @@ zprivs_init_dry(struct zebra_privs_t *zprivs, bool dryrun)
       exit (ret);
     }
 
-  /* NULL privs                                                         */
+  /* NULL privs
+   */
   if ( (zprivs->user == NULL) && (zprivs->group == NULL)
                               && (zprivs->cap_num_p == 0)
                               && (zprivs->cap_num_i == 0) )
     goto null_zprivs ;
 
-  /* Get uid for configured user (if any)                               */
+  /* Get uid for configured user (if any)
+   */
   if (zprivs->user)
     {
       if ( (pwentry = getpwnam (zprivs->user)) )
@@ -794,12 +796,14 @@ zprivs_init_dry(struct zebra_privs_t *zprivs, bool dryrun)
         }
     }
 
-  /* Get gid for vty_group and add to our groups                        */
+  /* Get gid for vty_group and add to our groups
+   */
   grentry = NULL;
 
   if (zprivs->vty_group)
-    /* Add the vty_group to the supplementary groups so it can be chowned to */
     {
+      /* Add the vty_group to the supplementary groups so it can be chowned to
+       */
       if ( (grentry = getgrnam (zprivs->vty_group)) )
         {
           zprivs_state.vtygrp = grentry->gr_gid;
@@ -818,7 +822,8 @@ zprivs_init_dry(struct zebra_privs_t *zprivs, bool dryrun)
         }
     }
 
-  /* Get gid for configured group and switch to same, now.              */
+  /* Get gid for configured group and switch to same, now.
+   */
   if (zprivs->group)
     {
       if ( (grentry = getgrnam (zprivs->group)) )
@@ -831,7 +836,9 @@ zprivs_init_dry(struct zebra_privs_t *zprivs, bool dryrun)
                    zprivs->group);
           goto failure ;
         }
-      /* change group now, forever. uid we do later                     */
+
+      /* change group now, forever. uid we do later
+       */
       if ( setregid (zprivs_state.zgid, zprivs_state.zgid) )
         {
           fprintf (stderr, "zprivs_init: could not setregid, %s\n",

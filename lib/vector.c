@@ -106,7 +106,7 @@ vector_new(vector_length_t limit)
  *
  * Allocates vector structure if none given -- that is, if v == NULL.
  *
- * If size is given as zero, no body is allocated, otherwise body of exactly
+ * If limit is given as zero, no body is allocated, otherwise body of exactly
  * the required size is allocated.
  *
  * NB: discards any existing vector body -- so it is the caller's responsibility
@@ -160,11 +160,50 @@ vector_free (vector v)
 } ;
 
 /*------------------------------------------------------------------------------
+ * Clear down vector (set 'end' = 0) and prepare for given number of entries.
+ *
+ * If the given number of entries is 0, then other than setting end = 0:
+ *
+ *   * does nothing if the vector is NULL -- so will return a NULL vector.
+ *
+ *   * does nothing if the body is NULL -- so, does not create a body.
+ *
+ *   * does nothing if the body is not NULL -- so preserves any existing body.
+ *
+ * If the given number of entries is not 0, then:
+ *
+ *   * if vector == NULL, create new vector and body with exactly that limit.
+ *
+ *   * if vector body == NULL, create new body with exactly that limit.
+ *
+ *   * if the vector body is smaller than limit, extends vector body to exactly
+ *     that limit.
+ *
+ *   * if vector body is greater, leaves it as is.
+ *
+ * ... and in all cases sets end == 0.
+ *
+ * NB: when clearing an existing vector it is the caller's responsibility to
+ *     release any vector item values *before* doing this.
+ */
+extern vector
+vector_clear(vector v, vector_length_t limit)
+{
+  if (v != NULL)
+    return vector_re_init(v, limit) ;
+
+  if (limit != 0)
+    return vector_new(limit) ;
+
+  return NULL ;
+} ;
+
+/*------------------------------------------------------------------------------
  * Re-initialise vector (or create new one), setting it empty.
  *
  * Allocates vector structure if none given -- that is, if v == NULL.
  *
- * If size is given as zero, no body is allocated, but any existing body is
+ * If limit is given as zero, no body is allocated, but any existing body is
  * retained.  (vector_reset() will discard body.)
  *
  * Otherwise ensures existing body is at least the required size, or a body
@@ -199,7 +238,7 @@ vector_re_init(vector v, vector_length_t limit)
  * NB: it is the caller's responsibility to release any vector item values
  *     *before* doing this.
  */
-vector
+extern vector
 vector_reset(vector v, free_keep_b free_structure)
 {
   if (v == NULL)
@@ -280,7 +319,8 @@ vector_ream(vector v, free_keep_b free_structure)
         return p_v ;    /* return non-NULL item */
     } ;
 
-  /* vector is empty: free the body, and (if required) the vector structure.  */
+  /* vector is empty: free the body, and (if required) the vector structure.
+   */
   vector_reset(v, free_structure) ;
 
   return NULL ;         /* signals end          */
@@ -1069,6 +1109,7 @@ vector_sort(vector v, vector_sort_cmp* cmp)
  *   result == -1: value is less than everything in the vector, or the
  *                 vector is empty (or NULL).
  *                 index returned is 0
+ *                 (The value sought belongs before this.)
  *
  * NB: The comparison function takes arguments which are:
  *
@@ -1104,7 +1145,8 @@ vector_bsearch(vector v, vector_bsearch_cmp* cmp, const void* p_val,
   il = 0 ;
   ih = v->end - 1 ;
 
-  /* Pick off the edge cases: >= last and <= first.  */
+  /* Pick off the edge cases: >= last and <= first.
+   */
   if ((c = cmp(&p_val, (const cvp*)&v->p_items[ih])) >= 0)
     {
       *result = c ;     /* 0 => found.  +1 => val > last        */
@@ -1116,8 +1158,9 @@ vector_bsearch(vector v, vector_bsearch_cmp* cmp, const void* p_val,
       return il ;       /* return low index.                   */
     }
 
-  /* Now binary chop.  We know that item[il] < val < item[ih]   */
-  /*                   We also know that il < ih                */
+  /* Now binary chop.  We know that item[il] < val < item[ih]
+   *                   We also know that il < ih
+   */
   while (1)
     {
       iv = (il + ih) / 2 ;
@@ -1126,7 +1169,9 @@ vector_bsearch(vector v, vector_bsearch_cmp* cmp, const void* p_val,
           *result = +1 ;
           return il ;   /* return il: item[il] < val < item[il+1]       */
         } ;
-      /* We now know that il < iv < ih  */
+
+      /* We now know that il < iv < ih
+       */
       c = cmp(&p_val, (const cvp*)&v->p_items[iv]) ;
       if (c == 0)
         {
@@ -1302,7 +1347,8 @@ vector_delete(vector v, vector_index_t i, vector_length_t n)
   if ((i >= old_end) || (n == 0))
     return ;
 
-  /* If i + n < old_end, we have 1 or more items to keep and move down */
+  /* If i + n < old_end, we have 1 or more items to keep and move down
+   */
   if ((i + n) < old_end)
     {
       memmove(&v->p_items[i], &v->p_items[i + n],

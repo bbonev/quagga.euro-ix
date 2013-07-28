@@ -23,122 +23,104 @@
 
 #include "bgpd/bgp_engine.h"
 
-#include "lib/memory.h"
-#include "lib/symtab.h"
-
 /*==============================================================================
  * The BGP Engine pThread contains:
  *
- *   * the BGP Finite State Machine (FSM) for BGP Sessions
+ *   * the BGP Finite State Machine (FSM) for BGP Connections
+ *   * the BGP listen and accept stuff
  *   * the encoding and decoding of BGP protocol messages
  *   * all related socket handling and I/O
  *   * all related timers
- *
- * The BGP Engine communicates with the BGP Routeing pthread(s) via two Message
- * Queues.
- *
- * There are also shared pools of data:
- *
- *   * the BGP session structures, which ...
- *   * the Attributes Store
- *   * the Prefixes Store
- *   ...
- *
- * Other pthread-safe facilities used:
- *
- *   * logging
- *   * privilege raising/lowering
- *   ...
- *
- * At the heart of the BGP Engine pthread is a select for the socket I/O, a
- * Message Queue reader and a timer handler.  The Message Queue uses SIGUSR2 to
- * kick the pthread into action if it is stopped on the select.
- *
  */
 
 /*==============================================================================
- * The qpnexus for the BGP Engine.
- *
+ * Logging debug support for tracking volumes of messages flowing between
+ * the BGP Engine and the Routeing Engine.
+ */
+typedef struct bgp_engine_queue_stats  bgp_engine_queue_stats_t ;
+typedef struct bgp_engine_queue_stats* bgp_engine_queue_stats ;
+
+struct bgp_engine_queue_stats
+{
+  uint     count ;
+  urlong   total ;
+  uint     max ;
+  uint     recent ;
+
+  uint     xon ;
+  uint     event ;
+  uint     update ;
+} ;
+
+static bgp_engine_queue_stats_t queue_stats[bgp_engine_debug_count]
+                      = { {0}, {0} } ;
+
+static const char* queue_name[] =
+  {
+    [bgp_engine_debug_to_bgp]      = "BGP Engine",
+    [bgp_engine_debug_to_routeing] = "Routeing Engine",
+  } ;
+
+/*------------------------------------------------------------------------------
  *
  */
+extern void
+bgp_queue_logging(mqueue_queue mq, uint which)
+{
+  bgp_engine_queue_stats stats ;
+  urlong average ;
+  uint   av_i ;
+  uint   av_f ;
+  uint   my_count ;
+  mqueue_block mqb ;
 
-/*==============================================================================
- * Start the BGP Engine Thread.
- *
- * Initialise the Engine Thread qpnexus
- *
- */
+  stats = &queue_stats[which] ;
+  ++stats->count ;
 
-/* BGP Engine side of bgp_engine_start() must call bgp_open_listeners()
- * for which it needs the port and address from command line.
- *
- * Implemented in bgp_main.c
- */
+  MQUEUE_LOCK(mq) ;
 
-/*==============================================================================
- * Stop the BGP Engine Thread.
- *
- */
+  if (mq->count > stats->max)
+    stats->max    = mq->count ;
+  if (mq->count > stats->recent)
+    stats->recent = mq->count ;
 
-/* BGP Engine side of bgp_engine_stop() must call bgp_close_listeners()
- *
- * Implemented in bgp_main.c
- */
+  stats->total += mq->count ;
 
-/*==============================================================================
- * The BGP Engine Thread main loop
- *
- * Processes:
- *
- *   1) connections with pending work -- local queue.
- *
- *      When a connection fills its output buffers, any further messages
- *      requiring output are placed on the connection's pending queue.
- *
- *      When the output buffers empty sufficiently, some of those messages
- *      can (finally) be processed.
- *
- *      So this is done first.
- *
- *      [This is also where stopped connections are finally reaped.]
- *
- *   2) messages coming from the Routeing Engine -- mqueue_queue.
- *
- *      These will mostly be BGP UPDATE messages, which will either be
- *      processed into the relevant connection's output buffers, or end up
- *      on its pending queue.
- *
- *      There is a flow control mechanism to prevent the Routeing Engine from
- *      flooding the BGP Engine with UPDATE messages.
- *
- *      Other messages start/stop sessions and so on.
- *
- *   3) I/O -- qpselect
- *
- *      This deals with all active sockets for read/write/connect/accept.
- *
- *      Each time a socket is readable, one message is read and dispatched to
- *      the Routeing Engine (or otherwise dealt with by the FSM).
- *
- *      Each time a socket is writable, as much as possible is written to it
- *      from the connection's write buffer.  When the write buffer is drained,
- *      the connection goes back onto the local queue.
- *
- *   4) Timers -- qtimers
- *
- *      Which generate FSM events.
- *
- * Implemented in qpnexus.c
- *
- */
+  if (stats->count < 1000)
+    {
+      MQUEUE_UNLOCK(mq) ;
+      return ;
+    } ;
 
+  my_count = 0 ;
 
-/*==============================================================================
- * The write queue for the BGP Engine
- *
- * Each connection has a single message buffer.  When that has yet to be
- *
- *
- */
+  mqb = mq->head ;
+  while (mqb != NULL)
+    {
+      ++my_count ;
+      mqb = mqb->next ;
+    } ;
 
+  assert(my_count == mq->count) ;
+
+  MQUEUE_UNLOCK(mq) ;
+
+  average = stats->total * 1000 ;
+  average = (average / stats->count) + 5 ;
+  av_i = average / 1000 ;
+  av_f = (average % 1000) / 10 ;
+
+  zlog_debug("%s queue: max=%u  recent: max=%u av=%d.%.2d (%u) [x=%u e=%u u=%u]",
+                 queue_name[which],
+                         stats->max, stats->recent, av_i, av_f, stats->count,
+                                      stats->xon, stats->event, stats->update) ;
+
+  stats->recent = 0 ;
+  stats->count  = 0 ;
+  stats->total  = 0 ;
+
+  stats->event  = 0 ;
+  stats->update = 0 ;
+  stats->xon    = 0 ;
+} ;
 

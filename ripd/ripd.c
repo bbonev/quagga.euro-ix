@@ -3877,8 +3877,8 @@ rip_reset (void)
 
   /* Call library reset functions. */
   vty_reset ();
-  access_list_reset ();
-  prefix_list_reset ();
+  access_list_reset (keep_it);
+  prefix_list_reset (keep_it);
 
   distribute_list_reset ();
 
@@ -3903,7 +3903,7 @@ rip_if_rmap_update (struct if_rmap *if_rmap)
 
   if (if_rmap->routemap[IF_RMAP_IN])
     {
-      rmap = route_map_lookup_by_name (if_rmap->routemap[IF_RMAP_IN]);
+      rmap = route_map_lookup (if_rmap->routemap[IF_RMAP_IN]);
       if (rmap)
 	ri->routemap[IF_RMAP_IN] = rmap;
       else
@@ -3914,7 +3914,7 @@ rip_if_rmap_update (struct if_rmap *if_rmap)
 
   if (if_rmap->routemap[IF_RMAP_OUT])
     {
-      rmap = route_map_lookup_by_name (if_rmap->routemap[IF_RMAP_OUT]);
+      rmap = route_map_lookup (if_rmap->routemap[IF_RMAP_OUT]);
       if (rmap)
 	ri->routemap[IF_RMAP_OUT] = rmap;
       else
@@ -3945,7 +3945,7 @@ rip_routemap_update_redistribute (void)
 	{
 	  if (rip->route_map[i].name)
 	    rip->route_map[i].map =
-	      route_map_lookup_by_name (rip->route_map[i].name);
+	      route_map_lookup (rip->route_map[i].name);
 	}
     }
 }

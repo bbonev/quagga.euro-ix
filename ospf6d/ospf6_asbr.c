@@ -342,7 +342,7 @@ ospf6_asbr_routemap_set (int type, const char *mapname)
   if (ospf6->rmap[type].name)
     free (ospf6->rmap[type].name);
   ospf6->rmap[type].name = strdup (mapname);
-  ospf6->rmap[type].map = route_map_lookup_by_name (mapname);
+  ospf6->rmap[type].map = route_map_lookup (mapname);
 }
 
 static void
@@ -366,7 +366,7 @@ ospf6_asbr_routemap_update (const char *mapname)
     {
       if (ospf6->rmap[type].name)
         ospf6->rmap[type].map =
-          route_map_lookup_by_name (ospf6->rmap[type].name);
+          route_map_lookup (ospf6->rmap[type].name);
       else
         ospf6->rmap[type].map = NULL;
     }

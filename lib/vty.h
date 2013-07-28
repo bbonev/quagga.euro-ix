@@ -138,7 +138,7 @@ extern void vty_resume(void) ;
 extern void vty_stop(const char* why, void (*stop_action)(void)) ;
 extern void vty_terminate (void);
 
-extern int vty_out (struct vty *vty, const char *format, ...)
+extern uint vty_out (struct vty *vty, const char *format, ...)
                                                         PRINTF_ATTRIBUTE(2, 3) ;
 extern void vty_err(struct vty *vty, const char *format, ...)
                                                         PRINTF_ATTRIBUTE(2, 3) ;

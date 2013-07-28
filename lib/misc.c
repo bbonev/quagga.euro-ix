@@ -20,6 +20,7 @@
  */
 
 #include "misc.h"
+#include <inttypes.h>
 
 #include "errno.h"
 #include "ctype.h"
@@ -38,6 +39,8 @@
  * strtol and strtoul extensions.
  *
  * These extensions:
+ *
+ *   * work with 'rlong' -- so definitely longer than 'int' !
  *
  *   * deal with the error handling issues
  *
@@ -81,18 +84,19 @@
  * string is not a valid number, returns pointer to first non-whitespace
  * character in the string.  Note that number can be valid and still overflow !
  *
- * Returns:  *signed* long -- LONG_MIN if failed
+ * Returns:  *signed* rlong -- RLONG_MIN if out of range and -ve, or if invalid
+ *                             RLONG_MAX if out of range and +ve
  *
  *           *p_tox  ==  strtox_signed  => OK, sign seen (+ or -)
  *                   ==  strtox_ok      => OK, no sign
- *                   ==  strtox_invalid => badly formed number
- *                   ==  strtox_range   => out of range for signed long
+ *                   ==  strtox_invalid => badly formed or empty number
+ *                   ==  strtox_range   => out of range for signed rlong
  */
-extern long
-strtol_x(const char* restrict str, strtox_t* p_tox, char** p_end)
+extern rlong
+strtol_x(const char* restrict str, strtox_t* p_tox, const char** p_end)
 {
   const char* start ;
-  ulong uval ;
+  urlong uval ;
   int   sign ;
 
   /* Establish sign if any -- eats leading whitespace, then if finds sign,
@@ -125,7 +129,10 @@ strtol_x(const char* restrict str, strtox_t* p_tox, char** p_end)
       if ((*p_tox == strtox_invalid) && (p_end != NULL))
         *p_end = miyagi(start) ;
 
-      return LONG_MIN ;
+      if ((*p_tox == strtox_range) && (sign >= 0))
+        return RLONG_MAX ;
+
+      return RLONG_MIN ;
     } ;
 
   /* Worry about sign and range.
@@ -151,40 +158,56 @@ strtol_x(const char* restrict str, strtox_t* p_tox, char** p_end)
       qassert(strtox_ok == 0) ;         /* as promised for *p_tox */
       *p_tox = sign ;
 
-      /* +ve is easy -- is OK unless > LONG_MAX
+      /* +ve is easy -- is OK unless > RLONG_MAX
        */
-      if (uval <= (ulong)LONG_MAX)
+      if (uval <= (urlong)RLONG_MAX)
         return uval ;                   /* +ve success          */
     }
   else
     {
       *p_tox = strtox_signed ;
 
-      /* -ve is not so easy -- is OK if <= LONG_MAX
-       *                       is OK if == -LONG_MIN
+      /* -ve is not so easy -- is OK if <= RLONG_MAX
+       *                       is OK if == -RLONG_MIN
        *
        * If OK, need to negate.
        *
-       * Getting -LONG_MIN is tricky -- (theoretically) possible M != N-1
+       * Getting -RLONG_MIN is tricky -- (theoretically) possible M != N-1
        *
-       * Negating value > LONG_MAX is also tricky !
+       * Negating value > RLONG_MAX is also tricky !
        */
-      confirm(((LONG_MIN + LONG_MAX) ==  0) ||  /* -LONG_MIN == LONG_MAX     */
-              ((LONG_MIN + LONG_MAX) == -1)) ;  /* -LONG_MIN == LONG_MAX + 1 */
+      confirm(((RLONG_MIN + RLONG_MAX) ==  0) ||
+              ((RLONG_MIN + RLONG_MAX) == -1)) ;
 
-      if (uval <= (ulong)LONG_MAX)
-        return -((long)uval) ;          /* -ve success          */
+      if (uval <= (urlong)RLONG_MAX)
+        return -((rlong)uval) ;         /* -ve success          */
 
-      if ((LONG_MIN + LONG_MAX) == -1)
-        if (uval == ((ulong)LONG_MAX + 1))
-          return LONG_MIN ;             /* extreme -ve success  */
+      if ((RLONG_MIN + RLONG_MAX) == -1)
+        if (uval == ((urlong)RLONG_MAX + 1))
+          return RLONG_MIN ;            /* extreme -ve success  */
     } ;
 
   /* Range error
    */
   *p_tox = strtox_range ;
 
-  return LONG_MIN ;
+  return (sign < 0) ? RLONG_MIN : RLONG_MAX ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Simple strtoul() -- where the string is already known to be a valid number.
+ *
+ * NB: requires string to contain a number and only a number, apart from
+ *     leading and trailing white-space.
+ *
+ * Returns:  *signed* rlong -- RLONG_MIN if out of range and -ve, or if invalid
+ *                             RLONG_MAX if out of range and +ve
+ */
+extern rlong
+strtol_s(const char* restrict str)
+{
+  strtox_t tox ;
+  return strtol_x(str, &tox, NULL) ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -192,18 +215,21 @@ strtol_x(const char* restrict str, strtox_t* p_tox, char** p_end)
  *
  * See strtol_x() for description of p_end.
  *
- * Returns:  *unsigned* long -- 0 if failed
+ * Returns:  *unsigned* rlong --         0 if invalid
+ *                              URLONG_MAX if out of range
  *
  *           *p_tox  ==  strtox_ok      => OK, no sign
- *                   ==  strtox_invalid => badly formed number
- *                   ==  strtox_range   => out of range for signed long
+ *                   ==  strtox_invalid => badly formed or empty number
+ *                   ==  strtox_range   => out of range for *unsigned* rlong
+ *
+ * NB: does not allow a leading zign.
  */
-extern ulong
-strtoul_x(const char* restrict str, strtox_t* p_tox, char** p_end)
+extern urlong
+strtoul_x(const char* restrict str, strtox_t* p_tox, const char** p_end)
 {
-  ulong uval ;
+  urlong uval ;
   int   base ;
-  char  stripped[sizeof(ulong) * 3] ;
+  char  stripped[sizeof(urlong) * 3] ;
   const char* start ;
   char* q, * e ;
   int   (* isd)(int c) ;
@@ -216,7 +242,7 @@ strtoul_x(const char* restrict str, strtox_t* p_tox, char** p_end)
    * The estimate of the number of digits to achieve this is based on 3 bits
    * per digit, which is an overestimate, since we don't do octal !
    */
-  confirm((((sizeof(ulong) * 8) + 5) / 3) < sizeof(stripped)) ;
+  confirm((((sizeof(urlong) * 8) + 5) / 3) < sizeof(stripped)) ;
 
   /* Establish base -- eats leading whitespace, base marker and leading zeros
    *                   with any '_'.
@@ -378,12 +404,12 @@ strtoul_x(const char* restrict str, strtox_t* p_tox, char** p_end)
    * NB: if we expect_overflow, but do not get it, the qassert should spring,
    *     but otherwise we force a range error.
    */
-  qassert(errno == ERANGE) ;
+  qassert((errno == ERANGE) || expect_overflow) ;
 
   *p_tox = strtox_range ;
   if (p_end != NULL)
     *p_end = miyagi(str) ;
-  return 0 ;
+  return URLONG_MAX ;
 
   /* Invalid -- number is not well formed, or is not the only thing in the
    *            given string.
@@ -396,33 +422,67 @@ invalid:
 } ;
 
 /*------------------------------------------------------------------------------
+ * Simple strtoul() -- where the string is already known to be a valid number.
+ *
+ * NB: requires string to contain a number and only a number, apart from
+ *     leading and trailing white-space.
+ *
+ * Returns:  *unsigned* rlong --         0 if invalid
+ *                              URLONG_MAX if out of range
+ */
+extern urlong
+strtoul_s(const char* restrict str)
+{
+  strtox_t tox ;
+  return strtoul_x(str, &tox, NULL) ;
+} ;
+
+/*------------------------------------------------------------------------------
  * Extended strtol() with check against given range.
  *
  * See strtol_x() for description of p_end.
  *
- * Returns:  *signed* long -- LONG_MIN if failed
+ * Returns:  *signed* rlong -- min if < min, or if invalid
+ *                             max if > max
  *
  *           *p_tox  ==  strtox_signed  => OK, sign seen (+ or -)
  *                   ==  strtox_ok      => OK, no sign
- *                   ==  strtox_invalid => badly formed number
- *                   ==  strtox_range   => out of range for signed long
+ *                   ==  strtox_invalid => badly formed or empty number
+ *                   ==  strtox_range   => out of range (< min or > max)
  */
-extern long
-strtol_xr(const char* restrict str, strtox_t* p_tox, char** p_end, long min,
-                                                                   long max)
+extern rlong
+strtol_xr(const char* restrict str, strtox_t* p_tox, const char** p_end,
+                                                           rlong min, rlong max)
 {
-  long val ;
+  rlong val ;
 
-  val = strtol_x(str, p_tox, p_end) ;
+  val = strtol_x(str, p_tox, p_end) ;   /* returns RLONG_MIN if invalid */
 
-  if (*p_tox != strtox_ok)
-    return min ;
+  if (*p_tox >= strtox_ok)
+    {
+      if ((val >= min) && (val <= max))
+        return val ;
 
-  if ((val >= min) && (val <= max))
-    return val ;
+      *p_tox = strtox_range ;
+    } ;
 
-  *p_tox = strtox_range ;
-  return min ;
+  return (val < 0) ? min : max ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Simple strtol_sr() -- where the string is already known to be a valid number.
+ *
+ * NB: requires string to contain a number and only a number, apart from
+ *     leading and trailing white-space.
+ *
+ * Returns:  *signed* rlong -- min if < min, or if invalid
+ *                             max if > max
+ */
+extern rlong
+strtol_sr(const char* restrict str, rlong min, rlong max)
+{
+  strtox_t tox ;
+  return strtol_xr(str, &tox, NULL, min, max) ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -430,28 +490,147 @@ strtol_xr(const char* restrict str, strtox_t* p_tox, char** p_end, long min,
  *
  * See strtol_x() for description of p_end.
  *
- * Returns:  *unsigned* long -- given min if failed
+ * Returns:  *unsigned* rlong -- min if < min, or if invalid
+ *                               max if > max
  *
  *           *p_tox  ==  strtox_ok      => OK, no sign
- *                   ==  strtox_invalid => badly formed number
- *                   ==  strtox_range   => out of range for signed long
+ *                   ==  strtox_invalid => badly formed or empty number
+ *                   ==  strtox_range   => out of range for signed rlong
  */
-extern ulong
-strtoul_xr(const char* restrict str, strtox_t* p_tox, char** p_end, ulong min,
-                                                                    ulong max)
+extern urlong
+strtoul_xr(const char* restrict str, strtox_t* p_tox, const char** p_end,
+                                                         urlong min, urlong max)
 {
-  ulong uval ;
+  urlong uval ;
 
   uval = strtoul_x(str, p_tox, p_end) ;
 
-  if (*p_tox != strtox_ok)
-    return min ;
+  if (*p_tox >= strtox_ok)
+    {
+      if ((uval >= min) && (uval <= max))
+        return uval ;
 
-  if ((uval >= min) && (uval <= max))
-    return uval ;
+      *p_tox = strtox_range ;
+    } ;
 
-  *p_tox = strtox_range ;
-  return min ;
+  /* If *p_tox == strtox_invalid, return min.  uval will be zero.
+   *
+   * If *p_tox == strtox_range, return min if uval <= min, otherwise max
+   *
+   * Since the smallest possible min is zero, we don't need to worry about
+   * the state of *p_tox.
+   *
+   * Note that if get impossibly large number in strtoul_x() it returns
+   * URLONG_MAX.  (So, if min == URLONG_MAX, then that's fine !)
+   */
+  return (uval <= min) ? min : max ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Simple strtol_sr() -- where the string is already known to be a valid number.
+ *
+ * NB: requires string to contain a number and only a number, apart from
+ *     leading and trailing white-space.
+ *
+ * Returns:  *unsigned* rlong -- min if < min, or if invalid
+ *                               max if > max
+ */
+extern urlong
+strtoul_sr(const char* restrict str, urlong min, urlong max)
+{
+  strtox_t tox ;
+
+  return strtoul_x(str, &tox, NULL) ;
+} ;
+
+/*==============================================================================
+ * Miscellaneous string functions.
+ */
+
+/*------------------------------------------------------------------------------
+ * Force string to lower case
+ *
+ * Return:  address of string as given
+ */
+extern char*
+strtolower(char* str)
+{
+  char* start ;
+  char ch ;
+
+  if (str == NULL)
+    return NULL ;
+
+  start = str ;
+
+  while ((ch = *str) != '\0')
+    *str++ = tolower(ch) ;
+
+  return start ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Trim isspace() characters from front and back of the given string.
+ *
+ * Return:  address of first not isspace() character -- may be the trailing '\0'
+ *
+ * NB: address returned is not the original address if there were any leading
+ *     isspace() characters.
+ *
+ * NB: if there are any trailing isspace(), then they are *all* replaced by
+ *     '\0' -- this writes to the given string.
+ */
+extern char*
+strtrim_space(char* str)
+{
+  char* end ;
+
+  if (str == NULL)
+    return NULL ;
+
+  while (isspace(*str))
+    ++str ;
+
+  end = strchr(str, '\0') ;
+  while ((end > str) && isspace(*(end - 1)))
+    {
+      --end ;
+      *end = '\0' ;
+    } ;
+
+  return str ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Trim isblank() characters from front and back of the given string.
+ *
+ * Return:  address of first not isblank() character -- may be the trailing '\0'
+ *
+ * NB: address returned is not the original address if there were any leading
+ *     isblank() characters.
+ *
+ * NB: if there are any trailing isblank(), then they are *all* replaced by
+ *     '\0' -- this writes to the given string.
+ */
+extern char*
+strtrim_blank(char* str)
+{
+  char* end ;
+
+  if (str == NULL)
+    return NULL ;
+
+  while (isblank(*str))
+    ++str ;
+
+  end = strchr(str, '\0') ;
+  while ((end > str) && isblank(*(end - 1)))
+    {
+      --end ;
+      *end = '\0' ;
+    } ;
+
+  return str ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -489,7 +668,7 @@ strtoul_xr(const char* restrict str, strtox_t* p_tox, char** p_end, ulong min,
  * leading zeros).
  */
 extern int
-strcmp_mixed(const void* a, const void* b)
+strcmp_mixed(const void* restrict a, const void* restrict b)
 {
   const uchar* ap ;
   const uchar* bp ;
@@ -602,4 +781,373 @@ strcmp_mixed(const void* a, const void* b)
    * precedence over any further instances.
    */
   return match ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Compare "string" and "pattern" in "lax" fashion.
+ *
+ * The comparison ignores case.
+ *
+ * All isspace() characters are deemed equal to each other, and equal to ' '.
+ *
+ * For each isspace() in the pattern, there must be a matching isspace()
+ * in the string.
+ *
+ * Otherwise, isspace() in the string is ignored if:
+ *
+ *   * at start of end of pattern
+ *
+ *   * last pattern character matched was ispunct()
+ *
+ *   * next pattern character to match is ispunct()
+ *
+ *   * last pattern character matched was isspace()
+ *
+ * Note that 2 or more spaces in the string will match 2 spaces in the
+ * pattern, but 1 space in the string will not.
+ *
+ * Note that spaces in the pattern are never ignored.  So spaces around
+ * punctuation in the pattern are mandatory.
+ *
+ * Returns:  0  <=> string and pattern match                )
+ *          -1  <=> first mismatch has the string < pattern ) in the usual way
+ *          +1  <=> first mismatch has the string > pattern )
+ */
+extern int
+strcmp_lax(const void* restrict a, const void* restrict b)
+{
+  uint ppch, pch, sch ;
+
+  const uchar* restrict str = a ;
+  const uchar* restrict pat = b ;
+
+  ppch = ' ' ;          /* start of string looks like matching spaces   */
+
+  sch  = *str++ ;       /* prime the pump       */
+  pch  = *pat++ ;
+  while (1)
+    {
+      /* At the top of the loop we have:
+       *
+       *   * sch and pch   -- current characters to consider
+       *
+       *   * pat and str   -- pointers to next characters to consider
+       *
+       *   * ppch          -- last patching pattern character
+       *
+       * Eat as much simple match or caseless match as we can.  Generally
+       * we expect match to proceed without incident... so will generally
+       * start and finish here.
+       *
+       * Emerges from the loop with ppch set to the last match.
+       */
+      while ((sch == pch) || (tolower(sch) == tolower(pch)))
+        {
+          if (sch == '\0')
+            return 0 ;
+
+          ppch = pch ;
+
+          sch  = *str++ ;
+          pch  = *pat++ ;
+        } ;
+
+      /* We do not have a match.
+       *
+       * We have some latitude iff the current string character isspace().
+       * (Since we can have more spaces in the string, but not fewer.)
+       *
+       * But otherwise the comparison is over -- arrange sch and pch for
+       * the return.
+       */
+      if (!isspace(sch))
+        {
+          sch = tolower(sch) ;
+          pch = isspace(pch) ? ' ' : tolower(pch) ;
+          break ;
+        } ;
+
+      /* Space in the string.
+       */
+      if (isspace(pch))
+        {
+          /* Space in both pattern and string.
+           *
+           * Each space in the pattern must match a space in the string.
+           *
+           * Sets ppch so that if next string character isspace, but next
+           * pattern character is not, then will eat the remain string
+           * isspace().
+           */
+          ppch = pch ;
+
+          sch  = *str++ ;
+          pch  = *pat++ ;
+
+          continue ;
+        } ;
+
+      /* Space in the string, but not in the pattern
+       */
+      if ( ispunct(ppch) || ispunct(pch) || isspace(ppch) || (pch == '\0') )
+        {
+          /* Can step past spaces in the string, because:
+           *
+           *   * previous match was punctuation
+           *   * current pattern character is punctuation.
+           *   * previous match was space or start of string
+           *   * have reached end of the pattern
+           *
+           * We don't change ppch, since there has been no match.  But it
+           * doesn't matter what it is, since sch emerges as not space, so will
+           * not get here again unless there is another match !
+           */
+          do { sch = *str++ ; } while (isspace(sch)) ;
+
+          continue ;
+        } ;
+
+      /* Space in the string, but no excuse to step past it -- in particular,
+       * pattern character is not space.
+       *
+       * The comparison is over -- arrange sch and pch for the return.
+       */
+      sch = ' ' ;
+      pch = tolower(pch) ;
+      break ;
+    } ;
+
+  /* Comparison failed.
+   *
+   * We have sch and pch:  if isspace() == ' '
+   *                       otherwise, lower case
+   */
+  return (sch < pch) ? -1 : + 1 ;
+} ;
+
+/*==============================================================================
+ * Generating strings for integer values -- itostr, utostr etc.
+ *
+ * These are passed a pointer to a umax_buf_t, in which the digits and any
+ * sign are placed, with a trailing '\0'.  The pointer returned is the address
+ * of the ms digit or the sign.
+ *
+ * NB: the string is generated LS digit first, and the ptr argument MUST
+ *     point at the END of the buffer to be used.
+ *
+ *     The LS digit is written at ptr - 1.  Nothing is written at or after ptr.
+ *
+ *     So:
+ *
+ *       umax_buf_t  buf ;
+ *       char* p, *e ;
+ *
+ *       e = buf + sizeof(buf) ;
+ *       p = umaxtostr(e, ...) ;
+ *
+ *     will work.  And (e - p) is the length of the result.
+ *
+ * NB: does NOT insert a trailing '\0'.
+ *
+ *     So:
+ *
+ *       umax_buf_t  buf ;
+ *       char* p, *e ;
+ *
+ *       e = buf + sizeof(buf) - 1 ;
+ *       p = umaxtostr(e, ...) ;
+ *
+ *       *e = '\0' ;
+ *
+ *     will do the trick.
+ *
+ * The base is expected to be 8, 10 or 16:
+ *
+ *   * bases > 32 produce nonsense, and will probably SEGV.
+ *
+ *   * bases <  8 will may generate more digits that will fit in the
+ *     standard buffer.
+ *
+ *     So, for base 2 just need a much longer buffer.
+ *
+ *   * bases < 2 are hopeless, and will crash and burn.
+ */
+                               /*........10........20........30..*/
+static const char lc_digits[] = "0123456789abcdefghijklmnopqrstuv" ;
+static const char uc_digits[] = "0123456789ABCDEFGHIJKLMNOPQRSTUV" ;
+
+extern char*
+itostr(char* ptr,    int v, uint base, bool uc)
+{
+  if (v >= 0)
+    return utostr(ptr, v, base, uc) ;
+
+  ptr = utostr(ptr, uabs(v), base, uc) ;
+
+  *(--ptr) = '-' ;
+
+  return ptr ;
+} ;
+
+extern char*
+utostr(char* ptr,   uint v, uint base, bool uc)
+{
+  const char* digits ;
+  div_t       dv ;
+
+  digits = uc ? uc_digits : lc_digits ;
+
+  if (v > INT_MAX)
+    {
+      confirm((UINT_MAX / 2) <= INT_MAX) ;
+
+      dv.quot = (int)(v / base) ;
+      dv.rem  = (int)(v % base) ;
+    }
+  else
+    dv = div((int)v, base) ;
+
+  while (1)
+    {
+      *(--ptr) = *(digits + dv.rem) ;
+
+      if (dv.quot == 0)
+        break ;
+
+      dv = div(dv.quot, base) ;
+    } ;
+
+  return ptr ;
+} ;
+
+extern char*
+iltostr(char* ptr,   long v, uint base, bool uc)
+{
+  if (v >= 0)
+    return ultostr(ptr, v, base, uc) ;
+
+  ptr = ultostr(ptr, ulabs(v), base, uc) ;
+
+  *(--ptr) = '-' ;
+
+  return ptr ;
+} ;
+
+extern char*
+ultostr(char* ptr,  ulong v, uint base, bool uc)
+{
+  const char* digits ;
+  ldiv_t      dv ;
+
+  digits = uc ? uc_digits : lc_digits ;
+
+  if (v > LONG_MAX)
+    {
+      confirm((ULONG_MAX / 2) <= LONG_MAX) ;
+
+      dv.quot = (long)(v / base) ;
+      dv.rem  = (long)(v % base) ;
+    }
+  else
+    dv = ldiv((long)v, base) ;
+
+  while (1)
+    {
+      *(--ptr) = *(digits + dv.rem) ;
+
+      if (dv.quot == 0)
+        break ;
+
+      dv = ldiv(dv.quot, base) ;
+    } ;
+
+  return ptr ;
+} ;
+
+extern char*
+illtostr(char* ptr,  llong v, uint base, bool uc)
+{
+  if (v >= 0)
+    return ulltostr(ptr, v, base, uc) ;
+
+  ptr = ulltostr(ptr, ullabs(v), base, uc) ;
+
+  *(--ptr) = '-' ;
+
+  return ptr ;
+} ;
+
+extern char*
+ulltostr(char* ptr, ullong v, uint base, bool uc)
+{
+  const char* digits ;
+  lldiv_t     dv ;
+
+  digits = uc ? uc_digits : lc_digits ;
+
+  if (v > LLONG_MAX)
+    {
+      confirm((ULLONG_MAX / 2) <= LLONG_MAX) ;
+
+      dv.quot = (llong)(v / base) ;
+      dv.rem  = (llong)(v % base) ;
+    }
+  else
+    dv = lldiv((llong)v, base) ;
+
+  while (1)
+    {
+      *(--ptr) = *(digits + dv.rem) ;
+
+      if (dv.quot == 0)
+        break ;
+
+      dv = lldiv(dv.quot, base) ;
+    } ;
+
+  return ptr ;
+} ;
+
+extern char*
+imaxtostr(char* ptr,   imax v, uint base, bool uc)
+{
+  if (v >= 0)
+    return umaxtostr(ptr, v, base, uc) ;
+
+  ptr = umaxtostr(ptr, umaxabs(v), base, uc) ;
+
+  *(--ptr) = '-' ;
+
+  return ptr ;
+} ;
+
+extern char*
+umaxtostr(char* ptr,   umax v, uint base, bool uc)
+{
+  const char* digits ;
+  imaxdiv_t   dv ;
+
+  digits = uc ? uc_digits : lc_digits ;
+
+  if (v > INTMAX_MAX)
+    {
+      confirm((UINTMAX_MAX / 2) <= INTMAX_MAX) ;
+
+      dv.quot = (imax)(v / base) ;
+      dv.rem  = (imax)(v % base) ;
+    }
+  else
+    dv = imaxdiv((imax)v, base) ;
+
+  while (1)
+    {
+      *(--ptr) = *(digits + dv.rem) ;
+
+      if (dv.quot == 0)
+        break ;
+
+      dv = imaxdiv(dv.quot, base) ;
+    } ;
+
+  return ptr ;
 } ;

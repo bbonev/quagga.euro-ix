@@ -27,60 +27,138 @@
 #include "bgpd/bgp_session.h"
 #include "bgpd/bgp_peer_index.h"
 
-#include "lib/symtab.h"
+#include "lib/vhash.h"
 #include "lib/vector.h"
 #include "lib/qpthreads.h"
 #include "lib/sockunion.h"
 #include "lib/memory.h"
+#include "lib/list_util.h"
 
 /*==============================================================================
- * BGP Peer Index
+ * BGP Peer Index and its Mutex
  *
- * When peers are created, they are registered in the bgp_peer_index.  When
+ * When peers are created, they are registered in the bgp_peer_su_index.  When
  * they are destroyed, they are removed.  This is done by the Routing Engine.
  *
  * The Peer Index is used by the Routing Engine to lookup peers either by
  * name (IP address) or by peer_id.
  *
- * The BGP Engine needs to lookup sessions when a listening socket accepts a
- * connection -- first, to decide whether to continue with the connection, and
- * second, to tie the connection to the right session.  It uses the Peer Index
- * to do this.
+ * The BGP Engine needs to know what to do when a listening socket accepts a
+ * connection, which can happen whether there is a peer or a session active for
+ * the incoming address.  To handle incoming stuff "between sessions" each
+ * configured peer has an "acceptor" object.  When a session is running, the
+ * acceptor and the session interact.  When a session is not running, the
+ * acceptor runs autonomously.
  *
- * A mutex is used to coordinate access to the index.  Only the Routing engine
- * makes changes to the Peer Index, so it only needs to lock the mutex when it
- * does make changes.  The BGP Engine needs to lock the Peer Index whenever it
- * accesses it.
+ * The BGP Engine needs to:
  *
- * The BGP Engine needs the session associated with a given address if and only
- * if the session is enabled for accept(), which implies that it is active and
- * in the hands of the BGP Engine.  To get to the session it needs to step
- * via the peer->session pointer, having found the peer via the index.  So,
- * setting the peer->session pointer is done under the Peer Index Mutex.
+ *   * know whether a peer is configured for a given address.
  *
- *------------------------------------------------------------------------------
- * The BGP Peer Index comprises a symbol table for looking up peers "by name"
+ *     When a peer is configured it is immediately entered into the index, and
+ *     an acceptor object is created for it.
+ *
+ *     When a peer is dismantled, it is removed from the index.  However,
+ *     the index entry may live on (pointing at moribund peer) if:
+ *
+ *       a) there is a session running for the peer -- the session will
+ *          be in the process of being closed down.
+ *
+ *       b) the acceptor for this instance of the peer is yet to be
+ *          destroyed.
+ *
+ *     because the BGP Engine is responsible for closing the session and/or
+ *     shutting down the acceptor.
+ *
+ *   * know whether a peer is enabled for accept(), for when a connection
+ *     arrives.
+ *
+ *   * be able to "track" an inbound connection while a session is not "up".
+ *
+ *   * manage connection options (eg password) for accept() and connect()
+ *     sockets.
+ *
+ * The Routeing Engine needs:
+ *
+ *   * a Peer Index entry for each configured peer -- so needs to create and
+ *     destroy those entries.
+ *
+ *   * a means to manage connection options, and signal changes to the BGP
+ *     Engine.
+ */
+struct bgp_peer_index_entry
+{
+  /* When registered, the entry is in the IP address hash.
+   */
+  vhash_node_t  vhash ;
+
+  /* When not registered and not in use, the entry lives on the free list.
+   */
+  bgp_peer_index_entry  next_free ;
+
+  /* The "name" of the peer is set when the index entry is created, and
+   * not cleared until the entry is destroyed.  When the entry is registered,
+   * the "name" is what it is registered as.  (Note that it is possible for
+   * more than one entry to have the same "name", but not possible for more
+   * than one entry with the same name to be registered.  After an entry
+   * is de-registered it continues in existence while the BGP Engine needs
+   * it.)
+   *
+   * The "id" is intrinsic to the entry.
+   *
+   * These are read-only.
+   */
+  sockunion     su_name ;       /* the "name".                          */
+  bgp_peer_id_t id ;            /* the id                               */
+
+  /* Pointers to peer and session to which this applies.
+   *
+   * These are set when the index entry is created, which is at the same time
+   * as the peer and its session are created.
+   *
+   * These are cleared, under the peer index mutex when the peer is deleted (by
+   * the Routeing Engine), and when the session is deleted (by the BGP Engine).
+   *
+   * The peer will be deleted first, and at that moment the entry is removed
+   * from the "name" hash... so the name can be re-registered, but the
+   * peer-id and session pointer live on.  The session will be deleted later,
+   * and at that moment the entry and the peer-id can be released.
+   *
+   * [In fact, the way this is done is that the first of RE/BE to delete
+   *  peer/session removes the entry from the "name" hash, and the second
+   *  frees the index entry all together and releases the peer-id.
+   *
+   *  When the index entry is created, it is "set" as belonging to the peer,
+   *  but with a reference count, belonging to the session.]
+   */
+  bgp_peer      peer ;
+  bgp_session   session ;
+} ;
+
+CONFIRM(offsetof(bgp_peer_index_entry_t, vhash) == 0) ; /* see vhash.h  */
+
+/*------------------------------------------------------------------------------
+ * The BGP Peer Index comprises a vhash_table for looking up peers "by name"
  * and a vector for looking up peers "by peer_id".  Both structures point to
- * struct bgp_peer_index_entry entries.  Those entries are deemed to belong
- * to the vector -- when symbols in the symbol table are removed, the body
- * of the symbol is not freed.
+ * struct bgp_peer_index_entry entries.
  */
 
-static symbol_table  bgp_peer_index = NULL ;    /* lookup by 'name'     */
-static vector_t      bgp_peer_id_index ;        /* lookup by peer-id    */
+static vhash_table  bgp_peer_su_index = NULL ;  /* lookup by 'name'     */
+static vector_t     bgp_peer_id_index[1] ;      /* lookup by peer-id    */
 
-static qpt_mutex     bgp_peer_index_mutex = NULL ;
+static qpt_mutex    bgp_peer_index_mutex = NULL ;
 
 CONFIRM(bgp_peer_id_null == 0) ;
 
 enum { bgp_peer_id_unit  = 64 } ;       /* allocate many at a time      */
 
+typedef struct bgp_peer_id_table_chunk  bgp_peer_id_table_chunk_t ;
 typedef struct bgp_peer_id_table_chunk* bgp_peer_id_table_chunk ;
+
 struct bgp_peer_id_table_chunk
 {
   bgp_peer_id_table_chunk  next ;
 
-  struct bgp_peer_index_entry entries[bgp_peer_id_unit] ;
+  bgp_peer_index_entry_t entries[bgp_peer_id_unit] ;
 } ;
 
 inline static void BGP_PEER_INDEX_LOCK(void)
@@ -97,44 +175,49 @@ static bgp_peer_id_t           bgp_peer_id_count = 0 ;
 
 static bgp_peer_id_table_chunk bgp_peer_id_table = NULL ;
 
-static bgp_peer_index_entry    bgp_peer_id_free_head = NULL ;
-static bgp_peer_index_entry    bgp_peer_id_free_tail = NULL ;
-
-/* Forward references                                                   */
-static void bgp_peer_id_table_free_entry(bgp_peer_index_entry entry) ;
+static struct dl_base_pair(bgp_peer_index_entry) bgp_peer_id_free
+                                                             = { NULL, NULL } ;
+/* Forward references
+ */
+static void bgp_peer_id_table_free_entry(bgp_peer_index_entry peer_ie,
+                                                             bgp_peer_id_t id) ;
 static void bgp_peer_id_table_make_ids(void) ;
 
-static int  bgp_peer_index_cmp(bgp_peer_index_entry entry, sockunion su) ;
-static void bgp_peer_index_symbol_body_free(bgp_peer_index_entry entry) ;
+/* The vhash table magic
+ */
+static vhash_equal_func bgp_peer_su_index_equal ;
+static vhash_new_func   bgp_peer_su_index_new ;
+static vhash_free_func  bgp_peer_su_index_free ;
 
-/* The symbol table magic                                               */
-static const symbol_funcs_t peer_index_symbol_funcs =
+static const vhash_params_t peer_index_vhash_params =
 {
-  .hash   = (symbol_hash_func*)sockunion_symbol_hash,
-  .equal  = (symbol_equal_func*)bgp_peer_index_cmp,
-  .free   = (symbol_free_func*)bgp_peer_index_symbol_body_free,
+  .hash   = sockunion_vhash_hash,
+  .equal  = bgp_peer_su_index_equal,
+  .new    = bgp_peer_su_index_new,
+  .free   = bgp_peer_su_index_free,
+  .orphan = vhash_orphan_null,
 } ;
 
 /*------------------------------------------------------------------------------
- * Initialise the bgp_peer_index.
+ * Initialise the bgp_peer_su_index.
  *
  * This must be done before any peers are configured !
  */
 extern void
 bgp_peer_index_init(void* parent)
 {
-  bgp_peer_index = symbol_table_new(
+  bgp_peer_su_index = vhash_table_new(
           parent,
           50,                     /* start ready for a few sessions     */
           200,                    /* allow to be quite dense            */
-          &peer_index_symbol_funcs) ;
+          &peer_index_vhash_params) ;
 
   vector_init_new(bgp_peer_id_index, bgp_peer_id_unit) ;
 
-  /* Initialise table entirely empty                                    */
+  /* Initialise table entirely empty
+   */
   bgp_peer_id_table     = NULL ;
-  bgp_peer_id_free_head = NULL ;
-  bgp_peer_id_free_tail = NULL ;
+  dsl_init(bgp_peer_id_free) ;
 
   bgp_peer_id_count = 0 ;
 } ;
@@ -163,21 +246,24 @@ bgp_peer_index_init_r(void)
 extern void
 bgp_peer_index_finish(void)
 {
-  bgp_peer_index_entry    entry ;
+  bgp_peer_index_entry    peer_ie ;
   bgp_peer_id_table_chunk chunk ;
 
   qassert(!qpthreads_active) ;
 
+  /* Ream out and discard vhash table -- gives back the peer_ids which are in
+   * use.  The chunks of entries are freed en masse, below.
+   */
+  bgp_peer_su_index = vhash_table_reset(bgp_peer_su_index, free_it) ;
+
   /* Ream out the peer id vector -- checking that all entries are empty
    */
-  while ((entry = vector_ream(bgp_peer_id_index, keep_it)) != NULL)
-    passert((entry->peer == NULL) && (entry->next_free != entry)) ;
+  while ((peer_ie = vector_ream(bgp_peer_id_index, keep_it)) != NULL)
+    {
+      qassert(peer_ie->peer == NULL) ;
 
-  /* Ream out and discard symbol table -- does not free any entries because
-   * they are held in the chucks of entries which are about to be freed en
-   * masse.
-   */
-  bgp_peer_index = symbol_table_free(bgp_peer_index, keep_it) ;
+
+    } ;
 
   /* Discard the empty chunks of entries
    */
@@ -191,8 +277,7 @@ bgp_peer_index_finish(void)
   /* Set utterly empty and discard mutex.
    */
   bgp_peer_id_table     = NULL ;
-  bgp_peer_id_free_head = NULL ;
-  bgp_peer_id_free_tail = NULL ;
+  dsl_init(bgp_peer_id_free) ;
 
   bgp_peer_id_count = 0 ;
 
@@ -200,323 +285,312 @@ bgp_peer_index_finish(void)
 } ;
 
 /*------------------------------------------------------------------------------
- * Register a peer in the peer index.
+ * Register a peer and its session in the peer index.
  *
  * For use by the Routeing Engine.
+ *
+ * NB: peer and session must point at each other already.
  *
  * NB: it is a FATAL error to register a peer for an address which is already
  *     registered.
  */
 extern void
-bgp_peer_index_register(bgp_peer peer, sockunion su)
+bgp_peer_index_register(bgp_peer peer, bgp_session session)
 {
-  bgp_peer_index_entry entry ;
-  symbol sym ;
+  bgp_peer_index_entry peer_ie ;
+  bool   added ;
+
+  qassert((peer != NULL) && (session != NULL)) ;
+  qassert((peer == session->peer) && (session == peer->session)) ;
+  qassert(peer->peer_ie    == NULL) ;
+  qassert(session->peer_ie == NULL) ;
 
   BGP_PEER_INDEX_LOCK() ;    /*<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<*/
 
-  /* First need an entry, which allocates a peer_id.  May need to extend
-   * the bgp_peer_id_table -- so need to be locked for this.
+  /* Add entry to the vhash_table -- creates entry and allocates id.
    */
-  if (bgp_peer_id_free_head == NULL)
-    bgp_peer_id_table_make_ids() ;
+  peer_ie = vhash_lookup(bgp_peer_su_index, peer->su_name, &added) ;
 
-  entry = bgp_peer_id_free_head ;
-  bgp_peer_id_free_head = entry->next_free ;
+  assert(added) ;               /* really do not know what to do if not */
 
-  assert(vector_get_item(bgp_peer_id_index, entry->id) == entry) ;
-
-  /* Initialise the entry -- the id is already set
+  /* Point entry at peer and session and vice versa and fix "set" and ref_count
    */
-  entry->peer       = peer ;
-  entry->next_free  = entry ;   /* pointing to self => in use   */
-  entry->su         = *su ;
+  peer->peer_ie    = peer_ie ;
+  peer_ie->peer    = peer ;
+  vhash_set(peer_ie) ;
 
-  peer->index_entry = entry;
-
-  /* Insert the new entry into the symbol table.
-   */
-  sym = symbol_lookup(bgp_peer_index, &entry->su, add) ;
-  qassert(symbol_get_body(sym) == NULL) ;
-  symbol_set_body(sym, entry, true /* set */, free_it /* existing */) ;
+  session->peer_ie = peer_ie ;
+  peer_ie->session = session ;
+  vhash_inc_ref(peer_ie) ;
 
   BGP_PEER_INDEX_UNLOCK() ;  /*->->->->->->->->->->->->->->->->->->->->->->-->*/
 } ;
 
 /*------------------------------------------------------------------------------
- * Deregister a peer from the peer index.
+ * Lookup a peer's session -- do nothing if does not exist
  *
- * For use by the Routeing Engine.
+ * For use by the BGP Engine.
  *
- * NB: The peer MUST NOT be deregistered if any of the following apply:
+ * Returns the bgp_session -- NULL if not found.
  *
- *       * there is an active session
+ * NB: caller is BGP Engine, so the pointer from the peer index entry to the
+ *     session is stable, because the BGP Engine is responsible for the session,
+ *     once it is created.
+ */
+extern bgp_session
+bgp_peer_index_seek_session(sockunion su)
+{
+  bgp_peer_index_entry peer_ie ;
+  bgp_session          session ;
+
+  BGP_PEER_INDEX_LOCK() ;    /*<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<*/
+
+  peer_ie = vhash_lookup(bgp_peer_su_index, su, NULL /* don't add */) ;
+  session = (peer_ie != NULL) ? peer_ie->session : NULL ;
+
+  BGP_PEER_INDEX_UNLOCK() ;  /*>->->->->->->->->->->->->->->->->->->->->->->->*/
+
+  return session ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Deregister a peer from the peer index -- for use by the Routeing Engine.
  *
- *       * the peer_id is still in use (anywhere at all)
+ * Clears the peer->peer_ie pointer.
+ *
+ * NB: the peer_id MUST not be in use anywhere in the Routeing Engine !
  *
  * NB: it is a FATAL error to deregister a peer which is not registered.
  */
 extern void
-bgp_peer_index_deregister(bgp_peer peer, sockunion su)
+bgp_peer_index_deregister_peer(bgp_peer peer)
 {
-  bgp_peer_index_entry entry ;
-  symbol  sym ;
+  bgp_peer_index_entry peer_ie ;
 
-  BGP_PEER_INDEX_LOCK() ;    /*<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<*/
+  BGP_PEER_INDEX_LOCK() ;    /*<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-*/
 
-  sym = symbol_lookup(bgp_peer_index, su, no_add) ;
-  passert(sym != NULL) ;
-
-  entry = symbol_get_body(sym) ;
-
-  symbol_delete(sym, keep_it) ;         /* do not free the body */
-
-  passert( (entry != NULL) && (entry->id        != bgp_peer_id_null)
-                           && (entry->peer      == peer)
-                           && (entry->next_free == entry) ) ;
-
-  bgp_peer_id_table_free_entry(entry) ;
-
-  BGP_PEER_INDEX_UNLOCK() ;  /*->->->->->->->->->->->->->->->->->->->->->->-->*/
-} ;
-
-/*------------------------------------------------------------------------------
- * Lookup a peer -- do nothing if does not exist
- *
- * For use by the Routeing Engine.
- *
- * Returns the bgp_peer -- NULL if not found.
- */
-extern bgp_peer
-bgp_peer_index_seek(sockunion su)
-{
-  bgp_peer_index_entry entry ;
-
-  /* Only the Routing Engine can add/delete entries -- so no lock required  */
-
-  entry = bgp_peer_index_seek_entry(su) ;
-
-  return (entry != NULL) ? entry->peer : NULL ;
-} ;
-
-/*------------------------------------------------------------------------------
- * Lookup a peer's peer index entry -- do nothing if does not exist
- *
- * For use by the Routeing Engine.
- *
- * Returns the bgp_peer_index_entry -- NULL if not found.
- */
-extern bgp_peer_index_entry
-bgp_peer_index_seek_entry(sockunion su)
-{
-  bgp_peer_index_entry entry ;
-
-  /* Only the Routing Engine can add/delete entries -- so no lock required  */
-
-  entry = symbol_get_body(symbol_lookup(bgp_peer_index, su, no_add)) ;
-
-  if (entry != NULL)
-    assert((entry->peer != NULL) && (entry->next_free = entry)) ;
-
-  return entry ;
-} ;
-
-/*------------------------------------------------------------------------------
- * Set peer->session field.
- *
- * This is done under the Peer Index Mutex, so that the BGP Engine can step
- * from the Peer Index entry, via the peer structure, to the session, which is
- * also controlled by that Mutex, in safety.
- */
-extern void
-bgp_peer_index_set_session(bgp_peer peer, bgp_session session)
-{
-  BGP_PEER_INDEX_LOCK() ;   /*<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-*/
-
-  peer->session = session ;
-
-  BGP_PEER_INDEX_UNLOCK() ; /*->->->->->->->->->->->->->->->->->->->->->->->->*/
-} ;
-
-#if 0
-/*------------------------------------------------------------------------------
- * Set the index entry bgp_connection_options, for the next time an accept()
- * is required for the entry.
- *
- * This is done under the Peer Index Mutex, so that the BGP Engine can pick
- * this up safely.
- */
-extern void
-bgp_peer_index_set_accept(bgp_peer peer)
-{
-  bgp_connection_options opts ;
-
-  BGP_PEER_INDEX_LOCK() ;   /*<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-*/
-
-  opts = peer->index_entry->opts ;
-
-  /* For accept() we need:
-   *
-   *    accept     -- true <=> should accept connections.
-   *
-   *                  so is set false if the peer is TODO TODO TODO
-   *
-   *    ttl_req    -- TTL to set, if not zero
-   *    gtsm_req   -- ttl set by ttl-security
-   *
-   *    password   -- MD5 password to be set in the listener
-   */
-  opts->connect   = (peer->flags & PEER_FLAG_PASSIVE) == 0 ;
-  opts->listen    = true ;
-
-  opts->ttl_req   = peer->ttl ;
-  opts->gtsm_req  = peer->gtsm ;
-
-
-
-  BGP_PEER_INDEX_UNLOCK() ; /*->->->->->->->->->->->->->->->->->->->->->->->->*/
-} ;
-#endif
-/*------------------------------------------------------------------------------
- * Find whether given address is for a known peer, and if so whether it has
- * an active session which is prepared to accept() a connection.
- *
- * For use by the BGP Engine.
- *
- * Returns: bgp_connection if: peer with given address is configured
- *                        and: the session is prepared to accept()
- *
- *          Note that the session cannot be deleted while it is in a prepared
- *          to accept state.
- *
- *      or: NULL otherwise
- *
- * Sets *p_found <=> a peer with the given address is configured.
- *
- * NB: the BGP Engine sets/clears the pointer to the connection.  The pointer
- *     is initialised NULL when the index entry is created.
- */
-extern bgp_connection
-bgp_peer_index_seek_accept(union sockunion* su, bool* p_found)
-{
-  bgp_connection       accept ;
-  bgp_peer_index_entry entry ;
-
-  BGP_PEER_INDEX_LOCK() ;   /*<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-*/
-
-  entry = symbol_get_body(symbol_lookup(bgp_peer_index, su, no_add)) ;
-
-  if (entry != NULL)
+  peer_ie = peer->peer_ie ;
+  if (peer_ie != NULL)
     {
-      *p_found = true ;
-      accept   = bgp_connection_query_accept(entry->peer->session) ;
-    }
-  else
-    {
-      *p_found = false ;
-      accept   = NULL ;
+      qassert(peer_ie->peer == peer) ;
+      qassert(vhash_is_set(peer_ie)) ;
+
+      peer->peer_ie = NULL ;
+      peer_ie->peer = NULL ;
+
+      vhash_unset_delete(peer_ie, bgp_peer_su_index) ;
     } ;
 
-  BGP_PEER_INDEX_UNLOCK() ; /*->->->->->->->->->->->->->->->->->->->->->->->->*/
-
-  return accept ;
+  BGP_PEER_INDEX_UNLOCK() ;  /*->->->->->->->->->->->->->->->->->->->->->->->*/
 } ;
 
 /*------------------------------------------------------------------------------
- * Comparison function -- symbol_equal_func
+ * Deregister a session from the peer index -- for use by the BGP Engine.
+ *
+ * NB: the peer index entry peer_id is still in use (anywhere at all)
+ *
+ * NB: it is a FATAL error to deregister a peer which is not registered.
+ */
+extern void
+bgp_peer_index_deregister_session(bgp_session session)
+{
+  bgp_peer_index_entry peer_ie ;
+
+  BGP_PEER_INDEX_LOCK() ;    /*<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-*/
+
+  peer_ie = session->peer_ie ;
+  if (peer_ie != NULL)
+    {
+      qassert(peer_ie->session == session) ;
+      qassert(vhash_has_references(peer_ie)) ;
+
+      session->peer_ie = NULL ;
+      peer_ie->session = NULL ;
+
+      vhash_dec_ref(peer_ie, bgp_peer_su_index) ;
+    } ;
+
+  BGP_PEER_INDEX_UNLOCK() ;  /*->->->->->->->->->->->->->->->->->->->->->->->*/
+} ;
+
+/*------------------------------------------------------------------------------
+ * Create a new entry in the bgp_peer_su_index, for the given sockunion.
+ *
+ * Allocates the next peer_id -- creating more if required.
+ *
+ * NB: requires the BGP_PEER_INDEX_LOCK()
+ */
+static vhash_item
+bgp_peer_su_index_new(vhash_table table, vhash_data_c data)
+{
+  bgp_peer_index_entry peer_ie ;
+  bgp_peer_id_t        id ;
+  sockunion_c          su ;
+
+  su = data ;
+
+  /* Allocate bgp_peer_index_entry complete with peer_id.
+   */
+  if (dsl_head(bgp_peer_id_free) == NULL)
+    bgp_peer_id_table_make_ids() ;
+
+  peer_ie = dsl_pop(&peer_ie, bgp_peer_id_free, next_free) ;
+  assert(vector_get_item(bgp_peer_id_index, peer_ie->id) == peer_ie) ;
+
+  /* For completeness -- empty out the entry.
+   *
+   *   * vhash              -- set on exit
+   *
+   *   * next_free          -- NULL
+   *
+   *   * su_name            -- set below
+   *   * id                 -- preserved !
+   *
+   *   * peer               -- NULL
+   *   * session            -- NULL
+   */
+  id = peer_ie->id ;
+  memset(peer_ie, 0, sizeof(bgp_peer_index_entry_t)) ;
+  peer_ie->id = id ;
+
+  /* Copy in the name of the entry before it is added to the vhash.
+   */
+  peer_ie->su_name = sockunion_dup(su) ;        /* set the "name"       */
+
+  return peer_ie ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Give back the peer_id -- the vhash_item is a bgp_peer_index_entry
+ *
+ * NB: requires the BGP_PEER_INDEX_LOCK()
+ */
+static vhash_item
+bgp_peer_su_index_free(vhash_item item, vhash_table table)
+{
+  bgp_peer_index_entry peer_ie ;
+
+  peer_ie = item ;
+  qassert((peer_ie->peer == NULL) && (peer_ie->session == NULL)) ;
+
+  bgp_peer_id_table_free_entry(peer_ie, peer_ie->id) ;
+
+  return NULL ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Comparison function -- vhash_equal_func
  */
 static int
-bgp_peer_index_cmp(bgp_peer_index_entry entry, sockunion su)
+bgp_peer_su_index_equal(vhash_item_c item, vhash_data_c data)
 {
-  return sockunion_cmp(&entry->su, su) ;
-} ;
+  bgp_peer_index_entry_c peer_ie ;
+  sockunion_c            su_name ;
 
-/*------------------------------------------------------------------------------
- * Value free function -- symbol_free_func
- *
- * The pointer to the bgp_peer_index_entry in the symbol is *secondary*.
- * Freeing the symbol should never also free the symbol body.
- */
-static void
-bgp_peer_index_symbol_body_free(bgp_peer_index_entry entry)
-{
-  qassert(false) ;
+  peer_ie = item ;
+  su_name = data ;
+
+  return sockunion_cmp(peer_ie->su_name, su_name) ;
 } ;
 
 /*==============================================================================
  * Extending the bgp_peer_id_table and adding free entries to it.
- *
- * NB: when entry is free,   the peer field is NULL.
- *     when entry is in use, the peer field is not NULL !
- *
- *     when entry is free, the accept field is overloaded as pointer to next
- *     free entry.
  */
 
 /*------------------------------------------------------------------------------
  * Free the given peer index entry and release its peer_id.
+ *
+ * NB: requires the BGP_PEER_INDEX_LOCK()
  */
 static void
-bgp_peer_id_table_free_entry(bgp_peer_index_entry entry)
+bgp_peer_id_table_free_entry(bgp_peer_index_entry peer_ie, bgp_peer_id_t id)
 {
-  assert((entry != NULL) && (entry->id < bgp_peer_id_count)) ;
-  assert(vector_get_item(bgp_peer_id_index, entry->id) == entry) ;
+  assert((peer_ie != NULL) && (id < bgp_peer_id_count)) ;
+  assert(vector_get_item(bgp_peer_id_index, id) == peer_ie) ;
 
-  if (bgp_peer_id_free_head == NULL)
-    bgp_peer_id_free_head = entry ;
-  else
-    bgp_peer_id_free_tail->next_free = entry ;
+  /* Clear down the bgp_peer_index_entry:
+   *
+   *   * vhash              -- empty
+   *
+   *   * next_free          -- set below;
+   *
+   *   * su_name            -- discard existing name and set NULL
+   *   * id                 -- preserved !
+   *
+   *   * peer               -- NULL (should already be !)
+   *   * session            -- NULL (should already be !)
+   */
+  sockunion_free(peer_ie->su_name) ;
 
-   bgp_peer_id_free_tail  = entry ;
-   entry->next_free       = NULL ;
+  memset(peer_ie, 0, sizeof(bgp_peer_index_entry_t)) ;
+  confirm(VHASH_NODE_INIT_ALL_ZEROS) ;
 
-   entry->peer  = NULL ;                /* only when free !             */
+  peer_ie->id = id ;
+
+  /* Now stick on the list of free id
+   */
+  dsl_append(bgp_peer_id_free, peer_ie, next_free) ;
 } ;
 
 /*------------------------------------------------------------------------------
  * Make a new set of free bgp_peer_ids.
+ *
+ * NB: requires the BGP_PEER_INDEX_LOCK()
  */
 static void
 bgp_peer_id_table_make_ids(void)
 {
-  bgp_peer_id_t  id_new ;
+  bgp_peer_id_t           id_new ;
   bgp_peer_id_table_chunk chunk ;
-  bgp_peer_index_entry    entry ;
+  bgp_peer_index_entry    peer_ie ;
 
-  chunk = XCALLOC(MTYPE_BGP_PEER_ID_TABLE,
-                                       sizeof(struct bgp_peer_id_table_chunk)) ;
+  chunk = XCALLOC(MTYPE_BGP_PEER_ID_TABLE, sizeof(bgp_peer_id_table_chunk_t)) ;
+
   chunk->next = bgp_peer_id_table ;
   bgp_peer_id_table = chunk ;
 
-  entry = &chunk->entries[0] ;
+  peer_ie = &chunk->entries[0] ;
 
-  /* Special case to avoid id == 0 being used.  Is not set in vector.   */
-  if (bgp_peer_id_count == 0)
+  id_new = bgp_peer_id_count ;
+  bgp_peer_id_count += bgp_peer_id_unit ;
+
+  /* Special case to avoid id == 0 being used.  Is not set in vector.
+   *
+   * NB: the entry has already been zeroized, so:
+   *
+   *   * vhash              -- empty
+   *   * next_free          -- NULL
+   *   * su_name            -- NULL
+   *   * id                 -- bgp_peer_id_null
+   *   * peer               -- NULL
+   *   * session            -- NULL
+   */
+  if (id_new == 0)
     {
       confirm(bgp_peer_id_null == 0) ;
 
-      entry->id        = 0 ;            /* should never be used         */
-      entry->peer      = NULL ;         /* invalid in use               */
-      entry->next_free = NULL ;         /* invalid in use               */
+      peer_ie += 1 ;            /* step past id == 0            */
+      id_new  += 1 ;            /* avoid setting id == 0 free   */
+    } ;
 
-      ++entry ;                         /* step past id == 0            */
-      id_new = 1 ;                      /* avoid setting id == 0 free   */
-    }
-  else
-    id_new = bgp_peer_id_count ;
-
-  bgp_peer_id_count += bgp_peer_id_unit ;
-
+  /* Complete the creation of the new chunk of peer_ids by "freeing" all the
+   * new entries.
+   *
+   * NB: the entry has already been zeroized, so:
+   *
+   *   * su_name            -- NULL
+   *
+   * Adds entry to the id_index *first*, because bgp_peer_id_table_free_entry()
+   * checks that !
+   */
   while (id_new < bgp_peer_id_count)
     {
-      vector_set_item(bgp_peer_id_index, id_new, entry) ;
+      vector_set_item(bgp_peer_id_index, id_new, peer_ie) ;
 
-      entry->id = id_new ;
-      bgp_peer_id_table_free_entry(entry) ;
+      bgp_peer_id_table_free_entry(peer_ie, id_new) ;
 
-      ++id_new ;
-      ++entry ;
+      peer_ie += 1 ;
+      id_new  += 1 ;
     } ;
 } ;
-
 

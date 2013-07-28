@@ -443,33 +443,33 @@ main (int argc, char **argv, char **env)
       opt = getopt_long (argc, argv, "bc:e:d:f:F:QnCEIqPh1", longopts, 0);
 
       if (opt == EOF)
-        break;
+	break;
 
       switch (opt)
-        {
-        case 0:
-          break;
+	{
+	case 0:
+	  break;
 
-        case 'b':
-          boot_flag       = true;
-          break;
+	case 'b':
+	  boot_flag       = true;
+	  break;
 
         /* collect one or more -c inline commands.
          *
          * Separate with "\n", so each -c will generate at least a blank
          * line !
          */
-        case 'c':
-        case 'e':
-          commands = qs_trim(commands, '\n') ;
+	case 'c':
+	case 'e':
+	  commands = qs_trim(commands, '\n') ;
           commands = qs_append_str(commands, optarg) ;
-          break;
+	  break;
 
         case '1':
           options.lexical_level = 1 ;
           break;
 
-        /* Collect daemon names to connect to
+	/* Collect daemon names to connect to
          *
          * Must be able to connect to all the named daemons, or will fail.
          *
@@ -485,19 +485,19 @@ main (int argc, char **argv, char **env)
          *
          * and so on.
          */
-        case 'd':
+	case 'd':
           p = optarg ;
           while ((*p == ' ') || (*p == '='))
             ++p ;
 
           daemon_list = qs_trim(daemon_list, ' ') ;
           daemon_list = qs_append_str(daemon_list, p) ;
-          break;
+	  break;
 
-        /* Specify vtysh own configuration file
-         *
-         * See notes on -f, -F and -Q.
-         */
+	/* Specify vtysh own configuration file
+	 *
+	 * See notes on -f, -F and -Q.
+	 */
         case 'f':
           own_config_file = optarg;
           own_config      = true ;
@@ -544,18 +544,18 @@ main (int argc, char **argv, char **env)
 
         /* For -c -- echo command lines -- suppressed by -q.
          */
-        case 'E':
-          options.echo_command    = true;
-          break;
+	case 'E':
+	  options.echo_command    = true;
+	  break;
 
-        /* Ignore warnings: do not report warnings and do not stop (default is
-         *                  the opposite).
-         *
-         * Applies while reading configuration files and while executing -c.
-         *
-         * Does not apply to interactive mode, except when reading vtysh
-         * configuration.
-         */
+	/* Ignore warnings: do not report warnings and do not stop (default is
+	 *                  the opposite).
+	 *
+	 * Applies while reading configuration files and while executing -c.
+	 *
+	 * Does not apply to interactive mode, except when reading vtysh
+	 * configuration.
+	 */
         case 'I':
           options.ignore_warnings = true ;
           break;
@@ -589,10 +589,10 @@ main (int argc, char **argv, char **env)
 
         /* unrecognised option
          */
-        default:
-          usage (1);
-          break;
-        } ;
+	default:
+	  usage (1);
+	  break;
+	} ;
     } ;
 
   /* Set up own signal handling.

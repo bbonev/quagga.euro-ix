@@ -194,7 +194,7 @@ ripng_redistribute_routemap_set (int type, const char *name)
     free (ripng->route_map[type].name);
 
   ripng->route_map[type].name = strdup (name);
-  ripng->route_map[type].map = route_map_lookup_by_name (name);
+  ripng->route_map[type].map = route_map_lookup (name);
 }
 
 static void

@@ -299,9 +299,10 @@ extern const char* cmd_host_program_name(void) ;
 extern const char* cmd_host_full_program_name(void) ;
 
 /* Concatenates argv[shift] through argv[argc-1] into a single NUL-terminated
-   string with a space between each element (allocated using
-   XMALLOC(MTYPE_TMP)).  Returns NULL if shift >= argc. */
-extern char *argv_concat (const char* const* argv, int argc, int shift);
+ * string with a space between each element (allocated using
+ * XMALLOC(MTYPE_TMP)).  Returns NULL if shift >= argc.
+ */
+extern char *argv_concat (const char* const* argv, uint argc, uint argf);
 
 /*------------------------------------------------------------------------------
  * Global variables

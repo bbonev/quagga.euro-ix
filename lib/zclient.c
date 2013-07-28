@@ -36,7 +36,7 @@
 /* Zebra client events. */
 enum event {ZLOOKUP_SCHEDULE, ZCLIENT_SCHEDULE, ZCLIENT_READ, ZCLIENT_CONNECT};
 
-char *zclient_serv_path = NULL;
+const char* zclient_serv_path = NULL;
 
 /* This file local debug flag. */
 int zclient_debug = 0;
@@ -66,7 +66,7 @@ zclient_new ()
 
   if (zclient_nexus)
     {
-      zclient->qf  = qps_file_init_new(zclient->qf, NULL);
+      zclient->qf  = qfile_init_new(zclient->qf, NULL);
       zclient->qtr = qtimer_init_new(zclient->qtr, zclient_nexus->pile,
                                       zclient_connect_r, zclient);
     }
@@ -74,12 +74,14 @@ zclient_new ()
   return zclient;
 }
 
-/* This function is only called when exiting, because
-   many parts of the code do not check for I/O errors, so they could
-   reference an invalid pointer if the structure was ever freed.
-
-   Free zclient structure. */
-void
+/*------------------------------------------------------------------------------
+ * Free zclient structure and all related stuff.
+ *
+ * This function is only called when exiting, because
+ * many parts of the code do not check for I/O errors, so they could
+ * reference an invalid pointer if the structure was ever freed.
+ */
+extern void
 zclient_free (struct zclient *zclient)
 {
   zclient_stop (zclient) ;      /* make sure stopped, socket closed etc */
@@ -89,8 +91,9 @@ zclient_free (struct zclient *zclient)
   if (zclient->wb)
     buffer_free(zclient->wb);
 
-  /* qfile and qtimer */
-  zclient->qf  = qps_file_free(zclient->qf) ;   /* Free, if any         */
+  /* qfile and qtimer
+   */
+  zclient->qf  = qfile_free(zclient->qf) ;   /* Free, if any         */
   zclient->qtr = qtimer_free(zclient->qtr) ;    /* Free, if any         */
 
   XFREE (MTYPE_ZCLIENT, zclient);
@@ -167,13 +170,13 @@ zclient_stop (struct zclient *zclient)
        *
        * If have no zclient->sock, should not have a qpd_file_fd either.
        *
-       * May have a zclient->sock, but not have set up the qps_file.
+       * May have a zclient->sock, but not have set up the qfile.
        */
       if (zclient->sock < 0)
-        qassert(qps_file_fd(zclient->qf) < 0) ;
+        qassert(qfile_fd_get(zclient->qf) < fd_first) ;
 
-      qps_remove_file(zclient->qf) ;
-      qps_file_unset_fd(zclient->qf) ;
+      qps_remove_qfile(zclient->qf) ;
+      qfile_fd_unset(zclient->qf) ;
     } ;
 
   if (zclient->qtr)
@@ -285,8 +288,10 @@ zclient_socket_connect (struct zclient *zc)
 #ifdef HAVE_TCP_ZEBRA
   zc->sock = zclient_socket ();
 #else
-  zc->sock = zclient_socket_un (zclient_serv_path ? zclient_serv_path
-                                                  : ZEBRA_SERV_PATH);
+  if (zclient_serv_path == NULL)
+    zclient_serv_path = ZEBRA_SERV_PATH ;
+
+  zc->sock = zclient_socket_un(zclient_serv_path) ;
 #endif
   return zc->sock;
 }
@@ -303,11 +308,11 @@ zclient_failed(struct zclient *zclient)
 /* Write as much data as possible.
  * nexus version */
 static void
-zclient_flush_data_r(qps_file qf, void* file_info)
+zclient_flush_data_r(qfile qf, void* file_info)
 {
   struct zclient *zclient = file_info;
 
-  qps_disable_modes(qf, qps_write_mbit);
+  qfile_disable_modes(qf, qps_write_mbit);
 
   if (zclient->sock < 0)
     return;
@@ -320,7 +325,7 @@ zclient_flush_data_r(qps_file qf, void* file_info)
       zclient_failed(zclient);
       break;
     case BUFFER_PENDING:
-      qps_enable_mode(qf, qps_write_mnum, zclient_flush_data_r) ;
+      qfile_enable_mode(qf, qps_write_mnum, zclient_flush_data_r) ;
       break;
     case BUFFER_EMPTY:
       break;
@@ -369,13 +374,13 @@ zclient_send_message(struct zclient *zclient)
       break;
     case BUFFER_EMPTY:
       if (zclient_nexus)
-        qps_disable_modes(zclient->qf, qps_write_mbit);
+        qfile_disable_modes(zclient->qf, qps_write_mbit);
       else
         THREAD_OFF(zclient->t_write);
       break;
     case BUFFER_PENDING:
       if (zclient_nexus)
-        qps_enable_mode(zclient->qf, qps_write_mnum, zclient_flush_data_r) ;
+        qfile_enable_mode(zclient->qf, qps_write_mnum, zclient_flush_data_r) ;
       else
         THREAD_WRITE_ON(master, zclient->t_write,
                         zclient_flush_data_t, zclient, zclient->sock);
@@ -429,8 +434,10 @@ zebra_hello_send (struct zclient *zclient)
   return 0;
 }
 
-/* Make connection to zebra daemon. */
-int
+/*------------------------------------------------------------------------------
+ * Make connection to zebra daemon.
+ */
+extern int
 zclient_start (struct zclient *zclient)
 {
   int i;
@@ -438,23 +445,28 @@ zclient_start (struct zclient *zclient)
   if (zclient_debug)
     zlog_debug ("zclient_start is called");
 
-  /* zclient is disabled. */
+  /* zclient is disabled.
+   */
   if (! zclient->enable)
     return 0;
 
-  /* If already connected to the zebra. */
+  /* If already connected to the zebra.
+   */
   if (zclient->sock >= 0)
     return 0;
 
-  /* Check connect thread. */
+  /* Check connect thread.
+   */
   if (zclient->t_connect)
     return 0;
 
-  /* Check timer */
+  /* Check timer
+   */
   if (qtimer_is_active(zclient->qtr))
     return 0;
 
-  /* Make socket. */
+  /* Make socket.
+   */
   if (zclient_socket_connect(zclient) < 0)
     {
       if (zclient_debug)
@@ -465,28 +477,33 @@ zclient_start (struct zclient *zclient)
     }
 
   if (zclient_nexus)
-    qps_add_file(zclient_nexus->selection, zclient->qf, zclient->sock, zclient);
+    qps_add_qfile(zclient_nexus->selection, zclient->qf, zclient->sock, zclient);
 
   if (set_nonblocking(zclient->sock) < 0)
     zlog_warn("%s: set_nonblocking(%d) failed", __func__, zclient->sock);
 
-  /* Clear fail count. */
+  /* Clear fail count.
+   */
   zclient->fail = 0;
   if (zclient_debug)
     zlog_debug ("zclient connect success with socket [%d]", zclient->sock);
 
-  /* Create read thread. */
+  /* Create read thread.
+   */
   zclient_event (ZCLIENT_READ, zclient);
 
   zebra_hello_send (zclient);
 
-  /* We need router-id information. */
+  /* We need router-id information.
+   */
   zebra_message_send (zclient, ZEBRA_ROUTER_ID_ADD);
 
-  /* We need interface information. */
+  /* We need interface information.
+   */
   zebra_message_send (zclient, ZEBRA_INTERFACE_ADD);
 
-  /* Flush all redistribute request. */
+  /* Flush all redistribute request.
+   */
   for (i = 0; i < ZEBRA_ROUTE_MAX; i++)
     if (i != zclient->redist_default && zclient->redist[i])
       zebra_redistribute_send (ZEBRA_REDISTRIBUTE_ADD, zclient, i);
@@ -604,9 +621,9 @@ zlookup_connect_r (qtimer qtr, void* timer_info, qtime_t when)
   *
   * XXX: No attention paid to alignment.
   */
-int
-zapi_ipv4_route (u_char cmd, struct zclient *zclient, struct prefix_ipv4 *p,
-                 struct zapi_ipv4 *api)
+extern int
+zapi_ipv4_route (u_char cmd, struct zclient *zclient,
+                             const struct prefix_ipv4 *p, struct zapi_ipv4 *api)
 {
   int i;
   int psize;
@@ -627,7 +644,7 @@ zapi_ipv4_route (u_char cmd, struct zclient *zclient, struct prefix_ipv4 *p,
   /* Put prefix information. */
   psize = PSIZE (p->prefixlen);
   stream_putc (s, p->prefixlen);
-  stream_put (s, (u_char *) & p->prefix, psize);
+  stream_put (s, (const u_char *) & p->prefix, psize);
 
   /* Nexthop, ifindex, distance and metric information. */
   if (CHECK_FLAG (api->message, ZAPI_MESSAGE_NEXTHOP))
@@ -666,9 +683,9 @@ zapi_ipv4_route (u_char cmd, struct zclient *zclient, struct prefix_ipv4 *p,
 }
 
 #ifdef HAVE_IPV6
-int
-zapi_ipv6_route (u_char cmd, struct zclient *zclient, struct prefix_ipv6 *p,
-               struct zapi_ipv6 *api)
+extern int
+zapi_ipv6_route (uchar cmd, struct zclient *zclient,
+                            const struct prefix_ipv6* p, struct zapi_ipv6 *api)
 {
   int i;
   int psize;
@@ -689,7 +706,7 @@ zapi_ipv6_route (u_char cmd, struct zclient *zclient, struct prefix_ipv6 *p,
   /* Put prefix information. */
   psize = PSIZE (p->prefixlen);
   stream_putc (s, p->prefixlen);
-  stream_put (s, (u_char *)&p->prefix, psize);
+  stream_put (s, (const uchar *)&p->prefix, psize);
 
   /* Nexthop, ifindex, distance and metric information. */
   if (CHECK_FLAG (api->message, ZAPI_MESSAGE_NEXTHOP))
@@ -751,7 +768,7 @@ zebra_router_id_update_read (struct stream *s, struct prefix *rid)
   /* Fetch interface address. */
   rid->family = stream_getc (s);
 
-  plen = prefix_blen (rid);
+  plen = prefix_byte_len (rid);
   stream_get (&rid->u.prefix, s, plen);
   rid->prefixlen = stream_getc (s);
 }
@@ -951,7 +968,7 @@ zebra_interface_address_read (int type, struct stream *s)
   /* Fetch interface address. */
   family = p.family = stream_getc (s);
 
-  plen = prefix_blen (&p);
+  plen = prefix_byte_len (&p);
   stream_get (&p.u.prefix, s, plen);
   p.prefixlen = stream_getc (s);
 
@@ -982,10 +999,10 @@ zebra_interface_address_read (int type, struct stream *s)
 
 /* nexus: Zebra client message read function. */
 static void
-zclient_read_r (qps_file qf, void* file_info)
+zclient_read_r (qfile qf, void* file_info)
 {
   struct zclient *zclient = file_info;
-  qps_disable_modes(qf, qps_read_mbit);
+  qfile_disable_modes(qf, qps_read_mbit);
   zclient_read(zclient);
 }
 
@@ -1227,7 +1244,7 @@ zclient_event_r (enum event event, struct zclient *zclient)
           qt_add_monotonic(QTIME(zclient->fail < 3 ? 10 : 60)), zclient_connect_r) ;
       break;
     case ZCLIENT_READ:
-         qps_enable_mode(zclient->qf, qps_read_mnum, zclient_read_r) ;
+         qfile_enable_mode(zclient->qf, qps_read_mnum, zclient_read_r) ;
       break;
     }
 }
@@ -1267,28 +1284,49 @@ zclient_event_t (enum event event, struct zclient *zclient)
     }
 }
 
-void
-zclient_serv_path_set (char *path)
+/*------------------------------------------------------------------------------
+ * Set the zclient_serv_path
+ *
+ * Unset it if the given path is NULL or empty.
+ *
+ * Returns:  true <=> OK (including NULL or empty)
+ *           false => given path does not exist or is not a AF_UNIX socket
+ *
+ * NB: the given path string is stored as is.
+ *
+ *     If the string should be freed, then it is the callers responsibility to
+ *     do that *AFTER* all zclients have stopped.
+ */
+extern bool
+zclient_serv_path_set (char* path)
 {
   struct stat sb;
 
-  /* reset */
+  /* reset
+   */
   zclient_serv_path = NULL;
 
-  /* test if `path' is socket. don't set it otherwise. */
+  if ((path == NULL) || (*path == '\0'))
+    return true ;
+
+  /* test if `path' is socket. don't set it otherwise.
+   */
   if (stat(path, &sb) == -1)
     {
       zlog_warn ("%s: zebra socket `%s' does not exist", __func__, path);
-      return;
+      return false ;
     }
 
   if ((sb.st_mode & S_IFMT) != S_IFSOCK)
     {
-      zlog_warn ("%s: `%s' is not unix socket, sir", __func__, path);
-      return;
+      zlog_warn ("%s: `%s' is not AF_UNIX socket, sir", __func__, path);
+      return false ;
     }
 
-  /* it seems that path is unix socket */
+  /* it seems that path is unix socket
+   */
   zclient_serv_path = path;
-}
+
+  return true ;
+} ;
 

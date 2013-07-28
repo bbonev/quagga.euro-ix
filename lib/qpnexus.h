@@ -72,13 +72,13 @@ typedef struct qpn_stats
   qtime_mono_t  last_time ;
   qtime_mono_t  idle ;
 
-  ulong   cycles ;
-  ulong   signals ;
-  ulong   foreg ;
-  ulong   dispatch ;
-  ulong   io_acts ;
-  ulong   timers ;
-  ulong   backg ;
+  urlong   cycles ;
+  urlong   signals ;
+  urlong   foreg ;
+  urlong   dispatch ;
+  urlong   io_acts ;
+  urlong   timers ;
+  urlong   backg ;
 
 } qpn_stats_t ;
 

@@ -32,7 +32,7 @@ typedef struct heap* heap ;
 
 struct heap
 {
-  vector_t       v ;
+  vector_t       v[1] ;
 
   heap_cmp*      cmp ;
   heap_backlink* bl ;

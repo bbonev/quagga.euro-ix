@@ -431,7 +431,7 @@ uty_file_read_block(vio_vf vf)
 
   while (1)
     {
-      vio_timer_time timeout ;
+      vio_timer_time_t timeout ;
       cmd_ret_t  ret ;
       int        get ;
 
@@ -732,7 +732,7 @@ uty_file_write_block(vio_vf vf)
 {
   qps_mini_t qm ;
   vio_err_type_t err_type ;
-  vio_timer_time timeout ;
+  vio_timer_time_t timeout ;
 
   qassert( (vf->vout_type == VOUT_FILE) || (vf->vout_type == VOUT_CONFIG)
                                         || (vf->vout_type == VOUT_PIPE)
@@ -1714,7 +1714,7 @@ uty_pipe_exec_prepare(vty_io vio, std_set set)
 
   /* Mark everything to be closed on exec
    */
-  for (fd = 0 ; fd < qlib_open_max ; ++fd)
+  for (fd = 0 ; fd < qlib->open_max ; ++fd)
     {
       int fd_flags ;
       fd_flags = fcntl(fd, F_GETFD, 0) ;
@@ -1894,7 +1894,7 @@ static cmd_ret_t
 uty_pipe_return_set_read_ready(vio_vf vf)
 {
   cmd_ret_t      ret ;
-  vio_timer_time timeout ;
+  vio_timer_time_t timeout ;
 
   ret = CMD_SUCCESS ;
 

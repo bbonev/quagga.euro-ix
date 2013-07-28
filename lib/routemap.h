@@ -23,22 +23,26 @@
 #define _ZEBRA_ROUTEMAP_H
 
 #include "misc.h"
+#include "list_util.h"
 
-/* Route map's type. */
+/* Route map's type.
+ */
 enum route_map_type
 {
+  RMAP_ANY,                     /* Used only as a look-up value         */
+
   RMAP_PERMIT,
   RMAP_DENY,
-  RMAP_ANY
 };
 
 typedef enum route_map_type route_map_type_t ;
 
 typedef enum
 {
-  RMAP_MATCH,
-  RMAP_DENYMATCH,
-  RMAP_NOMATCH,
+  RMAP_MATCH,                   /* ...                                  */
+  RMAP_DENY_MATCH,               /*                                      */
+
+  RMAP_NOT_MATCH,
   RMAP_ERROR,
   RMAP_OKAY
 } route_map_result_t;
@@ -50,7 +54,9 @@ typedef enum
   RMAP_OSPF,
   RMAP_OSPF6,
   RMAP_BGP,
-  RMAP_ZEBRA
+  RMAP_ZEBRA,
+
+  RMAP_NO_SET  = BIT(7),
 } route_map_object_t;
 
 typedef enum
@@ -75,130 +81,156 @@ typedef enum
 /* Depth limit in RMAP recursion using RMAP_CALL. */
 #define RMAP_RECURSION_LIMIT      10
 
-/* Route map rule structure for matching and setting. */
+/* Route map rule structure for matching and setting.
+ */
+typedef struct route_map_rule_cmd  route_map_rule_cmd_t ;
+typedef struct route_map_rule_cmd* route_map_rule_cmd ;
+typedef const struct route_map_rule_cmd* route_map_rule_cmd_c ;
+
 struct route_map_rule_cmd
 {
-  /* Route map rule name (e.g. as-path, metric) */
+  /* Route map rule name (e.g. as-path, metric)
+   */
   const char *str;
 
-  /* Function for value set or match. */
-  route_map_result_t (*func_apply)(void *, struct prefix *,
-                                   route_map_object_t, void *);
+  /* Function for value set or match.
+   */
+  route_map_result_t (*func_apply)(void *, prefix_c,
+                                                  route_map_object_t, void *);
 
-  /* Compile argument and return result as void *. */
+  /* Compile argument and return result as void *
+   */
   void *(*func_compile)(const char *);
 
   /* Free allocated value by func_compile (). */
   void (*func_free)(void *);
 };
 
-/* Route map apply error. */
-enum
+/* Route map apply error -- or not
+ */
+enum rmap_rule_ret
 {
+  RMAP_RULE_OK      = 0,
+
   /* Route map rule is missing. */
-  RMAP_RULE_MISSING = 1,
+  RMAP_RULE_MISSING,
 
   /* Route map rule can't compile */
   RMAP_COMPILE_ERROR
 };
 
-/* Route map rule list. */
-struct route_map_rule_list
-{
-  struct route_map_rule *head;
-  struct route_map_rule *tail;
-};
+typedef enum rmap_rule_ret rmap_rule_ret_t ;
 
-/* Route map sequence number    */
+/*------------------------------------------------------------------------------
+ * Route map rules.
+ */
+typedef struct route_map_rule  route_map_rule_t ;
+typedef struct route_map_rule* route_map_rule ;
+
+struct route_map_rule_list dl_base_pair(route_map_rule) ;
+
+typedef struct route_map_rule_list  route_map_rule_list_t ;
+typedef struct route_map_rule_list* route_map_rule_list ;
+
+/* Route map entry and route map structures.
+ */
+typedef struct route_map  route_map_t ;
+typedef struct route_map* route_map ;
+typedef const struct route_map* route_map_c ;
+
+typedef struct route_map_entry  route_map_entry_t ;
+typedef struct route_map_entry* route_map_entry ;
+
+typedef struct route_map_entry_list route_map_entry_list_t ;
+struct route_map_entry_list dl_base_pair(route_map_entry) ;
+
 typedef uint32_t route_map_seq_t ;
 
-/* Route map index structure.   */
-struct route_map_index
+struct route_map_entry
 {
-  struct route_map *map;
-  char *description;
+  route_map  rmap;
 
-  /* Preference of this route map rule. */
+  char* description;
+
+  struct dl_list_pair(route_map_entry) list ;
+
+  /* Preference of this route map rule.
+   */
   route_map_seq_t       seq;
 
-  /* Route map type permit or deny. */
-  enum route_map_type   type;
+  /* Route map type permit or deny.
+   */
+  route_map_type_t      type;
 
-  /* Do we follow old rules, or hop forward? */
+  /* Do we follow old rules, or hop forward?
+   */
   route_map_end_t       exitpolicy;
 
-  /* If we're using "GOTO", to where do we go? */
+  /* If we're using "GOTO", to where do we go?
+   */
   route_map_seq_t       goto_seq;
 
-  /* If we're using "CALL", to which route-map do we go? */
-  char *nextrm;
+  /* If we're using "CALL", to which route-map do we go?
+   */
+  char *call_name;
 
-  /* Matching rule list. */
-  struct route_map_rule_list match_list;
-  struct route_map_rule_list set_list;
-
-  /* Make linked list. */
-  struct route_map_index *next;
-  struct route_map_index *prev;
+  /* The lists of match and set rules
+   */
+  route_map_rule_list_t match_list ;
+  route_map_rule_list_t set_list ;
 };
 
-/* Route map list structure. */
+/*------------------------------------------------------------------------------
+ * A route-map -- ...
+ */
 struct route_map
 {
-  /* Name of route map. */
-  char *name;
+  vhash_node_t  vhash ;
 
-  /* Route map's rule. */
-  struct route_map_index *head;
-  struct route_map_index *tail;
+  char*         name ;
 
-  /* Make linked list. */
-  struct route_map *next;
-  struct route_map *prev;
+  struct dl_base_pair(route_map_entry) base ;
 };
 
-/* Prototypes. */
+CONFIRM(offsetof(route_map_t, vhash) == 0) ;  /* see vhash.h  */
+
+/*------------------------------------------------------------------------------
+ * Prototypes.
+ */
 extern void route_map_cmd_init (void);
 extern void route_map_init (void);
 extern void route_map_finish (void);
 
-/* Add match statement to route map. */
-extern int route_map_add_match (struct route_map_index *index,
-                                const char *match_name,
-                                const char *match_arg);
-
-/* Delete specified route match rule. */
-extern int route_map_delete_match (struct route_map_index *index,
-                                   const char *match_name,
-                                   const char *match_arg);
-
-/* Add route-map set statement to the route map. */
-extern int route_map_add_set (struct route_map_index *index,
-                              const char *set_name,
-                              const char *set_arg);
-
-/* Delete route map set rule. */
-extern int route_map_delete_set (struct route_map_index *index,
-                                 const char *set_name,
-                                 const char *set_arg);
-
-/* Install rule command to the match list. */
-extern void route_map_install_match (struct route_map_rule_cmd *cmd);
-
-/* Install rule command to the set list. */
-extern void route_map_install_set (struct route_map_rule_cmd *cmd);
-
-/* Lookup route map by name. */
-extern struct route_map * route_map_lookup_by_name (const char *name);
-
-/* Apply route map to the object. */
-extern route_map_result_t route_map_apply (struct route_map *map,
-                                           struct prefix *,
-                                           route_map_object_t object_type,
-                                           void *object);
-
 extern void route_map_add_hook (void (*func) (const char *));
 extern void route_map_delete_hook (void (*func) (const char *));
 extern void route_map_event_hook (void (*func) (route_map_event_t, const char *));
+
+extern rmap_rule_ret_t route_map_add_match (route_map_entry re,
+                                                 const char *match_name,
+                                                 const char *match_arg);
+extern rmap_rule_ret_t route_map_delete_match (route_map_entry re,
+                                                 const char *match_name,
+                                                 const char *match_arg);
+extern rmap_rule_ret_t route_map_add_set (route_map_entry re,
+                                                 const char *set_name,
+                                                 const char *set_arg);
+extern rmap_rule_ret_t route_map_delete_set (route_map_entry re,
+                                                 const char *set_name,
+                                                 const char *set_arg);
+
+extern void route_map_install_match (route_map_rule_cmd_c cmd);
+extern void route_map_install_set (route_map_rule_cmd_c cmd);
+
+extern route_map route_map_lookup (const char *name);
+
+extern route_map route_map_get_ref(const char *name) ;
+extern route_map route_map_set_ref(route_map rmap) ;
+extern route_map route_map_clear_ref(route_map rmap) ;
+extern const char* route_map_get_name(route_map rmap) ;
+extern bool route_map_is_set(route_map rmap) ;
+extern bool route_map_is_active(route_map rmap) ;
+
+extern route_map_result_t route_map_apply (route_map map, prefix_c pfx,
+                                       route_map_object_t x_type, void* object);
 
 #endif /* _ZEBRA_ROUTEMAP_H */

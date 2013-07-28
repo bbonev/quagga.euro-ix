@@ -22,6 +22,7 @@ Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
 #define _QUAGGA_BGP_REGEX_H
 
 #include <zebra.h>
+#include "bgpd/bgp_attr_store.h"
 
 #ifdef HAVE_LIBPCREPOSIX
 # include <pcreposix.h>
@@ -35,6 +36,6 @@ Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
 
 extern void bgp_regex_free (regex_t *regex);
 extern regex_t *bgp_regcomp (const char *str);
-extern int bgp_regexec (regex_t *regex, struct aspath *aspath);
+extern int bgp_regexec_asp (regex_t *regex, as_path asp);
 
 #endif /* _QUAGGA_BGP_REGEX_H */

@@ -21,7 +21,8 @@
  */
 
 #include <zebra.h>
-/* malloc.h is generally obsolete, however GNU Libc mallinfo wants it. */
+/* malloc.h is generally obsolete, however GNU Libc mallinfo wants it.
+ */
 #if !defined(HAVE_STDLIB_H) || (defined(GNU_LINUX) && defined(HAVE_MALLINFO))
 #include <malloc.h>
 #endif /* !HAVE_STDLIB_H || HAVE_MALLINFO */
@@ -35,10 +36,12 @@
 #include "command.h"
 #include "qfstring.h"
 
-/* HAVE_MMAP specifies that can do mmap() and mmunmap() -- below        */
+/* HAVE_MMAP specifies that can do mmap() and mmunmap() -- below
+ */
 #define HAVE_MMAP  1
 
-/* HAVE_MEM_REGIONS -- pro tem !                                        */
+/* HAVE_MEM_REGIONS -- pro tem !
+ */
 #if defined(GNU_LINUX) && !defined(NO_MEM_REGIONS)
 #define HAVE_MEM_REGIONS
 #endif
@@ -121,8 +124,9 @@
  *------------------------------------------------------------------------------
  * mmap() and munmap()
  *
- * These are Posix facilities.  Most implementations support (MAP_ANON or
- * MAP_ANONYMOUS), though that is not Posix.  The Posix posix_typed+mem_open()
+ * These are Posix facilities.  Most implementations support MAP_ANON or
+ * MAP_ANONYMOUS
+ * , though that is not Posix.  The Posix posix_typed+mem_open()
  * can be used if MAP_ANON or MAP_ANONYMOUS is not supported.
  *
  * Late model malloc() uses mmap(), so memory may be allocated across a number
@@ -206,14 +210,14 @@ typedef struct mem_tracker_item  mem_tracker_item_t ;
 
 struct mem_tracker_item
 {
-  ulong  malloc_count ;         /* number of mallocs            */
-  ulong  realloc_count ;        /* number of reallocs           */
-  ulong  free_count ;           /* number of frees              */
+  urlong malloc_count ;         /* number of mallocs            */
+  urlong realloc_count ;        /* number of reallocs           */
+  urlong free_count ;           /* number of frees              */
 
-  ulong  item_count ;           /* number of existing items     */
+  urlong item_count ;           /* number of existing items     */
   size_t total_size ;           /* total size of existing items */
 
-  ulong  peak_item_count ;      /* peak count of items          */
+  urlong peak_item_count ;      /* peak count of items          */
   size_t peak_total_size ;      /* peak size of items           */
 } ;
 
@@ -520,14 +524,14 @@ enum
 static struct                   /* TODO: establish what this is for !   */
 {
   const char *name;
-  ulong alloc;
-  ulong t_malloc;
-  ulong c_malloc;
-  ulong t_calloc;
-  ulong c_calloc;
-  ulong t_realloc;
-  ulong t_free;
-  ulong c_strdup;
+  urlong alloc;
+  urlong t_malloc;
+  urlong c_malloc;
+  urlong t_calloc;
+  urlong c_calloc;
+  urlong t_realloc;
+  urlong t_free;
+  urlong c_strdup;
 } mlog_stat [MTYPE_MAX];
 
 /*==============================================================================
@@ -807,7 +811,7 @@ mem_get_stats(mem_stats_t* mst)
  *
  * For use with a copy of statistics picjed up already.
  */
-extern ulong
+extern urlong
 mem_get_alloc(mem_stats_t* mst, mtype_t mtype)
 {
   return mst->alloc[mtype] ;
@@ -818,10 +822,10 @@ mem_get_alloc(mem_stats_t* mst, mtype_t mtype)
  *
  * To get all the counters at once, see mem_get_stats().
  */
-extern ulong
+extern urlong
 mtype_stats_alloc(mtype_t mtype)
 {
-  ulong alloc ;
+  urlong alloc ;
   LOCK ;
   alloc = mstats.alloc[mtype] ;
   UNLOCK ;
@@ -1103,15 +1107,15 @@ mem_alloc_unknown_message(void)
   switch (mem_alloc_failed)
     {
       case ma_not_tried:
-        qfs_append(qfs, "not yet tried to establish parameters") ;
+        qfs_put_str(qfs, "not yet tried to establish parameters") ;
         break ;
 
       case ma_not_a_before_b:
-        qfs_append(qfs, "malloc() allocated 'a' at higher address than 'b'") ;
+        qfs_put_str(qfs, "malloc() allocated 'a' at higher address than 'b'") ;
         break ;
 
       case ma_not_increasing_size:
-        qfs_append(qfs,
+        qfs_put_str(qfs,
               "malloc() apparently allocated less space for larger request") ;
         break ;
 
@@ -1762,7 +1766,7 @@ mem_read_pagemap(uint64_t* pm, int pagemap, uintptr_t v, uint count)
   if (lseek(pagemap, off, SEEK_SET) < 0)
     {
       zlog_err("%s: failed to seek to %llX in '/proc/self/pagemap': %s",
-                              __func__, (long long)off, errtoa(errno, 0).str) ;
+                              __func__, (ullong)off, errtoa(errno, 0).str) ;
       return 0 ;
     } ;
 
@@ -1771,7 +1775,7 @@ mem_read_pagemap(uint64_t* pm, int pagemap, uintptr_t v, uint count)
   if (n < 0)
     {
       zlog_err("%s: failed reading at %llX in '/proc/self/pagemap': %s",
-                              __func__, (long long)off, errtoa(errno, 0).str) ;
+                              __func__, (ullong)off, errtoa(errno, 0).str) ;
       n = 0 ;
     } ;
 
@@ -2371,7 +2375,7 @@ mem_mt_get_stats(mem_tracker_data mtd, bool locked)
 {
   mem_stats_t  mst ;
   mtype_t      mtype ;
-  ulong        item_count ;
+  urlong       item_count ;
   size_t       total_size ;
 
   if (!locked)
@@ -2427,24 +2431,26 @@ mem_mt_get_stats(mem_tracker_data mtd, bool locked)
 
 /*------------------------------------------------------------------------------
  * Form count with 4 significant digits, up to multiples of trillions.
+ *
+ * NB: although count is nominally urlong, we only do 0..RLONG_MAX
  */
 static inline qfs_num_str_t
-mem_form_count(ulong val)
+mem_form_count(urlong val)
 {
-  qassert(val <= LONG_MAX) ;
-  return qfs_dec_value((long)val, pf_scale | pf_commas | pf_trailing) ;
+  qassert(val <= RLONG_MAX) ;
+  return qfs_put_dec_value((rlong)val, pf_scale | pf_commas | pf_trailing) ;
 } ;
 
 /*------------------------------------------------------------------------------
  * Form byte count with 4 significant digits -- 6 character field
  *
- * NB: although count is nominally ulong, we only do 0..LONG_MAX
+ * NB: although count is nominally urlong, we only do 0..RLONG_MAX
  */
 static qfs_num_str_t
-mem_form_byte_count(ulong val)
+mem_form_byte_count(urlong val)
 {
-  qassert(val <= LONG_MAX) ;
-  return qfs_bin_value((long)val, pf_scale | pf_commas | pf_trailing) ;
+  qassert(val <= RLONG_MAX) ;
+  return qfs_put_bin_value((rlong)val, pf_scale | pf_commas | pf_trailing) ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -2456,11 +2462,11 @@ show_memory_tracker_summary(vty vty, mem_tracker_data mtd)
   vty_out (vty, "Memory Tracker Statistics:\n");
   vty_out (vty, "  Current memory allocated:  %12s\n",
            mem_form_byte_count(mtd->tot->total_size).str) ;
-  vty_out (vty, "  Current allocated objects: %'11lu\n",
+  vty_out (vty, "  Current allocated objects: %'11"fRL"u\n",
                                mtd->tot->item_count);
   vty_out (vty, "  Maximum memory allocated:  %12s\n",
            mem_form_byte_count(mtd->tot->peak_total_size).str) ;
-  vty_out (vty, "  Maximum allocated objects: %'11lu\n",
+  vty_out (vty, "  Maximum allocated objects: %'11"fRL"u\n",
                                mtd->tot->peak_item_count) ;
   vty_out (vty, "  malloc/calloc call count:  %12s\n",
            mem_form_count     (mtd->tot->malloc_count).str);

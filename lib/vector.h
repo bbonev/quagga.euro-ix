@@ -47,8 +47,8 @@ struct vector
   vector_length_t limit ;       /* number of allocated item entries         */
 };
 
-typedef struct vector  vector_t[1] ;    /* embedded vector structure    */
-typedef struct vector* vector ;         /* pointer to vector structure  */
+typedef struct vector  vector_t ;
+typedef struct vector* vector ;
 
 /* Setting a vector object to all zeros is enough to initialise it to
  * an empty vector.
@@ -153,6 +153,7 @@ extern void *vector_lookup_ensure (vector, vector_index_t);
 
 extern vector vector_init_new(vector v, vector_length_t size) ;
 extern vector vector_new(vector_length_t size) ;
+extern vector vector_clear(vector v, vector_length_t size) ;
 extern vector vector_re_init(vector v, vector_length_t size) ;
 extern vector vector_reset(vector v, free_keep_b free_structure) ;
 extern p_vector_item vector_ream(vector v, free_keep_b free_structure) ;
@@ -172,9 +173,11 @@ Inline vector_body_t vector_body(vector v) ;
 Inline p_vector_item vector_get_item(vector v, vector_index_t i) ;
 Inline p_vector_item vector_get_first_item(vector v) ;
 Inline p_vector_item vector_get_last_item(vector v) ;
-Inline void vector_set_item(vector v, vector_index_t i, p_vector_item p_v) ;
-Inline void vector_assign_item(vector v, vector_index_t dst,
-                                         vector_index_t src) ;
+Inline p_vector_item* vector_get_p_item(vector v, vector_index_t i) ;
+Inline p_vector_item vector_set_item(vector v, vector_index_t i,
+                                                            p_vector_item p_v) ;
+Inline p_vector_item vector_assign_item(vector v, vector_index_t dst,
+                                                  vector_index_t src) ;
 extern p_vector_item vector_unset_item(vector v, vector_index_t i) ;
 extern vector_length_t vector_trim(vector v) ;
 extern vector_length_t vector_condense(vector v) ;
@@ -189,9 +192,9 @@ extern p_vector_item vector_delete_item(vector v, vector_index_t i) ;
 extern void vector_reverse(vector v) ;
 extern void vector_part_reverse(vector v, vector_index_t i, vector_length_t n) ;
 
-Inline void vector_push_item(vector v, p_vector_item p_v) ;
+Inline p_vector_item vector_push_item(vector v, p_vector_item p_v) ;
 Inline p_vector_item vector_pop_item(vector v) ;
-Inline void vector_unshift_item(vector v, p_vector_item p_v) ;
+Inline p_vector_item vector_unshift_item(vector v, p_vector_item p_v) ;
 Inline p_vector_item vector_shift_item(vector v) ;
 
 extern void vector_insert(vector v, vector_index_t i, vector_length_t n) ;
@@ -363,16 +366,27 @@ vector_get_last_item(vector v)
 } ;
 
 /*------------------------------------------------------------------------------
+ * Get pointer to item pointer.  Returns NULL if accessing beyond end.
+ */
+Inline p_vector_item*
+vector_get_p_item(vector v, vector_index_t i)
+{
+  return (i < v->end) ? &v->p_items[i] : NULL ;
+} ;
+
+/*------------------------------------------------------------------------------
  * Set item value in vector.  Extend vector if required.
  *
  * NB: it is the caller's responsibility to release memory used by any
  *     current value of the item, if required.
+ *
+ * Returns:  address of item as given
  */
-Inline void
+Inline p_vector_item
 vector_set_item(vector v, vector_index_t i, p_vector_item p_v)
 {
   vector_ensure(v, i) ;
-  v->p_items[i] = (p_vector_item)p_v ;
+  return v->p_items[i] = p_v ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -380,21 +394,27 @@ vector_set_item(vector v, vector_index_t i, p_vector_item p_v)
  *
  * NB: it is the caller's responsibility to look after the memory being
  *     used by the current dst item or the new (duplicated) src item.
+ *
+ * Returns:  address of item as given
  */
-Inline void
+Inline p_vector_item
 vector_assign_item(vector v, vector_index_t dst, vector_index_t src)
 {
-  vector_set_item(v, dst, vector_get_item(v, src)) ;
+  return vector_set_item(v, dst, vector_get_item(v, src)) ;
 } ;
 
 /*------------------------------------------------------------------------------
  * Push value onto vector, extending as required.
+ *
+ * Returns:  address of item as given
  */
-Inline void
+Inline p_vector_item
 vector_push_item(vector v, p_vector_item p_v)
 {
-  vector_index_t i = vector_extend_by_1(v) ;
-  v->p_items[i] = (p_vector_item)p_v ;
+  vector_index_t i ;
+
+  i = vector_extend_by_1(v) ;
+  return v->p_items[i] = p_v ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -410,12 +430,14 @@ vector_pop_item(vector v)
 
 /*------------------------------------------------------------------------------
  * Unshift value onto start of vector, extending as required.
+ *
+ * Returns:  address of item as given
  */
-Inline void
+Inline p_vector_item
 vector_unshift_item(vector v, p_vector_item p_v)
 {
   vector_insert(v, 0, 1) ;
-  v->p_items[0] = p_v ;
+  return v->p_items[0] = p_v ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -425,7 +447,9 @@ vector_unshift_item(vector v, p_vector_item p_v)
 Inline p_vector_item
 vector_shift_item(vector v)
 {
-  p_vector_item p_v = vector_get_first_item(v) ;
+  p_vector_item p_v ;
+
+  p_v = vector_get_first_item(v) ;
   vector_delete(v, 0, 1) ;
   return p_v ;
 } ;

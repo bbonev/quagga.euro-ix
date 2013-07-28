@@ -43,9 +43,14 @@
  *                it can continue to operate correctly.
  * LOG_ERR      - Error situations indicating malfunctions.  Probably require
  *                attention.
+ * LOG_CRIT     - Errors indicating "impossible" conditions, which are short
+ *                of an assert(), but which mean that although the daemon has
+ *                not actually crashed, it is not working correctly.
  *
- * Note: LOG_CRIT, LOG_ALERT, and LOG_EMERG are currently not used anywhere,
- * please use LOG_ERR instead.
+ *                See: _zlog_critical().
+ *
+ * Note: LOG_ALERT, and LOG_EMERG are currently not used anywhere.
+ *       Please use LOG_ERR.
  */
 
 /*------------------------------------------------------------------------------

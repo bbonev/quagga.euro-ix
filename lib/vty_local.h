@@ -244,7 +244,7 @@ VTY_ASSERT_CMD_THREAD(void)
  */
 extern void vty_hello (vty vty);
 
-extern int  vty_out(vty vty, const char *format, ...) PRINTF_ATTRIBUTE(2, 3) ;
+extern uint vty_out(vty vty, const char *format, ...) PRINTF_ATTRIBUTE(2, 3) ;
 extern void vty_err(vty vty, const char *format, ...) PRINTF_ATTRIBUTE(2, 3) ;
 
 extern int vty_write(struct vty *vty, const void* buf, int n) ;

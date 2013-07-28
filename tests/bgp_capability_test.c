@@ -9,6 +9,7 @@
 #include "privs.h"
 #include "memory.h"
 
+#include "bgpd/bgp.h"
 #include "bgpd/bgpd.h"
 #include "bgpd/bgp_peer.h"
 #include "bgpd/bgp_open.h"
@@ -24,9 +25,6 @@
 #define DYNCAP     1
 #define OPT_PARAM  2
 
-/* need these to link in libbgp */
-struct zebra_privs_t *bgpd_privs = NULL;
-
 static int failed = 0;
 static int tty = 0;
 
@@ -36,8 +34,8 @@ static struct test_segment {
   const char *desc;
   const u_char data[1024];
   int len;
-#define SHOULD_PARSE    0
-#define SHOULD_ERR      -1
+#define SHOULD_PARSE	0
+#define SHOULD_ERR	-1
   int parses; /* whether it should parse or not */
   int peek_for; /* what peek_for_as4_capability should say */
 
@@ -53,7 +51,7 @@ static struct test_segment {
   /* 0 */
   { "caphdr",
     "capability header, and no more",
-    { CAPABILITY_CODE_REFRESH, 0x0 },
+    { BGP_CAN_R_REFRESH, 0x0 },
     2, SHOULD_PARSE,
   },
   /* 1 */
@@ -65,13 +63,13 @@ static struct test_segment {
   /* 2 */
   { "padded",
     "valid, with padding",
-    { CAPABILITY_CODE_REFRESH, 0x2, 0x0, 0x0 },
+    { BGP_CAN_R_REFRESH, 0x2, 0x0, 0x0 },
     4, SHOULD_PARSE,
   },
   /* 3 */
   { "minsize",
     "violates minsize requirement",
-    { CAPABILITY_CODE_ORF, 0x2, 0x0, 0x0 },
+    { BGP_CAN_ORF, 0x2, 0x0, 0x0 },
     4, SHOULD_ERR,
   },
   { NULL, NULL, {0}, 0, 0},
@@ -94,48 +92,48 @@ static struct test_segment mp_segments[] =
   /* 5 */
   { "MP2",
     "MP IP/Multicast",
-    { CAPABILITY_CODE_MP, 0x4, 0x0, 0x1, 0x0, 0x2 },
+    { BGP_CAN_MP_EXT, 0x4, 0x0, 0x1, 0x0, 0x2 },
     6, SHOULD_PARSE, 0,
     1, AFI_IP, SAFI_MULTICAST, VALID_AFI,
   },
   /* 6 */
   { "MP3",
     "MP IP6/MPLS-labeled VPN",
-    { CAPABILITY_CODE_MP, 0x4, 0x0, 0x2, 0x0, 0x80 },
+    { BGP_CAN_MP_EXT, 0x4, 0x0, 0x2, 0x0, 0x80 },
     6, SHOULD_PARSE, 0,
     1, AFI_IP6, SAFI_MPLS_LABELED_VPN, VALID_AFI,
   },
   /* 7 */
   { "MP5",
     "MP IP6/MPLS-VPN",
-    { CAPABILITY_CODE_MP, 0x4, 0x0, 0x2, 0x0, 0x4 },
+    { BGP_CAN_MP_EXT, 0x4, 0x0, 0x2, 0x0, 0x4 },
     6, SHOULD_PARSE, 0,
     1, AFI_IP6, SAFI_MPLS_VPN, VALID_AFI,
   },
   /* 8 */
   { "MP6",
     "MP IP4/MPLS-laveled VPN",
-    { CAPABILITY_CODE_MP, 0x4, 0x0, 0x1, 0x0, 0x80 },
+    { BGP_CAN_MP_EXT, 0x4, 0x0, 0x1, 0x0, 0x80 },
     6, SHOULD_PARSE, 0,
     1, AFI_IP, SAFI_MPLS_LABELED_VPN, VALID_AFI,
   },
   /* 10 */
   { "MP8",
     "MP unknown AFI/SAFI",
-    { CAPABILITY_CODE_MP, 0x4, 0x0, 0xa, 0x0, 0x81 },
+    { BGP_CAN_MP_EXT, 0x4, 0x0, 0xa, 0x0, 0x81 },
     6, SHOULD_PARSE, 0,
     1, 0xa, 0x81, INVALID_AFI, /* parses, but unknown */
   },
   /* 11 */
   { "MP-short",
     "MP IP4/Unicast, length too short (< minimum)",
-    { CAPABILITY_CODE_MP, 0x2, 0x0, 0x1, 0x0, 0x1 },
+    { BGP_CAN_MP_EXT, 0x2, 0x0, 0x1, 0x0, 0x1 },
     6, SHOULD_ERR,
   },
   /* 12 */
   { "MP-overflow",
     "MP IP4/Unicast, length too long",
-    { CAPABILITY_CODE_MP, 0x6, 0x0, 0x1, 0x0, 0x1 },
+    { BGP_CAN_MP_EXT, 0x6, 0x0, 0x1, 0x0, 0x1 },
     6, SHOULD_ERR, 0,
     1, AFI_IP, SAFI_UNICAST, VALID_AFI,
   },
@@ -147,30 +145,30 @@ static struct test_segment misc_segments[] =
   /* 13 */
   { "ORF",
     "ORF, simple, single entry, single tuple",
-    { /* hdr */         CAPABILITY_CODE_ORF, 0x7,
-      /* mpc */         0x0, 0x1, 0x0, 0x1,
-      /* num */         0x1,
-      /* tuples */      0x40, 0x3
+    { /* hdr */		BGP_CAN_ORF, 0x7,
+      /* mpc */		0x0, 0x1, 0x0, 0x1,
+      /* num */		0x1,
+      /* tuples */	0x40, 0x3
     },
     9, SHOULD_PARSE,
   },
   /* 14 */
   { "ORF-many",
     "ORF, multi entry/tuple",
-    { /* hdr */         CAPABILITY_CODE_ORF, 0x21,
-      /* mpc */         0x0, 0x1, 0x0, 0x1,
-      /* num */         0x3,
-      /* tuples */      0x40, ORF_MODE_BOTH,
+    { /* hdr */		BGP_CAN_ORF, 0x21,
+      /* mpc */		0x0, 0x1, 0x0, 0x1,
+      /* num */		0x3,
+      /* tuples */	0x40, ORF_MODE_BOTH,
                         0x80, ORF_MODE_RECEIVE,
                         0x80, ORF_MODE_SEND,
-      /* mpc */         0x0, 0x2, 0x0, 0x1,
-      /* num */         0x3,
-      /* tuples */      0x40, ORF_MODE_BOTH,
+      /* mpc */		0x0, 0x2, 0x0, 0x1,
+      /* num */		0x3,
+      /* tuples */	0x40, ORF_MODE_BOTH,
                         0x80, ORF_MODE_RECEIVE,
                         0x80, ORF_MODE_SEND,
-      /* mpc */         0x0, 0x2, 0x0, 0x2,
-      /* num */         0x3,
-      /* tuples */      0x40, ORF_MODE_RECEIVE,
+      /* mpc */		0x0, 0x2, 0x0, 0x2,
+      /* num */		0x3,
+      /* tuples */	0x40, ORF_MODE_RECEIVE,
                         0x80, ORF_MODE_SEND,
                         0x80, ORF_MODE_BOTH,
     },
@@ -179,20 +177,20 @@ static struct test_segment misc_segments[] =
   /* 15 */
   { "ORFlo",
     "ORF, multi entry/tuple, hdr length too short",
-    { /* hdr */         CAPABILITY_CODE_ORF, 0x15,
-      /* mpc */         0x0, 0x1, 0x0, 0x1,
-      /* num */         0x3,
-      /* tuples */      0x40, 0x3,
+    { /* hdr */		BGP_CAN_ORF, 0x15,
+      /* mpc */		0x0, 0x1, 0x0, 0x1,
+      /* num */		0x3,
+      /* tuples */	0x40, 0x3,
                         0x80, 0x1,
                         0x80, 0x2,
-      /* mpc */         0x0, 0x1, 0x0, 0x1,
-      /* num */         0x3,
-      /* tuples */      0x40, 0x3,
+      /* mpc */		0x0, 0x1, 0x0, 0x1,
+      /* num */		0x3,
+      /* tuples */	0x40, 0x3,
                         0x80, 0x1,
                         0x80, 0x2,
-      /* mpc */         0x0, 0x2, 0x0, 0x2,
-      /* num */         0x3,
-      /* tuples */      0x40, 0x3,
+      /* mpc */		0x0, 0x2, 0x0, 0x2,
+      /* num */		0x3,
+      /* tuples */	0x40, 0x3,
                         0x80, 0x1,
                         0x80, 0x2,
     },
@@ -201,20 +199,20 @@ static struct test_segment misc_segments[] =
   /* 16 */
   { "ORFlu",
     "ORF, multi entry/tuple, length too long",
-    { /* hdr */         0x3, 0x22,
-      /* mpc */         0x0, 0x1, 0x0, 0x1,
-      /* num */         0x3,
-      /* tuples */      0x40, 0x3,
+    { /* hdr */		0x3, 0x22,
+      /* mpc */		0x0, 0x1, 0x0, 0x1,
+      /* num */		0x3,
+      /* tuples */	0x40, 0x3,
                         0x80, 0x1,
                         0x80, 0x2,
-      /* mpc */         0x0, 0x2, 0x0, 0x1,
-      /* num */         0x3,
-      /* tuples */      0x40, 0x3,
+      /* mpc */		0x0, 0x2, 0x0, 0x1,
+      /* num */		0x3,
+      /* tuples */	0x40, 0x3,
                         0x80, 0x1,
                         0x80, 0x2,
-      /* mpc */         0x0, 0x2, 0x0, 0x2,
-      /* num */         0x3,
-      /* tuples */      0x40, 0x3,
+      /* mpc */		0x0, 0x2, 0x0, 0x2,
+      /* num */		0x3,
+      /* tuples */	0x40, 0x3,
                         0x80, 0x1,
                         0x80, 0x2,
     },
@@ -223,20 +221,20 @@ static struct test_segment misc_segments[] =
   /* 17 */
   { "ORFnu",
     "ORF, multi entry/tuple, entry number too long",
-    { /* hdr */         0x3, 0x21,
-      /* mpc */         0x0, 0x1, 0x0, 0x1,
-      /* num */         0x3,
-      /* tuples */      0x40, 0x3,
+    { /* hdr */		0x3, 0x21,
+      /* mpc */		0x0, 0x1, 0x0, 0x1,
+      /* num */		0x3,
+      /* tuples */	0x40, 0x3,
                         0x80, 0x1,
                         0x80, 0x2,
-      /* mpc */         0x0, 0x2, 0x0, 0x1,
-      /* num */         0x4,
-      /* tuples */      0x40, 0x3,
+      /* mpc */		0x0, 0x2, 0x0, 0x1,
+      /* num */		0x4,
+      /* tuples */	0x40, 0x3,
                         0x80, 0x1,
                         0x80, 0x2,
-      /* mpc */         0x0, 0x2, 0x0, 0x2,
-      /* num */         0x3,
-      /* tuples */      0x40, 0x3,
+      /* mpc */		0x0, 0x2, 0x0, 0x2,
+      /* num */		0x3,
+      /* tuples */	0x40, 0x3,
                         0x80, 0x1,
                         0x80, 0x2,
     },
@@ -245,20 +243,20 @@ static struct test_segment misc_segments[] =
   /* 18 */
   { "ORFno",
     "ORF, multi entry/tuple, entry number too short",
-    { /* hdr */         0x3, 0x21,
-      /* mpc */         0x0, 0x1, 0x0, 0x1,
-      /* num */         0x3,
-      /* tuples */      0x40, 0x3,
+    { /* hdr */		0x3, 0x21,
+      /* mpc */		0x0, 0x1, 0x0, 0x1,
+      /* num */		0x3,
+      /* tuples */	0x40, 0x3,
                         0x80, 0x1,
                         0x80, 0x2,
-      /* mpc */         0x0, 0x2, 0x0, 0x1,
-      /* num */         0x1,
-      /* tuples */      0x40, 0x3,
+      /* mpc */		0x0, 0x2, 0x0, 0x1,
+      /* num */		0x1,
+      /* tuples */	0x40, 0x3,
                         0x80, 0x1,
                         0x80, 0x2,
-      /* mpc */         0x0, 0x2, 0x0, 0x2,
-      /* num */         0x3,
-      /* tuples */      0x40, 0x3,
+      /* mpc */		0x0, 0x2, 0x0, 0x2,
+      /* num */		0x3,
+      /* tuples */	0x40, 0x3,
                         0x80, 0x1,
                         0x80, 0x2,
     },
@@ -267,20 +265,20 @@ static struct test_segment misc_segments[] =
   /* 17 */
   { "ORFpad",
     "ORF, multi entry/tuple, padded to align",
-    { /* hdr */         0x3, 0x22,
-      /* mpc */         0x0, 0x1, 0x0, 0x1,
-      /* num */         0x3,
-      /* tuples */      0x40, 0x3,
+    { /* hdr */		0x3, 0x22,
+      /* mpc */		0x0, 0x1, 0x0, 0x1,
+      /* num */		0x3,
+      /* tuples */	0x40, 0x3,
                         0x80, 0x1,
                         0x80, 0x2,
-      /* mpc */         0x0, 0x2, 0x0, 0x1,
-      /* num */         0x3,
-      /* tuples */      0x40, 0x3,
+      /* mpc */		0x0, 0x2, 0x0, 0x1,
+      /* num */		0x3,
+      /* tuples */	0x40, 0x3,
                         0x80, 0x1,
                         0x80, 0x2,
-      /* mpc */         0x0, 0x2, 0x0, 0x2,
-      /* num */         0x3,
-      /* tuples */      0x40, 0x3,
+      /* mpc */		0x0, 0x2, 0x0, 0x2,
+      /* num */		0x3,
+      /* tuples */	0x40, 0x3,
                         0x80, 0x1,
                         0x80, 0x2,
                         0x00,
@@ -296,102 +294,102 @@ static struct test_segment misc_segments[] =
   /* 20 */
   { "GR",
     "GR capability",
-    { /* hdr */         CAPABILITY_CODE_RESTART, 0xe,
-      /* R-bit, time */ 0xf1, 0x12,
-      /* afi */         0x0, 0x1,
-      /* safi */        0x1,
-      /* flags */       0xf,
-      /* afi */         0x0, 0x2,
-      /* safi */        0x1,
-      /* flags */       0x0,
-      /* afi */         0x0, 0x2,
-      /* safi */        0x2,
-      /* flags */       0x1,
+    { /* hdr */		BGP_CAN_G_RESTART, 0xe,
+      /* R-bit, time */	0xf1, 0x12,
+      /* afi */		0x0, 0x1,
+      /* safi */	0x1,
+      /* flags */	0xf,
+      /* afi */		0x0, 0x2,
+      /* safi */	0x1,
+      /* flags */	0x0,
+      /* afi */		0x0, 0x2,
+      /* safi */	0x2,
+      /* flags */	0x1,
     },
     16, SHOULD_PARSE,
   },
   /* 21 */
   { "GR-short",
     "GR capability, but header length too short",
-    { /* hdr */         0x40, 0xa,
-      /* R-bit, time */ 0xf1, 0x12,
-      /* afi */         0x0, 0x1,
-      /* safi */        0x1,
-      /* flags */       0xf,
-      /* afi */         0x0, 0x2,
-      /* safi */        0x1,
-      /* flags */       0x0,
-      /* afi */         0x0, 0x2,
-      /* safi */        0x2,
-      /* flags */       0x1,
+    { /* hdr */		0x40, 0xa,
+      /* R-bit, time */	0xf1, 0x12,
+      /* afi */		0x0, 0x1,
+      /* safi */	0x1,
+      /* flags */	0xf,
+      /* afi */		0x0, 0x2,
+      /* safi */	0x1,
+      /* flags */	0x0,
+      /* afi */		0x0, 0x2,
+      /* safi */	0x2,
+      /* flags */	0x1,
     },
     16, SHOULD_PARSE,
   },
   /* 22 */
   { "GR-long",
     "GR capability, but header length too long",
-    { /* hdr */         0x40, 0xf,
-      /* R-bit, time */ 0xf1, 0x12,
-      /* afi */         0x0, 0x1,
-      /* safi */        0x1,
-      /* flags */       0xf,
-      /* afi */         0x0, 0x2,
-      /* safi */        0x1,
-      /* flags */       0x0,
-      /* afi */         0x0, 0x2,
-      /* safi */        0x2,
+    { /* hdr */		0x40, 0xf,
+      /* R-bit, time */	0xf1, 0x12,
+      /* afi */		0x0, 0x1,
+      /* safi */	0x1,
+      /* flags */	0xf,
+      /* afi */		0x0, 0x2,
+      /* safi */	0x1,
+      /* flags */	0x0,
+      /* afi */		0x0, 0x2,
+      /* safi */	0x2,
     },
     16, SHOULD_ERR,
   },
   { "GR-trunc",
     "GR capability, but truncated",
-    { /* hdr */         0x40, 0xf,
-      /* R-bit, time */ 0xf1, 0x12,
-      /* afi */         0x0, 0x1,
-      /* safi */        0x1,
-      /* flags */       0xf,
-      /* afi */         0x0, 0x2,
-      /* safi */        0x1,
-      /* flags */       0x0,
-      /* afi */         0x0, 0x2,
-      /* safi */        0x2,
-      /* flags */       0x1,
+    { /* hdr */		0x40, 0xf,
+      /* R-bit, time */	0xf1, 0x12,
+      /* afi */		0x0, 0x1,
+      /* safi */	0x1,
+      /* flags */	0xf,
+      /* afi */		0x0, 0x2,
+      /* safi */	0x1,
+      /* flags */	0x0,
+      /* afi */		0x0, 0x2,
+      /* safi */	0x2,
+      /* flags */	0x1,
     },
     15, SHOULD_ERR,
   },
   { "GR-empty",
     "GR capability, but empty.",
-    { /* hdr */         0x40, 0x0,
+    { /* hdr */		0x40, 0x0,
     },
     2, SHOULD_ERR,
   },
   { "MP-empty",
     "MP capability, but empty.",
-    { /* hdr */         0x1, 0x0,
+    { /* hdr */		0x1, 0x0,
     },
     2, SHOULD_ERR,
   },
   { "ORF-empty",
     "ORF capability, but empty.",
-    { /* hdr */         0x3, 0x0,
+    { /* hdr */		0x3, 0x0,
     },
     2, SHOULD_ERR,
   },
   { "AS4-empty",
     "AS4 capability, but empty.",
-    { /* hdr */         0x41, 0x0,
+    { /* hdr */		0x41, 0x0,
     },
     2, SHOULD_ERR,
   },
   { "dyn-empty",
     "Dynamic capability, but empty.",
-    { /* hdr */         0x42, 0x0,
+    { /* hdr */		0x42, 0x0,
     },
     2, SHOULD_PARSE,
   },
   { "dyn-old",
     "Dynamic capability (deprecated version)",
-    { CAPABILITY_CODE_DYNAMIC, 0x0 },
+    { BGP_CAN_DYNAMIC_CAP_dep, 0x0 },
     2, SHOULD_PARSE,
   },
   { NULL, NULL, {0}, 0, 0}
@@ -520,14 +518,14 @@ parse_test (struct peer *peer, struct test_segment *t, int type)
   switch (type)
     {
       case CAPABILITY:
-        stream_putc (peer->ibuf, BGP_OPEN_OPT_CAP);
+        stream_putc (peer->ibuf, BGP_OPT_CAPS);
         stream_putc (peer->ibuf, t->len);
         break;
       case DYNCAP:
-/*        for (i = 0; i < BGP_MARKER_SIZE; i++)
+/*        for (i = 0; i < BGP_MH_MARKER_L; i++)
           stream_putc (peer->, 0xff);
         stream_putw (s, 0);
-        stream_putc (s, BGP_MSG_CAPABILITY);*/
+        stream_putc (s, BGP_MT_CAPABILITY);*/
         break;
       default:
         break ;
@@ -562,20 +560,20 @@ parse_test (struct peer *peer, struct test_segment *t, int type)
     {
       safi_t safi = t->safi;
 
-      if (bgp_afi_safi_valid_indices (t->afi, &safi) != t->afi_valid)
+      if (bgp_afi_safi_valid_indices (t->afi, safi) != t->afi_valid)
         failed++;
 
       printf ("MP: %u/%u (%u): recv %u, nego %u\n",
               t->afi, t->safi, safi,
-              peer->afc_recv[t->afi][safi],
-              peer->afc_nego[t->afi][safi]);
+              peer->af_rcv[qafx_from_i(t->afi, safi)],
+              peer->af_use[qafx_from_i(t->afi, safi)]);
 
       if (t->afi_valid == VALID_AFI)
         {
 
-          if (!peer->afc_recv[t->afi][safi])
+          if (!peer->af_rcv[qafx_from_i(t->afi, safi)])
             failed++;
-          if (!peer->afc_nego[t->afi][safi])
+          if (!peer->af_use[qafx_from_i(t->afi, safi)])
             failed++;
         }
     }
@@ -605,6 +603,8 @@ parse_test (struct peer *peer, struct test_segment *t, int type)
 
 static struct bgp *bgp;
 static as_t asn = 100;
+
+static struct peer * peer_create_accept (struct bgp *bgp) ;
 
 int
 main (int argc, char **argv)
@@ -640,8 +640,8 @@ main (int argc, char **argv)
   for (i = AFI_IP; i < AFI_MAX; i++)
     for (j = SAFI_UNICAST; j < SAFI_MAX; j++)
       {
-        peer->afc[i][j] = 1;
-        peer->afc_adv[i][j] = 1;
+        peer->afc[qafx_from_i(i,j)] = 1;
+        peer->af_adv[qafx_from_i(i,j)] = 1;
       }
 
   i = 0;
@@ -649,7 +649,7 @@ main (int argc, char **argv)
     parse_test (peer, &mp_segments[i++], CAPABILITY);
 
   /* These tests assume mp_segments tests set at least
-   * one of the afc_nego's
+   * one of the af_use's
    */
   i = 0;
   while (test_segments[i].name)
@@ -663,8 +663,8 @@ main (int argc, char **argv)
   while (opt_params[i].name)
     parse_test (peer, &opt_params[i++], OPT_PARAM);
 
-  SET_FLAG (peer->cap, PEER_CAP_DYNAMIC_ADV);
-  peer->state = bgp_peer_pEstablished;
+  peer->caps_adv |= PEER_CAP_DYNAMIC ;
+  peer->state = bgp_pEstablished;
 
   i = 0;
   while (dynamic_cap_msgs[i].name)
@@ -673,3 +673,22 @@ main (int argc, char **argv)
   printf ("failures: %d\n", failed);
   return failed;
 }
+
+/*------------------------------------------------------------------------------
+ * Make accept BGP peer... used in test programs...  TODO
+ */
+struct peer *
+peer_create_accept (struct bgp *bgp)
+{
+  struct peer *peer;
+
+  peer = bgp_peer_new (bgp, PEER_TYPE_REAL);
+
+  peer = bgp_peer_lock (peer); /* bgp peer list reference */
+  listnode_add_sort (bgp->peer, peer);
+
+  return peer;
+}
+
+
+

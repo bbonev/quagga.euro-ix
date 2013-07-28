@@ -24,6 +24,7 @@
 
 #include <netinet/in.h>
 #include <pwd.h>
+#include <netdb.h>
 
 #include "qstring.h"
 #include "qfstring.h"
@@ -47,11 +48,15 @@ extern const char * safe_strerror(int errnum);
 extern const char * safe_inet_ntoa (struct in_addr in);
 
 extern str_iptoa_t siptoa(sa_family_t family, const void* address) ;
+extern str_iptoa_t sipv4toa(in_addr_t addr) ;
 
 extern int safe_getpwnam(const char* name, struct passwd** p_pwd, void* buf,
                                                                      ulen size);
 extern int safe_getpwuid(uid_t id, struct passwd** p_pwd, void* buf, ulen size);
 
 extern qstring qcrypt(const char* text, const char* salt) ;
+
+extern uint16_t safe_get_port(const char* port_str, const char* proto) ;
+extern struct servent* safe_getservbyname(const char* name, const char* proto) ;
 
 #endif /* PTHREAD_SAFE_H_ */

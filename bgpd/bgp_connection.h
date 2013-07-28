@@ -33,140 +33,12 @@
 #include "lib/stream.h"
 
 #include "bgpd/bgp_common.h"
-#include "bgpd/bgp_session.h"
+#include "bgpd/bgp_fsm.h"
 #include "bgpd/bgp_open_state.h"
 #include "bgpd/bgp_notification.h"
 #include "bgpd/bgp_msg_read.h"
-
-/*==============================================================================
- * The BGP Finite State Machine: states and events
- *
- */
-
-typedef enum bgp_fsm_states bgp_fsm_state_t ;
-enum bgp_fsm_states
-{
-  bgp_fsm_first_state     = 0,
-
-  bgp_fsm_sInitial        = 0,  /* extra: connection initialised            */
-
-  bgp_fsm_sIdle           = 1,  /* waiting for Idle Hold time               */
-  bgp_fsm_sConnect        = 2,  /* waiting for connect (may be listening)   */
-  bgp_fsm_sActive         = 3,  /* listening only                           */
-  bgp_fsm_sOpenSent       = 4,  /* sent Open -- awaits Open                 */
-  bgp_fsm_sOpenConfirm    = 5,  /* sent & received Open -- awaits keepalive */
-  bgp_fsm_sEstablished    = 6,  /* running connection                       */
-
-  bgp_fsm_sStopping       = 7,  /* extra: connection shutting down          */
-
-  bgp_fsm_last_state      = 7,
-} ;
-
-typedef enum bgp_fsm_events bgp_fsm_event_t ;
-enum bgp_fsm_events
-{
-  bgp_fsm_null_event                      =  0,
-
-  bgp_fsm_eBGP_Start                      =  1,
-  bgp_fsm_eBGP_Stop                       =  2,
-  bgp_fsm_eTCP_connection_open            =  3,
-  bgp_fsm_eTCP_connection_closed          =  4,
-  bgp_fsm_eTCP_connection_open_failed     =  5,
-  bgp_fsm_eTCP_fatal_error                =  6,
-  bgp_fsm_eConnectRetry_timer_expired     =  7,
-  bgp_fsm_eHold_Timer_expired             =  8,
-  bgp_fsm_eKeepAlive_timer_expired        =  9,
-  bgp_fsm_eReceive_OPEN_message           = 10,
-  bgp_fsm_eReceive_KEEPALIVE_message      = 11,
-  bgp_fsm_eReceive_UPDATE_message         = 12,
-  bgp_fsm_eReceive_NOTIFICATION_message   = 13,
-  bgp_fsm_eSent_NOTIFICATION_message      = 14,
-
-  bgp_fsm_last_event                      = 15,
-} ;
-
-enum bgp_fsm_events_4271
-{
-  bgp_fsm2_eNULL                          =  0,
-
-  /* 8.1.2 Administrative Events
-   */
-  bgp_fsm2_eManualStart                   =  1,
-  bgp_fsm2_eManualStop                    =  2,
-  bgp_fsm2_eAutomaticStart                =  3,
-  bgp_fsm2_eManualStart_with_Passive      =  4,
-  bgp_fsm2_eAutomaticStart_with_Passive   =  5,
-  bgp_fsm2_eAutomaticStart_with_Damp      =  6,
-  bgp_fsm2_eAutomaticStart_with_Damp_and_Passive   =  7,
-  bgp_fsm2_eAutomaticStop                 =  8,
-
-  /* 8.1.3 Timer Events
-   */
-  bgp_fsm2_eConnectRetryTimer_Expires     =  9,
-  bgp_fsm2_eHoldTimer_Expires             = 10,
-  bgp_fsm2_eKeepaliveTimer_Expires        = 11,
-  bgp_fsm2_eDelayOpenTimer_Expires        = 12,
-  bgp_fsm2_eIdleHoldTimer_Expires         = 13,
-
-  /* 8.1.4 TCP Connection-Based Events
-   */
-  bgp_fsm2_eTcpConnection_Valid           = 14,
-  bgp_fsm2_eTcp_CR_Invalid                = 15,
-  bgp_fsm2_eTcp_CR_Acked                  = 16,
-  bgp_fsm2_eTcpConnectionConfirmed        = 17,
-  bgp_fsm2_eTcpConnectionFails            = 18,
-
-  /* 8.1.5 BGP Message-Based Events
-   */
-  bgp_fsm2_eBGPOpen                       = 19,
-  bgp_fsm2_eBGPOpen_with_DelayOpenTimer   = 20,
-  bgp_fsm2_eBGPHeaderErr                  = 21,
-  bgp_fsm2_eBGPOpenMsgErr                 = 22,
-  bgp_fsm2_eOpenCollisionDump             = 23,
-  bgp_fsm2_eNotifyMsgVerErr               = 24,
-  bgp_fsm2_eMotifyMsg                     = 25,
-  bgp_fsm2_eKeepAliveMsg                  = 26,
-  bgp_fsm2_eUpdateMsg                     = 27,
-  bgp_fsm2_eUpdareMsgErr                  = 28,
-
-  /* Number of events -- including the eNULL
-   */
-  bgp_fsm2_event_count                    = 29,
-} ;
-
-/*==============================================================================
- * BGP Connection Structures
- *
- *------------------------------------------------------------------------------
- * Write buffer for connection.
- *
- *  NB: when connection is initialised all the pointers are set NULL.
- *
- *      The buffer is not allocated until the TCP connection comes up.
- *
- *  NB: p_out == p_in => buffer is empty
- *
- *      BUT: p_out == limit => buffer is not writable.
- *
- *      When connection is first initialised all pointers are NULL, so the
- *      buffer is "empty but not writable".
- *
- *      When connection is opened, closed or fails, buffer is set into this
- *      "empty but not writable" state.
- */
-typedef struct bgp_wbuffer* bgp_wbuffer ;
-typedef struct bgp_wbuffer  bgp_wbuffer_t ;
-struct bgp_wbuffer
-{
-  uint8_t*    p_out ;
-  uint8_t*    p_in ;
-
-  uint8_t*    base ;
-  uint8_t*    limit ;
-} ;
-
-/* Buffer is allocated for a number of maximum size BGP messages.       */
-enum { bgp_wbuff_size = BGP_MSG_MAX_L * 10 } ;
+#include "bgpd/bgp_msg_write.h"
+#include "bgpd/bgp_route_refresh.h"
 
 /*==============================================================================
  * BGP Connection Options Structure
@@ -174,37 +46,81 @@ enum { bgp_wbuff_size = BGP_MSG_MAX_L * 10 } ;
  * This is a discrete structure so that the accept() handling can handle these
  * things without requiring the complete bgp_connection or bgp_session !
  */
+typedef struct bgp_connection_options bgp_connection_options_t ;
+
 struct bgp_connection_options
 {
+  /* For configuration options:
+   *
+   *   su_remote    = peer->su_name      -- used by connect() and listen()
+   *   su_local     = peer->ifaddress    -- used by connect()
+   *
+   * For connections once connect() or accept()
+   *
+   *   su_remote    = getpeername()
+   *   su_local     = getsockname()
+   *
+   * NB: these are embedded, so can be copied around etc. without fuss.
+   */
+  sockunion_t su_remote ;
+  sockunion_t su_local ;
+
+  /* The port to be used or currently in use.
+   */
+  in_port_t port ;
+
   /* Flags indicating whether to allow inbound and/or outbound connections.
    */
-  bool  accept ;
-  bool  connect ;
+  bool      accept ;
+  bool      connect ;
+
+  /* Flag so can suppress sending NOTIFICATION messages without first
+   * sending an OPEN -- just in case, but default is to not send !
+   */
+  bool      can_notify_before_open ;
+
+  /* Timer intervals for pre-OPEN timers.
+   */
+  uint       connect_retry_secs ;
+  uint       accept_retry_secs ;
+  uint       open_hold_secs ;
 
   /* Both connect() and accept() will attempt to set the required ttl/gtsm
    *
-   * The gtsm_set flag reflects what has happened.
-   */
-  int   ttl_req ;               /* TTL to set, if not zero        */
-  bool  gtsm_req ;              /* ttl set by ttl-security        */
-
-  bool  gtsm_set ;              /* minttl has been set            */
-
-  /* Both connect() and accept() will apply MD5 password to connections.
+   * The ttl and gtsm are configuration options, which are unchanged by
+   * attempts to set them.
    *
-   * If the accept flag is true, then the password is set for the peer's
-   * address in all listeners.
+   * ttl_out and ttl_min are set when a connection is actually made, and
+   * reflect what was possible at the time.  They default to TTL_MAX and
+   * 0 respectively.
    *
-   * For connect() the password is set when the outbpund connection is
-   * set up.
+   * If gtsm is true, then ttl_min == 0 => either GTSM not yet set, or
+   * failed to set it when we tried.  When gtsm is true, ttl_out is set to
+   * TTL_MAX, whether succeeds in setting GTSM or not.
+   *
+   * NB: if gtsm is requested, the ttl is the maximum number of hops to/from
+   *     the remote end.  The ttl set on outgoing packets will be 0xFF.  The
+   *     maximum allowed incoming ttl will be 0xFF less the nominal ttl.
    */
-  char* password ;              /* copy of MD5 password           */
+  ttl_t     ttl ;               /* 1..TTL_MAX                           */
+  bool      gtsm ;              /* set GTSM if possible                 */
+
+  ttl_t     ttl_out ;           /* actual value set                     */
+  ttl_t     ttl_min ;           /* actual min_ttl -- 0 <=> not GTSM     */
+
+  /* Both connect() and listen() will apply MD5 password to connections.
+   *
+   * NB: this is embedded, so can be copied around etc. without fuss.
+   */
+  bgp_password_t password ;     /* copy of MD5 password                 */
 
   /* Only connect() worries about these.
+   *
+   * NB: the interface name is embedded, so can be copied around etc. without
+   *     fuss.
    */
-  char* ifname ;                /* interface to bind to, if any   */
-  uint  ifindex ;               /* and its index, if any          */
-  sockunion  ifaddress ;        /* address to bind to, if any     */
+  bgp_ifname_t ifname ;         /* interface to bind to, if any         */
+  uint         ifindex ;        /* and its index, if any                */
 } ;
 
 /*==============================================================================
@@ -215,241 +131,331 @@ struct bgp_connection_options
  * When a session terminates, or a connection is shut it may have a short
  * independent life, if a NOTIFICATION message is pending.
  */
+
+enum
+{
+  IO_Hold_Time          = 5,            /* seconds      */
+  Extension_Hold_Time   = 5,            /* seconds      */
+
+  Open_Hold_Time        = 4 * 60,       /* seconds      */
+
+  /* Sizes for: read ring-buffer -- which currently carries raw UPDATEs
+   */
+  bgp_read_rb_size  =  32 * BGP_MSG_MAX_L,      /* 128K         */
+  bgp_write_rb_size =  32 * BGP_MSG_MAX_L,      /* 128K         */
+} ;
+
+CONFIRM(BGP_MSG_MAX_L == 4096) ;        /* if not, reconsider the above */
+
+/*------------------------------------------------------------------------------
+ * The Connection Structure
+ */
 struct bgp_connection
 {
   struct dl_list_pair(bgp_connection) exist ;
-                                        /* list of existing connections   */
+                                        /* existing connections         */
 
-  bgp_session       session ;           /* session connection belongs to  */
-                                        /* NULL if connection stopping    */
-  qpt_mutex         p_mutex ;           /* session mutex*                 */
-                                        /* (avoids incomplete type issue) */
-  unsigned          lock_count ;        /* session mutex lock count       */
+  bgp_session       session ;           /* parent session
+                                         * NULL if connection stopping  */
 
-  bgp_connection_ord_t ordinal ;        /* primary/secondary connection   */
-  bool              accepted ;          /* came via accept()              */
+  bgp_connection_ord_t ordinal ;        /* accept/connect connection    */
+  bgp_connection_logging_t lox ;        /* how to log                   */
 
-  bgp_fsm_state_t   state ;             /* FSM state of connection        */
-  bool              comatose ;          /* Idle and no timer set          */
-  bool              half_open ;         /* Idle but accepted connection   */
+  /* The event state
+   */
+  struct dl_list_pair(bgp_connection) event_ring ;
+                                        /* connections with events      */
+  bgp_fsm_meta_t    meta_events ;
 
-  bgp_connection    next ;              /* for the connection queue       */
-  bgp_connection    prev ;              /* NULL <=> not on the queue      */
+  bgp_fsm_event_t   admin_event ;
+  bgp_notify        admin_notif ;
 
-  int               fsm_active ;        /* active in FSM counter          */
-  bgp_fsm_event_t   follow_on ;         /* event raised within FSM        */
+  bgp_fsm_event_t   socket_event ;
+  int               socket_err ;
 
-  bgp_session_event_t exception;        /* exception posted here          */
-  bgp_notify        notification ;      /* if any sent/received           */
-  int               err ;               /* erno, if any                   */
+  /* The finite state machine state of the connection, and its sub-state
+   * flags.
+   */
+  bgp_fsm_state_t   fsm_state ;         /* FSM state of connection      */
+  qfile_state_t     io_state ;          /* I/O state of connection      */
 
-  bool              cap_suppress ;      /* capability send suppress
-                                           always set false when connection
-                                           initialised.  Set if get
-                                           NOTIFICATION that other end does
-                                           not do capabilities.  Copied to
-                                           session when established.      */
+  bgp_idle_state_t  idling_state ;      /* in fsIdle and fsStop         */
+  qtime_t           idle_time_pending ; /* after Notification-Hold-Time */
 
-  bgp_open_state    open_recv ;         /* the open received.             */
+  bool              holdtimer_suppressed ;      /* fsOpenConfirm and
+                                                 * fsEstablished        */
 
-  qps_file          qf ;                /* qpselect file structure        */
-  bool              gtsm ;              /* minttl has been set            */
+  bool              delaying_open ;     /* fsConnect or fsActive and
+                                         * DelayOpenTimer running       */
 
-  union sockunion*  su_local ;          /* address of the near end        */
-  union sockunion*  su_remote ;         /* address of the far end         */
+  /* The qfile and the connection options for this connection.
+   *
+   * For connect() the qf is set when the connect() starts, successfully.
+   * The cops are copied from the session at the point the connect() is
+   * started.  They are updated when the connect() succeeds.
+   *
+   * For accept() the qf is co-opted from the acceptor, and the cops are
+   * copied from the acceptor at the same time.
+   *
+   * So connection only holds the effective cops.  The session holds the
+   * cops_config.
+   */
+  qfile             qf ;                /* qpselect file structure      */
+  bgp_connection_options cops ;         /* connection options in force  */
 
-  char*             host ;              /* peer "name" + Connect/Listen   */
-  struct zlog*      log ;               /* where to log to                */
+  /* The opens as sent and received and stuff.
+   *
+   *   * open_sent/open_recv are not set until actually sends/receives OPEN.
+   *
+   *   * local_id and remote_as are set when the connection is created, so
+   *     that are on hand if OPEN is received (even if connection no longer
+   *     attached to session !!)
+   */
+  bgp_open_state    open_sent ;         /* the open as sent             */
+  bgp_open_state    open_recv ;         /* the open received.           */
 
-  qtime_t   hold_timer_interval ;       /* subject to negotiation         */
-  qtime_t   keepalive_timer_interval ;  /* subject to negotiation         */
+  in_addr_t         local_id ;          /* BGP-Id here                  */
+  as_t              remote_as ;         /* ASN of the peer              */
 
-  bool              as4 ;               /* subject to negotiation         */
-  bgp_form_t        route_refresh ;     /* subject to negotiation         */
-  bgp_form_t        orf_prefix ;        /* subject to negotiation         */
+  /* Properties of a connection while we are trying to make one.
+   *
+   *   * cap_suppress starts false, but if at any time the far end rejects
+   *     Capability Option, we set this true and try again.  If we succeed
+   *     in getting to OpenConfirm, but then reject the OPEN, we clear the
+   *     flag before going back to sIdle.
+   *
+   *     So... if suppressing capabilities doesn't do the job, will keep
+   *     trying, with and without capabilities, until get something.
+   *
+   *   * idle_hold_timer_interval is set whne the session is enabled.
+   *
+   *     Each time passes through sIdle after a failure, increases this.
+   */
+  bool              cap_suppress ;
+  qtime_t           idle_hold_timer_interval ;
 
-  qtimer            hold_timer ;
-  qtimer            keepalive_timer ;
+  /* Timer objects.
+   */
+  bgp_fsm_timer_t   hold_timer[1] ;
+  bgp_fsm_timer_t   keepalive_timer[1] ;
 
-  struct stream*    ibuf ;              /* a single input "stream"        */
-  unsigned          read_pending ;      /* how much input waiting for     */
+  /* Reader I/O for the connection.
+   *
+   * The ring-buffer belongs to the session, and this pointer to it is
+   * set while the session is fsEstablished.  When a session falls out of
+   * fsEstablished the connection loses interest, removes anything it needs
+   * from the ring-buffer and forgets about it.  The Routeing Engine will
+   * discard the ring-buffer when it sees the session stop.
+   */
+  bgp_msg_reader    reader ;            /* reading of messages          */
+  ring_buffer       read_rb ;           /* ring buffer to read into     */
 
-  bool              read_header ;       /* reading message header         */
-  uint8_t           msg_type ;          /* copy of message type           */
-  bgp_size_t        msg_body_size ;     /* size of message *body*         */
-  bgp_msg_handler*  msg_func ;          /* function to handle message     */
+  /* Writer I/O for the connection.
+   *
+   * The ring-buffer belongs to the session, and this pointer to it is
+   * set while the session is established.  When a session falls out of
+   * fsEstablished the connection loses interest, removes anything it needs
+   * from the ring-buffer and forgets about it.  The Routeing Engine will
+   * discard the ring-buffer when it sees the session stop.
+   */
+  bgp_msg_writer    writer ;            /* writing of messages          */
+  ring_buffer       write_rb ;          /* ring buffer to write from    */
+} ;
 
-  struct stream*    obuf ;              /* a single output "stream"       */
+/*==============================================================================
+ * Accepting connections object
+ */
+typedef enum bgp_accept_state bgp_accept_state_t ;
 
-  int          notification_pending ;   /* waiting to write NOTIFICATION  */
+enum bgp_accept_state
+{
+  bacs_unset   = 0,     /* not yet set or has been unset                */
 
-  mqueue_local_queue_t
-                    pending_queue ;     /* pending write messages         */
+  bacs_idle,            /* waiting after session established            */
+  bacs_listening,       /* waiting for connection                       */
+  bacs_paused,          /* waiting before starting to read              */
+  bacs_open_awaited,    /* told FSM (if any), waiting for an OPEN       */
+  bacs_open_received,   /* OPEN has arrived                             */
+  bacs_busted,          /* something, incomplete, before/after OPEN     */
+} ;
 
-  bgp_wbuffer_t     wbuff[1] ;          /* write buffer                   */
+typedef enum bgp_accept_pending bgp_accept_pending_t ;
+
+enum bgp_accept_pending
+{
+  bacp_none   = 0,      /* nothing pending                              */
+
+  bacp_close,           /* waiting to close a connection                */
+  bacp_open,            /* waiting for complete opening one             */
+} ;
+
+typedef struct bgp_acceptor bgp_acceptor_t ;
+
+struct bgp_acceptor
+{
+  bgp_session        session ;          /* to which the acceptor belongs  */
+  bgp_connection_logging_t lox ;        /* how to log                   */
+
+  /* The state:
+   *
+   *   * bacs_unset        => not configured
+   *
+   *     This is the state before an acceptor is fully initialised, or while
+   *     it is being closed down.
+   *
+   *   * bacs_idle         => an outgoing connection reached fsEstablished,
+   *                          the acceptor at the time will have been closed,
+   *                          but placed in this state so that incoming
+   *                          connections are "blanked" for a while.
+   *
+   *     There may be a pending close if we have seen an incoming connection
+   *     while idle.
+   *
+   *     There is no current connection and no pending open.
+   *
+   *     On an incoming connection (don't care if it's acceptable or not):
+   *
+   *       if there is a previous close pending, close it now.
+   *       set close_pending (Collision Resolution), LEAVING the timer.
+   *
+   *     Timer running, when it expires: if there is a close pending, deal with
+   *     it, then change to bacs_listening.
+   *
+   *   * bacs_listening    => ready for accept() -- no current connection.
+   *
+   *     NB: if configured to not actually accept, will reject connections
+   *         at this point.
+   *
+   *         The peer, session and acceptor all exist while the peer is
+   *         configured.  When the peer/session is shut-down will be set to not
+   *         accept connections.  When the peer/session is disabled, will
+   *         accept connections and hold on to them.  A peer/session may be
+   *         enabled, but configured not to accept, in which case, will reject
+   *         here.
+   *
+   *     There is no current connection and no pending close or open, and
+   *     no timer is running.
+   *
+   *     On an incoming connection, if it is acceptable, change up to
+   *     bacs_open_awaited, and:
+   *
+   *         set the current connection
+   *         set read-ready
+   *         set timer to AcceptRetryTime
+   *         tell FSM (if any) that an accept() connection has been accepted.
+   *
+   *     If not acceptable, reject the connection (immediately) and then go to
+   *     bacs_paused with a time-out -- so the first not acceptable is
+   *     responded to instantly, but any further connections will be subject
+   *     to a short delay.
+   *
+   *   * bacs_paused       => delaying things...
+   *                          ... may have a pending close or a pending open
+   *                              (but not both) and may be neither.
+   *
+   *     Timer running -- balance of pause.
+   *
+   *     On an incoming connection:
+   *
+   *       If there is a pending close, complete it now.
+   *
+   *       If there is a pending open, reject it now.
+   *
+   *       If connection is acceptable, set pending open.
+   *       Otherwise, set pending close.
+   *
+   *     On time-out:
+   *
+   *       If there is a pending close, complete it, and go bacs_listening.
+   *
+   *       If there is a pending open, go to bacs_open_awaited, as above.
+   *
+   *       Otherwise, go bacs_listening.
+   *
+   *   * bacs_open_awaited    => have a connection up, in various states of
+   *   * bacs_open_received      completion of the process
+   *   * bacs_busted
+   *
+   *     Timer running -- the AcceptRetryTime, or a short time if bacs_busted.
+   *
+   *     Cannot have a close pending or an open pending.
+   *
+   *     If fails, if failed on an incomplete message, reset the timer to
+   *     a short wait for the message to complete and change to bacs_busted.
+   *     On all other failures, set a pending close (with timer) and fall back
+   *     to bacs_paused.
+   *
+   *     On an incoming connection, close immediately, and:
+   *
+   *       If acceptable, set pending open and go bacs_paused with a time-out.
+   *
+   *       If not acceptable, set pending close with a time-out.
+   *
+   *     On time-out, close immediately and fall back to bacs_listening.
+   */
+  bgp_accept_state_t state ;
+
+  int           sock_fd_pending ;
+  bgp_accept_pending_t  pending ;
+  bgp_notify    notification ;
+
+  bgp_connection_options cops ;
+
+  qfile          qf ;
+  bgp_msg_reader reader ;
+
+  bool          open_received ;
+  bool          timer_running ;
+
+  qtimer        timer ;
 } ;
 
 /*==============================================================================
  * The functions
  */
+extern void bgp_connections_init(void) ;
+extern void bgp_connections_stop(void) ;
 
 extern bgp_connection bgp_connection_init_new(bgp_connection connection,
                             bgp_session session, bgp_connection_ord_t ordinal) ;
-extern void bgp_connection_open(bgp_connection connection, int sock_fd) ;
-extern void bgp_connection_start(bgp_connection connection, sockunion su_local,
-                                                          sockunion su_remote) ;
-extern void bgp_connection_enable_accept(bgp_connection connection) ;
-extern void bgp_connection_disable_accept(bgp_connection connection) ;
-extern bgp_connection bgp_connection_query_accept(bgp_session session) ;
+extern void bgp_connection_free(bgp_connection connection) ;
+extern bgp_connection_options bgp_connection_prepare(
+                                                    bgp_connection connection) ;
+extern qfile bgp_connection_connecting(bgp_connection connection, int sock_fd) ;
+extern bool bgp_connection_io_start(bgp_connection connection) ;
+
+extern bgp_notify bgp_connection_establish(bgp_connection connection) ;
 extern bgp_connection bgp_connection_get_sibling(bgp_connection connection) ;
-extern void bgp_connection_make_primary(bgp_connection connection) ;
-extern void bgp_connection_close(bgp_connection connection, bool keep_timers) ;
-extern bool bgp_connection_part_close(bgp_connection connection) ;
-extern void bgp_connection_exit(bgp_connection connection) ;
-extern void bgp_connection_read_enable(bgp_connection connection) ;
-extern int bgp_connection_write(bgp_connection connection, struct stream* s) ;
-extern void bgp_connection_queue_add(bgp_connection connection) ;
-extern void bgp_connection_queue_del(bgp_connection connection) ;
+extern void bgp_connection_down(bgp_connection connection) ;
+extern void bgp_connection_shut_rd(bgp_connection connection) ;
+extern void bgp_connection_shut_wr(bgp_connection connection) ;
+
+
 extern int bgp_connection_queue_process(void) ;
 
-Inline bool
-bgp_connection_no_pending(bgp_connection connection, bgp_connection* is_pending)
-{
-  return (   (mqueue_local_head(&connection->pending_queue) == NULL)
-          || (*is_pending != NULL) ) ;
-} ;
 
-extern void bgp_connection_add_pending(bgp_connection connection,
-                                 mqueue_block mqb, bgp_connection* is_pending) ;
+extern bgp_acceptor bgp_acceptor_init_new(bgp_acceptor acceptor,
+                                                          bgp_session session) ;
+extern void bgp_acceptor_set_options(bgp_acceptor acceptor,
+                                            bgp_connection_options new_config) ;
+extern void bgp_acceptor_unset(bgp_acceptor acceptor) ;
+extern bgp_acceptor bgp_acceptor_free(bgp_acceptor acceptor) ;
+extern void bgp_acceptor_accept(bgp_acceptor acceptor, int sock_fd, bool ok,
+                                                          sockunion_c sock_su) ;
 
-/*------------------------------------------------------------------------------
- * Set buffer *unwritable* (buffer appears full, but nothing pending).
- */
-Inline void
-bgp_write_buffer_unwritable(bgp_wbuffer wb)
-{
-  wb->p_in = wb->p_out = wb->limit ;
-} ;
+extern bgp_fsm_event_t bgp_acceptor_state(bgp_acceptor acceptor) ;
+extern void bgp_acceptor_squelch(bgp_acceptor acceptor) ;
 
-/*------------------------------------------------------------------------------
- * If allocated:   set buffer empty
- * If unallocated: buffer remains *unwritable*
- */
-Inline void
-bgp_write_buffer_reset(bgp_wbuffer wb)
-{
-  wb->p_in = wb->p_out = wb->base ;
-} ;
 
-/*------------------------------------------------------------------------------
- * See if do NOT have enough room for what want to write PLUS 1.
- *
- * NB: there is never any room in an unallocated buffer.
- */
-Inline bool
-bgp_write_buffer_cannot(bgp_wbuffer wb, size_t want)
-{
-  return ((size_t)(wb->limit - wb->p_in) <= want) ;
-} ;
 
-/*------------------------------------------------------------------------------
- * Full if NOT enough room for a maximum size BGP message + 1
- *
- * NB: there is never any room in an unallocated buffer.
- */
-enum { bgp_write_buffer_full_threshold = BGP_MSG_MAX_L + 1 } ;
-
-Inline bool
-bgp_write_buffer_cannot_max(bgp_wbuffer wb)
-{
-  return bgp_write_buffer_cannot(wb, BGP_MSG_MAX_L) ;
-} ;
-
-/*------------------------------------------------------------------------------
- * See if buffer has anything in it.
- *
- * If empty, ensures that the buffer has been allocated, and sets the pointers
- * to the start of the buffer -- so all set to go.
- */
-Inline bool
-bgp_write_buffer_empty(bgp_wbuffer wb)
-{
-  if (wb->p_out < wb->p_in)
-    return false ;              /* not empty => has buffer      */
-
-  dassert(wb->p_out == wb->p_in) ;
-
-  passert(wb->base != NULL) ;   /* must have buffer             */
-
-  bgp_write_buffer_reset(wb) ;  /* pointers to start of buffer  */
-
-  return true ;                 /* empty and all ready to go    */
-} ;
-
-/*------------------------------------------------------------------------------
- * Return how much the write buffer still has to write.
- *
- * NB: if returns 0, may not yet have been allocated.
- *
- *     > 0 => allocated.
- */
-Inline int
-bgp_write_buffer_has(bgp_wbuffer wb)
-{
-  dassert(wb->p_out <= wb->p_in) ;
-  return (wb->p_in - wb->p_out) ;
-} ;
-
-/*------------------------------------------------------------------------------
- * As above, for connection
- */
-Inline bool
-bgp_connection_write_cannot_max(bgp_connection connection)
-{
-  return bgp_write_buffer_cannot_max(connection->wbuff) ;
-} ;
-
-/*------------------------------------------------------------------------------
- * As above, for connection
- */
-Inline bool
-bgp_connection_write_empty(bgp_connection connection)
-{
-  return bgp_write_buffer_empty(connection->wbuff) ;
-} ;
-
-/*==============================================================================
- * Locking the session associated with the connection.
- *
- * This is slightly complicated by the fact that when the connection is in
- * sStopping, it is no longer attached to the session.
- *
- * To facilitate that, the connection maintains its own "recursive" count, so
- * that when the connection is cut loose from the session, the session's mutex
- * can be released.
- *
- * Further -- when the connection is cut loose, a big number is added to the
- * count, so when the session is "unlocked" nothing will happen !
- *
- * Also -- this mechanism means that the session lock can be called even after
- * the connection has been cut loose, without requiring any other tests.
- */
-
-Inline void
-BGP_CONNECTION_SESSION_LOCK(bgp_connection connection)
-{
-  if (connection->lock_count++ == 0)
-    qpt_mutex_lock(connection->p_mutex) ;
-} ;
-
-Inline void
-BGP_CONNECTION_SESSION_UNLOCK(bgp_connection connection)
-{
-  if (--connection->lock_count == 0)
-    qpt_mutex_unlock(connection->p_mutex) ;
-} ;
-
-extern void
-BGP_CONNECTION_SESSION_CUT_LOOSE(bgp_connection connection) ;
+extern bgp_connection_options bgp_connection_options_init_new(
+                                                  bgp_connection_options cops) ;
+extern bgp_connection_options bgp_connection_options_copy(
+                                                 bgp_connection_options dst,
+                                                 bgp_connection_options_c src) ;
+extern bgp_connection_options bgp_connection_options_reset(
+                                                  bgp_connection_options cops) ;
+extern bgp_connection_options bgp_connection_options_free(
+                                                  bgp_connection_options cops) ;
 
 #endif /* QUAGGA_BGP_CONNECTION_H */

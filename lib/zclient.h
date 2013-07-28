@@ -26,6 +26,7 @@
 #include "if.h"
 #include "qpnexus.h"
 #include "prefix.h"
+#include "qafi_safi.h"
 
 /* For input/output buffer to zebra. */
 #define ZEBRA_MAX_PACKET_SIZ          4096
@@ -63,8 +64,8 @@ struct zclient
   struct thread *t_write;
 
   /* If using nexus, qfile and qtimer */
-  qps_file  qf;
-  qtimer    qtr;
+  qfile  qf;
+  qtimer qtr;
 
   /* Redistribute information. */
   u_char redist_default;
@@ -108,13 +109,13 @@ struct zserv_header
 /* Zebra IPv4 route message API. */
 struct zapi_ipv4
 {
-  u_char type;
+  u_char     type;
 
-  u_char flags;
+  u_char     flags;
 
-  u_char message;
+  u_char     message;
 
-  safi_t safi;
+  safi_t     safi;
 
   u_char nexthop_num;
   struct in_addr **nexthop;
@@ -137,7 +138,7 @@ extern void zclient_reset (struct zclient *);
 extern void zclient_free (struct zclient *);
 extern void zlookup_schedule(struct zclient *);
 
-extern void zclient_serv_path_set  (char *path);
+extern bool zclient_serv_path_set  (char *path);
 
 /* Send redistribute command to zebra daemon. Do not update zclient state. */
 extern int zebra_redistribute_send (int command, struct zclient *, int type);
@@ -160,8 +161,8 @@ extern struct interface *zebra_interface_state_read (struct stream *s);
 extern struct connected *zebra_interface_address_read (int, struct stream *);
 extern void zebra_interface_if_set_value (struct stream *, struct interface *);
 extern void zebra_router_id_update_read (struct stream *s, struct prefix *rid);
-extern int zapi_ipv4_route (u_char, struct zclient *, struct prefix_ipv4 *,
-                            struct zapi_ipv4 *);
+extern int zapi_ipv4_route (uchar, struct zclient *,
+                               const struct prefix_ipv4 *, struct zapi_ipv4 *);
 
 #ifdef HAVE_IPV6
 /* IPv6 prefix add and delete function prototype. */
@@ -187,8 +188,8 @@ struct zapi_ipv6
   u_int32_t metric;
 };
 
-extern int zapi_ipv6_route (u_char cmd, struct zclient *zclient,
-                     struct prefix_ipv6 *p, struct zapi_ipv6 *api);
+extern int zapi_ipv6_route (uchar cmd, struct zclient *zclient,
+                     const struct prefix_ipv6 *p, struct zapi_ipv6 *api);
 #endif /* HAVE_IPV6 */
 
 #endif /* _ZEBRA_ZCLIENT_H */

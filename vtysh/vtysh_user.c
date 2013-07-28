@@ -122,7 +122,7 @@ user_lookup (const char *name)
   for (ALL_LIST_ELEMENTS (userlist, node, nnode, user))
     {
       if (strcmp (user->name, name) == 0)
-        return user;
+	return user;
     }
   return NULL;
 }
@@ -138,7 +138,7 @@ user_config_write (void)
   for (ALL_LIST_ELEMENTS (userlist, node, nnode, user))
     {
       if (user->nopassword)
-        printf (" username %s nopassword\n", user->name);
+	printf (" username %s nopassword\n", user->name);
     }
 }
 
@@ -185,7 +185,7 @@ vtysh_auth(void)
     {
 #ifdef USE_PAM
       if (vtysh_pam (passwd->pw_name))
-        exit (0);
+	exit (0);
 #endif /* USE_PAM */
     }
   return 0;

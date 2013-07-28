@@ -606,15 +606,18 @@ vio_lc_write_nb(int fd, vio_line_control lc)
        * NB: if have a particularly long original line, or a particularly
        *     narrow or short screen, it is possible to pass through here
        *     more than once for the same original line.
-       *
-       *     In this obscure case, the line will already be buffered in
-       *     lc->here.  Happily s_set_len_nn() does not disturb the body of
-       *     the qstring, and qs_append_n will append from within its own
-       *     body !
        */
       if (!qiovec_empty(lc->fragments))
         {
-          qs_set_len_nn(lc->here, 0) ;  /* ready to append stuff        */
+          qstring temp ;
+
+          temp = NULL ;
+          if (qs_len(lc->here) != 0)
+            {
+              temp = qs_set(NULL, lc->here) ;   /* copy current stuff   */
+              qs_clear(lc->here) ;
+            } ;
+
           do
             {
               qiov_item_t item ;
@@ -624,6 +627,9 @@ vio_lc_write_nb(int fd, vio_line_control lc)
               qs_append_n(lc->here, item->base, item->len) ;
             }
           while (!qiovec_empty(lc->fragments)) ;
+
+          if (temp != NULL)
+            temp = qs_free(temp) ;
 
           /* One fragment in hand, collected from all previous fragments
            */

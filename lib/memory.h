@@ -53,6 +53,7 @@ typedef enum MTYPE mtype_t ;
 /*------------------------------------------------------------------------------
  * Basic counting -- count of allocated objects of each type of memory
  *
+ * For 32-bit machines, 32-bit count is fine !
  */
 struct mem_stats                /* wrap in struct so can copy trivially */
 {

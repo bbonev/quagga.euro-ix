@@ -657,10 +657,9 @@ vio_fifo_put_bytes(vio_fifo vff, const char* src, ulen n)
 /*------------------------------------------------------------------------------
  * Formatted print to FIFO -- cf printf()
  *
- * Returns: >= 0 -- number of bytes written
- *           < 0 -- failed (unlikely though that is)
+ * Returns: number of bytes written
  */
-extern int
+extern uint
 vio_fifo_printf(vio_fifo vff, const char* format, ...)
 {
   va_list args;
@@ -678,15 +677,14 @@ vio_fifo_printf(vio_fifo vff, const char* format, ...)
  *
  * Does nothing if vff is NULL !
  *
- * Returns: >= 0 -- number of bytes written
- *           < 0 -- failed (unlikely though that is)
+ * Returns: number of bytes written
  *
  * NB: uses qfs_vprintf(qfs, format, va), which allows the result to be
  *     collected a section at a time, if required.  With reasonable size
  *     lumps, expect to need no more than two sections, and then only
  *     occasionally.
  */
-extern int
+extern uint
 vio_fifo_vprintf(vio_fifo vff, const char *format, va_list va)
 {
   qf_str_t qfs ;
@@ -707,8 +705,11 @@ vio_fifo_vprintf(vio_fifo vff, const char *format, va_list va)
 
       qfs_init_offset(qfs, vff->put_ptr, vff->put_end - vff->put_ptr, done) ;
 
-      did = qfs_vprintf(qfs, format, va) ;
+      qfs_vprintf(qfs, format, va) ;
 
+      did = qfs_len(qfs) ;      /* qfs_init_offset() resets len to 0.
+                                 * so the len is what was written to the
+                                 * fixed size buffer.                   */
       done         += did ;
       vff->put_ptr += did ;
     }

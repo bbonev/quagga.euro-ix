@@ -25,9 +25,8 @@
 
 #include "zebra.h"
 #include <stdbool.h>
-#include "symtab.h"
-#include "prefix.h"
 #include "memory.h"
+#include "vhash.h"
 
 #if 0
 union sockunion {
@@ -46,17 +45,25 @@ union sockunion {
 
 typedef struct prefix* prefix ;
 
-typedef union sockunion* sockunion ;
-typedef union sockunion  sockunion_t ;
+typedef       union sockunion* sockunion ;
+typedef const union sockunion* sockunion_c ;
+typedef       union sockunion  sockunion_t ;
 
 union sockunion
 {
-  struct sockaddr sa;
-  struct sockaddr_in sin;
+  struct sockaddr     sa ;
+  struct sockaddr_in  sin;
 #ifdef HAVE_IPV6
   struct sockaddr_in6 sin6;
 #endif /* HAVE_IPV6 */
 };
+
+CONFIRM(offsetof(struct sockaddr_in, sin_family)
+                                      == offsetof(struct sockaddr, sa_family)) ;
+#ifdef HAVE_IPV6
+CONFIRM(offsetof(struct sockaddr_in6, sin6_family)
+                                      == offsetof(struct sockaddr, sa_family)) ;
+#endif
 
 /* Default address family. */
 #ifdef HAVE_IPV6
@@ -74,22 +81,26 @@ CONFIRM(SU_ADDRSTRLEN >= INET_ADDRSTRLEN) ;
 CONFIRM(SU_ADDRSTRLEN >= INET6_ADDRSTRLEN) ;
 #endif
 
-/* Sockunion String Object                                              */
+/* Sockunion String Object
+ */
 typedef struct sockunion_string sockunion_string_t ;
 struct sockunion_string
 {
   char str[SU_ADDRSTRLEN] ;
 };
 
-/* Macro to set link local index to the IPv6 address.  For KAME IPv6
-   stack. */
-#ifdef KAME
-#define IN6_LINKLOCAL_IFINDEX(a)  ((a).s6_addr[2] << 8 | (a).s6_addr[3])
-#define SET_IN6_LINKLOCAL_IFINDEX(a, i) \
+/* Macros to set link local index to the IPv6 address.  For KAME IPv6 stack.
+ */
+#define KAME_IN6_LINKLOCAL_IFINDEX(a)  ((a).s6_addr[2] << 8 | (a).s6_addr[3])
+#define KAME_SET_IN6_LINKLOCAL_IFINDEX(a, i) \
   do { \
     (a).s6_addr[2] = ((i) >> 8) & 0xff; \
     (a).s6_addr[3] = (i) & 0xff; \
   } while (0)
+
+#ifdef KAME
+#define IN6_LINKLOCAL_IFINDEX(a)        KAME_IN6_LINKLOCAL_IFINDEX(a)
+#define SET_IN6_LINKLOCAL_IFINDEX(a, i) KAME_SET_IN6_LINKLOCAL_IFINDEX(a, i)
 #else
 #define IN6_LINKLOCAL_IFINDEX(a)
 #define SET_IN6_LINKLOCAL_IFINDEX(a, i)
@@ -102,49 +113,64 @@ struct sockunion_string
 #endif /* HAVE_IPV6 */
 
 inline static sa_family_t
-sockunion_family(sockunion su)
+sockunion_family(sockunion_c su)
 {
   return su->sa.sa_family ;
 } ;
 
-/* Prototypes. */
-extern sockunion sockunion_init_new(sockunion su, sa_family_t family) ;
-extern afi_t sockunion_get_afi(sockunion su) ;
-extern int sockunion_get_len(sockunion su) ;
-extern int sockunion_get_addr_len(sockunion su) ;
-extern void* sockunion_get_addr(sockunion su) ;
-extern int sockunion_set_port(sockunion su, in_port_t port) ;
-extern int str2sockunion (const char * str, sockunion su);
-extern const char *sockunion2str (sockunion su, char* buf, size_t size);
-extern sockunion_string_t sutoa(sockunion su) ;
-extern int sockunion_cmp (sockunion su1, sockunion su2);
-extern int sockunion_same (sockunion su1, sockunion su2);
+inline static uint16_t
+sockunion_port(sockunion_c su)
+{
+  return ntohs(su->sin.sin_port) ;
+#ifdef HAVE_IPV6
+  confirm(offsetof(struct sockaddr_in, sin_port)
+                                  == offsetof(struct sockaddr_in6, sin6_port)) ;
+#endif
+} ;
 
-extern char* sockunion_su2str (sockunion su, enum MTYPE type) ;
-extern sockunion sockunion_str2su (const char *str);
-extern struct in_addr sockunion_get_in_addr (sockunion su);
+/*==============================================================================
+ * Prototypes.
+ */
+extern sockunion sockunion_init_new(sockunion su, sa_family_t family) ;
+extern afi_t sockunion_get_afi(sockunion_c su) ;
+extern int sockunion_get_len(sockunion_c su) ;
+extern int sockunion_get_addr_len(sockunion_c su) ;
+extern const void* sockunion_get_addr(sockunion_c su) ;
+extern int sockunion_set_port(sockunion su, uint16_t port) ;
+extern int str2sockunion (const char * str, sockunion su);
+extern uint16_t str2port(const char* port_str, const char* proto_str) ;
+extern const char *sockunion2str (sockunion_c su, char* buf, size_t size);
+extern sockunion_string_t sutoa(sockunion_c su) ;
+extern int sockunion_cmp (sockunion_c su1, sockunion_c su2);
+extern bool sockunion_same (sockunion_c su1, sockunion_c su2);
+
+extern char* sockunion_su2str (sockunion_c su, mtype_t mtype) ;
+extern bool sockunion_str2su (sockunion su, const char *str) ;
+
 extern int sockunion_accept (int sock_fd, sockunion su);
 extern int sockunion_stream_socket (sockunion su);
-extern int sockunion_bind (int sock_fd, sockunion su,
-                                                unsigned short port, bool any) ;
+extern int sockunion_bind (int sock_fd, sockunion su, uint port, bool any) ;
 extern int sockunion_socket (sockunion su, int type, int protocol) ;
-extern int sockunion_connect (int sock_fd, sockunion su,
-                                    unsigned short port, unsigned int ifindex) ;
+extern int sockunion_connect (int sock_fd, sockunion su_remote,
+                                                      uint port, uint ifindex) ;
 extern int sockunion_listen(int sock_fd, int backlog) ;
 
 extern int sockunion_getsockfamily(int sock_fd) ;
 extern int sockunion_getprotofamily(int sock_fd) ;
+extern int sockunion_is_sock_mapped_ipv4(int sock_fd) ;
+extern bool sockunion_is_mapped_ipv4(sockunion su) ;
 extern int sockunion_getsockname (int sock_fd, sockunion su);
 extern int sockunion_getpeername (int sock_fd, sockunion su);
-extern void sockunion_unmap_ipv4 (sockunion su) ;
+extern bool sockunion_unmap_ipv4 (sockunion su) ;
 extern void sockunion_map_ipv4 (sockunion su) ;
 
-extern sockunion sockunion_dup (sockunion src);
-extern void sockunion_copy (sockunion dst, sockunion src) ;
-extern void sockunion_free (sockunion su);
+extern sockunion sockunion_dup (sockunion_c src);
+extern void sockunion_copy (sockunion dst, sockunion_c src) ;
+extern sockunion sockunion_free (sockunion su);
 
-extern sockunion sockunion_new_prefix(sockunion su, prefix p) ;
-extern sockunion sockunion_new_sockaddr(sockunion su, struct sockaddr* sa) ;
+extern sockunion sockunion_new_prefix(sockunion su, struct prefix* p) ;
+extern sockunion sockunion_new_sockaddr(sockunion su,
+                                                    const struct sockaddr* sa) ;
 extern void sockunion_unset(sockunion* p_su) ;
 extern void sockunion_set(sockunion* p_dst, sockunion su) ;
 extern void sockunion_set_dup(sockunion* p_dst, sockunion su) ;
@@ -163,6 +189,6 @@ extern int inet_pton (int family, const char *strptr, void *addrptr);
 extern int inet_aton (const char *cp, struct in_addr *inaddr);
 #endif
 
-extern symbol_hash_t sockunion_symbol_hash(const void* name) ;
+extern vhash_hash_t sockunion_vhash_hash(const void* name) ;
 
 #endif /* _ZEBRA_SOCKUNION_H */

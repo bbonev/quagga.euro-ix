@@ -62,7 +62,7 @@ ospf_route_map_update (const char *name)
 
 	  /* Update route-map. */
 	  ROUTEMAP (ospf, type) =
-	    route_map_lookup_by_name (ROUTEMAP_NAME (ospf, type));
+	    route_map_lookup (ROUTEMAP_NAME (ospf, type));
 
 	  /* No update for this distribute type. */
 	  if (old == NULL && ROUTEMAP (ospf, type) == NULL)

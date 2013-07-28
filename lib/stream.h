@@ -103,10 +103,14 @@
  * retrieve the values of the 3 markers and manipulate the getp marker.
  */
 
-/* Stream buffer. */
+/* Stream buffer
+ */
+typedef struct stream  stream_t ;
+typedef struct stream* stream ;
+
 struct stream
 {
-  struct stream *next;
+  stream next ;         /* for fifo                             */
 
   /* Remainder is ***private*** to stream
    * direct access is frowned upon!
@@ -124,13 +128,17 @@ struct stream
   byte*  data ;         /* data pointer                 */
 };
 
-/* First in first out queue structure. */
+/* First in first out queue structure.
+ */
+typedef struct stream_fifo  stream_fifo_t ;
+typedef struct stream_fifo* stream_fifo ;
+
 struct stream_fifo
 {
   size_t count;
 
-  struct stream *head;
-  struct stream *tail;
+  stream head;
+  stream tail;
 };
 
 /*==============================================================================
@@ -149,112 +157,112 @@ struct stream_fifo
  * l: long (two words)
  * q: quad (four words)
  */
-extern struct stream *stream_new (size_t);
-extern void stream_free (struct stream *);
-extern struct stream * stream_copy (struct stream *, struct stream *src);
-extern struct stream *stream_dup (struct stream *);
-extern size_t stream_resize (struct stream *, size_t);
-Inline void stream_reset (struct stream *s) ;
-Inline bool stream_is_empty (struct stream *s) ;
+extern stream stream_new (size_t size);
+extern stream stream_free (stream s);
+extern stream stream_copy (stream dst, stream src);
+extern stream stream_dup (stream s);
+extern size_t stream_resize (stream s, size_t size);
+Inline void stream_reset (stream s) ;
+Inline bool stream_is_empty (stream s) ;
 
-Inline size_t stream_get_getp(struct stream* s);
-Inline size_t stream_get_endp(struct stream* s);
-Inline size_t stream_get_len(struct stream* s) ;
-Inline size_t stream_get_size(struct stream* s) ;
-Inline size_t stream_get_startp(struct stream* s) ;
-Inline byte*  stream_get_data(struct stream* s) ;
-Inline byte*  stream_get_pnt(struct stream* s) ;
-Inline byte*  stream_get_pnt_to (struct stream *s, size_t pos) ;
+Inline size_t stream_get_getp(stream s);
+Inline size_t stream_get_endp(stream s);
+Inline size_t stream_get_len(stream s) ;
+Inline size_t stream_get_size(stream s) ;
+Inline size_t stream_get_startp(stream s) ;
+Inline byte*  stream_get_data(stream s) ;
+Inline byte*  stream_get_pnt(stream s) ;
+Inline byte*  stream_get_pnt_to (stream s, size_t pos) ;
+Inline byte*  stream_get_end (stream s) ;
 
-Inline size_t stream_get_read_left(struct stream* s) ;
-Inline size_t stream_get_read_left_from(struct stream* s, size_t from) ;
-Inline bool stream_has_read_left(struct stream* s, size_t len) ;
-Inline size_t stream_get_write_left(struct stream* s) ;
-Inline size_t stream_get_write_left_at(struct stream* s, size_t at) ;
-Inline bool stream_has_write_left(struct stream* s, size_t len) ;
-Inline bool stream_has_overrun(struct stream* s) ;
-Inline bool stream_has_overflowed(struct stream* s) ;
-Inline void stream_clear_overrun(struct stream* s) ;
-Inline void stream_clear_overflow(struct stream* s) ;
+Inline size_t stream_get_read_left(stream s) ;
+Inline size_t stream_get_read_left_from(stream s, size_t from) ;
+Inline bool stream_has_read_left(stream s, size_t len) ;
+Inline size_t stream_get_write_left(stream s) ;
+Inline size_t stream_get_write_left_at(stream s, size_t at) ;
+Inline bool stream_has_write_left(stream s, size_t len) ;
+Inline bool stream_has_overrun(stream s) ;
+Inline bool stream_has_overflowed(stream s) ;
+Inline void stream_clear_overrun(stream s) ;
+Inline void stream_clear_overflow(stream s) ;
 
-Inline bool stream_has_written_beyond(struct stream* s, size_t limit) ;
+Inline bool stream_has_written_beyond(stream s, size_t limit) ;
 
-Inline void stream_set_getp(struct stream *, size_t);
-Inline void stream_set_endp(struct stream *, size_t);
-Inline void stream_set_startp(struct stream* s, size_t) ;
-Inline void stream_reset_getp(struct stream* s) ;
-Inline void stream_forward_getp(struct stream *, size_t);
-Inline void stream_forward_endp(struct stream *, size_t);
+Inline void stream_set_getp(stream s, size_t getp);
+Inline void stream_set_endp(stream s, size_t endp);
+Inline void stream_set_startp(stream s, size_t startp) ;
+Inline void stream_reset_getp(stream s) ;
+Inline void stream_forward_getp(stream s, size_t step);
+Inline void stream_forward_endp(stream s, size_t step);
 
-Inline size_t stream_push_endp(struct stream* s, size_t len) ;
-Inline bool stream_pop_endp(struct stream* s, size_t old_endp) ;
+Inline size_t stream_push_endp(stream s, size_t len) ;
+Inline bool stream_pop_endp(stream s, size_t old_endp) ;
 
-extern void stream_put (struct stream *, const void *, size_t);
-extern void stream_putc (struct stream *, byte);
-extern void stream_putc_at (struct stream *, size_t, byte);
-extern void stream_putw (struct stream *, uint16_t);
-extern void stream_putw_at (struct stream *, size_t, uint16_t);
-extern void stream_putl (struct stream *, uint32_t);
-extern void stream_putl_at (struct stream *, size_t, uint32_t);
-extern void stream_putq (struct stream *, uint64_t);
-extern void stream_putq_at (struct stream *, size_t, uint64_t);
-extern void stream_put_ipv4 (struct stream *, in_addr_t);
-extern void stream_put_in_addr (struct stream *, struct in_addr *);
-extern void stream_put_prefix (struct stream *, struct prefix *);
+extern void stream_put (stream s, const void * src, size_t n);
+extern void stream_putc (stream s, byte c);
+extern void stream_putc_n(stream s, byte c, size_t n) ;
+extern void stream_putc_at (stream s, size_t at, byte c);
+extern void stream_putw (stream s, uint16_t w);
+extern void stream_putw_at (stream s, size_t at, uint16_t w);
+extern void stream_putl (stream s, uint32_t l);
+extern void stream_putl_at (stream s, size_t at, uint32_t l);
+extern void stream_putq (stream s, uint64_t q);
+extern void stream_putq_at (stream s, size_t at, uint64_t q);
+extern void stream_put_ipv4 (stream s, in_addr_t ip);
+extern void stream_put_in_addr (stream s, struct in_addr* addr);
+extern void stream_put_prefix (stream s, prefix_c p);
 
-extern void stream_get (void *, struct stream *, size_t) ;
-extern void* stream_get_bytes(struct stream *s, size_t want, size_t* have) ;
-extern void* stream_get_bytes_left(struct stream *s, size_t* have) ;
-extern byte stream_getc (struct stream *);
-extern byte stream_getc_from (struct stream *, size_t);
-extern uint16_t stream_getw (struct stream *);
-extern uint16_t stream_getw_from (struct stream *, size_t);
-extern uint32_t stream_getl (struct stream *);
-extern uint32_t stream_getl_from (struct stream *, size_t);
-extern uint64_t stream_getq (struct stream *);
-extern uint64_t stream_getq_from (struct stream *, size_t);
-extern in_addr_t stream_get_ipv4 (struct stream *);
-extern void stream_get_prefix(struct stream *s,
-                                         struct prefix* p, sa_family_t family) ;
-extern uint stream_get_prefix_from(struct stream *s, size_t from,
-                                         struct prefix* p, sa_family_t family) ;
+extern void stream_get (void* dst, stream s, size_t n) ;
+extern void* stream_get_bytes(stream s, size_t want, size_t* have) ;
+extern void* stream_get_bytes_left(stream s, size_t* have) ;
+extern byte stream_getc (stream s);
+extern byte stream_getc_from (stream s, size_t from);
+extern uint16_t stream_getw (stream s);
+extern uint16_t stream_getw_from (stream s, size_t from);
+extern uint32_t stream_getl (stream s);
+extern uint32_t stream_getl_from (stream s, size_t from) ;
+extern uint64_t stream_getq (stream s);
+extern uint64_t stream_getq_from (stream s, size_t from);
+extern in_addr_t stream_get_ipv4 (stream s);
+extern void stream_get_prefix(stream s, prefix p, sa_family_t family) ;
+extern uint stream_get_prefix_from(stream s, size_t from,
+                                                 prefix p, sa_family_t family) ;
 
 /* Deprecated: assumes blocking I/O.  Will be removed.
-   Use stream_read_try instead.  */
-extern int stream_read (struct stream *, int, size_t);
-
-extern int stream_readn (struct stream* s, int fd, size_t size) ;
-
-extern ssize_t stream_read_try(struct stream *s, int fd, size_t size);
-
-extern ssize_t stream_recvmsg (struct stream *s, int fd, struct msghdr *,
+ * Use stream_read_try instead.
+ */
+extern int stream_read (stream s, int fd, size_t size);
+extern int stream_readn (stream s, int fd, size_t size) ;
+extern ssize_t stream_read_try(stream s, int fd, size_t size);
+extern ssize_t stream_recvmsg (stream s, int fd, struct msghdr *,
                                int flags, size_t size);
-extern ssize_t stream_recvfrom (struct stream *s, int fd, size_t len,
-                                int flags, struct sockaddr *from,
-                                socklen_t *fromlen);
+extern ssize_t stream_recvfrom (stream s, int fd, size_t len,
+                                int flags, struct sockaddr* from,
+                                socklen_t* fromlen);
 
-extern int stream_flush_try(struct stream* s, int fd) ;
-extern void* stream_transfer(void* p, struct stream* s, void* limit) ;
+extern int stream_flush_try(stream s, int fd) ;
+extern void* stream_transfer(void* p, stream s, void* limit) ;
 
-/* Stream fifo. */
-extern struct stream_fifo *stream_fifo_new (void);
-extern void stream_fifo_push (struct stream_fifo *fifo, struct stream *s);
-extern struct stream *stream_fifo_pop (struct stream_fifo *fifo);
-extern struct stream *stream_fifo_head (struct stream_fifo *fifo);
-extern void stream_fifo_reset (struct stream_fifo *fifo);
-extern void stream_fifo_clean (struct stream_fifo *fifo);
-extern void stream_fifo_free (struct stream_fifo *fifo);
+/* Stream fifo.
+ */
+extern stream_fifo stream_fifo_new (void);
+extern void stream_fifo_push (stream_fifo fifo, stream s);
+extern stream stream_fifo_pop (stream_fifo fifo);
+extern stream stream_fifo_head (stream_fifo fifo);
+extern void stream_fifo_reset (stream_fifo fifo);
+extern void stream_fifo_clean (stream_fifo fifo);
+extern stream_fifo stream_fifo_free (stream_fifo fifo);
 
 /*==============================================================================
  * The Inlines
  */
-Private void stream_set_overs(struct stream* s) ;
+Private void stream_set_overs(stream s) ;
 
 /*------------------------------------------------------------------------------
  * qassert that the s->getp, s->endp and s->size are consistent.
  */
 Inline void
-qassert_stream(struct stream* s)
+qassert_stream(stream s)
 {
   qassert((s->getp <= s->endp) && (s->endp <= s->size)) ;
 } ;
@@ -263,7 +271,7 @@ qassert_stream(struct stream* s)
  * Is there anything in this stream ?
  */
 Inline bool
-stream_is_empty (struct stream *s)
+stream_is_empty (stream s)
 {
   qassert_stream(s) ;
   return (s->endp == 0);
@@ -275,7 +283,7 @@ stream_is_empty (struct stream *s)
  * NB: contents of body are untouched.
  */
 Inline void
-stream_reset (struct stream *s)
+stream_reset (stream s)
 {
   s->getp     = s->endp    = s->startp  = 0 ;
   s->overflow = s->overrun = false ;
@@ -285,7 +293,7 @@ stream_reset (struct stream *s)
  * The current s->getp.
  */
 Inline size_t
-stream_get_getp(struct stream* s)
+stream_get_getp(stream s)
 {
   qassert_stream(s) ;
   return s->getp ;
@@ -300,7 +308,7 @@ stream_get_getp(struct stream* s)
  * updated later by stream_putX_at() -- typically a length field.
  */
 Inline size_t
-stream_get_endp(struct stream* s)
+stream_get_endp(stream s)
 {
   qassert_stream(s) ;
   return s->endp ;
@@ -316,7 +324,7 @@ stream_get_endp(struct stream* s)
  *     been enough room.
  */
 Inline size_t
-stream_get_len(struct stream *s)
+stream_get_len(stream s)
 {
   qassert_stream(s) ;
   return s->endp ;
@@ -328,7 +336,7 @@ stream_get_len(struct stream *s)
  * May be zero !  (In which case stream_get_data() will return NULL.)
  */
 Inline size_t
-stream_get_size(struct stream* s)
+stream_get_size(stream s)
 {
   qassert_stream(s) ;
   return s->size ;
@@ -343,7 +351,7 @@ stream_get_size(struct stream* s)
  * be used for whatever purpose by users of the stream.
  */
 Inline size_t
-stream_get_startp(struct stream* s)
+stream_get_startp(stream s)
 {
   qassert_stream(s) ;
   return s->startp ;
@@ -361,7 +369,7 @@ stream_get_startp(struct stream* s)
  *     get/put functions are *recommended* !
  */
 Inline byte*
-stream_get_data(struct stream* s)
+stream_get_data(stream s)
 {
   qassert_stream(s) ;
   return s->data ;
@@ -377,10 +385,26 @@ stream_get_data(struct stream* s)
  *     get/put functions are *recommended* !
  */
 Inline byte*
-stream_get_pnt (struct stream *s)
+stream_get_pnt (stream s)
 {
   qassert_stream(s) ;
   return s->data + s->getp;
+}
+
+/*------------------------------------------------------------------------------
+ * Return pointer to byte at current s->endp.
+ *
+ * NB: if the stream size is changed, the address returned here may become out
+ *     of date.
+ *
+ * NB: for ordinary processing of the contents of a stream, the various
+ *     get/put functions are *recommended* !
+ */
+Inline byte*
+stream_get_end (stream s)
+{
+  qassert_stream(s) ;
+  return s->data + s->endp;
 }
 
 /*------------------------------------------------------------------------------
@@ -398,7 +422,7 @@ stream_get_pnt (struct stream *s)
  *     get/put functions are *recommended* !
  */
 Inline byte*
-stream_get_pnt_to (struct stream *s, size_t pos)
+stream_get_pnt_to (stream s, size_t pos)
 {
   qassert_stream(s) ;
   return s->data + ((pos <= s->endp) ? pos : s->endp) ;
@@ -408,7 +432,7 @@ stream_get_pnt_to (struct stream *s, size_t pos)
  * Count of bytes between s->getp and s->endp.
  */
 Inline size_t
-stream_get_read_left(struct stream* s)
+stream_get_read_left(stream s)
 {
   qassert_stream(s) ;
   return (s->getp < s->endp) ? s->endp - s->getp : 0 ;
@@ -420,7 +444,7 @@ stream_get_read_left(struct stream* s)
  * If the given position is > s->endp, returns 0.
  */
 Inline size_t
-stream_get_read_left_from(struct stream* s, size_t from)
+stream_get_read_left_from(stream s, size_t from)
 {
   qassert_stream(s) ;
   return (from < s->endp) ? s->endp - from : 0 ;
@@ -430,7 +454,7 @@ stream_get_read_left_from(struct stream* s, size_t from)
  * See if has at least len bytes between s->getp and s->endp
  */
 Inline bool
-stream_has_read_left(struct stream* s, size_t len)
+stream_has_read_left(stream s, size_t len)
 {
   return len <= stream_get_read_left(s) ;
 } ;
@@ -439,7 +463,7 @@ stream_has_read_left(struct stream* s, size_t len)
  * Count of bytes between s->endp and s->size.
  */
 Inline size_t
-stream_get_write_left(struct stream* s)
+stream_get_write_left(stream s)
 {
   qassert_stream(s) ;
   return (s->endp < s->size) ? s->size - s->endp : 0 ;
@@ -451,7 +475,7 @@ stream_get_write_left(struct stream* s)
  * If the given position is > s->size, returns 0.
  */
 Inline size_t
-stream_get_write_left_at(struct stream* s, size_t at)
+stream_get_write_left_at(stream s, size_t at)
 {
   qassert_stream(s) ;
   return (at < s->size) ? s->size - at : 0 ;
@@ -461,7 +485,7 @@ stream_get_write_left_at(struct stream* s, size_t at)
  * See if has at least len bytes between s->endp and s->size
  */
 Inline bool
-stream_has_write_left(struct stream* s, size_t len)
+stream_has_write_left(stream s, size_t len)
 {
   return len <= stream_get_write_left(s) ;
 } ;
@@ -470,7 +494,7 @@ stream_has_write_left(struct stream* s, size_t len)
  * Return the overrun flag
  */
 Inline bool
-stream_has_overrun(struct stream* s)
+stream_has_overrun(stream s)
 {
   qassert_stream(s) ;
   return s->overrun ;
@@ -480,7 +504,7 @@ stream_has_overrun(struct stream* s)
  * Return the overflow flag
  */
 Inline bool
-stream_has_overflowed(struct stream* s)
+stream_has_overflowed(stream s)
 {
   qassert_stream(s) ;
   return s->overflow ;
@@ -490,7 +514,7 @@ stream_has_overflowed(struct stream* s)
  * Clear the overrun flag
  */
 Inline void
-stream_clear_overrun(struct stream* s)
+stream_clear_overrun(stream s)
 {
   s->overrun = false ;
 }
@@ -499,7 +523,7 @@ stream_clear_overrun(struct stream* s)
  * Clear the overflow flag
  */
 Inline void
-stream_clear_overflow(struct stream* s)
+stream_clear_overflow(stream s)
 {
   s->overflow = false ;
 }
@@ -517,7 +541,7 @@ stream_clear_overflow(struct stream* s)
  *     going to return false, because the s->endp is *always* <= s->size !
  */
 Inline bool
-stream_has_written_beyond(struct stream* s, size_t limit)
+stream_has_written_beyond(stream s, size_t limit)
 {
   qassert_stream(s) ;
   qassert(limit < s->size) ;
@@ -531,7 +555,7 @@ stream_has_written_beyond(struct stream* s, size_t limit)
  * If value > s->endp will force to s->endp and set s->overrun.
  */
 Inline void
-stream_set_getp (struct stream *s, size_t pos)
+stream_set_getp (stream s, size_t pos)
 {
   qassert_stream(s) ;
 
@@ -558,7 +582,7 @@ stream_set_getp (struct stream *s, size_t pos)
  *     But see stream_push_endp()/stream_pop_endp().
  */
 Inline void
-stream_set_endp (struct stream *s, size_t pos)
+stream_set_endp (stream s, size_t pos)
 {
   qassert_stream(s) ;
 
@@ -575,7 +599,7 @@ stream_set_endp (struct stream *s, size_t pos)
  * be used for whatever purpose by users of the stream.
  */
 Inline void
-stream_set_startp(struct stream* s, size_t pos)
+stream_set_startp(stream s, size_t pos)
 {
   qassert_stream(s) ;
   s->startp = pos ;
@@ -592,7 +616,7 @@ stream_set_startp(struct stream* s, size_t pos)
  * If s->getp is now > s->endp will force to s->endp and set s->overrun.
  */
 Inline void
-stream_reset_getp (struct stream *s)
+stream_reset_getp (stream s)
 {
   qassert_stream(s) ;
 
@@ -608,7 +632,7 @@ stream_reset_getp (struct stream *s)
  * If result > s->endp will force to s->endp and set s->overrun.
  */
 Inline void
-stream_forward_getp (struct stream *s, size_t step)
+stream_forward_getp (stream s, size_t step)
 {
   qassert_stream(s) ;
 
@@ -626,7 +650,7 @@ stream_forward_getp (struct stream *s, size_t step)
  * NB: moving the s->endp around is unusual -- see stream_set_endp().
  */
 Inline void
-stream_forward_endp (struct stream *s, size_t step)
+stream_forward_endp (stream s, size_t step)
 {
   qassert_stream(s) ;
 
@@ -651,7 +675,7 @@ stream_forward_endp (struct stream *s, size_t step)
  * In any case, restoring (pop) the saved value will work fine (even if failed).
  */
 Inline size_t
-stream_push_endp(struct stream* s, size_t len)
+stream_push_endp(stream s, size_t len)
 {
   size_t new_endp, old_endp ;
 
@@ -687,7 +711,7 @@ stream_push_endp(struct stream* s, size_t len)
  * Returns:  (getp == old endp) && not overrun
  */
 Inline bool
-stream_pop_endp(struct stream* s, size_t old_endp)
+stream_pop_endp(stream s, size_t old_endp)
 {
   bool ok ;
 

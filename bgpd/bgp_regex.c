@@ -28,10 +28,11 @@ Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
 #include "bgp_aspath.h"
 #include "bgp_regex.h"
 
-/* Character `_' has special mean.  It represents [,{}() ] and the
-   beginning of the line(^) and the end of the line ($).
-
-   (^|[,{}() ]|$) */
+/* Character `_' has special meaning.  It represents [,{}() ] and the
+ * beginning of the line(^) and the end of the line ($).
+ *
+ *   (^|[,{}() ]|$)
+ */
 
 regex_t *
 bgp_regcomp (const char *regstr)
@@ -80,9 +81,9 @@ bgp_regcomp (const char *regstr)
 }
 
 int
-bgp_regexec (regex_t *regex, struct aspath *aspath)
+bgp_regexec_asp (regex_t *regex, as_path asp)
 {
-  return regexec (regex, aspath->str, 0, NULL, 0);
+  return regexec (regex, as_path_str(asp), 0, NULL, 0);
 }
 
 void

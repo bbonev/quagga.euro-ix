@@ -425,8 +425,8 @@ if_flag_dump (unsigned long flag)
 static void
 if_dump (const struct interface *ifp)
 {
-  struct listnode *node;
-  struct connected *c  Unused ;
+  struct listnode* node;
+  struct connected* c Unused;
 
   for (ALL_LIST_ELEMENTS_RO (ifp->connected, node, c))
     zlog_info ("Interface %s index %d metric %d mtu %d "
@@ -464,7 +464,7 @@ DEFUN (interface_desc,
     return CMD_SUCCESS;
 
   ifp = vty->index;
-  if (ifp->desc)
+  if (ifp->desc != NULL)
     XFREE (MTYPE_TMP, ifp->desc);
   ifp->desc = argv_concat(argv, argc, 0);
 

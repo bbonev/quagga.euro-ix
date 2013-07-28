@@ -295,7 +295,7 @@ test_ip_masklen(counts ct)
         } ;
 
       get    = ip_masklen(mask) ;
-      get_ok = ip_mask_check(mask) ;
+      get_ok = ip_mask_check(mask.s_addr) ;
 
       ++ct->total ;
 
@@ -533,10 +533,10 @@ test_prefix_raw_ipv4(counts ct)
   fprintf(stderr, "Test prefix_to/from_raw() IPv4") ;
   for (plen = 0 ; plen <= 255 ; ++plen)
     {
-      struct prefix p1[1] ;
-      prefix_raw_t raw_in ;
-      prefix_raw_t raw_out ;
-      prefix_raw_t raw_exp ;
+      prefix_t     p1[1] ;
+      prefix_raw_t raw_in[1] ;
+      prefix_raw_t raw_out[1] ;
+      prefix_raw_t raw_exp[1] ;
       const byte* pm ;
       uint i ;
       bool ok ;
@@ -574,7 +574,7 @@ test_prefix_raw_ipv4(counts ct)
           raw_out->prefix[i] = ~raw_in->prefix[i] ;
         } ;
 
-      prefix_from_raw(p1, raw_in, AF_INET) ;
+      prefix_from_raw(p1, AF_INET, raw_in) ;
 
       ++ct->total ;
       if ((p1->family == AF_INET) && (p1->prefixlen == raw_exp->prefix_len)
@@ -641,10 +641,10 @@ test_prefix_raw_ipv6(counts ct)
   fprintf(stderr, "Test prefix_to/from_raw() IPv6") ;
   for (plen = 0 ; plen <= 255 ; ++plen)
     {
-      struct prefix p1[1] ;
-      prefix_raw_t raw_in ;
-      prefix_raw_t raw_out ;
-      prefix_raw_t raw_exp ;
+      prefix_t     p1[1] ;
+      prefix_raw_t raw_in[1] ;
+      prefix_raw_t raw_out[1] ;
+      prefix_raw_t raw_exp[1] ;
       const byte* pm ;
       uint i ;
       bool ok ;
@@ -682,7 +682,7 @@ test_prefix_raw_ipv6(counts ct)
           raw_out->prefix[i] = ~raw_in->prefix[i] ;
         } ;
 
-      prefix_from_raw(p1, raw_in, AF_INET6) ;
+      prefix_from_raw(p1, AF_INET6, raw_in) ;
 
       ++ct->total ;
       if ((p1->family == AF_INET6) && (p1->prefixlen == raw_exp->prefix_len)
@@ -798,7 +798,7 @@ test_prefix_match(counts ct)
 
           for (px = 0 ; px <= 128 ; ++px)
             {
-              int get, expect ;
+              bool get, expect ;
 
               if (px < 128)
                 flip_pbit(p1->u.b, px) ;        /* perturb bit just beyond
@@ -1447,14 +1447,14 @@ test_spfxtoa_str2prefix(counts ct)
   for (plen = 0 ; plen <= 255 ; ++plen)
     {
       uint i ;
-      prefix_raw_t raw_in ;
-      prefix_raw_t raw_out ;
+      prefix_raw_t raw_in[1] ;
+      prefix_raw_t raw_out[1] ;
       const byte* pm ;
 
       pm = mask_n[plen] ;
 
-      memset(&raw_in,     0xA5, sizeof(prefix_raw_t)) ;
-      memset(&raw_out,    0x5A, sizeof(prefix_raw_t)) ;
+      memset(raw_in,     0xA5, sizeof(prefix_raw_t)) ;
+      memset(raw_out,    0x5A, sizeof(prefix_raw_t)) ;
 
       raw_in->prefix_len = plen ;
 
@@ -1465,7 +1465,7 @@ test_spfxtoa_str2prefix(counts ct)
        */
       raw_in->prefix_len = (plen <= 32) ? plen : 32 ;
 
-      prefix_from_raw(p1, raw_in, AF_INET) ;
+      prefix_from_raw(p1, AF_INET, raw_in) ;
       snprintf(buffer, sizeof(buffer), "%s", spfxtoa(p1).str) ;
       str2prefix(buffer, p1) ;
       prefix_to_raw(raw_out, p1) ;
@@ -1496,7 +1496,7 @@ test_spfxtoa_str2prefix(counts ct)
        */
       raw_in->prefix_len = (plen <= 128) ? plen : 128 ;
 
-      prefix_from_raw(p1, raw_in, AF_INET6) ;
+      prefix_from_raw(p1, AF_INET6, raw_in) ;
       snprintf(buffer, sizeof(buffer), "%s", spfxtoa(p1).str) ;
       str2prefix(buffer, p1) ;
       prefix_to_raw(raw_out, p1) ;

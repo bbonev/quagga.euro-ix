@@ -729,10 +729,9 @@ uty_reset(const char* why, bool curtains)
  *
  * This is for command output, which may later be suppressed
  *
- * Returns: >= 0 => OK
- *          <  0 => failed (see errno)
+ * Returns: number of bytes written
  */
-extern int
+extern uint
 vty_out(struct vty *vty, const char *format, ...)
 {
   int     ret ;
@@ -2506,8 +2505,8 @@ vty_config_write (struct vty *vty)
 
   /* exec-timeout */
   if (host.vty_timeout_val != VTY_TIMEOUT_DEFAULT)
-    uty_out (vio, " exec-timeout %ld %ld\n", host.vty_timeout_val / 60,
-                                             host.vty_timeout_val % 60);
+    uty_out (vio, " exec-timeout %u %u\n", host.vty_timeout_val / 60,
+                                           host.vty_timeout_val % 60);
 
   /* login */
   if (host.no_password_check)

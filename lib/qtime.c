@@ -62,6 +62,12 @@ static int64_t step_limit ;             /* for sanity check                 */
  */
 static uint32_t qt_random_seed ;
 
+/* For qt_period_origin(), qt_base_fm() & qt_mono_fb()...
+ *
+ * ...the value to subtract from qtime_mono_t to give qtime_base_t.
+ */
+qtime_mono_t qt_base_origin ;           /* Declared Private in qtime.h  */
+
 /* For debug we track the CLOCK_MONOTONIC to make sure that it really is !
  *
  * Protected by qt_slock.
@@ -106,12 +112,17 @@ qt_times(void)
  *
  * Prepare for crafted monotonic (just in case !).
  *
+ * Set the initial value of the qt_random_seed.
+ *
+ * Set value of
+ *
  * Prepare for debug tracking of monotonic time (if required).
  */
 extern void
 qt_start_up(void)
 {
   lldiv_t  qr ;
+  qtime_mono_t now ;
 
   /* Initial values for crafted monotonic time -- if required.
    */
@@ -133,14 +144,22 @@ qt_start_up(void)
 
   step_limit = (int64_t)24 * 60 * 60 * times_clk_tcks ;
 
+  now = qt_get_monotonic() ;
+
   /* Local "random" seed.
    */
-  qt_random_seed = (uintptr_t)(&qr) ;
+  qt_random_seed = (uintptr_t)(&qr) ^ now ;
   qt_random_seed = qt_random(3141592653) ;      /* final seed   */
+
+  /* Origin of qtime_base_t as qtime_mono_t.
+   *
+   * So... subtract this from qtime_mono_t to give qtime_base_t.
+   */
+  qt_base_origin = now - QT_BASE_ZERO ;
 
   /* For debug tracking of monotonic time
    */
-  track_monotonic = qt_get_monotonic() ;
+  track_monotonic = now ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -431,6 +450,23 @@ qt_clock_failed(clockid_t clock_id, const char* op, struct timespec* ts)
   zlog_err("failed to %s(%d): %s", op, clock_id, errtoa(err, 0).str) ;
 
   memset(ts, 0, sizeof(*ts)) ;
+} ;
+
+/*==============================================================================
+ * qtime_period_t support
+ */
+
+/*------------------------------------------------------------------------------
+ * Construct origin for qt_period_fm() and qt_mono_fp().
+ *
+ * The origin is the qtime_base_t origin, but with the LS 32 bits randomised.
+ *
+ * The objective is to allow many periodic timers to be running, at the same
+ * rate, but not synchronised to each other !
+ */
+extern qtime_mono_t qt_period_origin(void)
+{
+  return qt_base_origin ^ qt_random(123456) ;
 } ;
 
 /*==============================================================================

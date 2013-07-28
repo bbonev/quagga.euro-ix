@@ -21,201 +21,169 @@ Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
 #ifndef _QUAGGA_BGP_ATTR_H
 #define _QUAGGA_BGP_ATTR_H
 
-#include <stdbool.h>
+#include "misc.h"
+#include "bitmap.h"
 
 #include "bgpd/bgp_common.h"
 #include "bgpd/bgpd.h"
+#include "bgpd/bgp_attr_store.h"
+#include "bgpd/bgp_attr_store.h"
 
-/* Simple bit mapping. */
-#define BITMAP_NBBY 8
+#include "stream.h"
 
-#define SET_BITMAP(MAP, NUM) \
-        SET_FLAG (MAP[(NUM) / BITMAP_NBBY], 1 << ((NUM) % BITMAP_NBBY))
+enum
+{
+  BGP_MED_MIN = 0,
+  BGP_MED_MAX = UINT32_MAX,
+} ;
 
-#define CHECK_BITMAP(MAP, NUM) \
-        CHECK_FLAG (MAP[(NUM) / BITMAP_NBBY], 1 << ((NUM) % BITMAP_NBBY))
-
-#define BGP_MED_MAX UINT32_MAX
-
-
-/* BGP Attribute type range. */
-#define BGP_ATTR_TYPE_RANGE     256
-#define BGP_ATTR_BITMAP_SIZE    (BGP_ATTR_TYPE_RANGE / BITMAP_NBBY)
-
-/* BGP Attribute flags. */
-#define BGP_ATTR_FLAG_OPTIONAL  0x80    /* Attribute is optional. */
-#define BGP_ATTR_FLAG_TRANS     0x40    /* Attribute is transitive. */
-#define BGP_ATTR_FLAG_PARTIAL   0x20    /* Attribute is partial. */
-#define BGP_ATTR_FLAG_EXTLEN    0x10    /* Extended length flag. */
-
-/* BGP attribute header must bigger than 2. */
-#define BGP_ATTR_MIN_LEN        3       /* Attribute flag, type length. */
-#define BGP_ATTR_DEFAULT_WEIGHT 32768
-
-/* Additional/uncommon BGP attributes.
- * lazily allocated as and when a struct attr
- * requires it.
+/*
+ *
  */
-struct attr_extra
+typedef enum
 {
-  /* Multi-Protocol Nexthop, AFI IPv6 */
-#ifdef HAVE_IPV6
-  struct in6_addr mp_nexthop_global;
-  struct in6_addr mp_nexthop_local;
-#endif /* HAVE_IPV6 */
+  BGP_ATTR_PARSE_OK    = 0,
 
-  /* Extended Communities attribute. */
-  struct ecommunity *ecommunity;
+  BGP_ATTR_PARSE_RECOVERED  = BIT(0),
 
-  /* Route-Reflector Cluster attribute */
-  struct cluster_list *cluster;
+  BGP_ATTR_PARSE_IGNORE     = BIT(1),
+  BGP_ATTR_PARSE_SERIOUS    = BIT(2),
+  BGP_ATTR_PARSE_CRITICAL   = BIT(3),
 
-  /* Unknown transitive attribute. */
-  struct transit *transit;
-
-  struct in_addr mp_nexthop_global_in;
-  struct in_addr mp_nexthop_local_in;
-
-  /* Aggregator Router ID attribute */
-  struct in_addr aggregator_addr;
-
-  /* Route Reflector Originator attribute */
-  struct in_addr originator_id;
-
-  /* Local weight, not actually an attribute */
-  u_int32_t weight;
-
-  /* Aggregator ASN */
-  as_t aggregator_as;
-
-  /* MP Nexthop length */
-  u_char mp_nexthop_len;
-};
-
-/* BGP core attribute structure. */
-struct attr
-{
-  /* AS Path structure */
-  struct aspath *aspath;
-
-  /* Community structure */
-  struct community *community;
-
-  /* Lazily allocated pointer to extra attributes */
-  struct attr_extra *extra;
-
-  /* Reference count of this attribute. */
-  unsigned long refcnt;
-
-  /* Flag of attribute is set or not. */
-  u_int32_t flag;
-
-  /* Apart from in6_addr, the remaining static attributes */
-  struct in_addr nexthop;
-  u_int32_t med;
-  u_int32_t local_pref;
-
-  /* Path origin attribute */
-  u_char origin;
-};
-
-/* Router Reflector related structure. */
-struct cluster_list
-{
-  unsigned long refcnt;
-  int length;
-  struct in_addr *list;
-};
-
-/* Unknown transit attribute. */
-struct transit
-{
-  unsigned long refcnt;
-  int length;
-  u_char *val;
-};
-
-#define ATTR_FLAG_BIT(X)  (1 << ((X) - 1))
-
-typedef enum {
-  BGP_ATTR_PARSE_IGNORE   =  1,
-  BGP_ATTR_PARSE_PROCEED  =  0, /* NB: value >= BGP_ATTR_PARSE_PROCEED is OK */
-  BGP_ATTR_PARSE_ERROR    = -1,
-  BGP_ATTR_PARSE_WITHDRAW = -2,
+  BGP_ATTR_PARSE_FAILED     = (BGP_ATTR_PARSE_IGNORE |
+                               BGP_ATTR_PARSE_SERIOUS |
+                               BGP_ATTR_PARSE_CRITICAL),
 } bgp_attr_parse_ret_t;
 
-#define BGP_ATTR_PARSE_OK(ret) ((ret) >= BGP_ATTR_PARSE_PROCEED)
+/*
+ *
+ *
+ */
+typedef struct bgp_nlri  bgp_nlri_t ;
+typedef struct bgp_nlri* bgp_nlri ;
 
-typedef struct bgp_attr_parser_args {
-  struct peer*   peer;
-  struct stream* s ;
+struct bgp_nlri
+{
+  /* The AFI/SAFI is stored exactly as received, and as the qafx for that.
+   *
+   * If the AFI/SAFI is not recognised, then qafx will be qafx_other.  If the
+   * AFI/SAFI is invalid, then qafx will be qafx_undef.
+   */
+  iAFI_SAFI_t   in ;            /* incoming Internet AFI/SAFI   */
 
-  uint8_t    type;
-  uint8_t    flags;
-  bgp_size_t length; /* attribute data length; */
+  qafx_t        qafx ;
 
-  struct attr attr;
+  /* The next hop associated with reachable NLRI
+   *
+   * For completeness, on reading will capture any RD and actual length
+   * of the next hop.  Where there is an RD it will (should) be zero, and that
+   * is not included in the next_hop value.
+   */
+  attr_next_hop_t       next_hop ;
 
-  struct aspath *as4_path ;
+  byte         next_hop_length ;
+  byte         next_hop_rd[2][8] ;
 
-  as_t as4_aggregator_as ;
-  struct in_addr as4_aggregator_addr ;
+  /* The pnt pointer points into the incoming packet data stream.
+   *
+   * Nothing else is valid if the length == 0.
+   */
+  const byte*  pnt ;
+  uint         length ;         /* of entire NLRI in bytes      */
+} ;
 
-  struct bgp_nlri update ;
-  struct bgp_nlri withdraw ;
+/* The attribute parser structure carries the current state of the parsing
+ * of a set of attributes and delivers the result.
+ */
+typedef struct bgp_attr_parser_args  bgp_attr_parser_args_t ;
+typedef struct bgp_attr_parser_args* bgp_attr_parser_args ;
 
-  struct bgp_nlri mp_update ;
-  struct bgp_nlri mp_withdraw ;
+struct bgp_attr_parser_args
+{
+  /* Context in which parsing proceeds.
+   */
+  bgp_peer        peer ;
 
-  bool mp_eor ;
-} bgp_attr_parser_args_t ;
+  bgp_peer_sort_t sort ;
+  bool            as4 ;         /* NEW_BGP speaker              */
 
-typedef bgp_attr_parser_args_t* bgp_attr_parser_args ;
+  /* Properties of the current attribute being processed
+   */
+  uint8_t    type ;
+  uint8_t    flags ;
 
-/* Prototypes. */
-extern void bgp_attr_init (void);
-extern void bgp_attr_finish (void);
-extern bgp_attr_parse_ret_t bgp_attr_parse (restrict bgp_attr_parser_args args);
-extern int bgp_attr_check (struct peer *, struct attr *, bool);
-extern struct attr_extra *bgp_attr_extra_get (struct attr *);
-extern void bgp_attr_extra_free (struct attr *);
-extern void bgp_attr_dup (struct attr *, struct attr *);
-extern struct attr *bgp_attr_intern (struct attr *attr);
-extern void bgp_attr_unintern_sub (struct attr *attr, bool free_extra) ;
-extern void bgp_attr_unintern (struct attr **);
-extern void bgp_attr_flush (struct attr *);
-extern struct attr *bgp_attr_default_set (struct attr *attr, u_char);
-extern struct attr *bgp_attr_default_intern (u_char);
-extern struct attr *bgp_attr_aggregate_intern (struct bgp *, u_char,
-                                        struct aspath *,
-                                        struct community *, int as_set);
-extern bgp_size_t bgp_packet_attribute (struct bgp *bgp, struct peer *,
-                                 struct stream *, struct attr *,
-                                 struct prefix *, afi_t, safi_t,
-                                 struct peer *, struct prefix_rd *, u_char *);
-extern bgp_size_t bgp_packet_withdraw (struct stream *s, struct prefix *p,
-                                          afi_t, safi_t, struct prefix_rd *);
-extern void bgp_packet_withdraw_vpn_prefix(struct stream *s, struct prefix *p,
-                                                        struct prefix_rd *prd) ;
+  bgp_size_t length ;           /* data length                  */
 
-extern void bgp_dump_routes_attr (struct stream *, struct attr *,
-                                  struct prefix *);
-extern int attrhash_cmp (const void *, const void *);
-extern unsigned int attrhash_key_make (void *);
-extern void attr_show_all (struct vty *);
-extern unsigned long int attr_count (void);
-extern unsigned long int attr_unknown_count (void);
+  const byte* start_p ;         /* start of *raw* attribute     */
+  const byte* end_p ;           /* end of *raw* attribute       */
 
-/* Cluster list prototypes. */
-extern int cluster_loop_check (struct cluster_list *, struct in_addr);
-extern void cluster_unintern (struct cluster_list *);
+  bgp_attr_parse_ret_t ret ;
 
-/* Transit attribute prototypes. */
-void transit_unintern (struct transit *);
+  /* Overall result
+   *
+   * Accumulates the return value, and keeps the first notification, in case
+   * cannot "treat-as-withdraw".
+   */
+  bgp_attr_parse_ret_t aret ;
 
-/* Below exported for unit-test purposes only
- * */
-extern int bgp_mp_reach_parse (bgp_attr_parser_args args);
-extern int bgp_mp_unreach_parse (bgp_attr_parser_args args);
+  bool        mp_eor ;
+
+  byte        notify_code ;
+  byte        notify_subcode ;
+  uint        notify_data_len ;
+  const byte* notify_data ;
+
+  byte        notify_attr_type ;        /* for BGP_NOMS_U_MISSING       */
+
+  /* Intermediate results
+   */
+  as_path    asp ;
+  as_path    as4p ;
+
+  as_t       aggregator_as ;            /* 0 => not seen                */
+  in_addr_t  aggregator_ip ;
+
+  as_t       as4_aggregator_as ;        /* 0 => not seen                */
+  in_addr_t  as4_aggregator_ip ;
+
+  bgp_nlri_t update ;
+  bgp_nlri_t withdraw ;
+
+  bgp_nlri_t mp_update ;
+  bgp_nlri_t mp_withdraw ;
+
+  attr_unknown unknown ;
+
+  /* Bitmap for all attributes seen and attribute pair for construction
+   * and use of the attribute set.
+   */
+  bitmap_s(BGP_ATT_COUNT) seen ;
+
+  attr_pair_t  attrs[1] ;       /* embedded                     */
+}  ;
+
+/*------------------------------------------------------------------------------
+ * Prototypes.
+ */
+extern void bgp_attr_parse (bgp_attr_parser_args restrict args,
+                                           const byte* start_p, uint attr_len) ;
+extern void bgp_attr_check (bgp_attr_parser_args restrict args) ;
+
+extern bgp_size_t bgp_packet_attribute(stream s, peer_rib prib,
+                                    attr_set attr, prefix p, mpls_tags_t tags) ;
+extern bgp_size_t bgp_unreach_attribute (stream s, prefix p, qafx_t qafx);
+
+extern void bgp_packet_withdraw_prefix(stream s, prefix_c p, qafx_t qafx) ;
+
+extern void bgp_dump_routes_attr (struct stream* s, attr_set attr, prefix p) ;
+
+/*------------------------------------------------------------------------------
+ * Unit test interfaces
+ */
+extern const byte* tx_bgp_attr_mp_reach_parse(bgp_attr_parser_args args,
+                                                           const byte* attr_p) ;
+extern const byte* tx_bgp_attr_mp_unreach_parse(bgp_attr_parser_args args,
+                                       const byte* attr_p,
+                                       const byte* start_p, const byte* end_p) ;
 
 #endif /* _QUAGGA_BGP_ATTR_H */

@@ -8,6 +8,7 @@
 #include "privs.h"
 #include "memory.h"
 
+#include "bgpd/bgp.h"
 #include "bgpd/bgpd.h"
 #include "bgpd/bgp_peer.h"
 #include "bgpd/bgp_attr.h"
@@ -24,9 +25,6 @@
 #define DYNCAP     1
 #define OPT_PARAM  2
 
-/* need these to link in libbgp */
-struct zebra_privs_t *bgpd_privs = NULL;
-
 static int failed = 0;
 static int tty = 0;
 
@@ -36,8 +34,8 @@ static struct test_segment {
   const char *desc;
   const u_char data[1024];
   int len;
-#define SHOULD_PARSE    0
-#define SHOULD_ERR      -1
+#define SHOULD_PARSE	true
+#define SHOULD_ERR	false
   int parses; /* whether it should parse or not */
 
   /* AFI/SAFI validation */
@@ -51,14 +49,14 @@ static struct test_segment {
   { "IPv6",
     "IPV6 MP Reach, global nexthop, 1 NLRI",
     {
-      /* AFI / SAFI */          0x0, AFI_IP6, SAFI_UNICAST,
-      /* nexthop bytes */       16,
-      /* Nexthop (global) */    0xff, 0xfe, 0x1,  0x2,
+      /* AFI / SAFI */		0x0, AFI_IP6, SAFI_UNICAST,
+      /* nexthop bytes */	16,
+      /* Nexthop (global) */	0xff, 0xfe, 0x1,  0x2,
                                 0xaa, 0xbb, 0xcc, 0xdd,
                                 0x3,  0x4,  0x5,  0x6,
                                 0xa1, 0xa2, 0xa3, 0xa4,
-      /* SNPA (defunct, MBZ) */ 0x0,
-      /* NLRI tuples */         32, 0xff, 0xfe, 0x1, 0x2, /* fffe:102::/32 */
+      /* SNPA (defunct, MBZ) */	0x0,
+      /* NLRI tuples */		32, 0xff, 0xfe, 0x1, 0x2, /* fffe:102::/32 */
     },
     (4 + 16 + 1 + 5),
     SHOULD_PARSE,
@@ -67,14 +65,14 @@ static struct test_segment {
   { "IPv6-2",
     "IPV6 MP Reach, global nexthop, 2 NLRIs",
     {
-      /* AFI / SAFI */          0x0, AFI_IP6, SAFI_UNICAST,
-      /* nexthop bytes */       16,
-      /* Nexthop (global) */    0xff, 0xfe, 0x1,  0x2,   /* ffee:102:... */
+      /* AFI / SAFI */		0x0, AFI_IP6, SAFI_UNICAST,
+      /* nexthop bytes */	16,
+      /* Nexthop (global) */	0xff, 0xfe, 0x1,  0x2,   /* ffee:102:... */
                                 0xaa, 0xbb, 0xcc, 0xdd,
                                 0x3,  0x4,  0x5,  0x6,
                                 0xa1, 0xa2, 0xa3, 0xa4,
-      /* SNPA (defunct, MBZ) */ 0x0,
-      /* NLRI tuples */         32,
+      /* SNPA (defunct, MBZ) */	0x0,
+      /* NLRI tuples */		32,
                                 0xff, 0xfe, 0x1, 0x2, /* fffe:102::/32 */
                                 64,
                                 0xff, 0xfe, 0x0, 0x1, /* fffe:1:2:3::/64 */
@@ -87,14 +85,14 @@ static struct test_segment {
   { "IPv6-default",
     "IPV6 MP Reach, global nexthop, 2 NLRIs + default",
     {
-      /* AFI / SAFI */          0x0, AFI_IP6, SAFI_UNICAST,
-      /* nexthop bytes */       16,
-      /* Nexthop (global) */    0xff, 0xfe, 0x1,  0x2,
+      /* AFI / SAFI */		0x0, AFI_IP6, SAFI_UNICAST,
+      /* nexthop bytes */	16,
+      /* Nexthop (global) */	0xff, 0xfe, 0x1,  0x2,
                                 0xaa, 0xbb, 0xcc, 0xdd,
                                 0x3,  0x4,  0x5,  0x6,
                                 0xa1, 0xa2, 0xa3, 0xa4,
-      /* SNPA (defunct, MBZ) */ 0x0,
-      /* NLRI tuples */         32,
+      /* SNPA (defunct, MBZ) */	0x0,
+      /* NLRI tuples */		32,
                                 0xff, 0xfe, 0x1, 0x2, /* fffe:102::/32 */
                                 64,
                                 0xff, 0xfe, 0x0, 0x1, /* fffe:1:2:3::/64 */
@@ -108,9 +106,9 @@ static struct test_segment {
   { "IPv6-lnh",
     "IPV6 MP Reach, global+local nexthops, 2 NLRIs + default",
     {
-      /* AFI / SAFI */          0x0, AFI_IP6, SAFI_UNICAST,
-      /* nexthop bytes */       32,
-      /* Nexthop (global) */    0xff, 0xfe, 0x1,  0x2,  /* fffe:102:... */
+      /* AFI / SAFI */		0x0, AFI_IP6, SAFI_UNICAST,
+      /* nexthop bytes */	32,
+      /* Nexthop (global) */	0xff, 0xfe, 0x1,  0x2,  /* fffe:102:... */
                                 0xaa, 0xbb, 0xcc, 0xdd,
                                 0x3,  0x4,  0x5,  0x6,
                                 0xa1, 0xa2, 0xa3, 0xa4,
@@ -118,8 +116,8 @@ static struct test_segment {
                                 0x0,  0x0,  0x0,  0x0,
                                 0x2,  0x10, 0x2,  0xff,
                                 0x1,  0x2,  0x3,  0x4,
-      /* SNPA (defunct, MBZ) */ 0x0,
-      /* NLRI tuples */         32,
+      /* SNPA (defunct, MBZ) */	0x0,
+      /* NLRI tuples */		32,
                                 0xff, 0xfe, 0x1, 0x2, /* fffe:102::/32 */
                                 64,
                                 0xff, 0xfe, 0x0, 0x1, /* fffe:1:2:3::/64 */
@@ -133,9 +131,9 @@ static struct test_segment {
   { "IPv6-nhlen",
     "IPV6 MP Reach, inappropriate nexthop length",
     {
-      /* AFI / SAFI */          0x0, AFI_IP6, SAFI_UNICAST,
-      /* nexthop bytes */       4,
-      /* Nexthop (global) */    0xff, 0xfe, 0x1,  0x2,  /* fffe:102:... */
+      /* AFI / SAFI */		0x0, AFI_IP6, SAFI_UNICAST,
+      /* nexthop bytes */	4,
+      /* Nexthop (global) */	0xff, 0xfe, 0x1,  0x2,  /* fffe:102:... */
                                 0xaa, 0xbb, 0xcc, 0xdd,
                                 0x3,  0x4,  0x5,  0x6,
                                 0xa1, 0xa2, 0xa3, 0xa4,
@@ -143,8 +141,8 @@ static struct test_segment {
                                 0x0,  0x0,  0x0,  0x0,
                                 0x2,  0x10, 0x2,  0xff,
                                 0x1,  0x2,  0x3,  0x4,
-      /* SNPA (defunct, MBZ) */ 0x0,
-      /* NLRI tuples */         32,
+      /* SNPA (defunct, MBZ) */	0x0,
+      /* NLRI tuples */		32,
                                 0xff, 0xfe, 0x1, 0x2, /* fffe:102::/32 */
                                 64,
                                 0xff, 0xfe, 0x0, 0x1, /* fffe:1:2:3::/64 */
@@ -158,9 +156,9 @@ static struct test_segment {
   { "IPv6-nhlen2",
     "IPV6 MP Reach, invalid nexthop length",
     {
-      /* AFI / SAFI */          0x0, AFI_IP6, SAFI_UNICAST,
-      /* nexthop bytes */       5,
-      /* Nexthop (global) */    0xff, 0xfe, 0x1,  0x2,  /* fffe:102:... */
+      /* AFI / SAFI */		0x0, AFI_IP6, SAFI_UNICAST,
+      /* nexthop bytes */	5,
+      /* Nexthop (global) */	0xff, 0xfe, 0x1,  0x2,  /* fffe:102:... */
                                 0xaa, 0xbb, 0xcc, 0xdd,
                                 0x3,  0x4,  0x5,  0x6,
                                 0xa1, 0xa2, 0xa3, 0xa4,
@@ -168,8 +166,8 @@ static struct test_segment {
                                 0x0,  0x0,  0x0,  0x0,
                                 0x2,  0x10, 0x2,  0xff,
                                 0x1,  0x2,  0x3,  0x4,
-      /* SNPA (defunct, MBZ) */ 0x0,
-      /* NLRI tuples */         32,
+      /* SNPA (defunct, MBZ) */	0x0,
+      /* NLRI tuples */		32,
                                 0xff, 0xfe, 0x1, 0x2, /* fffe:102::/32 */
                                 64,
                                 0xff, 0xfe, 0x0, 0x1, /* fffe:1:2:3::/64 */
@@ -183,9 +181,9 @@ static struct test_segment {
   { "IPv6-nhlen3",
     "IPV6 MP Reach, nexthop length overflow",
     {
-      /* AFI / SAFI */          0x0, AFI_IP6, SAFI_UNICAST,
-      /* nexthop bytes */       32,
-      /* Nexthop (global) */    0xff, 0xfe, 0x1,  0x2,  /* fffe:102:... */
+      /* AFI / SAFI */		0x0, AFI_IP6, SAFI_UNICAST,
+      /* nexthop bytes */	32,
+      /* Nexthop (global) */	0xff, 0xfe, 0x1,  0x2,  /* fffe:102:... */
                                 0xaa, 0xbb, 0xcc, 0xdd,
                                 0x3,  0x4,  0x5,  0x6,
                                 0xa1, 0xa2, 0xa3, 0xa4,
@@ -197,9 +195,9 @@ static struct test_segment {
   { "IPv6-nhlen4",
     "IPV6 MP Reach, nexthop length short",
     {
-      /* AFI / SAFI */          0x0, AFI_IP6, SAFI_UNICAST,
-      /* nexthop bytes */       16,
-      /* Nexthop (global) */    0xff, 0xfe, 0x1,  0x2,  /* fffe:102:... */
+      /* AFI / SAFI */		0x0, AFI_IP6, SAFI_UNICAST,
+      /* nexthop bytes */	16,
+      /* Nexthop (global) */	0xff, 0xfe, 0x1,  0x2,  /* fffe:102:... */
                                 0xaa, 0xbb, 0xcc, 0xdd,
                                 0x3,  0x4,  0x5,  0x6,
                                 0xa1, 0xa2, 0xa3, 0xa4,
@@ -207,8 +205,8 @@ static struct test_segment {
                                 0x0,  0x0,  0x0,  0x0,
                                 0x2,  0x10, 0x2,  0xff,
                                 0x1,  0x2,  0x3,  0x4,
-      /* SNPA (defunct, MBZ) */ 0x0,
-      /* NLRI tuples */         32,
+      /* SNPA (defunct, MBZ) */	0x0,
+      /* NLRI tuples */		32,
                                 0xff, 0xfe, 0x1, 0x2, /* fffe:102::/32 */
                                 64,
                                 0xff, 0xfe, 0x0, 0x1, /* fffe:1:2:3::/64 */
@@ -222,9 +220,9 @@ static struct test_segment {
   { "IPv6-nlri",
     "IPV6 MP Reach, NLRI bitlen overflow",
     {
-      /* AFI / SAFI */          0x0, AFI_IP6, SAFI_UNICAST,
-      /* nexthop bytes */       32,
-      /* Nexthop (global) */    0xff, 0xfe, 0x1,  0x2,  /* fffe:102:... */
+      /* AFI / SAFI */		0x0, AFI_IP6, SAFI_UNICAST,
+      /* nexthop bytes */	32,
+      /* Nexthop (global) */	0xff, 0xfe, 0x1,  0x2,  /* fffe:102:... */
                                 0xaa, 0xbb, 0xcc, 0xdd,
                                 0x3,  0x4,  0x5,  0x6,
                                 0xa1, 0xa2, 0xa3, 0xa4,
@@ -232,8 +230,8 @@ static struct test_segment {
                                 0x0,  0x0,  0x0,  0x0,
                                 0x2,  0x10, 0x2,  0xff,
                                 0x1,  0x2,  0x3,  0x4,
-      /* SNPA (defunct, MBZ) */ 0x0,
-      /* NLRI tuples */         120,
+      /* SNPA (defunct, MBZ) */	0x0,
+      /* NLRI tuples */		120,
                                 0xff, 0xfe, 0x1, 0x2, /* fffe:102::/32 */
                                 64,
                                 0xff, 0xfe, 0x0, 0x1, /* fffe:1:2:3::/64 */
@@ -247,11 +245,11 @@ static struct test_segment {
   { "IPv4",
     "IPv4 MP Reach, 2 NLRIs + default",
     {
-      /* AFI / SAFI */          0x0, AFI_IP, SAFI_UNICAST,
-      /* nexthop bytes */       4,
-      /* Nexthop */             192, 168,   0,  1,
-      /* SNPA (defunct, MBZ) */ 0x0,
-      /* NLRI tuples */         16, 10, 1,    /* 10.1/16 */
+      /* AFI / SAFI */		0x0, AFI_IP, SAFI_UNICAST,
+      /* nexthop bytes */	4,
+      /* Nexthop */		192, 168,   0,  1,
+      /* SNPA (defunct, MBZ) */	0x0,
+      /* NLRI tuples */		16, 10, 1,    /* 10.1/16 */
                                 17, 10, 2, 3, /* 10.2.3/17 */
                                 0, /* 0/0 */
     },
@@ -262,11 +260,11 @@ static struct test_segment {
   { "IPv4-nhlen",
     "IPv4 MP Reach, nexthop lenth overflow",
     {
-      /* AFI / SAFI */          0x0, AFI_IP, SAFI_UNICAST,
-      /* nexthop bytes */       32,
-      /* Nexthop */             192, 168,   0,  1,
-      /* SNPA (defunct, MBZ) */ 0x0,
-      /* NLRI tuples */         16, 10, 1,    /* 10.1/16 */
+      /* AFI / SAFI */		0x0, AFI_IP, SAFI_UNICAST,
+      /* nexthop bytes */	32,
+      /* Nexthop */		192, 168,   0,  1,
+      /* SNPA (defunct, MBZ) */	0x0,
+      /* NLRI tuples */		16, 10, 1,    /* 10.1/16 */
                                 17, 10, 2, 3, /* 10.2.3/17 */
                                 0, /* 0/0 */
     },
@@ -277,11 +275,11 @@ static struct test_segment {
   { "IPv4-nlrilen",
     "IPv4 MP Reach, nlri lenth overflow",
     {
-      /* AFI / SAFI */          0x0, AFI_IP, SAFI_UNICAST,
-      /* nexthop bytes */       4,
-      /* Nexthop */             192, 168,   0,  1,
-      /* SNPA (defunct, MBZ) */ 0x0,
-      /* NLRI tuples */         16, 10, 1,    /* 10.1/16 */
+      /* AFI / SAFI */		0x0, AFI_IP, SAFI_UNICAST,
+      /* nexthop bytes */	4,
+      /* Nexthop */		192, 168,   0,  1,
+      /* SNPA (defunct, MBZ) */	0x0,
+      /* NLRI tuples */		16, 10, 1,    /* 10.1/16 */
                                 30, 10,
                                 0, /* 0/0 */
     },
@@ -292,13 +290,13 @@ static struct test_segment {
   { "IPv4-MLVPN",
     "IPv4/MPLS-labeled VPN MP Reach, RD, Nexthop, 3 NLRIs",
     {
-      /* AFI / SAFI */          0x0, AFI_IP, SAFI_MPLS_LABELED_VPN,
-      /* nexthop bytes */       12,
-      /* RD */                  0, 0, 1, 2,
+      /* AFI / SAFI */		0x0, AFI_IP, SAFI_MPLS_LABELED_VPN,
+      /* nexthop bytes */	12,
+      /* RD */			0, 0, 1, 2,
                                 0, 0xff, 3, 4,
-      /* Nexthop */             192, 168,   0,  1,
-      /* SNPA (defunct, MBZ) */ 0x0,
-      /* NLRI tuples */         16, 10, 1,    /* 10.1/16 */
+      /* Nexthop */		192, 168,   0,  1,
+      /* SNPA (defunct, MBZ) */	0x0,
+      /* NLRI tuples */		16, 10, 1,    /* 10.1/16 */
                                 17, 10, 2, 3,  /* 10.2.3/17 */
                                 0, /* 0/0 */
     },
@@ -310,9 +308,9 @@ static struct test_segment {
   { "IPv6-bug",
     "IPv6, global nexthop, 1 default NLRI",
     {
-      /* AFI / SAFI */          0x0, 0x2, 0x1,
-      /* nexthop bytes */       0x20,
-      /* Nexthop (global) */    0x20, 0x01, 0x04, 0x70,
+      /* AFI / SAFI */		0x0, 0x2, 0x1,
+      /* nexthop bytes */	0x20,
+      /* Nexthop (global) */	0x20, 0x01, 0x04, 0x70,
                                 0x00, 0x01, 0x00, 0x06,
                                 0x00, 0x00, 0x00, 0x00,
                                 0x00, 0x00, 0x00, 0x01,
@@ -320,8 +318,8 @@ static struct test_segment {
                                 0x00, 0x00, 0x00, 0x00,
                                 0x02, 0x0c, 0xdb, 0xff,
                                 0xfe, 0xfe, 0xeb, 0x00,
-      /* SNPA (defunct, MBZ) */ 0,
-      /* NLRI tuples */         /* Should have 0 here for ::/0, but dont */
+      /* SNPA (defunct, MBZ) */	0,
+      /* NLRI tuples */		/* Should have 0 here for ::/0, but dont */
     },
     37,
     SHOULD_ERR,
@@ -337,8 +335,8 @@ static struct test_segment mp_unreach_segments [] =
   { "IPv6-unreach",
     "IPV6 MP Unreach, 1 NLRI",
     {
-      /* AFI / SAFI */          0x0, AFI_IP6, SAFI_UNICAST,
-      /* NLRI tuples */         32, 0xff, 0xfe, 0x1, 0x2, /* fffe:102::/32 */
+      /* AFI / SAFI */		0x0, AFI_IP6, SAFI_UNICAST,
+      /* NLRI tuples */		32, 0xff, 0xfe, 0x1, 0x2, /* fffe:102::/32 */
     },
     (3 + 5),
     SHOULD_PARSE,
@@ -347,8 +345,8 @@ static struct test_segment mp_unreach_segments [] =
   { "IPv6-unreach2",
     "IPV6 MP Unreach, 2 NLRIs",
     {
-      /* AFI / SAFI */          0x0, AFI_IP6, SAFI_UNICAST,
-      /* NLRI tuples */         32,
+      /* AFI / SAFI */		0x0, AFI_IP6, SAFI_UNICAST,
+      /* NLRI tuples */		32,
                                 0xff, 0xfe, 0x1, 0x2, /* fffe:102::/32 */
                                 64,
                                 0xff, 0xfe, 0x0, 0x1, /* fffe:1:2:3::/64 */
@@ -361,8 +359,8 @@ static struct test_segment mp_unreach_segments [] =
   { "IPv6-unreach-default",
     "IPV6 MP Unreach, 2 NLRIs + default",
     {
-      /* AFI / SAFI */          0x0, AFI_IP6, SAFI_UNICAST,
-      /* NLRI tuples */         32,
+      /* AFI / SAFI */		0x0, AFI_IP6, SAFI_UNICAST,
+      /* NLRI tuples */		32,
                                 0xff, 0xfe, 0x1, 0x2, /* fffe:102::/32 */
                                 64,
                                 0xff, 0xfe, 0x0, 0x1, /* fffe:1:2:3::/64 */
@@ -376,8 +374,8 @@ static struct test_segment mp_unreach_segments [] =
   { "IPv6-unreach-nlri",
     "IPV6 MP Unreach, NLRI bitlen overflow",
     {
-      /* AFI / SAFI */          0x0, AFI_IP6, SAFI_UNICAST,
-      /* NLRI tuples */         120,
+      /* AFI / SAFI */		0x0, AFI_IP6, SAFI_UNICAST,
+      /* NLRI tuples */		120,
                                 0xff, 0xfe, 0x1, 0x2, /* fffe:102::/32 */
                                 64,
                                 0xff, 0xfe, 0x0, 0x1, /* fffe:1:2:3::/64 */
@@ -391,8 +389,8 @@ static struct test_segment mp_unreach_segments [] =
   { "IPv4-unreach",
     "IPv4 MP Unreach, 2 NLRIs + default",
     {
-      /* AFI / SAFI */          0x0, AFI_IP, SAFI_UNICAST,
-      /* NLRI tuples */         16, 10, 1,    /* 10.1/16 */
+      /* AFI / SAFI */		0x0, AFI_IP, SAFI_UNICAST,
+      /* NLRI tuples */		16, 10, 1,    /* 10.1/16 */
                                 17, 10, 2, 3, /* 10.2.3/17 */
                                 0, /* 0/0 */
     },
@@ -403,8 +401,8 @@ static struct test_segment mp_unreach_segments [] =
   { "IPv4-unreach-nlrilen",
     "IPv4 MP Unreach, nlri length overflow",
     {
-      /* AFI / SAFI */          0x0, AFI_IP, SAFI_UNICAST,
-      /* NLRI tuples */         16, 10, 1,    /* 10.1/16 */
+      /* AFI / SAFI */		0x0, AFI_IP, SAFI_UNICAST,
+      /* NLRI tuples */		16, 10, 1,    /* 10.1/16 */
                                 30, 10,
                                 0, /* 0/0 */
     },
@@ -415,13 +413,13 @@ static struct test_segment mp_unreach_segments [] =
   { "IPv4-unreach-MLVPN",
     "IPv4/MPLS-labeled VPN MP Unreach, RD, 3 NLRIs",
     {
-      /* AFI / SAFI */          0x0, AFI_IP, SAFI_MPLS_LABELED_VPN,
-      /* nexthop bytes */       12,
-      /* RD */                  0, 0, 1, 2,
+      /* AFI / SAFI */		0x0, AFI_IP, SAFI_MPLS_LABELED_VPN,
+      /* nexthop bytes */	12,
+      /* RD */			0, 0, 1, 2,
                                 0, 0xff, 3, 4,
-      /* Nexthop */             192, 168,   0,  1,
-      /* SNPA (defunct, MBZ) */ 0x0,
-      /* NLRI tuples */         16, 10, 1,    /* 10.1/16 */
+      /* Nexthop */		192, 168,   0,  1,
+      /* SNPA (defunct, MBZ) */	0x0,
+      /* NLRI tuples */		16, 10, 1,    /* 10.1/16 */
                                 17, 10, 2, 3,  /* 10.2.3/17 */
                                 0, /* 0/0 */
     },
@@ -438,60 +436,69 @@ static void
 parse_test (struct peer *peer, struct test_segment *t, int type)
 {
   byte flags ;
-  int ret;
+  bool parsed ;
   int oldfailed = failed;
   bgp_attr_parser_args_t args[1] ;
+  const byte* attr_p ;
+
 #define RANDOM_FUZZ 35
+
+  memset (args, 0, sizeof (args));
 
   stream_reset (peer->ibuf);
   stream_put (peer->ibuf, NULL, RANDOM_FUZZ);
   stream_set_getp (peer->ibuf, RANDOM_FUZZ);
 
-  flags = BGP_ATTR_FLAG_OPTIONAL | ((t->len < 256) ? 0 : BGP_ATTR_FLAG_EXTLEN) ;
+  flags = BGP_ATF_OPTIONAL | ((t->len < 256) ? 0 : BGP_ATF_EXTENDED) ;
+
+  args->start_p = stream_get_pnt(peer->ibuf) ;
 
   stream_putc(peer->ibuf, flags) ;
   stream_putc(peer->ibuf, type) ;
-  if (flags & BGP_ATTR_FLAG_EXTLEN)
+  if (flags & BGP_ATF_EXTENDED)
     stream_putw(peer->ibuf, t->len) ;
   else
     stream_putc(peer->ibuf, t->len) ;
 
-  stream_set_startp(peer->ibuf, stream_get_getp(peer->ibuf)) ;
+  attr_p = stream_get_end(peer->ibuf) ;
+
   stream_put (peer->ibuf, t->data, t->len);
+
+  args->end_p = stream_get_end(peer->ibuf) ;
 
   printf ("%s: %s\n", t->name, t->desc);
 
-  memset (args, 0, sizeof (args));
-
   args->peer   = peer ;
-  args->s      = peer->ibuf ;
 
-  args->type   = type ;
-  args->flags  = flags ;
-  args->length = t->len ;
+  args->type    = type ;
+  args->flags   = flags ;
+  args->length  = t->len ;
 
-  if (type == BGP_ATTR_MP_REACH_NLRI)
-    ret = bgp_mp_reach_parse (args);
+  if (type == BGP_ATT_MP_REACH_NLRI)
+    attr_p = tx_bgp_attr_mp_reach_parse (args, attr_p);
   else
-    ret = bgp_mp_unreach_parse (args);
+    attr_p = tx_bgp_attr_mp_unreach_parse (args, attr_p,
+                                     stream_get_data(peer->ibuf), args->end_p);
 
-  if (!ret)
+  parsed = (args->ret == BGP_ATTR_PARSE_OK) ;
+
+  if (!parsed)
     {
       safi_t safi = t->safi;
 
-      if (bgp_afi_safi_valid_indices (t->afi, &safi) != t->afi_valid)
+      if (bgp_afi_safi_valid_indices (t->afi, safi) != t->afi_valid)
         failed++;
 
       printf ("MP: %u/%u (%u): recv %u, nego %u\n",
               t->afi, t->safi, safi,
-              peer->afc_recv[t->afi][safi],
-              peer->afc_nego[t->afi][safi]);
-    }
+              peer->af_rcv[qafx_from_i(t->afi, safi)],
+              peer->af_use[qafx_from_i(t->afi, safi)]);
+    } ;
 
-  printf ("parsed?: %s\n", ret ? "no" : "yes");
+  if (t->parses != parsed)
+    failed++ ;
 
-  if (ret != t->parses)
-    failed++;
+  printf ("parsed?: %s\n", parsed ? "no" : "yes");
 
   if (tty)
     printf ("%s", (failed > oldfailed) ? VT100_RED "failed!" VT100_RESET
@@ -507,6 +514,8 @@ parse_test (struct peer *peer, struct test_segment *t, int type)
 
 static struct bgp *bgp;
 static as_t asn = 100;
+
+static struct peer * peer_create_accept (struct bgp *bgp) ;
 
 int
 main (int argc, char **argv)
@@ -542,18 +551,34 @@ main (int argc, char **argv)
   for (i = AFI_IP; i < AFI_MAX; i++)
     for (j = SAFI_UNICAST; j < SAFI_MAX; j++)
       {
-        peer->afc[i][j] = 1;
-        peer->afc_adv[i][j] = 1;
+        peer->afc[qafx_from_i(i ,j)] = 1;
+        peer->af_adv[qafx_from_i(i ,j)] = 1;
       }
 
   i = 0;
   while (mp_reach_segments[i].name)
-    parse_test (peer, &mp_reach_segments[i++], BGP_ATTR_MP_REACH_NLRI);
+    parse_test (peer, &mp_reach_segments[i++], BGP_ATT_MP_REACH_NLRI);
 
   i = 0;
   while (mp_unreach_segments[i].name)
-    parse_test (peer, &mp_unreach_segments[i++], BGP_ATTR_MP_UNREACH_NLRI);
+    parse_test (peer, &mp_unreach_segments[i++], BGP_ATT_MP_UNREACH_NLRI);
 
   printf ("failures: %d\n", failed);
   return failed;
+}
+
+/*------------------------------------------------------------------------------
+ * Make accept BGP peer... used in test programs...  TODO
+ */
+struct peer *
+peer_create_accept (struct bgp *bgp)
+{
+  struct peer *peer;
+
+  peer = bgp_peer_new (bgp, PEER_TYPE_REAL);
+
+  peer = bgp_peer_lock (peer); /* bgp peer list reference */
+  listnode_add_sort (bgp->peer, peer);
+
+  return peer;
 }

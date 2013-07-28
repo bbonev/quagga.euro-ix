@@ -20,6 +20,17 @@ Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
 
 #include <zebra.h>
 
+#include "bgpd/bgp_dump.h"
+#include "bgpd/bgpd.h"
+#include "bgpd/bgp_peer.h"
+#include "bgpd/bgp_table.h"
+#include "bgpd/bgp_route.h"
+#include "bgpd/bgp_attr.h"
+#include "bgpd/bgp_engine.h"
+#include "bgpd/bgp_session.h"
+#include "bgpd/bgp_connection.h"
+#include "bgpd/bgp_msg_read.h"
+
 #include "log.h"
 #include "vty.h"
 #include "stream.h"
@@ -33,14 +44,6 @@ Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
 #include "qtimers.h"
 #include "mqueue.h"
 #include "qiovec.h"
-
-#include "bgpd/bgp_dump.h"
-#include "bgpd/bgpd.h"
-#include "bgpd/bgp_peer.h"
-#include "bgpd/bgp_table.h"
-#include "bgpd/bgp_route.h"
-#include "bgpd/bgp_attr.h"
-#include "bgpd/bgp_engine.h"
 
 /*==============================================================================
  * This will bd BGP state in MRT ("Multi-threaded Routing Toolkit") form.
@@ -184,7 +187,7 @@ enum
 
 CONFIRM(BGP_DUMP_BUFFER_SIZE >= (MRT_COMMON_HEADER_SIZE +
                                  MRT_BGP4MP_HEADER_SIZE +
-                                 (BGP_MAX_PACKET_SIZE * 2))) ;
+                                 (BGP_MSG_MAX_L * 2))) ;
 
 typedef enum bgp_dump_type
 {
@@ -537,10 +540,13 @@ bgp_dump_free(bgp_dump bd)
  * TABLE (and TABLE_NOW) dumps
  */
 static bgp_dump bgp_dump_routes_index_table(bgp_dump bd, struct bgp *bgp) ;
-static bgp_dump bgp_dump_routes_family(bgp_dump bd, struct bgp *bgp, afi_t afi);
+static bgp_dump bgp_dump_routes_family(bgp_dump bd, struct bgp *bgp,
+                                                                  qAFI_t q_afi);
 
-static struct stream* bgp_dump_header (bgp_dump bd, int type, int subtype) ;
-static void bgp_dump_set_size (struct stream *s, int plus) ;
+static stream bgp_dump_header (bgp_dump bd, int type, int subtype) ;
+static void bgp_dump_set_msg_header(stream s, uint msg_body_length,
+                                                            uint msg_bgp_type) ;
+static void bgp_dump_set_size (stream s, uint plus) ;
 
 /*------------------------------------------------------------------------------
  * Perform a TABLE or TABLE_NOW dump, and close the dump file when finished.
@@ -576,9 +582,9 @@ bgp_dump_table(bgp_dump_control bdc)
 
       /* Now dump all the routes
        */
-      bd = bgp_dump_routes_family(bd, bgp, AFI_IP) ;
+      bd = bgp_dump_routes_family(bd, bgp, qAFI_IP) ;
 #ifdef HAVE_IPV6
-      bd = bgp_dump_routes_family(bd, bgp, AFI_IP6) ;
+      bd = bgp_dump_routes_family(bd, bgp, qAFI_IP6) ;
 #endif /* HAVE_IPV6 */
 
       /* Flush anything left to go
@@ -609,7 +615,7 @@ bgp_dump_routes_index_table(bgp_dump bd, struct bgp *bgp)
    */
   s = bgp_dump_header(bd, MRT_MT_TABLE_DUMP_V2, MRT_MST_TDV2_PEER_INDEX_TABLE) ;
 
-  stream_put_in_addr(s, &bgp->router_id) ;      /* Collector BGP ID     */
+  stream_put_ipv4(s, bgp->router_id) ;          /* Collector BGP ID     */
 
   len = (bgp->name != NULL) ? strlen(bgp->name) : 0 ;
   stream_putw(s, len) ;                         /* View name            */
@@ -632,7 +638,7 @@ bgp_dump_routes_index_table(bgp_dump bd, struct bgp *bgp)
       sockunion su ;
       uint  type ;
 
-      su = &peer->su ;
+      su = peer->su_name ;
 
       type = MRT_TDV2_PEER_INDEX_TABLE_AS4 ;    /* always, for simplicity */
 
@@ -653,8 +659,8 @@ bgp_dump_routes_index_table(bgp_dump bd, struct bgp *bgp)
         } ;
 
       stream_putc (s, type) ;                   /* Peer's type          */
-      stream_put_in_addr (s, &peer->remote_id); /* Peer's BGP ID        */
-      stream_put (s, sockunion_get_addr(su),  /* Peer's IP address    */
+      stream_put_ipv4 (s, peer->remote_id);     /* Peer's BGP ID        */
+      stream_put (s, sockunion_get_addr(su),    /* Peer's IP address    */
                        sockunion_get_addr_len(su)) ;
       stream_putl (s, peer->as);                /* Peer's AS (AS4-wise) */
 
@@ -682,10 +688,10 @@ bgp_dump_routes_index_table(bgp_dump bd, struct bgp *bgp)
  * NB: assumes that th afi is known !
  */
 static bgp_dump
-bgp_dump_routes_family(bgp_dump bd, struct bgp *bgp, afi_t afi)
+bgp_dump_routes_family(bgp_dump bd, struct bgp *bgp, qAFI_t q_afi)
 {
-  struct bgp_node *rn;
-  struct bgp_table *table;
+  vector         rv ;
+  vector_index_t i ;
   int subtype ;
 
   if (bd == NULL)
@@ -693,14 +699,14 @@ bgp_dump_routes_family(bgp_dump bd, struct bgp *bgp, afi_t afi)
 
   /* Establish subtype of dump entries.
    */
-  switch (afi)
+  switch (q_afi)
     {
-      case AFI_IP:
+      case qAFI_IP:
         subtype = MRT_MST_TDV2_RIB_IPV4_UNICAST ;
         break ;
 
 #ifdef HAVE_IPV6
-      case AFI_IP6:
+      case qAFI_IP6:
         subtype = MRT_MST_TDV2_RIB_IPV6_UNICAST ;
         break ;
 #endif /* HAVE_IPV6 */
@@ -709,53 +715,60 @@ bgp_dump_routes_family(bgp_dump bd, struct bgp *bgp, afi_t afi)
         return bd ;             /* do nothing if family unknown */
     } ;
 
-  /* Get the required table -- exit, quick, if none
+  /* Get the required table -- gets empty vector, if none
    */
-  table = bgp->rib[afi][SAFI_UNICAST] ;
-
-  if (table == NULL)
-    return bd ;
-
+  rv = bgp_rib_extract(bgp->rib[qafx_from_q(q_afi, qSAFI_Unicast)][rib_main],
+                                                                         NULL) ;
   /* Walk down each BGP route
    */
-  for (rn = bgp_table_top (table) ; rn != NULL ; rn = bgp_route_next (rn))
+  for (i = 0 ; i < vector_length(rv) ; ++i)
     {
       struct stream* s;
-      struct bgp_info *info;
+      bgp_rib_node  rn;
+      route_info    ri;
+      prefix        pfx ;
       int sizep ;
       uint16_t entry_count ;
 
-      if (rn->info == NULL)
-        continue;
+      rn = vector_get_item(rv, i) ;
+      ri = ddl_head(rn->routes) ;
+
+      if (ri == NULL)
+        continue ;              /* ignore if no routes available        */
 
       /* MRT header for MRT_MT_TABLE_DUMP_V2 type message
        */
       s = bgp_dump_header (bd, MRT_MT_TABLE_DUMP_V2, subtype) ;
 
       stream_putl(s, bd->seq) ;                 /* Sequence number      */
-      stream_putc(s, rn->p.prefixlen) ;         /* Prefix length        */
-      stream_put(s, &rn->p.u.prefix,          /* Prefix               */
-                      (rn->p.prefixlen+7)/8) ;  /* (zero is OK)         */
+
+      pfx = prefix_id_get_prefix(rn->pfx_id) ;
+      stream_putc(s, pfx->prefixlen) ;          /* Prefix length        */
+      stream_put(s, &pfx->u.prefix,             /* Prefix               */
+                     (pfx->prefixlen + 7)/8) ;  /* (zero is OK)         */
 
       sizep = stream_get_endp(s);               /* will set count later */
       entry_count = 0;
       stream_putw(s, entry_count);              /* entry count, so far  */
 
       /* Cycle through the known attributes for this prefix             */
-      for (info = rn->info ; info != NULL ; info = info->info_next)
+      do
         {
           entry_count++;
 
           /* Peer index */
-          stream_putw(s, info->peer->table_dump_index);
+          stream_putw(s, ri->prib->peer->table_dump_index);
 
           /* Originated */
-          stream_putl (s, bgp_wall_clock(info->uptime));
+          stream_putl (s, bgp_wall_clock(ri->uptime));
 
           /* Dump attribute.                                            */
           /* Skip prefix & AFI/SAFI for MP_NLRI                         */
-          bgp_dump_routes_attr (s, info->attr, &rn->p);
+          bgp_dump_routes_attr (s, ri->attr, pfx);
+
+          ri = ddl_next(ri, route_list) ;
         }
+      while (ri != NULL) ;
 
       /* Overwrite the entry count, now that we know the right number */
       stream_putw_at (s, sizep, entry_count);
@@ -768,6 +781,8 @@ bgp_dump_routes_family(bgp_dump bd, struct bgp *bgp, afi_t afi)
 
       ++bd->seq ;
     }
+
+  vector_free(rv) ;
 
   return bd ;
 } ;
@@ -802,9 +817,24 @@ bgp_dump_header (bgp_dump bd, int type, int subtype)
  * NB: depends on the header being at the start of the given stream.
  */
 static void
-bgp_dump_set_size (struct stream *s, int plus)
+bgp_dump_set_msg_header(stream s, uint msg_body_length, uint msg_bgp_type)
 {
-  stream_putl_at (s, 8, stream_get_endp (s) - MRT_COMMON_HEADER_SIZE + plus);
+  stream_putc_n(s, BGP_MH_MARKER_L, 16) ;
+  stream_putw(s, msg_body_length + BGP_MSG_HEAD_L) ;
+  stream_putc(s, msg_bgp_type) ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Set size of MRT packet to be size of stuff in the obuf, less the header,
+ * plus the given size.
+ *
+ * NB: depends on the header being at the start of the given stream.
+ */
+static void
+bgp_dump_set_size (stream s, uint plus)
+{
+  stream_putl_at (s, MRT_COMMON_HEADER_SIZE - 4,
+                          stream_get_endp (s) - MRT_COMMON_HEADER_SIZE + plus) ;
 }
 
 /*------------------------------------------------------------------------------
@@ -1024,6 +1054,7 @@ bgp_dump_parse_time (const char *str)
               case 's':
                 if (i != (len - 1))
                   return -1 ;   /* must be at end                       */
+                break ;
 
               default:
                 return -1 ;     /* unknown character                    */
@@ -1466,7 +1497,7 @@ struct bgp_dump_engine_set_args         /* to BGP Engine                */
 MQB_ARGS_SIZE_OK(struct bgp_dump_engine_set_args) ;
 
 static void bgp_dump_engine_do_set(mqueue_block mqb, mqb_flag_t flag) ;
-static struct stream* bgp_dump_common (bgp_dump bd, bgp_connection connection,
+static stream bgp_dump_common (bgp_dump bd, bgp_session session,
                                                         int subtype, bool as4) ;
 static void bgp_dump_set_flags(void) ;
 static int bgp_dump_fsm_state(bgp_fsm_state_t state) ;
@@ -1534,23 +1565,31 @@ bgp_dump_engine_do_set(mqueue_block mqb, mqb_flag_t flag)
  * Frees the dump in the event of any I/O error.
  */
 extern void
-bgp_dump_state (bgp_connection connection, bgp_fsm_state_t new_state)
+bgp_dump_state (bgp_session session, bgp_fsm_state_t fsm_state_new,
+                                     bgp_fsm_state_t fsm_state_was)
 {
-  struct stream *s;
-
   if (bd_all != NULL)
     {
-      s = bgp_dump_common(bd_all, connection, MRT_MST_BGP4MP_STATE_CHANGE_AS4,
-                                                                         true) ;
-      stream_putw(s, bgp_dump_fsm_state(connection->state));
-      stream_putw(s, bgp_dump_fsm_state(new_state)) ;
+      uint mrt_state_new, mrt_state_was ;
+      stream s ;
+
+      mrt_state_new = bgp_dump_fsm_state(fsm_state_new) ;
+      mrt_state_was = bgp_dump_fsm_state(fsm_state_was) ;
+
+      if (fsm_state_new == fsm_state_was)
+        return ;
+
+      s = bgp_dump_common(bd_all, session,
+                                    MRT_MST_BGP4MP_STATE_CHANGE_AS4, true) ;
+      stream_putw(s, mrt_state_was) ;
+      stream_putw(s, mrt_state_new) ;
 
       bgp_dump_set_size (s, 0);
 
       bd_all = bgp_dump_put(bd_all, STREAM_DATA (s),
-                                                 stream_get_endp (s), NULL, 0) ;
+                                    stream_get_endp (s), NULL, 0) ;
       if (bd_all != NULL)
-        return ;                /* OK, so no flag change        */
+        return ;                        /* OK, so no flag change        */
     } ;
 
   bgp_dump_set_flags() ;
@@ -1559,17 +1598,19 @@ bgp_dump_state (bgp_connection connection, bgp_fsm_state_t new_state)
 /*------------------------------------------------------------------------------
  * Dump BGP packet received, if required -- BGP Engine
  *
+ * Puts entire BGP packet, from marker onwards.
+ *
  * Does nothing if no bd_all and no bd_updates.
  *
  * Frees a dump in the event of any I/O error on it.
  */
 extern void
-bgp_dump_packet (bgp_connection connection)
+bgp_dump_packet (bgp_session session, ptr_t msg_body, uint msg_body_length,
+                                                      uint msg_bgp_type)
 {
   bgp_dump  bd ;
-  struct stream* s ;
-  uint plen ;
-  bool du ;
+  bool      du ;
+  stream    s ;
 
   /* If we have nothing to do, get out, quick.
    *
@@ -1577,7 +1618,7 @@ bgp_dump_packet (bgp_connection connection)
    * MRT header.  Note that in the (unlikely) event of having both ALL and
    * UPDATES dumps, selects the UPDATES obuf.
    */
-  du = (bd_updates != NULL) && (connection->msg_type == BGP_MSG_UPDATE) ;
+  du = (bd_updates != NULL) && (msg_bgp_type == BGP_MT_UPDATE) ;
 
   if (du)
     bd = bd_updates ;
@@ -1591,12 +1632,13 @@ bgp_dump_packet (bgp_connection connection)
    * Note that in the (unlikely) event of having both ALL and UPDATES dumps,
    * we construct just the one header.
    */
-  s = bgp_dump_common(bd, connection,
-                                connection->as4 ? MRT_MST_BGP4MP_MESSAGE_AS4
-                                                : MRT_MST_BGP4MP_MESSAGE,
-                                                              connection->as4) ;
-  plen = stream_get_endp(connection->ibuf) ;
-  bgp_dump_set_size (s, plen) ;
+  s = bgp_dump_common(bd, session,
+                          session->args->can_as4 ? MRT_MST_BGP4MP_MESSAGE_AS4
+                                                 : MRT_MST_BGP4MP_MESSAGE,
+                                                       session->args->can_as4) ;
+
+  bgp_dump_set_msg_header(s, msg_body_length, msg_bgp_type) ;
+  bgp_dump_set_size (s, msg_body_length) ;
 
   /* Output the MRT header and the packet
    *
@@ -1608,18 +1650,16 @@ bgp_dump_packet (bgp_connection connection)
    */
   if (bd_all != NULL)
     {
-      bd_all = bgp_dump_put(bd_all, STREAM_DATA(s),
-                                         stream_get_endp(s),
-                                          STREAM_DATA(connection->ibuf), plen) ;
+      bd_all = bgp_dump_put(bd_all, STREAM_DATA(s), stream_get_endp(s),
+                                                    msg_body, msg_body_length) ;
       if (bd_all == NULL)
         bgp_dump_set_flags() ;
     } ;
 
   if (du)
     {
-      bd_updates = bgp_dump_put(bd_updates, STREAM_DATA(s),
-                                         stream_get_endp(s),
-                                          STREAM_DATA(connection->ibuf), plen) ;
+      bd_updates = bgp_dump_put(bd_updates, STREAM_DATA(s), stream_get_endp(s),
+                                                    msg_body, msg_body_length) ;
       if (bd_updates == NULL)
         bgp_dump_set_flags() ;
     } ;
@@ -1628,14 +1668,12 @@ bgp_dump_packet (bgp_connection connection)
 /*------------------------------------------------------------------------------
  * Construct header and common parts of a MSG_PROTOCOL_BGP4MP MRT message
  */
-static struct stream*
-bgp_dump_common (bgp_dump bd, bgp_connection connection, int subtype, bool as4)
+static stream
+bgp_dump_common (bgp_dump bd, bgp_session session, int subtype, bool as4)
 {
-  static const char empty[16] = {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0};
-
-  struct stream *s ;
-  asn_t remote_as ;
-  asn_t local_as ;
+  stream s ;
+  asn_t  remote_as ;
+  asn_t  local_as ;
   sockunion su_remote ;
   sockunion su_local ;
   int sal ;
@@ -1643,9 +1681,12 @@ bgp_dump_common (bgp_dump bd, bgp_connection connection, int subtype, bool as4)
   s = bgp_dump_header(bd, MRT_MT_BGP4MP, subtype) ;
 
   /* Source AS number and Destination AS number
+   *
+   * NB: if there is a change_local_as in force, then that is the local_as that
+   *     will be recorded.
    */
-  remote_as = connection->session->as_peer ;
-  local_as  = connection->session->open_send->my_as ;
+  remote_as = session->remote_as ;
+  local_as  = session->local_as ;
 
   if (as4)
     {
@@ -1660,7 +1701,7 @@ bgp_dump_common (bgp_dump bd, bgp_connection connection, int subtype, bool as4)
 
   /* Interface index
    */
-  stream_putw (s, connection->session->ifindex);
+  stream_putw (s, session->cops->ifindex);
 
   /* Remote and local IP addresses
    *
@@ -1671,8 +1712,8 @@ bgp_dump_common (bgp_dump bd, bgp_connection connection, int subtype, bool as4)
    * something "impossible" has happened, then the message will still be
    * "syntactically" well formed.
    */
-  su_remote = connection->session->su_peer ;
-  su_local  = connection->su_local ;
+  su_remote = session->su_peer ;
+  su_local  = &session->cops->su_local ;
 
   stream_putw (s, sockunion_get_afi(su_remote)) ;
 
@@ -1687,7 +1728,7 @@ bgp_dump_common (bgp_dump bd, bgp_connection connection, int subtype, bool as4)
   if (su_local != NULL)
     stream_put(s, sockunion_get_addr(su_local), sal) ;
   else
-    stream_put(s, empty, sal) ;
+    stream_put(s, NULL, sal) ;
 
   return s ;
 } ;
@@ -1717,29 +1758,25 @@ bgp_dump_fsm_state(bgp_fsm_state_t state)
 {
   switch (state)
     {
-      case bgp_fsm_sInitial:
-        return MRT_FSM_UNDEF ;
-
-      case bgp_fsm_sIdle:
+      case bgp_fsNULL:
+      case bgp_fsIdle:
+      case bgp_fsStop:
         return MRT_FSM_Idle ;
 
-      case bgp_fsm_sConnect:
+      case bgp_fsConnect:
         return MRT_FSM_Connect ;
 
-      case bgp_fsm_sActive:
+      case bgp_fsActive:
         return MRT_FSM_Active ;
 
-      case bgp_fsm_sOpenSent:
+      case bgp_fsOpenSent:
         return MRT_FSM_OpenSent ;
 
-      case bgp_fsm_sOpenConfirm:
+      case bgp_fsOpenConfirm:
         return MRT_FSM_OpenConfirm ;
 
-      case bgp_fsm_sEstablished:
+      case bgp_fsEstablished:
         return MRT_FSM_Established ;
-
-      case bgp_fsm_sStopping:
-        return MRT_FSM_UNDEF ;
 
       default:
         return MRT_FSM_UNDEF ;

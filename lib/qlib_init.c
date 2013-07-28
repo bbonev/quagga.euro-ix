@@ -27,8 +27,11 @@
 #include "qlib_init.h"
 #include "zassert.h"
 #include "memory.h"
+#include "mempool.h"
+#include "qlump.h"
 #include "qpnexus.h"
 #include "qpthreads.h"
+#include "qatomic.h"
 #include "qtime.h"
 #include "qpselect.h"
 #include "thread.h"
@@ -37,6 +40,7 @@
 #include "pthread_safe.h"
 #include "log_local.h"
 #include "qiovec.h"
+#include "prefix_id.h"
 
 /*==============================================================================
  * Quagga Library Initialise/Closedown
@@ -79,12 +83,9 @@
  * System parameters:
  *
  */
+static struct qlib_sysconf qlib_s  = { 0 } ;
 
-int qlib_iov_max ;              /* _SC_IOV_MAX          */
-int qlib_open_max ;             /* _SC_OPEN_MAX         */
-int qlib_pagesize ;             /* _SC_PAGE_SIZE        */
-int qlib_thread_cputime ;       /* _SC_THREAD_CPUTIME   */
-int qlib_cputime ;              /* _SC_CPUTIME          */
+/* extern */ const struct qlib_sysconf* qlib = &qlib_s ;
 
 struct
 {
@@ -95,30 +96,30 @@ struct
   long        max ;
 } qlib_vars[] =
 {
-    { .p_var = &qlib_iov_max,        .sc =  _SC_IOV_MAX,
-                                   .name = "_SC_IOV_MAX",
-                                    .min =  16,
-                                    .max = INT_MAX
+    { .p_var = &qlib_s.iov_max,        .sc =  _SC_IOV_MAX,
+                                     .name = "_SC_IOV_MAX",
+                                      .min =  16,
+                                      .max = INT_MAX
     },
-    { .p_var = &qlib_open_max,       .sc =  _SC_OPEN_MAX,
-                                   .name = "_SC_OPEN_MAX",
-                                    .min = 256,
-                                    .max = INT_MAX
+    { .p_var = &qlib_s.open_max,       .sc =  _SC_OPEN_MAX,
+                                     .name = "_SC_OPEN_MAX",
+                                      .min = 256,
+                                      .max = INT_MAX
     },
-    { .p_var = &qlib_pagesize,       .sc =  _SC_PAGESIZE,
-                                   .name = "_SC_PAGESIZE",
-                                    .min = 256,
-                                    .max = (INT_MAX >> 1) + 1
+    { .p_var = &qlib_s.pagesize,       .sc =  _SC_PAGESIZE,
+                                     .name = "_SC_PAGESIZE",
+                                      .min = 256,
+                                      .max = (INT_MAX >> 1) + 1
     },
-    { .p_var = &qlib_thread_cputime, .sc =  _SC_THREAD_CPUTIME,
-                                   .name = "_SC_THREAD_CPUTIME",
-                                    .min =  -1,
-                                    .max = INT_MAX
+    { .p_var = &qlib_s.thread_cputime, .sc =  _SC_THREAD_CPUTIME,
+                                     .name = "_SC_THREAD_CPUTIME",
+                                      .min =  -1,
+                                      .max = INT_MAX
     },
-    { .p_var = &qlib_cputime,        .sc =  _SC_CPUTIME,
-                                   .name = "_SC_CPUTIME",
-                                    .min =  -1,
-                                    .max = INT_MAX
+    { .p_var = &qlib_s.cputime,        .sc =  _SC_CPUTIME,
+                                     .name = "_SC_CPUTIME",
+                                      .min =  -1,
+                                      .max = INT_MAX
     },
     { .p_var = NULL }
 } ;
@@ -183,19 +184,27 @@ qlib_init_first_stage(mode_t cmask)
    *
    *  1. memory is the first to be initialised, and the last to be shut down.
    *
+   *     memory pools are initialised just after the malloc wrappers, and
+   *     memory lumps are initialised after that.
+   *
    *  2. qtime is initialised early, so that crafted monotonic time etc are
    *     available just in case other initialisation wants it.
    *
    *  3. qpthreads is also initialised early, to make sure that its state is
    *     correct, just in case.
    */
-  memory_start_up(qlib_pagesize) ;
+  memory_start_up(qlib->pagesize) ;
+  qmp_start_up() ;
+  qlump_start_up() ;
+  qs_start_up() ;               /* after qlump  */
   qt_start_up() ;
-  qpt_start_up(qlib_cputime, qlib_thread_cputime) ;
+  qpt_start_up(qlib->cputime, qlib->thread_cputime) ;
+  qatomic_start_up() ;
   qps_start_up() ;
-  qiovec_start_up(qlib_iov_max) ;
+  qiovec_start_up(qlib->iov_max) ;
   thread_start_up();
   qpn_wd_start_up() ;
+  prefix_id_init() ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -215,7 +224,9 @@ extern void
 qlib_init_second_stage(bool pthreaded)
 {
   qpt_second_stage(pthreaded);
+  qatomic_second_stage() ;
   memory_init_r();
+  qmp_second_stage() ;
   qt_second_stage() ;
   qpn_init() ;
   thread_init_r();
@@ -244,14 +255,19 @@ qlib_init_second_stage(bool pthreaded)
 extern void
 qexit(int exit_code, bool mem_stats)
 {
+  qatomic_finish() ;
   qpt_finish() ;
 
+  prefix_id_finish() ;
   safe_finish();
   mqueue_finish();
   zprivs_finish();
   log_finish();
   thread_finish();
   qt_finish() ;
+  qs_finish() ;
+  qlump_finish() ;
+  qmp_finish(mem_stats) ;
   memory_finish(mem_stats);
   exit (exit_code);
 }

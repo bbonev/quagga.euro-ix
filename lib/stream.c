@@ -39,10 +39,10 @@
  *
  * NB: the body of the stream is *NOT* zeroised.
  */
-extern struct stream *
+extern stream
 stream_new (size_t size)
 {
-  struct stream *s;
+  stream s;
 
   s = XCALLOC(MTYPE_STREAM, sizeof (struct stream));
 
@@ -71,17 +71,21 @@ stream_new (size_t size)
 } ;
 
 /*------------------------------------------------------------------------------
- * Free it now.
+ * Free stream structure (if any) and stream body (if any).
+ *
+ * Returns:  NULL
  */
-extern void
-stream_free (struct stream *s)
+extern stream
+stream_free (stream s)
 {
-  if (s == NULL)
-    return;
+  if (s != NULL)
+    {
+      XFREE (MTYPE_STREAM_DATA, s->data);
+      XFREE (MTYPE_STREAM, s);
+    } ;
 
-  XFREE (MTYPE_STREAM_DATA, s->data);
-  XFREE (MTYPE_STREAM, s);
-}
+  return NULL ;
+} ;
 
 /*------------------------------------------------------------------------------
  * Set overflow and/or overrun (if required)
@@ -96,7 +100,7 @@ stream_free (struct stream *s)
  * but will do nothing if s->getp <= s->endp <= s->size !
  */
 extern void
-stream_set_overs(struct stream* s)
+stream_set_overs(stream s)
 {
   if (s->endp > s->size)
     {
@@ -119,8 +123,8 @@ stream_set_overs(struct stream* s)
  * Copies as much as possible, given the dst->size.  Ensures that the new endp
  * and getp are valid, and sets overrun and/or overflow as required.
  */
-extern struct stream *
-stream_copy (struct stream *dst, struct stream *src)
+extern stream
+stream_copy (stream dst, stream src)
 {
   qassert ((dst != NULL) && (src != NULL)) ;
   qassert_stream(src) ;
@@ -147,8 +151,8 @@ stream_copy (struct stream *dst, struct stream *src)
  *
  * NB: if the src is empty, will create a stream with no body.
  */
-extern struct stream *
-stream_dup (struct stream* src)
+extern stream
+stream_dup (stream src)
 {
   return stream_copy(stream_new(stream_get_len(src)), src) ;
 } ;
@@ -162,7 +166,7 @@ stream_dup (struct stream* src)
  * Checks s->getp <= s->endp for safety.
  */
 extern size_t
-stream_resize (struct stream *s, size_t newsize)
+stream_resize (stream s, size_t newsize)
 {
   s->data = XREALLOC (MTYPE_STREAM_DATA, s->data, newsize) ;
   s->size = newsize;
@@ -176,7 +180,7 @@ stream_resize (struct stream *s, size_t newsize)
 /*==============================================================================
  * Getting stuff from a stream
  */
-static void stream_get_partial(byte* b, struct stream* s, size_t n,
+static void stream_get_partial(byte* b, stream s, size_t n,
                                                        size_t from, bool step) ;
 
 /*------------------------------------------------------------------------------
@@ -186,7 +190,7 @@ static void stream_get_partial(byte* b, struct stream* s, size_t n,
  * can and fill the rest with zeros.  Sets s->getp == s->endp and s->overrun !
  */
 inline static void
-stream_get_this(byte* b, struct stream* s, size_t n)
+stream_get_this(byte* b, stream s, size_t n)
 {
   size_t getp, getp_n ;
 
@@ -211,7 +215,7 @@ stream_get_this(byte* b, struct stream* s, size_t n)
  * can and fill the rest with zeros.  Sets s->overrun !
  */
 inline static void
-stream_get_this_from(byte* b, struct stream* s, size_t n, size_t from)
+stream_get_this_from(byte* b, stream s, size_t n, size_t from)
 {
   qassert_stream(s) ;
 
@@ -233,7 +237,7 @@ stream_get_this_from(byte* b, struct stream* s, size_t n, size_t from)
  *     wanted -- however, will cope if can get everything.
  */
 static void
-stream_get_partial(byte* b, struct stream* s, size_t n, size_t from, bool step)
+stream_get_partial(byte* b, stream s, size_t n, size_t from, bool step)
 {
   size_t have ;
 
@@ -263,7 +267,7 @@ stream_get_partial(byte* b, struct stream* s, size_t n, size_t from, bool step)
  * Gets 0 for any byte(s) beyond s->endp and sets s->overrun
  */
 extern void
-stream_get (void *dst, struct stream *s, size_t n)
+stream_get (void *dst, stream s, size_t n)
 {
   stream_get_this(dst, s, n) ;
 } ;
@@ -279,7 +283,7 @@ stream_get (void *dst, struct stream *s, size_t n)
  * NB: the address will remain valid until the stream is resized or freed.
  */
 extern void*
-stream_get_bytes(struct stream *s, size_t want, size_t* have)
+stream_get_bytes(stream s, size_t want, size_t* have)
 {
   byte*  ptr ;
   size_t avail ;
@@ -309,7 +313,7 @@ stream_get_bytes(struct stream *s, size_t want, size_t* have)
  * NB: the address will remain valid until the stream is resized or freed.
  */
 extern void*
-stream_get_bytes_left(struct stream *s, size_t* have)
+stream_get_bytes_left(stream s, size_t* have)
 {
   byte* ptr ;
 
@@ -329,7 +333,7 @@ stream_get_bytes_left(struct stream *s, size_t* have)
  * Returns 0 if overruns (or already overrun)
  */
 extern u_char
-stream_getc (struct stream *s)
+stream_getc (stream s)
 {
   qassert_stream(s) ;
 
@@ -346,7 +350,7 @@ stream_getc (struct stream *s)
  * Returns 0 if overruns (or already overrun)
  */
 extern u_char
-stream_getc_from (struct stream *s, size_t from)
+stream_getc_from (stream s, size_t from)
 {
   qassert_stream(s) ;
 
@@ -363,7 +367,7 @@ stream_getc_from (struct stream *s, size_t from)
  * Gets 0 for any byte(s) beyond s->endp and sets s->overrun
  */
 extern uint16_t
-stream_getw(struct stream *s)
+stream_getw(stream s)
 {
   uint16_t w ;
 
@@ -378,7 +382,7 @@ stream_getw(struct stream *s)
  * Gets 0 for any byte(s) beyond s->endp and sets s->overrun
  */
 extern uint16_t
-stream_getw_from (struct stream *s, size_t from)
+stream_getw_from (stream s, size_t from)
 {
   uint16_t w ;
 
@@ -393,7 +397,7 @@ stream_getw_from (struct stream *s, size_t from)
  * Gets 0 for any byte(s) beyond s->endp and sets s->overrun
  */
 extern uint32_t
-stream_getl (struct stream *s)
+stream_getl (stream s)
 {
   uint32_t l ;
 
@@ -408,7 +412,7 @@ stream_getl (struct stream *s)
  * Gets 0 for any byte(s) beyond s->endp and sets s->overrun
  */
 extern u_int32_t
-stream_getl_from (struct stream *s, size_t from)
+stream_getl_from (stream s, size_t from)
 {
   uint32_t l ;
 
@@ -423,7 +427,7 @@ stream_getl_from (struct stream *s, size_t from)
  * Gets 0 for any byte(s) beyond s->endp and sets s->overrun
  */
 extern uint64_t
-stream_getq(struct stream *s)
+stream_getq(stream s)
 {
   uint64_t q ;
 
@@ -438,7 +442,7 @@ stream_getq(struct stream *s)
  * Gets 0 for any byte(s) beyond s->endp and sets s->overrun
  */
 extern uint64_t
-stream_getq_from (struct stream *s, size_t from)
+stream_getq_from (stream s, size_t from)
 {
   uint64_t q ;
 
@@ -453,7 +457,7 @@ stream_getq_from (struct stream *s, size_t from)
  * Gets 0 for any byte(s) beyond s->endp and sets s->overrun
  */
 extern in_addr_t
-stream_get_ipv4 (struct stream *s)
+stream_get_ipv4 (stream s)
 {
   in_addr_t ip ;
 
@@ -463,14 +467,14 @@ stream_get_ipv4 (struct stream *s)
 } ;
 
 /*------------------------------------------------------------------------------
- * Get next ipv4 address -- returns in_addr_t (which is in NETWORK order).
+ * Get next prefix for given family
  *
  * Gets 0 for any byte(s) beyond s->endp and sets s->overrun
  */
 extern void
-stream_get_prefix(struct stream *s, struct prefix* p, sa_family_t family)
+stream_get_prefix(stream s, struct prefix* p, sa_family_t family)
 {
-  prefix_raw_t raw ;
+  prefix_raw_t raw[1] ;
   size_t       psize;
 
   raw->prefix_len = stream_getc(s) ;
@@ -478,19 +482,19 @@ stream_get_prefix(struct stream *s, struct prefix* p, sa_family_t family)
   if (psize != 0)
     stream_get_this(raw->prefix, s, psize) ;
 
-  prefix_from_raw(p, raw, family) ;
+  prefix_from_raw(p, family, raw) ;
 } ;
 
 /*------------------------------------------------------------------------------
- * Get next ipv4 address -- returns in_addr_t (which is in NETWORK order).
+ * Get next prefix for given family
  *
  * Gets 0 for any byte(s) beyond s->endp and sets s->overrun
  */
 extern uint
-stream_get_prefix_from(struct stream *s, size_t from,
+stream_get_prefix_from(stream s, size_t from,
                                            struct prefix* p, sa_family_t family)
 {
-  prefix_raw_t raw ;
+  prefix_raw_t raw[1] ;
   size_t       psize;
 
   raw->prefix_len = stream_getc_from(s, from) ;
@@ -498,7 +502,7 @@ stream_get_prefix_from(struct stream *s, size_t from,
   if (psize != 0)
     stream_get_this_from(raw->prefix, s, psize, from + 1) ;
 
-  prefix_from_raw(p, raw, family) ;
+  prefix_from_raw(p, family, raw) ;
 
   return psize + 1 ;
 } ;
@@ -506,7 +510,7 @@ stream_get_prefix_from(struct stream *s, size_t from,
 /*==============================================================================
  * Putting stuff to a stream
  */
-static void stream_put_partial(struct stream* s, const byte* src, size_t n,
+static void stream_put_partial(stream s, const byte* src, size_t n,
                                                          size_t at, bool step) ;
 
 /*------------------------------------------------------------------------------
@@ -516,7 +520,7 @@ static void stream_put_partial(struct stream* s, const byte* src, size_t n,
  * set s->overflow.
  */
 inline static void
-stream_put_this(struct stream* s, const byte* src, size_t n)
+stream_put_this(stream s, const byte* src, size_t n)
 {
   size_t endp, endp_n ;
 
@@ -544,7 +548,7 @@ stream_put_this(struct stream* s, const byte* src, size_t n)
  *     or overwritten !!
  */
 inline static void
-stream_put_this_at(struct stream* s, const byte* src, size_t n, size_t at)
+stream_put_this_at(stream s, const byte* src, size_t n, size_t at)
 {
   qassert_stream(s) ;
 
@@ -569,7 +573,7 @@ stream_put_this_at(struct stream* s, const byte* src, size_t n, size_t at)
  *     wanted -- however, will cope if can put everything.
  */
 static void
-stream_put_partial(struct stream* s, const byte* src, size_t n,
+stream_put_partial(stream s, const byte* src, size_t n,
                                                            size_t at, bool step)
 {
   size_t have ;
@@ -602,27 +606,12 @@ stream_put_partial(struct stream* s, const byte* src, size_t n,
  * If src == NULL, then put zeros.
  */
 extern void
-stream_put (struct stream *s, const void *src, size_t n)
+stream_put (stream s, const void* src, size_t n)
 {
   if (src != NULL)
     stream_put_this(s, src, n) ;
   else
-    {
-      size_t have ;
-
-      have = stream_get_write_left(s) ;
-
-      if (have < n)
-        {
-          n = have ;
-          s->overflow = true ;
-        } ;
-
-      if (n > 0)
-        memset(s->data + s->endp, 0, n) ;
-
-      s->endp += n ;
-    } ;
+    stream_putc_n(s, 0, n) ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -631,12 +620,36 @@ stream_put (struct stream *s, const void *src, size_t n)
  * Puts as much as can: truncates anything beyond s->size and sets s->overflow.
  */
 extern void
-stream_putc (struct stream *s, byte c)
+stream_putc (stream s, byte c)
 {
   if (s->endp < s->size)
     *(s->data + (s->endp++)) = c ;
   else
     s->overflow = true ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Copy as much of source as possible to stream.
+ *
+ * If src == NULL, then put zeros.
+ */
+extern void
+stream_putc_n(stream s, byte c, size_t n)
+{
+  size_t have ;
+
+  have = stream_get_write_left(s) ;
+
+  if (have < n)
+    {
+      n = have ;
+      s->overflow = true ;
+    } ;
+
+  if (n > 0)
+    memset(s->data + s->endp, c, n) ;
+
+  s->endp += n ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -649,7 +662,7 @@ stream_putc (struct stream *s, byte c)
  *     overwritten, unless the s->endp is moved suitably !
  */
 extern void
-stream_putc_at (struct stream *s, size_t at, u_char c)
+stream_putc_at (stream s, size_t at, u_char c)
 {
   if (at < s->size)
     *(s->data + at) = c ;
@@ -663,7 +676,7 @@ stream_putc_at (struct stream *s, size_t at, u_char c)
  * Puts as much as can: truncates anything beyond s->size and sets s->overflow.
  */
 extern void
-stream_putw (struct stream *s, uint16_t w)
+stream_putw (stream s, uint16_t w)
 {
   w = htons(w) ;
   stream_put_this(s, (byte*)&w, 2) ;
@@ -679,7 +692,7 @@ stream_putw (struct stream *s, uint16_t w)
  *     suitably !
  */
 extern void
-stream_putw_at(struct stream *s, size_t at, uint16_t w)
+stream_putw_at(stream s, size_t at, uint16_t w)
 {
   w = htons(w) ;
   stream_put_this_at(s, (byte*)&w, 2, at) ;
@@ -691,7 +704,7 @@ stream_putw_at(struct stream *s, size_t at, uint16_t w)
  * Puts as much as can: truncates anything beyond s->size and sets s->overflow.
  */
 extern void
-stream_putl (struct stream *s, uint32_t l)
+stream_putl (stream s, uint32_t l)
 {
   l = htonl(l) ;
   stream_put_this(s, (byte*)&l, 4) ;
@@ -707,7 +720,7 @@ stream_putl (struct stream *s, uint32_t l)
  *     suitably !
  */
 extern void
-stream_putl_at (struct stream *s, size_t at, uint32_t l)
+stream_putl_at (stream s, size_t at, uint32_t l)
 {
   l = htonl(l) ;
   stream_put_this_at(s, (byte*)&l, 4, at) ;
@@ -719,7 +732,7 @@ stream_putl_at (struct stream *s, size_t at, uint32_t l)
  * Puts as much as can: truncates anything beyond s->size and sets s->overflow.
  */
 extern void
-stream_putq (struct stream *s, uint64_t q)
+stream_putq (stream s, uint64_t q)
 {
   q = htonq(q) ;
   stream_put_this(s, (byte*)&q, 8) ;
@@ -735,7 +748,7 @@ stream_putq (struct stream *s, uint64_t q)
  *     suitably !
  */
 extern void
-stream_putq_at (struct stream *s, size_t at, uint64_t q)
+stream_putq_at (stream s, size_t at, uint64_t q)
 {
   q = htonq(q) ;
   stream_put_this_at(s, (byte*)&q, 8, at) ;
@@ -747,7 +760,7 @@ stream_putq_at (struct stream *s, size_t at, uint64_t q)
  * Puts as much as can: truncates anything beyond s->size and sets s->overflow.
  */
 extern void
-stream_put_ipv4 (struct stream *s, in_addr_t ip)
+stream_put_ipv4 (stream s, in_addr_t ip)
 {
   stream_put_this(s, (byte*)&ip, sizeof(ip)) ;
 } ;
@@ -758,7 +771,7 @@ stream_put_ipv4 (struct stream *s, in_addr_t ip)
  * Puts as much as can: truncates anything beyond s->size and sets s->overflow.
  */
 extern void
-stream_put_in_addr (struct stream *s, struct in_addr *addr)
+stream_put_in_addr (stream s, struct in_addr *addr)
 {
   stream_put_this(s, (byte*)&(addr->s_addr), sizeof(addr->s_addr)) ;
 } ;
@@ -769,9 +782,9 @@ stream_put_in_addr (struct stream *s, struct in_addr *addr)
  * Puts as much as can: truncates anything beyond s->size and sets s->overflow.
  */
 extern void
-stream_put_prefix (struct stream *s, struct prefix *p)
+stream_put_prefix (stream s, prefix_c p)
 {
-  prefix_raw_t raw ;
+  prefix_raw_t raw[1] ;
   size_t       psize;
 
   psize = prefix_to_raw(raw, p) ;
@@ -789,7 +802,7 @@ stream_put_prefix (struct stream *s, struct prefix *p)
  * Reads the requested amount, or up to the s->size, whichever is smaller.
  */
 extern int
-stream_read (struct stream *s, int fd, size_t size)
+stream_read (stream s, int fd, size_t size)
 {
   size_t have ;
   int nbytes;
@@ -823,7 +836,7 @@ stream_read (struct stream *s, int fd, size_t size)
  *     return -1 with errno == ENOMEM !
  */
 extern int
-stream_readn(struct stream *s, int fd, size_t size)
+stream_readn(stream s, int fd, size_t size)
 {
   size_t have ;
   int ret ;
@@ -880,7 +893,7 @@ stream_readn(struct stream *s, int fd, size_t size)
  *     return -1 with errno == ENOMEM !
  */
 extern ssize_t
-stream_read_try(struct stream *s, int fd, size_t size)
+stream_read_try(stream s, int fd, size_t size)
 {
   ssize_t nbytes;
   size_t  have ;
@@ -929,7 +942,7 @@ stream_read_try(struct stream *s, int fd, size_t size)
  *     return -1 with errno == ENOMEM !
  */
 extern ssize_t
-stream_recvfrom (struct stream *s, int fd, size_t size, int flags,
+stream_recvfrom (stream s, int fd, size_t size, int flags,
                  struct sockaddr *from, socklen_t *fromlen)
 {
   ssize_t nbytes;
@@ -980,7 +993,7 @@ stream_recvfrom (struct stream *s, int fd, size_t size, int flags,
  *     return -1 with errno == ENOMEM !
  */
 extern ssize_t
-stream_recvmsg (struct stream *s, int fd, struct msghdr *msgh, int flags,
+stream_recvmsg (stream s, int fd, struct msghdr *msgh, int flags,
                 size_t size)
 {
   int nbytes;
@@ -1025,7 +1038,7 @@ stream_recvmsg (struct stream *s, int fd, struct msghdr *msgh, int flags,
  * Returns pointer to next byte in given buffer
  */
 extern void*
-stream_transfer(void* p, struct stream* s, void* limit)
+stream_transfer(void* p, stream s, void* limit)
 {
   size_t have ;
 
@@ -1047,10 +1060,10 @@ stream_transfer(void* p, struct stream* s, void* limit)
 /*------------------------------------------------------------------------------
  * Make base of fifo of steams.
  */
-extern struct stream_fifo *
+extern stream_fifo
 stream_fifo_new (void)
 {
-  struct stream_fifo *new;
+  stream_fifo new;
 
   new = XCALLOC (MTYPE_STREAM_FIFO, sizeof (struct stream_fifo));
   return new;
@@ -1060,7 +1073,7 @@ stream_fifo_new (void)
  * Append given stream to given fifo
  */
 extern void
-stream_fifo_push (struct stream_fifo *fifo, struct stream *s)
+stream_fifo_push (stream_fifo fifo, stream s)
 {
   if (fifo->tail)
     fifo->tail->next = s;
@@ -1075,14 +1088,14 @@ stream_fifo_push (struct stream_fifo *fifo, struct stream *s)
 /*------------------------------------------------------------------------------
  * Remove first stream from fifo.
  */
-extern struct stream *
-stream_fifo_pop (struct stream_fifo *fifo)
+extern stream
+stream_fifo_pop (stream_fifo fifo)
 {
-  struct stream *s;
+  stream s;
 
   s = fifo->head;
 
-  if (s)
+  if (s != NULL)
     {
       fifo->head = s->next;
 
@@ -1098,8 +1111,8 @@ stream_fifo_pop (struct stream_fifo *fifo)
 /*------------------------------------------------------------------------------
  * Return first fifo entry -- without removing it.
  */
-extern struct stream *
-stream_fifo_head (struct stream_fifo *fifo)
+extern stream
+stream_fifo_head (stream_fifo fifo)
 {
   return fifo->head;
 }
@@ -1110,7 +1123,7 @@ stream_fifo_head (struct stream_fifo *fifo)
  * NB: assumes that any streams in the fifo will be dealt with separately,
  */
 extern void
-stream_fifo_reset (struct stream_fifo *fifo)
+stream_fifo_reset (stream_fifo fifo)
 {
   fifo->head = fifo->tail = NULL;
   fifo->count = 0;
@@ -1120,12 +1133,11 @@ stream_fifo_reset (struct stream_fifo *fifo)
  * Empty given fifo and free off any streams it contains.
  */
 extern void
-stream_fifo_clean (struct stream_fifo *fifo)
+stream_fifo_clean (stream_fifo fifo)
 {
-  struct stream *s;
-  struct stream *next;
+  stream s, next ;
 
-  for (s = fifo->head; s; s = next)
+  for (s = fifo->head; s != NULL; s = next)
     {
       next = s->next;
       stream_free (s);
@@ -1137,9 +1149,14 @@ stream_fifo_clean (struct stream_fifo *fifo)
 /*------------------------------------------------------------------------------
  * Empty given fifo, freeing any streams it contains, and then free fifo.
  */
-extern void
-stream_fifo_free (struct stream_fifo *fifo)
+extern stream_fifo
+stream_fifo_free (stream_fifo fifo)
 {
-  stream_fifo_clean (fifo);
-  XFREE (MTYPE_STREAM_FIFO, fifo);
+  if (fifo != NULL)
+    {
+      stream_fifo_clean (fifo);
+      XFREE (MTYPE_STREAM_FIFO, fifo);
+    } ;
+
+  return NULL ;
 }

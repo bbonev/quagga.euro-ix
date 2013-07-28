@@ -156,7 +156,7 @@ rip_route_map_update (const char *notused)
 	{
 	  if (rip->route_map[i].name)
 	    rip->route_map[i].map = 
-	      route_map_lookup_by_name (rip->route_map[i].name);
+	      route_map_lookup (rip->route_map[i].name);
 	}
     }
 }

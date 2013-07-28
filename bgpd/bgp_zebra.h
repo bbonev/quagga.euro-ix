@@ -21,20 +21,29 @@ Boston, MA 02111-1307, USA.  */
 #ifndef _QUAGGA_BGP_ZEBRA_H
 #define _QUAGGA_BGP_ZEBRA_H
 
+#include "bgpd/bgp_common.h"
+
 extern void bgp_zebra_init (void);
 extern int bgp_if_update_all (void);
-extern int bgp_config_write_redistribute (struct vty *, struct bgp *, afi_t,
-                                                                 safi_t, int *);
-extern void bgp_zebra_announce (struct prefix *, struct bgp_info *,
-                                                          struct bgp *, safi_t);
-extern void bgp_zebra_withdraw (struct prefix *, struct bgp_info *, safi_t);
+extern int bgp_config_write_redistribute (struct vty *, struct bgp *, qafx_t,
+                                                                         int *);
+extern route_zebra bgp_zebra_announce(route_zebra zr, bgp_rib_node rn,
+                                                                   prefix_c p) ;
+extern route_zebra bgp_zebra_discard(route_zebra zr, prefix_c p);
+extern void bgp_zebra_withdraw(route_zebra zr, prefix_c p);
+
+
 
 extern int bgp_redistribute_set (struct bgp *, afi_t, int);
 extern int bgp_redistribute_rmap_set (struct bgp *, afi_t, int, const char *);
 extern int bgp_redistribute_metric_set (struct bgp *, afi_t, int, u_int32_t);
-extern int bgp_redistribute_unset (struct bgp *, afi_t, int);
+extern cmd_ret_t bgp_redistribute_unset (struct bgp *bgp, qAFI_t q_afi,
+                                                                     int type) ;
 extern int bgp_redistribute_routemap_unset (struct bgp *, afi_t, int);
 extern int bgp_redistribute_metric_unset (struct bgp *, afi_t, int);
+
+
+
 
 extern struct interface *if_lookup_by_ipv4 (struct in_addr *);
 extern struct interface *if_lookup_by_ipv4_exact (struct in_addr *);

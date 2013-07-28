@@ -201,7 +201,9 @@ typedef enum
 
 extern void mqueue_enqueue(mqueue_queue mq, mqueue_block mqb,
                                                           mqb_rank_b priority) ;
-extern mqueue_block mqueue_dequeue(mqueue_queue mq, int wait, void* arg) ;
+extern mqueue_block mqueue_dequeue(mqueue_queue mq, bool wait,
+                                                 qtime_mono_t* p_timeout_time) ;
+extern bool mqueue_set_signal(mqueue_queue mq, mqueue_thread_signal mtsig) ;
 extern int mqueue_revoke(mqueue_queue mq, void* arg0, uint num) ;
 
 extern bool mqb_revoke(mqueue_block mqb, mqueue_queue mq) ;

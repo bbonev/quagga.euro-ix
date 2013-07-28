@@ -84,18 +84,30 @@ typedef qtime_t qtime_mono_t ;  /* qtime_t value, monotonic time-base     */
 typedef qtime_t qtime_tod_t ;   /* qtime_t value, timeofday time-base...  */
                                 /* ...just in case != CLOCK_REALTIME !    */
 
-/* A qtime_t second                 123456789 -- nano-seconds             */
-#define QTIME_SECOND     ((qtime_t)1000000000)
-#define TIMESPEC_SECOND  ((int64_t)1000000000)
-#define TIMEVAL_SECOND   ((int64_t)1000000)
+/* struct timeval works in micro-seconds
+ */
+#define TIMEVAL_SECOND   ((int64_t)1000 * 1000)
+
+/* struct timespec and qtime_t work in nano-seconds
+ */
+#define TIMESPEC_SECOND  ((int64_t)1000 * 1000 * 1000)
+#define QTIME_SECOND     ((qtime_t)1000 * 1000 * 1000)
+#define QMILLI_SECOND    ((qtime_t)1000 * 1000)
+#define QMICRO_SECOND    ((qtime_t)1000)
+#define QNANO_SECOND     ((qtime_t)1)
 
 #define QTIME_MAX INT64_MAX
 
 /* Macro to convert time in seconds to a qtime_t
  *
- * Note that the time to convert may be a float.
+ * Note that the time to convert may be a float -- rounds *down*.
  */
-#define QTIME(s) ((qtime_t)((s) * QTIME_SECOND))
+#define QTIME_SECONDS(s)       ((qtime_t)((s) * QTIME_SECOND))
+#define QTIME_MILLI_SECONDS(s) ((qtime_t)((s) * QMILLI_SECOND))
+#define QTIME_MICRO_SECONDS(s) ((qtime_t)((s) * QMICRO_SECOND))
+#define QTIME_NANO_SECONDS(s)  ((qtime_t)((s) * QNANO_SECOND))
+
+#define QTIME(s) QTIME_SECONDS(s)
 
 /* Construct qt_have_clock_monotonic from HAVE_CLOCK_MONOTONIC
  */
@@ -109,6 +121,58 @@ enum
 #endif
 };
 
+/* A "base" time -- based on monotonic time -- is supported.
+ *
+ * The monotonic time is defined by POSIX to start at "an unspecified point in
+ * the past (for example, system start-up time or the Epoch)" but also
+ * specifies that the "point does not change after system start-up time".
+ *
+ * For some purposes it is useful to have a version of monotonic time which
+ * starts near but not at zero, for the application.  Not at zero, so that
+ * zero can signify unset or undefined.  Near zero so that some, reasonable,
+ * period into the past can be represented.
+ *
+ * So a "base" time is a version of monotonic time, whose origin is shifted
+ * so that "time zero" (when the application woke up) is a little after day 3
+ * -- 2^48 nano-seconds.
+ *
+ * qt_base_origin is set to be the monotonic time of "base time zero".
+ *
+ * See qt_mono_fb() and qt_base_fm().
+ *
+ * One use of "base" times is to construct low resolution time values.  A
+ * simple way to do that is to shift off some number of LS bits, leaving some
+ * fraction of "binary seconds" -- a binary second is just less than 1.074 sec.
+ * Given that the base time is in nano-seconds, with various shifts a 32-bit
+ * unsigned value can hold:
+ *
+ *   qt_base_t >> 24 -- resolution ~0.0168 sec -- range >   2.2 year
+ *   qt_base_t >> 25 -- resolution ~0.0336 sec -- range >   4.5 year
+ *   qt_base_t >> 26 -- resolution ~0.0671 sec -- range >   9.1 year
+ *   qt_base_t >> 27 -- resolution ~0.1342 sec -- range >  18.2 year
+ *   qt_base_t >> 28 -- resolution ~0.2684 sec -- range >  36.5 year
+ *   qt_base_t >> 29 -- resolution ~0.5370 sec -- range >  73.1 year
+ *   qt_base_t >> 30 -- resolution ~1.0737 sec -- range > 146.2 year
+ *   qt_base_t >> 31 -- resolution ~2.1475 sec -- range > 292.4 year
+ */
+typedef uint64_t qtime_base_t ;
+
+#define QT_BASE_ZERO  ((qtime_mono_t)1 << 48)
+
+CONFIRM(QT_BASE_ZERO > QTIME(78 * 60 * 60)) ;
+CONFIRM(QT_BASE_ZERO < QTIME(79 * 60 * 60)) ;
+
+Private qtime_mono_t qt_base_origin ;
+
+/* A low resolution time based on a qtime_base_t is a qtime_period_t
+ */
+typedef uint64_t qtime_period_t ;
+
+enum
+{
+  QTIME_PERIOD_MIN = 0,                 /* unsigned     */
+  QTIME_PERIOD_MAX = UINT64_MAX,
+} ;
 
 /*==============================================================================
  * Functions
@@ -127,6 +191,15 @@ Inline qtime_mono_t qt_add_realtime(qtime_t interval) ;
 Inline qtime_mono_t qt_get_monotonic(void) ;
 Inline qtime_mono_t qt_add_monotonic(qtime_t interval) ;
 Inline time_t qt_get_mono_secs(void) ;
+
+Inline qtime_base_t qt_base_fm(qtime_mono_t mono) ;
+Inline qtime_mono_t qt_mono_fb(qtime_base_t base) ;
+Inline qtime_period_t qt_period_fm(qtime_mono_t mono, qtime_mono_t origin,
+                                                                   uint shift) ;
+Inline qtime_mono_t qt_mono_fp(qtime_period_t period, qtime_mono_t origin,
+                                                                   uint shift) ;
+Inline qtime_period_t qt_periods(qtime_t ns, uint shift) ;
+extern qtime_mono_t qt_period_origin(void) ;
 
 Inline qtime_tod_t qt_get_timeofday(void) ;
 Inline qtime_tod_t qt_add_timeofday(qtime_t interval) ;
@@ -377,5 +450,66 @@ qt_clock_getres_ts(clockid_t clock_id, struct timespec* ts)
   if (clock_getres(clock_id, ts) != 0)
     qt_clock_getres_failed(clock_id, ts) ;
 } ;
+
+/*==============================================================================
+ * Conversion qtime_mono_t <-> qtime_base_t
+ */
+
+/*------------------------------------------------------------------------------
+ * Get qtime_base_t from qtime_mono_t
+ */
+Inline qtime_base_t
+qt_base_fm(qtime_mono_t mono)
+{
+  return (qtime_base_t)(mono - qt_base_origin) ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Get qtime_mono_t from qtime_base_t
+ */
+Inline qtime_mono_t
+qt_mono_fb(qtime_base_t base)
+{
+  return (qtime_mono_t)base + qt_base_origin ;
+} ;
+
+/*==============================================================================
+ * Conversion qtime_mono_t <-> qtime_period_t
+ */
+
+/*------------------------------------------------------------------------------
+ * Get qtime_period_t from qtime_mono_t
+ *
+ * Adjusts to period origin and then truncates nano-seconds to period units,
+ * by shift.
+ */
+Inline qtime_period_t
+qt_period_fm(qtime_mono_t mono, qtime_mono_t origin, uint shift)
+{
+  return ((qtime_period_t)(mono - origin)) >> shift ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Get qtime_mono_t from qtime_period_t
+ *
+ * Convert period units to nano-seconds by shift and re-adjust from period
+ * origin.
+ */
+Inline qtime_mono_t
+qt_mono_fp(qtime_period_t period, qtime_mono_t origin, uint shift)
+{
+  return (qtime_mono_t)(period << shift) + origin ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Get qtime_period_t from qtime_t -- rounding up
+ */
+Inline qtime_period_t
+qt_periods(qtime_t ns, uint shift)
+{
+  return ((qtime_period_t)(ns + (1 << shift) - 1)) >> shift ;
+} ;
+
+
 
 #endif /* _ZEBRA_QTIME_H */

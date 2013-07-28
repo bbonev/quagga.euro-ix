@@ -32,68 +32,92 @@ Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
 static void bgp_node_delete (struct bgp_node *);
 static void bgp_table_free (struct bgp_table *);
 
-struct bgp_table *
-bgp_table_init (afi_t afi, safi_t safi)
+/*------------------------------------------------------------------------------
+ *
+ */
+extern bgp_table
+bgp_table_init (qafx_t qafx)
 {
-  struct bgp_table *rt;
+  bgp_table table;
 
-  rt = XCALLOC (MTYPE_BGP_TABLE, sizeof (struct bgp_table));
+  table = XCALLOC (MTYPE_BGP_TABLE, sizeof (bgp_table_t));
 
-  bgp_table_lock(rt);
-  rt->type = BGP_TABLE_MAIN;
-  rt->afi = afi;
-  rt->safi = safi;
+  bgp_table_lock(table);
 
-  return rt;
+  table->type = BGP_TABLE_MAIN;
+  table->qafx = qafx ;
+
+  return table;
 }
 
+/*------------------------------------------------------------------------------
+ *
+ */
 void
-bgp_table_lock (struct bgp_table *rt)
+bgp_table_lock (bgp_table table)
 {
-  rt->lock++;
+  table->lock++;
 }
 
-void
-bgp_table_unlock (struct bgp_table *rt)
+/*------------------------------------------------------------------------------
+ *
+ */
+extern void
+bgp_table_unlock (bgp_table table)
 {
-  assert (rt->lock > 0);
-  rt->lock--;
+  assert (table->lock > 0);
+  table->lock--;
 
-  if (rt->lock == 0)
-    bgp_table_free (rt);
+  if (table->lock == 0)
+    bgp_table_free (table);
 }
 
-void
-bgp_table_finish (struct bgp_table **rt)
+/*------------------------------------------------------------------------------
+ *
+ */
+extern bgp_table
+bgp_table_finish (bgp_table table)
 {
-  if (*rt != NULL)
-    {
-      bgp_table_unlock(*rt);
-      *rt = NULL;
-    }
+  if (table != NULL)
+    bgp_table_unlock(table);
+
+  return NULL ;
 }
 
+/*------------------------------------------------------------------------------
+ *
+ */
 static struct bgp_node *
-bgp_node_create (void)
+bgp_node_create (bgp_table table)
 {
-  return XCALLOC (MTYPE_BGP_NODE, sizeof (struct bgp_node));
+  bgp_node  node;
+
+  node = XCALLOC (MTYPE_BGP_NODE, sizeof (bgp_node_t));
+
+  node->table = table;
+  node->qafx  = table->qafx ;
+
+  return node ;
 }
 
-/* Allocate new route node with prefix set. */
+/*------------------------------------------------------------------------------
+ * Allocate new route node with prefix set.
+ */
 static struct bgp_node *
-bgp_node_set (struct bgp_table *table, struct prefix *prefix)
+bgp_node_set (struct bgp_table *table, prefix_c prefix)
 {
-  struct bgp_node *node;
+  bgp_node  node;
 
-  node = bgp_node_create ();
+  node = bgp_node_create (table);
 
   prefix_copy (&node->p, prefix);
-  node->table = table;
 
   return node;
 }
 
-/* Free route node. */
+/*------------------------------------------------------------------------------
+ * Free route node.
+ */
 static void
 bgp_node_free (struct bgp_node *node)
 {
@@ -101,7 +125,9 @@ bgp_node_free (struct bgp_node *node)
   XFREE (MTYPE_BGP_NODE, node);
 }
 
-/* Free route table. */
+/*------------------------------------------------------------------------------
+ * Free route table.
+ */
 static void
 bgp_table_free (struct bgp_table *rt)
 {
@@ -175,17 +201,19 @@ static const u_char maskbit[] =
   0x00, 0x80, 0xc0, 0xe0, 0xf0, 0xf8, 0xfc, 0xfe, 0xff
 };
 
-/* Common prefix route genaration. */
+/*------------------------------------------------------------------------------
+ * Common prefix route generation.
+ */
 static void
-route_common (struct prefix *n, struct prefix *p, struct prefix *new)
+route_common (prefix new, prefix_c n, prefix_c p)
 {
-  int i;
-  u_char diff;
-  u_char mask;
+  uint i;
+  byte diff;
+  byte mask;
 
-  u_char *np = (u_char *)&n->u.prefix;
-  u_char *pp = (u_char *)&p->u.prefix;
-  u_char *newp = (u_char *)&new->u.prefix;
+  const byte* np = (const byte*)&n->u.prefix;
+  const byte* pp = (const byte*)&p->u.prefix;
+  byte*     newp =       (byte*)&new->u.prefix;
 
   for (i = 0; i < p->prefixlen / 8; i++)
     {
@@ -210,6 +238,9 @@ route_common (struct prefix *n, struct prefix *p, struct prefix *new)
     }
 }
 
+/*------------------------------------------------------------------------------
+ *
+ */
 static void
 set_link (struct bgp_node *node, struct bgp_node *new)
 {
@@ -219,7 +250,9 @@ set_link (struct bgp_node *node, struct bgp_node *new)
   new->parent = node;
 }
 
-/* Lock node. */
+/*------------------------------------------------------------------------------
+ * Lock node.
+ */
 struct bgp_node *
 bgp_lock_node (struct bgp_node *node)
 {
@@ -227,7 +260,9 @@ bgp_lock_node (struct bgp_node *node)
   return node;
 }
 
-/* Unlock node. */
+/*------------------------------------------------------------------------------
+ * Unlock node.
+ */
 void
 bgp_unlock_node (struct bgp_node *node)
 {
@@ -238,9 +273,11 @@ bgp_unlock_node (struct bgp_node *node)
     bgp_node_delete (node);
 }
 
-/* Find matched prefix. */
+/*------------------------------------------------------------------------------
+ * Find matched prefix -- finds longest prefix match
+ */
 struct bgp_node *
-bgp_node_match (const struct bgp_table *table, struct prefix *p)
+bgp_node_match (const struct bgp_table *table, prefix_c p)
 {
   struct bgp_node *node;
   struct bgp_node *matched;
@@ -248,10 +285,10 @@ bgp_node_match (const struct bgp_table *table, struct prefix *p)
   matched = NULL;
   node = table->top;
 
-  /* Walk down tree.  If there is matched route then store it to
-     matched. */
-  while (node && node->p.prefixlen <= p->prefixlen &&
-         prefix_match (&node->p, p))
+  /* Walk down tree.  If there is matched route then store it to matched.
+   */
+  while ((node != NULL) && (node->p.prefixlen <= p->prefixlen)
+                        && prefix_match (&node->p, p))
     {
       if (node->info)
         matched = node;
@@ -265,6 +302,8 @@ bgp_node_match (const struct bgp_table *table, struct prefix *p)
   return NULL;
 }
 
+/*------------------------------------------------------------------------------
+ */
 struct bgp_node *
 bgp_node_match_ipv4 (const struct bgp_table *table, struct in_addr *addr)
 {
@@ -279,6 +318,9 @@ bgp_node_match_ipv4 (const struct bgp_table *table, struct in_addr *addr)
 }
 
 #ifdef HAVE_IPV6
+/*------------------------------------------------------------------------------
+ *
+ */
 struct bgp_node *
 bgp_node_match_ipv6 (const struct bgp_table *table, struct in6_addr *addr)
 {
@@ -293,19 +335,36 @@ bgp_node_match_ipv6 (const struct bgp_table *table, struct in6_addr *addr)
 }
 #endif /* HAVE_IPV6 */
 
-/* Lookup same prefix node.  Return NULL when we can't find route. */
-struct bgp_node *
-bgp_node_lookup (const struct bgp_table *table, struct prefix *p)
+/*------------------------------------------------------------------------------
+ * Look up prefix in the given table (if any) -- return NULL if not found.
+ *
+ * If returns bgp_node, that node has just been locked.
+ *
+ * Returns:  newly locked node (with node->info != NULL)
+ *       or: NULL did not find node (or node->info was NULL)
+ *
+ * NB: does not find nodes with NULL node->info.
+ */
+extern bgp_node
+bgp_node_lookup (bgp_table table, prefix_c p)
 {
-  struct bgp_node *node;
+  bgp_node node;
+
+  if (table == NULL)
+    return NULL ;
 
   node = table->top;
 
-  while (node && node->p.prefixlen <= p->prefixlen &&
-         prefix_match (&node->p, p))
+  while ((node != NULL) && (node->p.prefixlen <= p->prefixlen)
+                        && prefix_match (&node->p, p))
     {
-      if (node->p.prefixlen == p->prefixlen && node->info)
-        return bgp_lock_node (node);
+      if (node->p.prefixlen == p->prefixlen)
+        {
+          if (node->info != NULL)
+            return bgp_lock_node (node);
+          else
+            return NULL ;
+        } ;
 
       node = node->link[prefix_bit(&p->u.prefix, node->p.prefixlen)];
     }
@@ -313,27 +372,34 @@ bgp_node_lookup (const struct bgp_table *table, struct prefix *p)
   return NULL;
 }
 
-/* Add node to routing table. */
-struct bgp_node *
-bgp_node_get (struct bgp_table *const table, struct prefix *p)
+/*------------------------------------------------------------------------------
+ * Look up prefix in the given table -- add bgp_node if not found.
+ *
+ * If returns bgp_node, that node has just been locked.
+ *
+ * Returns:  newly locked node -- which may be a new node.
+ */
+extern bgp_node
+bgp_node_get (bgp_table table, prefix_c p)
 {
-  struct bgp_node *new;
-  struct bgp_node *node;
-  struct bgp_node *match;
+  bgp_node  new, node, match;
+
+  qassert(table != NULL) ;
 
   match = NULL;
   node = table->top;
-  while (node && node->p.prefixlen <= p->prefixlen &&
-         prefix_match (&node->p, p))
+  while ((node != NULL) && (node->p.prefixlen <= p->prefixlen)
+                        && prefix_match (&node->p, p))
     {
       if (node->p.prefixlen == p->prefixlen)
         {
           bgp_lock_node (node);
           return node;
-        }
+        } ;
+
       match = node;
       node = node->link[prefix_bit(&p->u.prefix, node->p.prefixlen)];
-    }
+    } ;
 
   if (node == NULL)
     {
@@ -345,10 +411,10 @@ bgp_node_get (struct bgp_table *const table, struct prefix *p)
     }
   else
     {
-      new = bgp_node_create ();
-      route_common (&node->p, p, &new->p);
+      new = bgp_node_create (table) ;
+
+      route_common (&new->p, &node->p, p);
       new->p.family = p->family;
-      new->table = table;
       set_link (new, node);
 
       if (match)
@@ -369,6 +435,44 @@ bgp_node_get (struct bgp_table *const table, struct prefix *p)
 
   return new;
 }
+
+/*------------------------------------------------------------------------------
+ * Look up parent of the given prefix in the given table.
+ *
+ * To count as a parent a node must have non-NULL node->info.
+ *
+ * If returns bgp_node, that node has just been locked.
+ *
+ * Returns:  newly locked node
+ *       or: NULL did not find parent
+ */
+extern bgp_node
+bgp_node_lookup_parent (bgp_table table, prefix_c p)
+{
+  bgp_node node, parent ;
+
+  node   = table->top;
+  parent = NULL ;
+  while ((node != NULL) && (node->p.prefixlen <= p->prefixlen)
+                        && prefix_match (&node->p, p))
+    {
+      if (node->p.prefixlen == p->prefixlen)
+        break ;
+
+      parent = node ;
+      node   = node->link[prefix_bit(&p->u.prefix, node->p.prefixlen)];
+    }
+
+  while (parent != NULL)
+    {
+      if (parent->info != NULL)
+        return bgp_lock_node (parent);
+
+      parent = parent->parent ;         /* back up to significant parent  */
+    }
+
+  return NULL ;
+} ;
 
 /* Delete node from the routing table. */
 static void
@@ -413,13 +517,15 @@ bgp_node_delete (struct bgp_node *node)
     bgp_node_delete (parent);
 }
 
-/* Get fist node and lock it.  This function is useful when one want
-   to lookup all the node exist in the routing table. */
+/*------------------------------------------------------------------------------
+ * Get first node (if any) in given table (if any) and lock it.
+ */
 struct bgp_node *
 bgp_table_top (const struct bgp_table *const table)
 {
-  /* If there is no node in the routing table return NULL. */
-  if (table->top == NULL)
+  /* If there is no table or no node in the table return NULL.
+   */
+  if ((table == NULL) || (table->top == NULL))
     return NULL;
 
   /* Lock the top node and return it. */
@@ -427,7 +533,9 @@ bgp_table_top (const struct bgp_table *const table)
   return table->top;
 }
 
-/* Unlock current node and lock next node then return it. */
+/*------------------------------------------------------------------------------
+ * Unlock current node and lock next node then return it.
+ */
 struct bgp_node *
 bgp_route_next (struct bgp_node *node)
 {
@@ -442,33 +550,43 @@ bgp_route_next (struct bgp_node *node)
       next = node->l_left;
       bgp_lock_node (next);
       bgp_unlock_node (node);
-      return next;
-    }
+      return next;                      /* go left              */
+    } ;
+
   if (node->l_right)
     {
       next = node->l_right;
       bgp_lock_node (next);
       bgp_unlock_node (node);
-      return next;
-    }
+      return next;                      /* go right             */
+    } ;
 
+  /* Go up and right
+   */
   start = node;
-  while (node->parent)
+  while (node->parent != NULL)
     {
-      if (node->parent->l_left == node && node->parent->l_right)
+      /* If we are moving up from the left child, and there is a right
+       * child, go to that right sibling.
+       */
+      if ((node->parent->l_left == node) && (node->parent->l_right))
         {
           next = node->parent->l_right;
           bgp_lock_node (next);
           bgp_unlock_node (start);
           return next;
-        }
+        } ;
+
       node = node->parent;
-    }
+    } ;
+
   bgp_unlock_node (start);
   return NULL;
 }
 
-/* Unlock current node and lock next node until limit. */
+/*------------------------------------------------------------------------------
+ * Unlock current node and lock next node until limit.
+ */
 struct bgp_node *
 bgp_route_next_until (struct bgp_node *node, struct bgp_node *limit)
 {
@@ -476,25 +594,28 @@ bgp_route_next_until (struct bgp_node *node, struct bgp_node *limit)
   struct bgp_node *start;
 
   /* Node may be deleted from bgp_unlock_node so we have to preserve
-     next node's pointer. */
-
+   * next node's pointer.
+   */
   if (node->l_left)
     {
       next = node->l_left;
       bgp_lock_node (next);
       bgp_unlock_node (node);
-      return next;
+      return next;              /* go left              */
     }
+
   if (node->l_right)
     {
       next = node->l_right;
       bgp_lock_node (next);
       bgp_unlock_node (node);
-      return next;
+      return next;              /* go right             */
     }
 
+  /* Go up and right -- stopping if we are on or move up to the given limit.
+   */
   start = node;
-  while (node->parent && node != limit)
+  while ((node->parent != NULL) && (node != limit))
     {
       if (node->parent->l_left == node && node->parent->l_right)
         {
@@ -504,7 +625,8 @@ bgp_route_next_until (struct bgp_node *node, struct bgp_node *limit)
           return next;
         }
       node = node->parent;
-    }
+    } ;
+
   bgp_unlock_node (start);
   return NULL;
 }

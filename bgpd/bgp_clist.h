@@ -21,115 +21,158 @@ Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
 #ifndef _QUAGGA_BGP_CLIST_H
 #define _QUAGGA_BGP_CLIST_H
 
-#include "symtab.h"
+#include "vhash.h"
+#include "list_util.h"
+#include "bgp_community.h"
+#include "bgp_ecommunity.h"
+#include "bgp_regex.h"
 
-/* Master Community-list. */
-#define COMMUNITY_LIST_MASTER          0
-#define EXTCOMMUNITY_LIST_MASTER       1
+/* Master Community-list.
+ */
+enum clist_type
+{
+  COMMUNITY_LIST,
+  ECOMMUNITY_LIST,
 
-/* Community-list deny and permit.  */
-#define COMMUNITY_DENY                 0
-#define COMMUNITY_PERMIT               1
+  CLIST_TYPE_COUNT      /* for array by clist_type      */
+} ;
+typedef enum clist_type clist_type_t ;
 
-/* Number and string based community-list name.  */
-//#define COMMUNITY_LIST_STRING          0
-//#define COMMUNITY_LIST_NUMBER          1
+/* Community-list deny and permit.
+ */
+enum clist_action_type
+{
+  COMMUNITY_DENY,
+  COMMUNITY_PERMIT,
 
-/* Community-list entry types.  */
-#define COMMUNITY_LIST_STANDARD        0 /* Standard community-list.  */
-#define COMMUNITY_LIST_EXPANDED        1 /* Expanded community-list.  */
-#define EXTCOMMUNITY_LIST_STANDARD     2 /* Standard extcommunity-list.  */
-#define EXTCOMMUNITY_LIST_EXPANDED     3 /* Expanded extcommunity-list.  */
+} ;
+typedef enum clist_action_type clist_action_type_t ;
 
-/* Community-list.  */
+/* Community-list entry styles
+ */
+enum clist_entry_style
+{
+  COMMUNITY_LIST_STANDARD,      /* Standard community-list entry        */
+  COMMUNITY_LIST_EXPANDED,      /* Expanded community-list entry        */
+  ECOMMUNITY_LIST_STANDARD,     /* Standard extcommunity-list entry     */
+  ECOMMUNITY_LIST_EXPANDED,     /* Expanded extcommunity-list entry     */
+} ;
+typedef enum clist_entry_style clist_entry_style_t ;
+
+/*------------------------------------------------------------------------------
+ * Community-list.
+ */
+typedef struct community_entry  community_entry_t ;
+typedef struct community_entry* community_entry ;
+
+typedef struct community_list  community_list_t ;
+typedef struct community_list* community_list ;
+
+typedef const struct community_list* community_list_c ;
+
 struct community_list
 {
-  /* Pointer to symbol entry of the community-list.     */
-  symbol sym ;
+  /* Lives in a vhash by name, and we have a pointer to the vhash_table.
+   */
+  vhash_node_t  vhash ;
+  vhash_table   table ;         /* has a reference to the table */
 
-  /* String or number.  */
-//int sort;
+  /* Community-list entry in this community-list.
+   */
+  struct dl_base_pair(community_entry) entries ;
 
-  /* Community-list entry in this community-list.       */
-  struct community_entry *head;
-  struct community_entry *tail;
-
-  /* Name of community-list                             */
-  char  name[] ;
+  /* Name of community-list
+   */
+  char*  name ;                 /* MTYPE_COMMUNITY_LIST_NAME    */
 };
 
-/* Each entry in community-list.  */
+CONFIRM(offsetof(community_list_t, vhash) == 0) ;       /* see vhash.h  */
+
+/* Each entry in community-list.
+ */
 struct community_entry
 {
-  struct community_entry *next;
-  struct community_entry *prev;
+  struct dl_list_pair(community_entry) list ;
 
-  /* Permit or deny.  */
-  u_char direct;
+  clist_action_type_t    action ;
+  clist_entry_style_t    style;
+  attr_community_type_t  act ;
 
-  /* Standard or expanded.  */
-  u_char style;
-
-  /* Any match.  */
-  u_char any;
-
-  /* Community structure.  */
   union
   {
-    struct community *com;
-    struct ecommunity *ecom;
-  } u;
+    attr_community   comm ;
+    attr_ecommunity  ecomm ;
+    regex_t*         reg ;
+    void*            any ;      /* NULL <=> "any" or "internet"         */
+  } u ;
 
-  /* Configuration string.  */
-  char *config;
-
-  /* Expanded community-list regular expression.  */
-  regex_t *reg;
+  char*     raw ;               /* NULL if standard style               */
 };
 
-/* Community-list handler.
+/*------------------------------------------------------------------------------
+ * Community-list handler.
+ *
  * community_list_init() returns this structure as handler -- contains a
  * distinct set of community-list and extcommunity-list filters.
+ *
+ * Should it be required, this allows for multiple community-list name-spaces.
  */
-struct community_list_handler ;
+typedef struct community_list_handler*  community_list_handler ;
 
-/* Error code of community-list.  */
-#define COMMUNITY_LIST_ERR_CANT_FIND_LIST        -1
-#define COMMUNITY_LIST_ERR_MALFORMED_VAL         -2
-#define COMMUNITY_LIST_ERR_STANDARD_CONFLICT     -3
-#define COMMUNITY_LIST_ERR_EXPANDED_CONFLICT     -4
+extern community_list_handler bgp_clist ;
 
-/* Handler.  */
-extern struct community_list_handler *bgp_clist;
+/*------------------------------------------------------------------------------
+ * Error code of community-list.
+ */
+enum clist_err_type
+{
+  COMMUNITY_LIST_ERR_CANT_FIND_LIST     = -1,
+  COMMUNITY_LIST_ERR_MALFORMED_VAL      = -2,
+  COMMUNITY_LIST_ERR_STANDARD_CONFLICT  = -3,
+  COMMUNITY_LIST_ERR_EXPANDED_CONFLICT  = -4,
+  COMMUNITY_LIST_ERR_ENTRY_EXISTS       = -5,
+} ;
+typedef enum clist_err_type clist_err_type_t ;
 
-/* Prototypes.  */
-extern struct community_list_handler *community_list_init (void);
-extern void community_list_terminate (struct community_list_handler *);
+/*------------------------------------------------------------------------------
+ * Prototypes.
+ */
+extern community_list_handler community_list_init (void);
+extern void community_list_terminate (community_list_handler);
 
-extern int community_list_set (struct community_list_handler *ch,
-                               const char *name, const char *str, int direct,
-                               int style);
-extern int community_list_unset (struct community_list_handler *ch,
-                                 const char *name, const char *str,
-                                 int direct, int style);
-extern int extcommunity_list_set (struct community_list_handler *ch,
-                                  const char *name, const char *str,
-                                  int direct, int style);
-extern int extcommunity_list_unset (struct community_list_handler *ch,
-                                    const char *name, const char *str,
-                                    int direct, int style);
+extern community_list community_list_lookup (community_list_handler ch,
+                                              clist_type_t what, const char *) ;
+extern community_list community_list_get_ref(community_list_handler ch,
+                                          clist_type_t what, const char *name) ;
+extern community_list community_list_clear_ref(community_list list) ;
 
-extern struct symbol_table*
-community_list_master_lookup (struct community_list_handler *, int);
+extern int community_list_set (community_list_handler ch, const char *name,
+                                    const char *str, clist_action_type_t action,
+                                                     clist_entry_style_t style);
+extern int community_list_unset (community_list_handler ch,
+                                     const char *name, const char *str,
+                                                    clist_action_type_t action,
+                                                    clist_entry_style_t style);
+extern int community_list_unset_all(community_list_handler ch,
+                                                             const char *name);
+extern int extcommunity_list_set (community_list_handler ch, const char *name,
+                                    const char *str, clist_action_type_t action,
+                                                     clist_entry_style_t style);
+extern int extcommunity_list_unset (community_list_handler ch,
+                                     const char *name, const char *str,
+                                                     clist_action_type_t action,
+                                                     clist_entry_style_t style);
+extern int extcommunity_list_unset_all(community_list_handler ch,
+                                                             const char *name);
 
-extern struct community_list *
-community_list_lookup (struct community_list_handler *, const char *, int);
-
-extern int community_list_match (struct community *, struct community_list *);
-extern int ecommunity_list_match (struct ecommunity *, struct community_list *);
-extern int community_list_exact_match (struct community *,
-                                       struct community_list *);
-extern struct community *
-community_list_match_delete (struct community *, struct community_list *);
+extern bool community_list_match (attr_community comm, community_list list);
+extern bool ecommunity_list_match (attr_ecommunity ecomm, community_list list);
+extern bool community_list_exact_match (attr_community comm,
+                                                          community_list list);
+extern attr_community community_list_match_delete (attr_community comm,
+                                                           community_list list);
+extern vector community_list_extract(community_list_handler ch,
+                                     clist_type_t what,
+                     vhash_select_test* selector, const void* p_val, bool most) ;
 
 #endif /* _QUAGGA_BGP_CLIST_H */

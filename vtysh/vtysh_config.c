@@ -27,8 +27,9 @@ Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
 #include "lib/qpath.h"
 #include "lib/pthread_safe.h"
 #include "lib/qpath.h"
-#include "lib/symtab.h"
+#include "lib/vhash.h"
 #include "lib/elstring.h"
+#include "lib/miyagi.h"
 
 #include "vtysh/vtysh.h"
 #include "lib/vty_vtysh_content.h"
@@ -524,14 +525,16 @@ typedef enum                    /* types of separator/comment line      */
 
 /* The name of an item, or items.
  *
- * The name includes the parent ordinal and the item_type of the item.  So all names
- * have their scope built into them.
+ * The name includes the parent ordinal and the item_type of the item.  So all
+ * names have their scope built into them.
  */
 typedef struct config_name* config_name ;
 typedef struct config_name  config_name_t ;
 
 struct config_name
 {
+  vhash_node_t  vhash ;         /* */
+
   config_item   list ;          /* list of items with this name         */
 
   config_item_type_t type ;     /* separate name spaces                 */
@@ -541,6 +544,8 @@ struct config_name
 
   uchar         str[1] ;        /* the name -- '\0' terminated          */
 } ;
+
+CONFIRM(offsetof(config_name_t, vhash) == 0) ;  /* see vhash.h  */
 
 /* Context while parsing in vtysh_config_items_parse()
  */
@@ -567,7 +572,7 @@ struct config_collection
   /* A single global symbol table is used for the names used for mst_as_is
    * merge strategy.  The name of an item includes its scope.
    */
-  symbol_table  match ;
+  vhash_table  match ;
 
 #if 0
 
@@ -770,15 +775,18 @@ static config_name vtysh_config_make_name(config_collection collection,
                                             config_item_type_t item_type,
                                                uint ordinal, qstring raw_name) ;
 
-static symbol_hash_func  vtysh_config_name_hash ;
-static symbol_equal_func vtysh_config_match_equal ;
-static symbol_free_func  vtysh_config_match_free ;
+static vhash_hash_func   vtysh_config_name_hash ;
+static vhash_equal_func  vtysh_config_match_equal ;
+static vhash_new_func    vtysh_config_match_new ;
+static vhash_free_func   vtysh_config_match_free ;
 
-static symbol_funcs_t vtysh_config_match_funcs =
+static vhash_params_t vtysh_config_match_params =
   {
-    .hash  = vtysh_config_name_hash,
-    .equal = vtysh_config_match_equal,
-    .free  = vtysh_config_match_free,
+    .hash   = vtysh_config_name_hash,
+    .equal  = vtysh_config_match_equal,
+    .new    = vtysh_config_match_new,
+    .free   = vtysh_config_match_free,
+    .orphan = vhash_orphan_null,
   } ;
 
 static cmd_ret_t vtysh_config_item_insert(config_collection collection) ;
@@ -824,7 +832,7 @@ vtysh_config_collection_new(vty vtysh)
    *   daemon_new      -- 0          -- none, yet
    *
    *   parsed          -- NULL       -- none, yet
-   *   line            -- empty elstring (embedded)
+   *   line            -- unset elstring (embedded)
    *   ordinal         -- 0
    *   content         -- all zero   -- set, below
    *
@@ -836,13 +844,13 @@ vtysh_config_collection_new(vty vtysh)
    *   comments        -- NULLs      -- empty list of outstanding comment lines
    *   existing        -- false      -- not processing existing config
    *
-   *   temp            -- empty qstring (embedded)
-   *   comment         -- empty qstring (embedded)
+   *   temp            -- unset qstring (embedded)
+   *   comment         -- unset qstring (embedded)
    *
    *   hat             -- X          -- set below
    */
   confirm(ELSTRING_INIT_ALL_ZEROS) ;
-  confirm(QSTRING_INIT_ALL_ZEROS) ;
+  confirm(QSTRING_UNSET_ALL_ZEROS) ;
   confirm(sep_none  == 0) ;
 
   collection->vtysh = vtysh ;
@@ -851,8 +859,8 @@ vtysh_config_collection_new(vty vtysh)
   collection->content->group_key = qs_new(100) ;
   collection->content->new_name  = qs_new(100) ;
 
-  collection->match = symbol_table_new(NULL, 2000, 200,
-                                                    &vtysh_config_match_funcs) ;
+  collection->match = vhash_table_new(NULL, 2000, 200,
+                                                    &vtysh_config_match_params) ;
 
   collection->hat = vector_new(200) ;
 
@@ -876,7 +884,7 @@ vtysh_config_collection_free(vty vtysh)
 
   /* Ream out the symbol table and free it.  All names are discarded later.
    */
-  collection->match = symbol_table_free(collection->match, keep_it) ;
+  collection->match = vhash_table_reset(collection->match, free_it) ;
 
   /* Ream out all the node items, and all their children etc.
    */
@@ -1383,9 +1391,9 @@ static cmd_ret_t
 vtysh_config_parse_section(config_collection collection)
 {
   vtysh_content_parse content ;
-  uint     nt ;
-  char*    end ;
-  strtox_t tox ;
+  uint        nt ;
+  const char* end ;
+  strtox_t    tox ;
 
   content = collection->content ;
 
@@ -1855,18 +1863,16 @@ vtysh_config_node_find(config_collection collection, node_type_t node)
   config_name_t temp[1] ;
   config_name   name ;
   config_item   item ;
-  symbol        sym ;
 
   temp->type   = it_node ;
   temp->ord    = node ;
   temp->str[0] = '\0' ;
 
-  sym  = symbol_lookup(collection->match, temp, no_add) ;
+  name = vhash_lookup(collection->match, temp, NULL) ;
 
-  if (sym == NULL)
+  if (name == NULL)
     return NULL ;
 
-  name = symbol_get_body(sym) ;
   item = name->list ;
 
   qassert(item->item_type == it_node) ;
@@ -3432,10 +3438,9 @@ vtysh_config_raw_free(config_collection collection)
  * LIFO order.  At this point nothing is added to that list, hence a NULL
  * name->list entry implies this is a new name.
  *
- * The name is allocated in the fragments store.  It is the body of the symbol
- * created to track the existence of that name.  There is no need to worry
- * freeing names -- that is all taken care of when the fragments store is torn
- * down.
+ * The name is allocated in the fragments store, and that is added to the vhash
+ * to track the existence of that name.  There is no need to worry freeing
+ * names -- that is all taken care of when the fragments store is torn down.
  */
 static config_name
 vtysh_config_make_name(config_collection collection,
@@ -3443,8 +3448,8 @@ vtysh_config_make_name(config_collection collection,
                                                  uint ordinal, qstring raw_name)
 {
   ulen   len ;
-  symbol sym ;
   config_name temp, name ;
+  bool added ;
 
   len  = qs_len(raw_name) ;
 
@@ -3458,13 +3463,12 @@ vtysh_config_make_name(config_collection collection,
     memcpy(temp->str, qs_char_nn(raw_name), len) ;
   temp->str[len] = '\0' ;
 
-  sym  = symbol_lookup(collection->match, temp, add) ;
-  name = symbol_get_body(sym) ;
+  name = vhash_lookup(collection->match, temp, &added) ;
 
-  if (name == NULL)
+  if (added)
     {
-      name = temp ;
-      symbol_set_body(sym, name, true /* set */, free_it /* previous ! */) ;
+      qassert(name == temp) ;
+      vhash_set(name) ;
     }
   else
     vtysh_config_fragment_return(collection, temp) ;
@@ -3475,28 +3479,28 @@ vtysh_config_make_name(config_collection collection,
 /*------------------------------------------------------------------------------
  * Hash the given config_name.
  */
-static symbol_hash_t
-vtysh_config_name_hash(const void* name)
+static vhash_hash_t
+vtysh_config_name_hash(vhash_data_c data)
 {
-  symbol_hash_t hash ;
-  const config_name_t* cname = name ;
+  vhash_hash_t hash ;
+  const config_name_t* cname = data ;
 
-  hash = symbol_hash_word(cname->type) ^ symbol_hash_word(cname->ord) ;
+  hash = vhash_hash_word(cname->type) ;
+  hash = vhash_hash_word(cname->ord ^ hash) ;
 
-  return symbol_hash_string_cont(cname->str, hash) ;
+  return vhash_hash_string_cont(cname->str, hash) ;
 } ;
 
 /*------------------------------------------------------------------------------
- * See if name in the given match table symbol body and the given config_name
- * are equal.
+ * See if name in the given vhash_item and the given vhash_data are equal.
  *
- * The symbol body is, in fact, a config_name !
+ * In fact, both the vhash_item and the vhash_data are both config_names !
  */
 static int
-vtysh_config_match_equal(const void* body, const void* name)
+vtysh_config_match_equal(vhash_item_c item, vhash_data_c data)
 {
-  const config_name_t* a = body ;
-  const config_name_t* b = name ;
+  const config_name_t* a = item ;
+  const config_name_t* b = data ;
 
   if (a->type != b->type)
     return 1 ;
@@ -3508,12 +3512,26 @@ vtysh_config_match_equal(const void* body, const void* name)
 } ;
 
 /*------------------------------------------------------------------------------
- * The symbol bodies are in fragments and are freed automatically.
+ * Create a new config_name to be added to the vhash, from the given vhash_data.
+ *
+ * In fact, the vhash_data is a temporary config_name, so we simply use that.
  */
-static void
-vtysh_config_match_free(void* body)
+static vhash_item
+vtysh_config_match_new(vhash_table table, vhash_data_c data)
 {
-  /* Empty function -- nothing required.        */
+  return miyagi(data) ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Free a config_name, when tearing down vhash.
+ *
+ * There is no need individually free names -- that is all taken care of when
+ * the fragments store is torn down.
+ */
+static vhash_item
+vtysh_config_match_free(vhash_item item, vhash_table table)
+{
+  return NULL ;
 } ;
 
 /*==============================================================================

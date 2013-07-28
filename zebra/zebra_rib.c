@@ -863,14 +863,14 @@ nexthop_active_check (struct route_node *rn, struct rib *rib,
   rmap = 0;
   if (rib->type >= 0 && rib->type < ZEBRA_ROUTE_MAX &&
                 proto_rm[family][rib->type])
-    rmap = route_map_lookup_by_name (proto_rm[family][rib->type]);
+    rmap = route_map_lookup (proto_rm[family][rib->type]);
   if (!rmap && proto_rm[family][ZEBRA_ROUTE_MAX])
-    rmap = route_map_lookup_by_name (proto_rm[family][ZEBRA_ROUTE_MAX]);
+    rmap = route_map_lookup (proto_rm[family][ZEBRA_ROUTE_MAX]);
   if (rmap) {
       ret = route_map_apply(rmap, &rn->p, RMAP_ZEBRA, nexthop);
   }
 
-  if (ret == RMAP_DENYMATCH)
+  if (ret == RMAP_DENY_MATCH)
     UNSET_FLAG (nexthop->flags, NEXTHOP_FLAG_ACTIVE);
   return CHECK_FLAG (nexthop->flags, NEXTHOP_FLAG_ACTIVE);
 }
@@ -1210,7 +1210,7 @@ process_subq (struct list * subq, u_char qindex)
 static wq_item_status
 meta_queue_process (struct work_queue *dummy, work_queue_item item)
 {
-  struct meta_queue * mq = item->args.data ;
+  struct meta_queue * mq = item->data ;
   unsigned i;
 
   for (i = 0; i < MQ_SIZE; i++)

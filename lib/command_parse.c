@@ -41,7 +41,7 @@ static char* cmd_item_brackets(cmd_command cmd, char* cp) ;
 static cmd_item cmd_make_item(cmd_command cmd, char* cp, char* dp) ;
 static void cmd_make_item_inner(cmd_command cmd, cmd_item n, char* cp) ;
 static char* cmd_make_item_numeric(cmd_command cmd, cmd_item n, char* cp) ;
-static long cmd_make_item_number(cmd_command cmd, cmd_item n, char** p_cp) ;
+static rlong cmd_make_item_number(cmd_command cmd, cmd_item n, char** p_cp) ;
 static int cmd_cmp_item(const cmd_item* a, const cmd_item* b) ;
 static int cmd_cmp_range_items(const cmd_item a, const cmd_item b) ;
 static bool cmd_item_is_option(cmd_item_type_t it) ;
@@ -868,7 +868,7 @@ cmd_make_item_numeric(cmd_command cmd, cmd_item n, char* cp)
 {
   if (isdigit(*cp) || (*cp == '+') || (*cp == '-'))
     {
-      long  m ;
+      rlong m ;
       bool  pm ;
 
       confirm((LONG_MAX > item_max_number) && (LONG_MIN < -item_max_number)) ;
@@ -920,32 +920,32 @@ cmd_make_item_numeric(cmd_command cmd, cmd_item n, char* cp)
 } ;
 
 /*------------------------------------------------------------------------------
- * Get signed or unsigned value -- process the '9b' form.
+ * Get signed or unsigned value -- including the '9b' form.
  *
  */
-static long
+static rlong
 cmd_make_item_number(cmd_command cmd, cmd_item n, char** p_cp)
 {
-  long  m ;
+  rlong  m ;
   char* cp ;
 
   cp = *p_cp ;
-  m = strtol(cp, p_cp, 10) ;
+  m = strtorl(cp, p_cp, 10) ;
 
   if ((*p_cp == cp) || (m > item_max_number))
     cmd_fail_item(cmd, "badly formed or out of range number in <...>") ;
 
   if (**p_cp == 'b')
     {
-      long s ;
+      int  s ;
 
       ++(*p_cp) ;       /* step past 'b'        */
-      s = m ;
-      m = labs(m) ;
+
+      m = urlabs_s(m, &s) ;
       if ((m == 0) || (m > 32))
         cmd_fail_item(cmd, "out of range number in 9b form in <...>") ;
 
-      m = ((long)1 << m) - 1 ;
+      m = ((rlong)1 << m) - 1 ;
       if (s < 0)
         m = -m ;
     } ;
@@ -1126,28 +1126,28 @@ cmd_token_set(token_vector tv, vector_index_t i,
       /* Zeroising the new structure sets:
        *
        *   type       = 0                 -- cmd_tok_eol
-       *   qs         = zeroised qstring  -- empty string
+       *   qs         = zeroised qstring  -- initialised below
        *   complete   = 0 -- false
        *
        *   tp         = 0
        *   lp         = zeroised elstring -- empty string
        */
       confirm(cmd_tok_eol == 0) ;
-      confirm(QSTRING_INIT_ALL_ZEROS) ;
       confirm(ELSTRING_INIT_ALL_ZEROS) ;
 
+      qs_init_new(t->qs, 0) ;
       vector_set_item(tv->body, i, t) ;
     } ;
 
-  t->type     = type ;
-  t->term     = false ;
-  t->tp       = tp ;
+  t->type  = type ;
+  t->term  = false ;
+  t->tp    = tp ;
 
   qs_set_alias_n(t->qs, p, len) ;
-  qs_els_copy_nn(t->ot, t->qs) ;
+  els_set_n_nn(t->ot, p, len) ;
 
-  t->w_len    = 0 ;             /* no words matched to, yet     */
-  t->seen     = 0 ;             /* no matches attempted, yet    */
+  t->w_len = 0 ;        /* no words matched to, yet     */
+  t->seen  = 0 ;        /* no matches attempted, yet    */
 } ;
 
 /*------------------------------------------------------------------------------
@@ -2056,7 +2056,7 @@ cmd_token_complete(cmd_parsed parsed, cmd_token t)
   els_cpp_nn(p, t->ot) ;                /* original token               */
 
   qs_new_size(t->qs, p->e - p->p) ;     /* discard alias & set qs to be
-                                           big enough for original      */
+                                         * big enough for original      */
   qs_pp_nn(q, t->qs) ;                  /* where to complete token to   */
 
   ret = CMD_SUCCESS ;
@@ -2751,9 +2751,9 @@ cmd_range_match (cmd_item item, cmd_token t)
   const char* cp, * dp ;
   char  *ep ;
   int   base ;
-  long  val;
+  rlong val;
 
-  confirm((LONG_MAX > item_max_number) && (LONG_MIN < -item_max_number)) ;
+  confirm((RLONG_MAX > item_max_number) && (RLONG_MIN < -item_max_number)) ;
 
   cp = cmd_token_make_string(t) ;
 
@@ -2805,7 +2805,7 @@ cmd_range_match (cmd_item item, cmd_token t)
   /* The string starts with digit, possibly preceded by sign, and possibly
    * an 'x' or 'X' with at least 1 further character.
    */
-  val = strtol(cp, &ep, base) ;
+  val = strtorl(cp, &ep, base) ;
   if (*ep != '\0')
     return mt_no_match ;
 

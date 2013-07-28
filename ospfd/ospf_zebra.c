@@ -767,7 +767,7 @@ ospf_routemap_set (struct ospf *ospf, int type, const char *name)
     free (ROUTEMAP_NAME (ospf, type));
 
   ROUTEMAP_NAME (ospf, type) = strdup (name);
-  ROUTEMAP (ospf, type) = route_map_lookup_by_name (name);
+  ROUTEMAP (ospf, type) = route_map_lookup (name);
 }
 
 void

@@ -29,21 +29,48 @@ Boston, MA 02111-1307, USA.  */
 #include "zclient.h"
 #include "routemap.h"
 #include "thread.h"
+#include "pthread_safe.h"
+#include "qafi_safi.h"
 
 #include "bgpd/bgpd.h"
 #include "bgpd/bgp_peer.h"
 #include "bgpd/bgp_route.h"
+#include "bgpd/bgp_rib.h"
 #include "bgpd/bgp_attr.h"
 #include "bgpd/bgp_nexthop.h"
 #include "bgpd/bgp_zebra.h"
 #include "bgpd/bgp_fsm.h"
 #include "bgpd/bgp_debug.h"
 
-/* All information about zebra. */
+/*------------------------------------------------------------------------------
+ * All information about zebra.
+ */
 struct zclient *zclient = NULL;
 struct in_addr router_id_zebra;
 
-/* Router-id update message from zebra. */
+/*------------------------------------------------------------------------------
+ * When a route is announced to zebra -- see bgp_zebra_announce() -- some
+ * information is stored, so that it can be withdrawn as, and when required.
+ */
+typedef struct route_zebra  route_zebra_t ;
+
+struct route_zebra
+{
+  safi_t      safi ;            /* iSAFI value  */
+  byte        flags ;
+
+  uint32_t    med ;
+
+  ip_union_t  next_hop ;
+  uint        ifindex;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Router-id update message from zebra.
+ *
+ * Updates the default router-id, and the router-id of any bgp instances for
+ * which no explicit router-id has been set.
+ */
 static int
 bgp_router_id_update (int command, struct zclient *zclient, zebra_size_t length)
 {
@@ -54,19 +81,15 @@ bgp_router_id_update (int command, struct zclient *zclient, zebra_size_t length)
   zebra_router_id_update_read(zclient->ibuf,&router_id);
 
   if (BGP_DEBUG(zebra, ZEBRA))
-    {
-      char buf[128];
-      prefix2str(&router_id, buf, sizeof(buf));
-      zlog_debug("Zebra rcvd: router id update %s", buf);
-    }
+    zlog_debug("Zebra rcvd: router id update %s", spfxtoa(&router_id).str);
 
   router_id_zebra = router_id.u.prefix4;
 
   for (ALL_LIST_ELEMENTS (bm->bgp, node, nnode, bgp))
     {
-      if (!bgp->router_id_static.s_addr)
-        bgp_router_id_set (bgp, &router_id.u.prefix4);
-    }
+      if (!(bgp->config & BGP_CONFIG_ROUTER_ID))
+        bgp_router_id_set (bgp, 0, false /* unset */);
+    } ;
 
   return 0;
 }
@@ -161,8 +184,8 @@ bgp_interface_down (int command, struct zclient *zclient, zebra_size_t length)
             if (peer->ttl != 1)
               continue;
 
-            if (peer->su.sa.sa_family == AF_INET)
-              peer_if = if_lookup_by_ipv4 (&peer->su.sin.sin_addr);
+            if (peer->su_name.sa.sa_family == AF_INET)
+              peer_if = if_lookup_by_ipv4 (&peer->su_name.sin.sin_addr);
             else
               continue;
 
@@ -187,12 +210,8 @@ bgp_interface_address_add (int command, struct zclient *zclient,
     return 0;
 
   if (BGP_DEBUG(zebra, ZEBRA))
-    {
-      char buf[128];
-      prefix2str(ifc->address, buf, sizeof(buf));
-      zlog_debug("Zebra rcvd: interface %s address add %s",
-                 ifc->ifp->name, buf);
-    }
+    zlog_debug("Zebra rcvd: interface %s address add %s",
+                                     ifc->ifp->name, spfxtoa(ifc->address).str);
 
   if (if_is_operative (ifc->ifp))
     bgp_connected_add (ifc);
@@ -212,12 +231,8 @@ bgp_interface_address_delete (int command, struct zclient *zclient,
     return 0;
 
   if (BGP_DEBUG(zebra, ZEBRA))
-    {
-      char buf[128];
-      prefix2str(ifc->address, buf, sizeof(buf));
-      zlog_debug("Zebra rcvd: interface %s address delete %s",
-                 ifc->ifp->name, buf);
-    }
+    zlog_debug("Zebra rcvd: interface %s address delete %s",
+                                     ifc->ifp->name, spfxtoa(ifc->address).str);
 
   if (if_is_operative (ifc->ifp))
     bgp_connected_delete (ifc);
@@ -233,28 +248,28 @@ zebra_read_ipv4 (int command, struct zclient *zclient, zebra_size_t length)
 {
   struct stream *s;
   struct zapi_ipv4 api;
-  struct in_addr nexthop;
-  struct prefix_ipv4 p;
+  ip_union_t  nexthop;
+  struct prefix p;
 
   s = zclient->ibuf;
-  nexthop.s_addr = 0;
+  nexthop.ipv4 = 0;
 
   /* Type, flags, message. */
-  api.type = stream_getc (s);
-  api.flags = stream_getc (s);
+  api.type    = stream_getc (s);
+  api.flags   = stream_getc (s);
   api.message = stream_getc (s);
 
   /* IPv4 prefix. */
-  memset (&p, 0, sizeof (struct prefix_ipv4));
+  memset (&p, 0, sizeof (struct prefix));
   p.family = AF_INET;
   p.prefixlen = stream_getc (s);
-  stream_get (&p.prefix, s, PSIZE (p.prefixlen));
+  stream_get (&p.u.prefix, s, PSIZE (p.prefixlen));
 
   /* Nexthop, ifindex, distance, metric. */
   if (CHECK_FLAG (api.message, ZAPI_MESSAGE_NEXTHOP))
     {
       api.nexthop_num = stream_getc (s);
-      nexthop.s_addr = stream_get_ipv4 (s);
+      nexthop.ipv4 = stream_get_ipv4 (s);
     }
   if (CHECK_FLAG (api.message, ZAPI_MESSAGE_IFINDEX))
     {
@@ -272,31 +287,24 @@ zebra_read_ipv4 (int command, struct zclient *zclient, zebra_size_t length)
     {
       if (BGP_DEBUG(zebra, ZEBRA))
         {
-          char buf[2][INET_ADDRSTRLEN];
-          zlog_debug("Zebra rcvd: IPv4 route add %s %s/%d nexthop %s metric %u",
+          zlog_debug("Zebra rcvd: IPv4 route add %s %s nexthop %s metric %u",
                      zebra_route_string(api.type),
-                     inet_ntop(AF_INET, &p.prefix, buf[0], sizeof(buf[0])),
-                     p.prefixlen,
-                     inet_ntop(AF_INET, &nexthop, buf[1], sizeof(buf[1])),
+                     spfxtoa(&p).str, siptoa(AF_INET, &nexthop).str,
                      api.metric);
         }
-      bgp_redistribute_add((struct prefix *)&p, &nexthop, NULL,
-                           api.metric, api.type);
+      bgp_redistribute_add(&p, &nexthop, api.metric, api.type);
     }
   else
     {
       if (BGP_DEBUG(zebra, ZEBRA))
         {
-          char buf[2][INET_ADDRSTRLEN];
-          zlog_debug("Zebra rcvd: IPv4 route delete %s %s/%d "
+          zlog_debug("Zebra rcvd: IPv4 route delete %s %s "
                      "nexthop %s metric %u",
                      zebra_route_string(api.type),
-                     inet_ntop(AF_INET, &p.prefix, buf[0], sizeof(buf[0])),
-                     p.prefixlen,
-                     inet_ntop(AF_INET, &nexthop, buf[1], sizeof(buf[1])),
+                     spfxtoa(&p).str, siptoa(AF_INET, &nexthop).str,
                      api.metric);
         }
-      bgp_redistribute_delete((struct prefix *)&p, api.type);
+      bgp_redistribute_delete(&p, api.type);
     }
 
   return 0;
@@ -309,8 +317,8 @@ zebra_read_ipv6 (int command, struct zclient *zclient, zebra_size_t length)
 {
   struct stream *s;
   struct zapi_ipv6 api;
-  struct in6_addr nexthop;
-  struct prefix_ipv6 p;
+  ip_union_t nexthop;
+  struct prefix p;
 
   s = zclient->ibuf;
   memset (&nexthop, 0, sizeof (struct in6_addr));
@@ -321,16 +329,16 @@ zebra_read_ipv6 (int command, struct zclient *zclient, zebra_size_t length)
   api.message = stream_getc (s);
 
   /* IPv6 prefix. */
-  memset (&p, 0, sizeof (struct prefix_ipv6));
+  memset (&p, 0, sizeof (struct prefix));
   p.family = AF_INET6;
   p.prefixlen = stream_getc (s);
-  stream_get (&p.prefix, s, PSIZE (p.prefixlen));
+  stream_get (&p.u.prefix, s, PSIZE (p.prefixlen));
 
   /* Nexthop, ifindex, distance, metric. */
   if (CHECK_FLAG (api.message, ZAPI_MESSAGE_NEXTHOP))
     {
       api.nexthop_num = stream_getc (s);
-      stream_get (&nexthop, s, 16);
+      stream_get (&nexthop.ipv6, s, 16);
     }
   if (CHECK_FLAG (api.message, ZAPI_MESSAGE_IFINDEX))
     {
@@ -347,38 +355,31 @@ zebra_read_ipv6 (int command, struct zclient *zclient, zebra_size_t length)
     api.metric = 0;
 
   /* Simply ignore link-local address. */
-  if (IN6_IS_ADDR_LINKLOCAL (&p.prefix))
+  if (IN6_IS_ADDR_LINKLOCAL (&p.u.prefix6))
     return 0;
 
   if (command == ZEBRA_IPV6_ROUTE_ADD)
     {
       if (BGP_DEBUG(zebra, ZEBRA))
         {
-          char buf[2][INET6_ADDRSTRLEN];
-          zlog_debug("Zebra rcvd: IPv6 route add %s %s/%d nexthop %s metric %u",
+          zlog_debug("Zebra rcvd: IPv6 route add %s %s nexthop %s metric %u",
                      zebra_route_string(api.type),
-                     inet_ntop(AF_INET6, &p.prefix, buf[0], sizeof(buf[0])),
-                     p.prefixlen,
-                     inet_ntop(AF_INET, &nexthop, buf[1], sizeof(buf[1])),
+                     spfxtoa(&p).str, siptoa(AF_INET6, &nexthop).str,
                      api.metric);
         }
-      bgp_redistribute_add ((struct prefix *)&p, NULL, &nexthop,
-                            api.metric, api.type);
+      bgp_redistribute_add (&p, &nexthop, api.metric, api.type);
     }
   else
     {
       if (BGP_DEBUG(zebra, ZEBRA))
         {
-          char buf[2][INET6_ADDRSTRLEN];
-          zlog_debug("Zebra rcvd: IPv6 route delete %s %s/%d "
+          zlog_debug("Zebra rcvd: IPv6 route delete %s %s "
                      "nexthop %s metric %u",
                      zebra_route_string(api.type),
-                     inet_ntop(AF_INET6, &p.prefix, buf[0], sizeof(buf[0])),
-                     p.prefixlen,
-                     inet_ntop(AF_INET6, &nexthop, buf[1], sizeof(buf[1])),
+                     spfxtoa(&p).str, siptoa(AF_INET6, &nexthop).str,
                      api.metric);
         }
-      bgp_redistribute_delete ((struct prefix *) &p, api.type);
+      bgp_redistribute_delete (&p, api.type);
     }
 
   return 0;
@@ -532,13 +533,13 @@ if_get_ipv6_local (struct interface *ifp, struct in6_addr *addr)
 #endif /* HAVE_IPV6 */
 
 int
-bgp_nexthop_set (union sockunion *local, union sockunion *remote,
-                 struct bgp_nexthop *nexthop, struct peer *peer)
+bgp_nexthop_set (sockunion local, sockunion remote,
+                 bgp_nexthop nexthop, struct peer *peer)
 {
   int ret = 0;
   struct interface *ifp = NULL;
 
-  memset (nexthop, 0, sizeof (struct bgp_nexthop));
+  memset (nexthop, 0, sizeof (bgp_nexthop_t));
 
   if (!local)
     return -1;
@@ -589,9 +590,10 @@ bgp_nexthop_set (union sockunion *local, union sockunion *remote,
     {
       struct interface *direct = NULL;
 
-      /* IPv4 nexthop.  I don't care about it. */
-      if (peer->local_id.s_addr)
-        nexthop->v4 = peer->local_id;
+      /* IPv4 nexthop.  I don't care about it.
+       */
+      if (peer->local_id != 0)
+        nexthop->v4.s_addr = peer->local_id;
 
       /* Global address*/
       if (! IN6_IS_ADDR_LINKLOCAL (&local->sin6.sin6_addr))
@@ -622,9 +624,9 @@ bgp_nexthop_set (union sockunion *local, union sockunion *remote,
 
   if (IN6_IS_ADDR_LINKLOCAL (&local->sin6.sin6_addr) ||
       if_lookup_by_ipv6 (&remote->sin6.sin6_addr))
-    peer->shared_network = 1;
+    peer->shared_network = true;
   else
-    peer->shared_network = 0;
+    peer->shared_network = false ;
 
   /* KAME stack specific treatment.  */
 #ifdef KAME
@@ -643,277 +645,349 @@ bgp_nexthop_set (union sockunion *local, union sockunion *remote,
   return ret;
 }
 
-void
-bgp_zebra_announce (struct prefix *p, struct bgp_info *info, struct bgp *bgp,
-                                                                    safi_t safi)
+/*------------------------------------------------------------------------------
+ * Set given route_zebra -- allocating one if required.
+ *
+ * Sets:
+ *
+ *   * safi       -- per ri->qafx
+ *   * flags      -- per peer->sort, ->ttl & ->flags as required
+ *
+ *   * med        -- per ri->attr->med
+ *
+ *   * next_hop   -- zero
+ *   * ifindex    -- zero;
+ */
+static route_zebra
+bgp_zebra_route_set(route_zebra zr, bgp_peer peer, route_info ri)
 {
-  int flags;
-  u_char distance;
-  struct peer *peer;
-  bgp_peer_sort_t sort ;
+  if (zr == NULL)
+    zr = XCALLOC(0, sizeof(route_zebra_t)) ;
+  else
+    zr = memset(zr, 0, sizeof(route_zebra_t)) ;
 
-  if (zclient->sock < 0)
-    return;
+  zr->safi = get_iSAFI(ri->qafx) ;
 
-  if (! zclient->redist[ZEBRA_ROUTE_BGP])
-    return;
-
-  flags = 0;
-  peer  = info->peer;
-  sort  = peer_sort(peer) ;
-
-  if ((sort == BGP_PEER_IBGP) || (sort == BGP_PEER_CONFED))
+  switch (peer->sort)
     {
-      SET_FLAG (flags, ZEBRA_FLAG_IBGP);
-      SET_FLAG (flags, ZEBRA_FLAG_INTERNAL);
-    }
+      case BGP_PEER_IBGP:
+      case BGP_PEER_CBGP:
+        zr->flags |= ZEBRA_FLAG_IBGP | ZEBRA_FLAG_INTERNAL ;
+        break ;
 
-  if (((sort == BGP_PEER_EBGP) && (peer->ttl != 1))
-      || CHECK_FLAG (peer->flags, PEER_FLAG_DISABLE_CONNECTED_CHECK))
-    SET_FLAG (flags, ZEBRA_FLAG_INTERNAL);
+      case BGP_PEER_EBGP:
+        if ((peer->ttl != 1) ||
+                             (peer->flags & PEER_FLAG_DISABLE_CONNECTED_CHECK))
+          zr->flags |= ZEBRA_FLAG_INTERNAL ;
+        break ;
 
-  if (p->family == AF_INET)
+      default:
+        qassert(false) ;
+        break ;
+    } ;
+
+  zr->med  = ri->attr->med ;
+
+  return zr ;
+}
+
+/*------------------------------------------------------------------------------
+ * Announce the given route to Zebra.
+ *
+ * Automatically withdraws any existing route for the given prefix.
+ */
+extern route_zebra
+bgp_zebra_announce (route_zebra zr, bgp_rib_node rn, prefix_c p)
+{
+  route_info    ri ;
+  bgp_peer      peer ;
+  attr_next_hop nh ;
+  bool          ok ;
+
+  if ((zclient->sock < 0) || !zclient->redist[ZEBRA_ROUTE_BGP])
+    return bgp_zebra_discard(zr, p) ;
+
+  ok = false ;
+
+  ri = rn->selected ;
+  nh = &ri->attr->next_hop ;
+
+  peer  = ri->prib->peer;
+  qassert(peer->type == PEER_TYPE_REAL) ;
+
+  switch (p->family)
     {
-      struct zapi_ipv4 api;
-      struct in_addr *nexthop;
-
-      api.flags = flags;
-      nexthop = &info->attr->nexthop;
-
-      api.type = ZEBRA_ROUTE_BGP;
-      api.message = 0;
-      api.safi = safi;
-      SET_FLAG (api.message, ZAPI_MESSAGE_NEXTHOP);
-      api.nexthop_num = 1;
-      api.nexthop = &nexthop;
-      api.ifindex_num = 0;
-      SET_FLAG (api.message, ZAPI_MESSAGE_METRIC);
-      api.metric = info->attr->med;
-
-      distance = bgp_distance_apply (p, info, bgp);
-
-      if (distance)
+      case AF_INET:
         {
-          SET_FLAG (api.message, ZAPI_MESSAGE_DISTANCE);
-          api.distance = distance;
-        }
+          struct zapi_ipv4 api;
+          struct in_addr*  nexthop[1] ;
 
-      if (BGP_DEBUG(zebra, ZEBRA))
-        {
-          char buf[2][INET_ADDRSTRLEN];
-          zlog_debug("Zebra send: IPv4 route add %s/%d nexthop %s metric %u",
-                     inet_ntop(AF_INET, &p->u.prefix4, buf[0], sizeof(buf[0])),
-                     p->prefixlen,
-                     inet_ntop(AF_INET, nexthop, buf[1], sizeof(buf[1])),
-                     api.metric);
-        }
+          if ( (ri->qafx != qafx_ipv4_unicast) &&
+               (ri->qafx != qafx_ipv4_multicast) )
+            break ;
 
-      zapi_ipv4_route (ZEBRA_IPV4_ROUTE_ADD, zclient,
-                       (struct prefix_ipv4 *) p, &api);
-    }
+          if (nh->type != nh_ipv4)
+            break ;             /* not an IPv5 next-hop         */
+
+          ok = true ;
+          zr = bgp_zebra_route_set(zr, peer, ri) ;
+
+          zr->next_hop.ipv4 = nh->ip.v4 ;
+
+          memset(&api, 0, sizeof(struct zapi_ipv4)) ;
+          nexthop[0] = (struct in_addr*)&zr->next_hop.ipv4 ;
+
+          api.flags        = zr->flags ;
+          api.type         = ZEBRA_ROUTE_BGP;
+          api.safi         = zr->safi ;
+
+          api.message     |= ZAPI_MESSAGE_NEXTHOP ;
+          api.nexthop_num  = 1;
+          api.nexthop      = nexthop ;
+
+          api.ifindex_num  = 0;
+
+          api.message     |= ZAPI_MESSAGE_METRIC ;
+          api.metric       = zr->med;
+
+          api.distance     = bgp_distance_apply (peer, p) ;
+          if (api.distance != 0)
+            api.message   |= ZAPI_MESSAGE_DISTANCE ;
+
+          if (BGP_DEBUG(zebra, ZEBRA))
+            {
+              zlog_debug("Zebra send: IPv4 route add %s/%d nexthop %s metric %u",
+                         siptoa(AF_INET, &p->u.prefix4).str,
+                         p->prefixlen,
+                         siptoa(AF_INET, nexthop[0]).str,
+                         api.metric);
+            }
+
+          zapi_ipv4_route (ZEBRA_IPV4_ROUTE_ADD, zclient,
+                                       (const struct prefix_ipv4 *)p, &api);
+        } ;
+        break ;
+
 #ifdef HAVE_IPV6
-  /* We have to think about a IPv6 link-local address curse. */
-  if (p->family == AF_INET6)
-    {
-      unsigned int ifindex;
-      struct in6_addr *nexthop;
-      struct zapi_ipv6 api;
-
-      ifindex = 0;
-      nexthop = NULL;
-
-      assert (info->attr->extra);
-
-      /* Only global address nexthop exists. */
-      if (info->attr->extra->mp_nexthop_len == 16)
-        nexthop = &info->attr->extra->mp_nexthop_global;
-
-      /* If both global and link-local address present. */
-      if (info->attr->extra->mp_nexthop_len == 32)
+      case AF_INET6:
         {
-          /* Workaround for Cisco's nexthop bug.  */
-          if (IN6_IS_ADDR_UNSPECIFIED (&info->attr->extra->mp_nexthop_global)
-              && peer->su_remote->sa.sa_family == AF_INET6)
-            nexthop = &peer->su_remote->sin6.sin6_addr;
+          /* We have to think about a IPv6 link-local address curse.
+           */
+          struct in6_addr* nexthop[1] ;
+          struct zapi_ipv6 api ;
+
+          if ( (ri->qafx != qafx_ipv6_unicast) &&
+               (ri->qafx != qafx_ipv6_multicast) )
+            break ;
+
+          if ( (nh->type != nh_ipv6_1) &&
+               (nh->type != nh_ipv6_2) )
+            break ;
+
+          ok = true ;
+          zr = bgp_zebra_route_set(zr, peer, ri) ;
+
+          if (nh->type == nh_ipv6_1)
+            {
+              /* Only global address nexthop exists.
+               */
+              zr->next_hop.ipv6.addr = nh->ip.v6[in6_global].addr ;
+            }
           else
-            nexthop = &info->attr->extra->mp_nexthop_local;
+            {
+              /* Both global and link-local address present.
+               *
+               * Workaround for Cisco's nexthop bug.
+               */
+              if (IN6_IS_ADDR_UNSPECIFIED(&nh->ip.v6[in6_global])
+                                 && (peer->su_remote->sa.sa_family == AF_INET6))
+                zr->next_hop.ipv6.addr = peer->su_remote->sin6.sin6_addr;
+              else
+                zr->next_hop.ipv6.addr = nh->ip.v6[in6_link_local].addr ;
 
-          if (info->peer->nexthop.ifp)
-            ifindex = info->peer->nexthop.ifp->ifindex;
-        }
+              if (peer->nexthop.ifp)
+                zr->ifindex = peer->nexthop.ifp->ifindex;
+            } ;
 
-      if (nexthop == NULL)
-        return;
+          if ((zr->ifindex != 0) && IN6_IS_ADDR_LINKLOCAL (nexthop[0]))
+            {
+              if (peer->ifname)
+                zr->ifindex = if_nametoindex (peer->ifname);
+              else if (peer->nexthop.ifp)
+                zr->ifindex = peer->nexthop.ifp->ifindex;
+            } ;
 
-      if (IN6_IS_ADDR_LINKLOCAL (nexthop) && ! ifindex)
-        {
-          if (info->peer->ifname)
-            ifindex = if_nametoindex (info->peer->ifname);
-          else if (info->peer->nexthop.ifp)
-            ifindex = info->peer->nexthop.ifp->ifindex;
-        }
+          memset(&api, 0, sizeof(struct zapi_ipv6)) ;
+          nexthop[0] = &zr->next_hop.ipv6.addr ;
 
-      /* Make Zebra API structure. */
-      api.flags = flags;
-      api.type = ZEBRA_ROUTE_BGP;
-      api.message = 0;
-      api.safi = safi;
-      SET_FLAG (api.message, ZAPI_MESSAGE_NEXTHOP);
-      api.nexthop_num = 1;
-      api.nexthop = &nexthop;
-      SET_FLAG (api.message, ZAPI_MESSAGE_IFINDEX);
-      api.ifindex_num = 1;
-      api.ifindex = &ifindex;
-      SET_FLAG (api.message, ZAPI_MESSAGE_METRIC);
-      api.metric = info->attr->med;
+          /* Make Zebra API structure.
+           */
+          api.flags       = zr->flags;
+          api.type        = ZEBRA_ROUTE_BGP;
+          api.safi        = zr->safi;
 
-      if (BGP_DEBUG(zebra, ZEBRA))
-        {
-          char buf[2][INET6_ADDRSTRLEN];
-          zlog_debug("Zebra send: IPv6 route add %s/%d nexthop %s metric %u",
-                     inet_ntop(AF_INET6, &p->u.prefix6, buf[0], sizeof(buf[0])),
-                     p->prefixlen,
-                     inet_ntop(AF_INET6, nexthop, buf[1], sizeof(buf[1])),
-                     api.metric);
-        }
+          api.message    |= ZAPI_MESSAGE_NEXTHOP ;
+          api.nexthop_num = 1;
+          api.nexthop     = nexthop ;
 
-      zapi_ipv6_route (ZEBRA_IPV6_ROUTE_ADD, zclient,
-                       (struct prefix_ipv6 *) p, &api);
-    }
+          api.message    |= ZAPI_MESSAGE_IFINDEX ;
+          api.ifindex_num = 1;
+          api.ifindex     = &zr->ifindex ;
+
+          api.message    |= ZAPI_MESSAGE_METRIC ;
+          api.metric      = zr->med ;
+
+          if (BGP_DEBUG(zebra, ZEBRA))
+            {
+              zlog_debug("Zebra send: IPv6 route add %s/%d nexthop %s metric %u",
+                         siptoa(AF_INET6, &p->u.prefix6).str,
+                         p->prefixlen,
+                         siptoa(AF_INET6, nexthop[0]).str,
+                         api.metric);
+            }
+
+          zapi_ipv6_route (ZEBRA_IPV6_ROUTE_ADD, zclient,
+                           (const struct prefix_ipv6 *) p, &api);
+        } ;
+        break ;
 #endif /* HAVE_IPV6 */
-}
 
-void
-bgp_zebra_withdraw (struct prefix *p, struct bgp_info *info, safi_t safi)
+      default:
+        break ;
+    } ;
+
+  /* If we failed to set the new zebra_route, withdraw the old one, if it is
+   * set !
+   */
+  if (!ok)
+    bgp_zebra_withdraw(zr, p) ;
+
+  return zr ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Tell Zebra that no longer have a route for the given prefix.
+ */
+extern route_zebra
+bgp_zebra_discard (route_zebra zr, prefix_c p)
 {
-  int flags;
-  struct peer *peer;
-  bgp_peer_sort_t sort ;
-
-  if (zclient->sock < 0)
-    return;
-
-  if (! zclient->redist[ZEBRA_ROUTE_BGP])
-    return;
-
-  flags = 0;
-  peer  = info->peer;
-  sort  = peer_sort(peer) ;
-
-  if (sort == BGP_PEER_IBGP)
+  if (zr != NULL)
     {
-      SET_FLAG (flags, ZEBRA_FLAG_INTERNAL);
-      SET_FLAG (flags, ZEBRA_FLAG_IBGP);
-    }
+      bgp_zebra_withdraw(zr, p) ;
 
-  if (((sort == BGP_PEER_EBGP) && (peer->ttl != 1))
-      || CHECK_FLAG (peer->flags, PEER_FLAG_DISABLE_CONNECTED_CHECK))
-    SET_FLAG (flags, ZEBRA_FLAG_INTERNAL);
+      XFREE(0, zr) ;
+    } ;
 
-  if (p->family == AF_INET)
-    {
-      struct zapi_ipv4 api;
-      struct in_addr *nexthop;
-
-      api.flags = flags;
-      nexthop = &info->attr->nexthop;
-
-      api.type = ZEBRA_ROUTE_BGP;
-      api.message = 0;
-      api.safi = safi;
-      SET_FLAG (api.message, ZAPI_MESSAGE_NEXTHOP);
-      api.nexthop_num = 1;
-      api.nexthop = &nexthop;
-      api.ifindex_num = 0;
-      SET_FLAG (api.message, ZAPI_MESSAGE_METRIC);
-      api.metric = info->attr->med;
-
-      if (BGP_DEBUG(zebra, ZEBRA))
-        {
-          char buf[2][INET_ADDRSTRLEN];
-          zlog_debug("Zebra send: IPv4 route delete %s/%d nexthop %s metric %u",
-                     inet_ntop(AF_INET, &p->u.prefix4, buf[0], sizeof(buf[0])),
-                     p->prefixlen,
-                     inet_ntop(AF_INET, nexthop, buf[1], sizeof(buf[1])),
-                     api.metric);
-        }
-
-      zapi_ipv4_route (ZEBRA_IPV4_ROUTE_DELETE, zclient,
-                       (struct prefix_ipv4 *) p, &api);
-    }
-#ifdef HAVE_IPV6
-  /* We have to think about a IPv6 link-local address curse. */
-  if (p->family == AF_INET6)
-    {
-      struct zapi_ipv6 api;
-      unsigned int ifindex;
-      struct in6_addr *nexthop;
-
-      assert (info->attr->extra);
-
-      ifindex = 0;
-      nexthop = NULL;
-
-      /* Only global address nexthop exists. */
-      if (info->attr->extra->mp_nexthop_len == 16)
-        nexthop = &info->attr->extra->mp_nexthop_global;
-
-      /* If both global and link-local address present. */
-      if (info->attr->extra->mp_nexthop_len == 32)
-        {
-          nexthop = &info->attr->extra->mp_nexthop_local;
-          if (info->peer->nexthop.ifp)
-            ifindex = info->peer->nexthop.ifp->ifindex;
-        }
-
-      if (nexthop == NULL)
-        return;
-
-      if (IN6_IS_ADDR_LINKLOCAL (nexthop) && ! ifindex)
-        if (info->peer->ifname)
-          ifindex = if_nametoindex (info->peer->ifname);
-
-      api.flags = flags;
-      api.type = ZEBRA_ROUTE_BGP;
-      api.message = 0;
-      api.safi = safi;
-      SET_FLAG (api.message, ZAPI_MESSAGE_NEXTHOP);
-      api.nexthop_num = 1;
-      api.nexthop = &nexthop;
-      SET_FLAG (api.message, ZAPI_MESSAGE_IFINDEX);
-      api.ifindex_num = 1;
-      api.ifindex = &ifindex;
-      SET_FLAG (api.message, ZAPI_MESSAGE_METRIC);
-      api.metric = info->attr->med;
-
-      if (BGP_DEBUG(zebra, ZEBRA))
-        {
-          char buf[2][INET6_ADDRSTRLEN];
-          zlog_debug("Zebra send: IPv6 route delete %s/%d nexthop %s metric %u",
-                     inet_ntop(AF_INET6, &p->u.prefix6, buf[0], sizeof(buf[0])),
-                     p->prefixlen,
-                     inet_ntop(AF_INET6, nexthop, buf[1], sizeof(buf[1])),
-                     api.metric);
-        }
-
-      zapi_ipv6_route (ZEBRA_IPV6_ROUTE_DELETE, zclient,
-                       (struct prefix_ipv6 *) p, &api);
-    }
-#endif /* HAVE_IPV6 */
+  return NULL ;
 }
+
+/*------------------------------------------------------------------------------
+ * Tell Zebra that no longer have a route for the given prefix.
+ */
+extern void
+bgp_zebra_withdraw (route_zebra zr, prefix_c p)
+{
+  if ((zr == NULL) || (zr->safi == iSAFI_Reserved))
+    return ;
+
+  if (zclient->sock >= 0)
+    switch (p->family)
+      {
+        case AF_INET:
+          {
+            struct zapi_ipv4 api;
+            struct in_addr* nexthop[1] ;
+
+            memset(&api, 0, sizeof(struct zapi_ipv4)) ;
+            nexthop[0] = (struct in_addr*)&zr->next_hop.ipv4 ;
+
+            api.flags       = zr->flags ;
+            api.type        = ZEBRA_ROUTE_BGP;
+            api.safi        = zr->safi;
+
+            api.message    |= ZAPI_MESSAGE_NEXTHOP ;
+            api.nexthop_num = 1;
+            api.nexthop     = nexthop;
+            api.ifindex_num = 0;
+
+            api.message    |= ZAPI_MESSAGE_METRIC ;
+            api.metric      = zr->med ;
+
+            if (BGP_DEBUG(zebra, ZEBRA))
+              {
+                zlog_debug("Zebra send: IPv4 route delete %s/%d "
+                                                        "nexthop %s metric %u",
+                       siptoa(AF_INET, &p->u.prefix4).str,
+                       p->prefixlen,
+                       siptoa(AF_INET, nexthop[1]).str,
+                       api.metric);
+              }
+
+            zapi_ipv4_route (ZEBRA_IPV4_ROUTE_DELETE, zclient,
+                                         (const struct prefix_ipv4 *) p, &api) ;
+          } ;
+          break ;
+
+  #ifdef HAVE_IPV6
+        case AF_INET6:
+          {
+            struct zapi_ipv6 api ;
+            struct in6_addr* nexthop[1] ;
+
+            memset(&api, 0, sizeof(struct zapi_ipv6)) ;
+            nexthop[0] = &zr->next_hop.ipv6.addr ;
+
+            api.flags       = zr->flags;
+            api.type        = ZEBRA_ROUTE_BGP;
+            api.safi        = zr->safi;
+
+            api.message    |= ZAPI_MESSAGE_NEXTHOP ;
+            api.nexthop_num = 1;
+            api.nexthop     = nexthop ;
+
+            api.message    |= ZAPI_MESSAGE_IFINDEX ;
+            api.ifindex_num = 1;
+
+            api.ifindex     = &zr->ifindex ;
+
+            api.message    |= ZAPI_MESSAGE_METRIC ;
+            api.metric      = zr->med;
+
+            if (BGP_DEBUG(zebra, ZEBRA))
+              {
+                zlog_debug("Zebra send: IPv6 route delete %s/%d "
+                                                        "nexthop %s metric %u",
+                           siptoa(AF_INET6, &p->u.prefix6).str,
+                           p->prefixlen,
+                           siptoa(AF_INET6, nexthop[0]).str,
+                           api.metric);
+              }
+
+            zapi_ipv6_route (ZEBRA_IPV6_ROUTE_DELETE, zclient,
+                                        (const struct prefix_ipv6 *) p, &api);
+          } ;
+          break ;
+#endif /* HAVE_IPV6 */
+
+        default:
+          break ;
+      } ;
+
+  zr->safi = iSAFI_Reserved ;
+} ;
 
 /* Other routes redistribution into BGP. */
 int
 bgp_redistribute_set (struct bgp *bgp, afi_t afi, int type)
 {
   /* Set flag to BGP instance. */
-  bgp->redist[afi][type] = 1;
+  bgp->redist[afi][type] = true ;
 
   /* Return if already redistribute flag is set. */
   if (zclient->redist[type])
     return CMD_WARNING;
 
-  zclient->redist[type] = 1;
+  zclient->redist[type] = true ;
 
   /* Return if zebra connection is not established. */
   if (zclient->sock < 0)
@@ -940,7 +1014,7 @@ bgp_redistribute_rmap_set (struct bgp *bgp, afi_t afi, int type,
   if (bgp->rmap[afi][type].name)
     free (bgp->rmap[afi][type].name);
   bgp->rmap[afi][type].name = strdup (name);
-  bgp->rmap[afi][type].map = route_map_lookup_by_name (name);
+  bgp->rmap[afi][type].map = route_map_lookup (name);
 
   return 1;
 }
@@ -950,41 +1024,42 @@ int
 bgp_redistribute_metric_set (struct bgp *bgp, afi_t afi, int type,
                              u_int32_t metric)
 {
-  if (bgp->redist_metric_flag[afi][type]
+  if (bgp->redist_metric_set[afi][type]
       && bgp->redist_metric[afi][type] == metric)
     return 0;
 
-  bgp->redist_metric_flag[afi][type] = 1;
+  bgp->redist_metric_set[afi][type] = true ;
   bgp->redist_metric[afi][type] = metric;
 
   return 1;
 }
 
-/* Unset redistribution.  */
-int
-bgp_redistribute_unset (struct bgp *bgp, afi_t afi, int type)
+/*------------------------------------------------------------------------------
+ * Unset redistribution.
+ */
+extern cmd_ret_t
+bgp_redistribute_unset (struct bgp *bgp, qAFI_t q_afi, int type)
 {
   /* Unset flag from BGP instance. */
-  bgp->redist[afi][type] = 0;
+  bgp->redist[q_afi][type] = false ;
 
   /* Unset route-map. */
-  if (bgp->rmap[afi][type].name)
-    free (bgp->rmap[afi][type].name);
-  bgp->rmap[afi][type].name = NULL;
-  bgp->rmap[afi][type].map = NULL;
+  if (bgp->rmap[q_afi][type].name)
+    free (bgp->rmap[q_afi][type].name);
+  bgp->rmap[q_afi][type].name = NULL;
+  bgp->rmap[q_afi][type].map = NULL;
 
   /* Unset metric. */
-  bgp->redist_metric_flag[afi][type] = 0;
-  bgp->redist_metric[afi][type] = 0;
+  bgp->redist_metric_set[q_afi][type] = false;
+  bgp->redist_metric[q_afi][type] = 0;
 
   /* Return if zebra connection is disabled. */
   if (! zclient->redist[type])
     return CMD_WARNING;
-  zclient->redist[type] = 0;
+  zclient->redist[type] = 0 ;
 
-  if (bgp->redist[AFI_IP][type] == 0
-      && bgp->redist[AFI_IP6][type] == 0
-      && zclient->sock >= 0)
+  if (!bgp->redist[qAFI_IP][type] && !bgp->redist[qAFI_IP6][type]
+                                                        && (zclient->sock >= 0))
     {
       /* Send distribute delete message to zebra. */
       if (BGP_DEBUG(zebra, ZEBRA))
@@ -994,7 +1069,7 @@ bgp_redistribute_unset (struct bgp *bgp, afi_t afi, int type)
     }
 
   /* Withdraw redistributed routes from current BGP's routing table. */
-  bgp_redistribute_withdraw (bgp, afi, type);
+  bgp_redistribute_withdraw_all (bgp, q_afi, type);
 
   return CMD_SUCCESS;
 }
@@ -1018,11 +1093,11 @@ bgp_redistribute_routemap_unset (struct bgp *bgp, afi_t afi, int type)
 int
 bgp_redistribute_metric_unset (struct bgp *bgp, afi_t afi, int type)
 {
-  if (! bgp->redist_metric_flag[afi][type])
+  if (! bgp->redist_metric_set[afi][type])
     return 0;
 
   /* Unset metric. */
-  bgp->redist_metric_flag[afi][type] = 0;
+  bgp->redist_metric_set[afi][type] = false ;
   bgp->redist_metric[afi][type] = 0;
 
   return 1;

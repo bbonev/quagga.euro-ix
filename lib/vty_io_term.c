@@ -1397,17 +1397,18 @@ static void
 uty_term_accept(int sock_listen_fd)
 {
   int sock_fd;
-  union sockunion su;
+  sockunion_t su[1] ;
   int ret;
-  unsigned int on;
-  struct prefix *p ;
+  uint on;
+  struct access_list* acl ;
 
   VTY_ASSERT_LOCKED() ;
 
-  /* We can handle IPv4 or IPv6 socket.                                 */
-  sockunion_init_new(&su, AF_UNSPEC) ;
+  /* We can handle IPv4 or IPv6 socket.
+   */
+  sockunion_init_new(su, AF_UNSPEC) ;
 
-  sock_fd = sockunion_accept (sock_listen_fd, &su);
+  sock_fd = sockunion_accept (sock_listen_fd, su);
 
   if (sock_fd < 0)
     {
@@ -1430,42 +1431,42 @@ uty_term_accept(int sock_listen_fd)
       return ;
     } ;
 
-  /* New socket is open... worry about access lists                     */
-  p = sockunion2hostprefix (&su);
-  ret = 0 ;     /* so far, so good              */
-
-  if ((p->family == AF_INET) && host.vty_accesslist_name)
+  /* New socket is open... worry about access lists
+   */
+  switch (sockunion_family(su))
     {
-      /* VTY's accesslist apply.                                        */
-      struct access_list* acl ;
-
-      if ((acl = access_list_lookup (AFI_IP, host.vty_accesslist_name))
-            && (access_list_apply (acl, p) == FILTER_DENY))
-        ret = -1 ;
-    }
+      case AF_INET:
+        acl = access_list_lookup (AFI_IP, host.vty_accesslist_name) ;
+        break ;
 
 #ifdef HAVE_IPV6
-  if ((p->family == AF_INET6) && host.vty_ipv6_accesslist_name)
-    {
-      /* VTY's ipv6 accesslist apply.                                   */
-      struct access_list* acl ;
-
-      if ((acl = access_list_lookup (AFI_IP6, host.vty_ipv6_accesslist_name))
-            && (access_list_apply (acl, p) == FILTER_DENY))
-        ret = -1 ;
-    }
+      case AF_INET6:
+        acl = access_list_lookup (AFI_IP6, host.vty_ipv6_accesslist_name) ;
+        break ;
 #endif /* HAVE_IPV6 */
 
-  prefix_free (p);
-
-  if (ret != 0)
-    {
-      zlog (NULL, LOG_INFO, "Vty connection refused from %s", sutoa(&su).str) ;
-      close (sock_fd);
-      return ;
+      default:
+        acl = NULL ;
+        break ;
     } ;
 
-  /* Final options (optional)                                           */
+  if (acl != NULL)
+    {
+      prefix_t p[1] ;
+
+      prefix_from_sockunion (p, su);
+
+      if (access_list_apply (acl, p) == FILTER_DENY)
+        {
+          zlog (NULL, LOG_INFO, "Vty connection refused from %s",
+                                                               sutoa(su).str) ;
+          close (sock_fd);
+          return ;
+        } ;
+    } ;
+
+  /* Final options (optional)
+   */
   on = 1 ;
   ret = setsockopt (sock_fd, IPPROTO_TCP, TCP_NODELAY,
                                                     (void*)&on, sizeof (on));
@@ -1473,8 +1474,9 @@ uty_term_accept(int sock_listen_fd)
     zlog (NULL, LOG_INFO, "can't set sockopt to socket %d: %s",
                                                sock_fd, errtoa(errno, 0).str) ;
 
-  /* All set -- create the VTY_TERMINAL and set it going                */
-  uty_term_open(sock_fd, &su);
+  /* All set -- create the VTY_TERMINAL and set it going
+   */
+  uty_term_open(sock_fd, su);
 } ;
 
 /*==============================================================================

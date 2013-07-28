@@ -60,107 +60,50 @@
 # endif
 #endif
 
-enum { bgp_engine_debug = BGP_ENGINE_DEBUG } ;
+enum
+{
+  bgp_engine_debug = BGP_ENGINE_DEBUG,
+} ;
+
+enum
+{
+  bgp_engine_debug_to_bgp      = 0,
+  bgp_engine_debug_to_routeing = 1,
+
+  bgp_engine_debug_count       = 2,
+} ;
 
 /*==============================================================================
- *
+ * Functions
  */
+Inline void bgp_to_bgp_engine(mqueue_block mqb, mqb_rank_b priority) ;
+Inline void bgp_to_routing_engine(mqueue_block mqb, mqb_rank_b priority) ;
 
-struct queue_stats
-{
-  unsigned        count ;
-  unsigned long   total ;
-  unsigned        max ;
-  unsigned        recent ;
+extern void bgp_engine_cops_change() ;
+extern void bgp_engine_() ;
 
-  unsigned        xon ;
-  unsigned        event ;
-  unsigned        update ;
-} ;
+Private void bgp_queue_logging(mqueue_queue mq, uint which) ;
 
-static struct queue_stats bgp_engine_queue_stats ;
-static struct queue_stats routing_engine_queue_stats ;
-
-Inline void
-bgp_queue_logging(const char* name, mqueue_queue mq, struct queue_stats* stats)
-{
-  unsigned long average ;
-  unsigned av_i ;
-  unsigned av_f ;
-  unsigned my_count ;
-  mqueue_block mqb ;
-
-  ++stats->count ;
-
-  MQUEUE_LOCK(mq) ;
-
-  if (mq->count > stats->max)
-    stats->max    = mq->count ;
-  if (mq->count > stats->recent)
-    stats->recent = mq->count ;
-
-  stats->total += mq->count ;
-
-  if (stats->count < 1000)
-    {
-      MQUEUE_UNLOCK(mq) ;
-      return ;
-    } ;
-
-  my_count = 0 ;
-
-  mqb = mq->head ;
-  while (mqb != NULL)
-    {
-      ++my_count ;
-      mqb = mqb->next ;
-    } ;
-
-  assert(my_count == mq->count) ;
-
-  MQUEUE_UNLOCK(mq) ;
-
-  average = stats->total * 1000 ;
-  average = (average / stats->count) + 5 ;
-  av_i = average / 1000 ;
-  av_f = (average % 1000) / 10 ;
-
-  zlog_debug("%s queue: max=%u  recent: max=%u av=%d.%.2d (%u) [x=%u e=%u u=%u]",
-                    name, stats->max, stats->recent, av_i, av_f, stats->count,
-                                      stats->xon, stats->event, stats->update) ;
-
-  stats->recent = 0 ;
-  stats->count  = 0 ;
-  stats->total  = 0 ;
-
-  stats->event  = 0 ;
-  stats->update = 0 ;
-  stats->xon    = 0 ;
-} ;
-
-/* Send given message to the BGP Engine -- priority/ordinary
+/*------------------------------------------------------------------------------
+ * Send given message to the BGP Engine -- priority/ordinary
  */
 Inline void
 bgp_to_bgp_engine(mqueue_block mqb, mqb_rank_b priority)
 {
   mqueue_enqueue(bgp_nexus->queue, mqb, priority) ;
   if (bgp_engine_debug)
-    bgp_queue_logging("BGP Engine", bgp_nexus->queue, &bgp_engine_queue_stats) ;
+    bgp_queue_logging(bgp_nexus->queue, bgp_engine_debug_to_bgp) ;
 } ;
 
-/*==============================================================================
- *
- */
-
-/* Send given message to the Routing Engine -- priority/ordinary
+/*------------------------------------------------------------------------------
+ * Send given message to the Routing Engine -- priority/ordinary
  */
 Inline void
 bgp_to_routing_engine(mqueue_block mqb, mqb_rank_b priority)
 {
   mqueue_enqueue(routing_nexus->queue, mqb, priority) ;
   if (bgp_engine_debug)
-    bgp_queue_logging("Routing Engine", routing_nexus->queue,
-                                                 &routing_engine_queue_stats) ;
+    bgp_queue_logging(bgp_nexus->queue, bgp_engine_debug_to_routeing) ;
 } ;
 
 #endif /* QUAGGA_BGP_ENGINE_H */

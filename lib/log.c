@@ -379,13 +379,13 @@ uvzlog_line(logline ll, struct zlog *zl, int priority,
   /* "<time stamp>"                                                     */
   uquagga_timestamp(qfs, (zl != NULL) ? zl->timestamp_precision : 0) ;
 
-  qfs_append_n(qfs, " ", 1) ;
+  qfs_put_n(qfs, " ", 1) ;
 
   /* "<priority>: " if required                                         */
   if ((zl != NULL) && zl->record_priority)
     {
-      qfs_append(qfs, zlog_priority[priority]) ;
-      qfs_append(qfs, ": ") ;
+      qfs_put_str(qfs, zlog_priority[priority]) ;
+      qfs_put_str(qfs, ": ") ;
     } ;
 
   /* "<protocol>: " or "unknown: "                                      */
@@ -394,14 +394,14 @@ uvzlog_line(logline ll, struct zlog *zl, int priority,
   else
     q = "unknown" ;
 
-  qfs_append(qfs, q) ;
-  qfs_append(qfs, ": ") ;
+  qfs_put_str(qfs, q) ;
+  qfs_put_str(qfs, ": ") ;
 
   /* Now the log line itself (uses a *copy* of the va_list)             */
   qfs_vprintf(qfs, format, va) ;
 
   /* Stick '\n' on the end                                              */
-  qfs_append_n(qfs, "\n", 1) ;
+  qfs_put_n(qfs, "\n", 1) ;
 
   /* Worry about overflow of message                                    */
   if (qfs_overflow(qfs) != 0)
@@ -472,7 +472,7 @@ uquagga_timestamp(qf_str qfs, int timestamp_precision)
       qassert(cache.len > 0) ;
     } ;
 
-  qfs_append_n(qfs, cache.buf, cache.len) ;
+  qfs_put_n(qfs, cache.buf, cache.len) ;
 
   /* Add decimal part as required.
    *
@@ -493,19 +493,18 @@ uquagga_timestamp(qf_str qfs, int timestamp_precision)
       if (prec > 6)
         prec = 6 ;
 
-      qfs_append_n(qfs, ".", 1) ;
-      qfs_unsigned(qfs, clock.tv_usec / divisor[prec], 0, 0, prec) ;
+      qfs_put_n(qfs, ".", 1) ;
+      qfs_put_unsigned(qfs, clock.tv_usec / divisor[prec], 0, 0, prec) ;
 
       if (prec < timestamp_precision)
-        qfs_append_ch_x_n(qfs, '0', timestamp_precision - prec) ;
+        qfs_put_ch_x_n(qfs, '0', timestamp_precision - prec) ;
     } ;
 } ;
 
 /*==============================================================================
- *
+ * Support for zassert.h
  */
-
-void
+extern void
 _zlog_assert_failed (const char *assertion, const char *file,
     unsigned int line, const char *function)
 {
@@ -516,8 +515,9 @@ _zlog_assert_failed (const char *assertion, const char *file,
   zlog_abort(buff);
 }
 
-/* Abort with message                                           */
-void
+/* Abort with message
+ */
+extern void
 _zlog_abort_mess (const char *mess, const char *file,
     unsigned int line, const char *function)
 {
@@ -528,7 +528,8 @@ _zlog_abort_mess (const char *mess, const char *file,
   zlog_abort(buff);
 }
 
-/* Abort with message and errno and strerror() thereof          */
+/* Abort with message and errno and strerror() thereof
+ */
 void
 _zlog_abort_errno (const char *mess, const char *file,
     unsigned int line, const char *function)
@@ -536,7 +537,8 @@ _zlog_abort_errno (const char *mess, const char *file,
   _zlog_abort_err(mess, errno, file, line, function);
 }
 
-/* Abort with message and given error and strerror() thereof    */
+/* Abort with message and given error and strerror() thereof
+ */
 void
 _zlog_abort_err (const char *mess, int err, const char *file,
     unsigned int line, const char *function)
@@ -547,6 +549,19 @@ _zlog_abort_err (const char *mess, int err, const char *file,
           mess, file, line, (function ? function : "?"),
           errtoa(err, 0).str);
   zlog_abort(buff);
+}
+
+/* Log critical error message
+ *
+ * Return true <=> logged a critical error
+ */
+extern bool
+_zlog_critical (const char *mess, const char *file,
+                                        unsigned int line, const char *function)
+{
+  zlog (NULL, LOG_CRIT, "*BUG* '%s', in file %s, line %u, function %s",
+                                                   mess, file, line, function) ;
+  return true ;
 }
 
 /*============================================================================*/
@@ -892,7 +907,7 @@ uzlog_backtrace(int priority)
     {
       zlog(NULL, LOG_ERR, "Cannot get backtrace, returned invalid # of frames %d "
                "(valid range is between 1 and %lu)",
-               size, (unsigned long)(sizeof(array)/sizeof(array[0])));
+               size, (ulong)(sizeof(array)/sizeof(array[0])));
       return;
     }
   zlog(NULL, priority, "Backtrace for %d stack frames:", size);

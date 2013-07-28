@@ -27,7 +27,8 @@
 #include "if.h"
 #include "vty_vtysh_content.h"
 
-/* Filter type is made by `permit', `deny' and `dynamic'. */
+/* Filter type is made by `permit', `deny' and `dynamic'.
+ */
 enum filter_type
 {
   FILTER_DENY,
@@ -35,37 +36,30 @@ enum filter_type
   FILTER_DYNAMIC
 };
 
-enum access_type
-{
-  ACCESS_TYPE_STRING,
-  ACCESS_TYPE_NUMBER
-};
+typedef struct access_list  access_list_t ;
+typedef struct access_list* access_list ;
 
-/* Access list */
-struct access_list
-{
-  char *name;
-  char *remark;
-
-  struct access_master *master;
-
-  enum access_type type;
-
-  struct access_list *next;
-  struct access_list *prev;
-
-  struct filter *head;
-  struct filter *tail;
-};
-
-/* Prototypes for access-list. */
+/* Prototypes for access-list.
+ */
 extern void access_list_cmd_init (void);
 extern void access_list_init (void);
-extern void access_list_reset (void);
-extern void access_list_add_hook (void (*func)(struct access_list*));
-extern void access_list_delete_hook (void (*func)(struct access_list*));
-extern struct access_list* access_list_lookup (afi_t, const char *);
-extern enum filter_type access_list_apply (struct access_list *, void *);
+extern void access_list_reset (free_keep_b free);
+
+extern void access_list_add_hook (void (*func)(access_list));
+extern void access_list_delete_hook (void (*func)(access_list));
+
+extern access_list access_list_lookup(qAFI_t afi, const char *);
+extern access_list access_list_find(qAFI_t afi, const char *);
+
+extern access_list access_list_get_ref(qAFI_t q_afi, const char *name) ;
+extern access_list access_list_set_ref(access_list alist) ;
+extern access_list access_list_clear_ref(access_list alist) ;
+extern const char* access_list_get_name(access_list alist) ;
+extern bool access_list_is_set(access_list alist) ;
+extern bool access_list_is_active(access_list alist) ;
+
+extern enum filter_type access_list_apply (access_list alist,
+                                                           const void* object) ;
 
 extern cmd_ret_t access_list_parse_section(vtysh_content_parse cp,
                                                             cmd_parsed parsed) ;

@@ -42,20 +42,23 @@ Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
 #define ORF_COMMON_PART_PERMIT     0x00
 #define ORF_COMMON_PART_DENY       0x20
 
-/* Packet send and receive function prototypes. */
-extern int bgp_read (struct thread *);
+/* Packet send and receive function prototypes.
+ */
 extern void bgp_write (bgp_peer peer, struct stream*);
 
-extern void bgp_route_refresh_send (struct peer *, afi_t, safi_t, u_char, u_char, int);
-extern void bgp_capability_send (struct peer *, afi_t, safi_t, int, int);
-extern void bgp_default_update_send (struct peer *, struct attr *,
-                              afi_t, safi_t, struct peer *);
-extern void bgp_default_withdraw_send (struct peer *, afi_t, safi_t);
+extern void bgp_route_refresh_send (peer_rib prib, byte orf_type,
+                                            byte when_to_refresh, bool remove) ;
+extern void bgp_capability_send (bgp_peer peer, qafx_t, int, int);
+extern void bgp_default_update_send (bgp_peer peer, prefix p, attr_set attr,
+                                                   qafx_t qafx, bgp_peer from) ;
+extern void bgp_default_withdraw_send (bgp_peer peer, prefix p, qafx_t qafx);
 
-extern int bgp_capability_receive (struct peer *, bgp_size_t);
+extern int bgp_capability_receive (bgp_peer peer, bgp_size_t);
 
-extern int bgp_update_receive (struct peer *peer, bgp_size_t size);
+extern void bgp_update_receive(bgp_peer peer, bgp_size_t size) ;
 
 extern void bgp_route_refresh_recv(bgp_peer peer, bgp_route_refresh rr) ;
+
+extern bool bgp_nlri_sanity_check(bgp_peer peer, bgp_nlri nlri) ;
 
 #endif /* _QUAGGA_BGP_PACKET_H */

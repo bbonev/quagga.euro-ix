@@ -22,43 +22,113 @@
 #include "stdio.h"
 
 #include "qstring.h"
+#include "qfstring.h"
 #include "memory.h"
 
 /*==============================================================================
  * Initialise, allocate etc.
  */
+static usize qs_qlump_alloc(qlump ql, usize new_size, bool store,
+                                                              qlump_type_c qt) ;
+static void qs_qlump_free(qlump ql, void* body, usize size, qlump_type_c qt) ;
 
 /*------------------------------------------------------------------------------
- * Create a new body or extend existing one to accommodate at least slen + 1.
- *
- * Sets size to multiple of 8 (minimum 16), with at least 9 bytes free beyond
- * the requested slen.
- *
- * Does not affect 'len' or 'cp'.
- *
- * If 'keep_alias', ONLY sets 'b_size' & 'b_body'.
- *
- * If !'keep_alias', sets the elstring body & size & clears 'alias'.
+ * The body of a qstring is a qlump.
  */
-static inline void
-qs_new_body(qstring qs, usize slen, bool keep_alias)
+static const qlump_type_t qs_body_qt[1] =
 {
-  qs->b_size = (slen + 0x10) & ~(usize)(0x08 - 1) ;
-  qs->b_body = XREALLOC(MTYPE_STRING, qs->b_body, qs->b_size) ;
+  { .alloc        = qs_qlump_alloc,
+    .free         = qs_qlump_free,
 
-  if (!keep_alias)
-    qs_set_real_body_nn(qs) ;
+    .unit         = 1,
+
+    .size_add     = 32,
+    .size_unit_m1 = 16 - 1,       /* 16 byte boundaries   */
+
+    .size_min     = 32,           /* if have to allocate  */
+
+    .size_min_unit_m1 = 1 - 1,    /*  4 byte boundaries   */
+
+    .embedded_size   = 0,
+    .embedded_offset = 0,
+
+    .size_term    = 1,
+  }
+} ;
+
+/*------------------------------------------------------------------------------
+ * Early morning start-up
+ */
+extern void
+qs_start_up(void)
+{
+  qlump_register_type(MTYPE_QSTRING_BODY, qs_body_qt, false /* not test */) ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Final termination
+ */
+extern void
+qs_finish(void)
+{
+} ;
+
+/*------------------------------------------------------------------------------
+ * This is called by the qlump handler, when the body needs to be extended.
+ *
+ * The qlump handler looks after aliases.
+ */
+static usize
+qs_qlump_alloc(qlump ql, usize new_size, bool store, qlump_type_c qt)
+{
+  size_t new_byte_size ;
+  bool   extend ;
+
+  extend = false ;
+
+  if (ql->state == qls_normal)
+    extend = (ql->size != 0) && !store ;
+  else
+    ql->state = qls_normal ;
+
+  new_byte_size = (size_t)new_size * qt->unit ;
+
+  if (extend)
+    ql->body.v = XREALLOC(ql->mtype, ql->body.v, new_byte_size) ;
+  else
+    ql->body.v = XMALLOC(ql->mtype, new_byte_size) ;
+
+  return ql->size = new_size ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * This is called by the qlump handler, when the body needs to be freed.
+ *
+ * Will not be called if the size is zero -- but we are cautious.
+ */
+static void
+qs_qlump_free(qlump ql, void* body, usize size, qlump_type_c qt)
+{
+  XFREE(ql->mtype, body) ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Initialise the qlump of the given qstring
+ */
+inline static void
+qs_qlump_init(qstring qs, usize slen)
+{
+  qlump_init(qs, slen, MTYPE_QSTRING_BODY) ;
 } ;
 
 /*------------------------------------------------------------------------------
  * Create a new, empty qs
  *
- * Sets 'len' = 'cp' = 0.
- *
- * If non-zero slen is given, a body is allocated (size = slen + 1), and '\0'
- * terminated at 'len'.
+ * If non-zero slen is given, a body is allocated -- plus space for '\0'.
  *
  * If zero slen is given, no body is allocated.
+ *
+ * Sets 'len' = 'cp' = 0.
  *
  * Returns: address of qstring
  */
@@ -67,34 +137,18 @@ qs_new(usize slen)
 {
   qstring qs ;
 
-  /* zeroising sets a completely empty qstring -- see qs_init_new()     */
+  qs = XMALLOC(MTYPE_QSTRING, sizeof(qstring_t)) ;
 
-  qs = XCALLOC(MTYPE_QSTRING, sizeof(qstring_t)) ;
-
-  confirm(QSTRING_INIT_ALL_ZEROS) ;
-
-  if (slen != 0)
-    {
-      qs_new_body(qs, slen, false) ;
-      *((char*)(qs->b_body)) = '\0' ;
-    } ;
+  qs_qlump_init(qs, slen) ;
 
   return qs ;
 } ;
 
 /*------------------------------------------------------------------------------
- * Create a new, empty qs with body
- */
-extern qstring
-qs_new_with_body(usize slen)
-{
-  return qs_new(slen | 1) ;
-} ;
-
-/*------------------------------------------------------------------------------
  * Initialise qstring -- allocate if required.
  *
- * If non-zero slen is given, a body is allocated (size = slen + 1).
+ * If non-zero slen is given, a body is allocated -- plus space for '\0'.
+ *
  * If zero slen is given, no body is allocated.
  *
  * Sets 'len' = 'cp' = 0.
@@ -110,26 +164,7 @@ qs_init_new(qstring qs, usize slen)
   if (qs == NULL)
     return qs_new(slen) ;
 
-  memset(qs, 0, sizeof(qstring_t)) ;
-
-  confirm(QSTRING_INIT_ALL_ZEROS) ;
-
-  /* Zeroising has set:
-   *
-   *   empty elstring -- no body, 'len' = 0
-   *
-   *   size   = 0     -- no elstring body
-   *
-   *   cp     = 0
-   *
-   *   b_body = NULL  -- no body buffer
-   *   b_size = 0     -- no body buffer
-   *
-   *   alias  = false -- not an alias qstring
-   */
-
-  if (slen != 0)
-    qs_new_body(qs, slen, false) ;
+  qs_qlump_init(qs, slen) ;
 
   return qs ;
 } ;
@@ -139,75 +174,69 @@ qs_init_new(qstring qs, usize slen)
  *
  * Does nothing if qs == NULL.
  *
- * If not freeing the structure, zeroise size, len and cp -- qs_free_body()
+ * If not freeing the structure, zeroise size, len and cp and set body == NULL
  *
  * Returns: NULL if freed the structure (or was NULL to start with)
  *          address of structure (if any), otherwise
- *
- * NB: frees the body if the size != 0.  So, a "dummy" qstring will not retain
- *     the old body.
  */
 extern qstring
 qs_reset(qstring qs, free_keep_b free_structure)
 {
   if (qs != NULL)
     {
-      if (qs->b_body != NULL)
-        XFREE(MTYPE_STRING, qs->b_body) ;       /* sets qs->b_body = NULL  */
+      /* NB: qlump_free_body does *nothing* if the size is zero, so won't
+       *     attempt to free an alias.
+       */
+      qlump_free_body(qs) ;             /* sets size = len = cp = 0
+                                         * sets body = NULL             */
 
       if (free_structure)
-        XFREE(MTYPE_QSTRING, qs) ;              /* sets qs = NULL          */
-      else
-        memset(qs, 0, sizeof(qstring_t)) ;      /* see qs_init_new         */
-
-      confirm(QSTRING_INIT_ALL_ZEROS) ;
+        XFREE(MTYPE_QSTRING, qs) ;      /* sets qs = NULL               */
     } ;
   return qs ;
 } ;
 
 /*------------------------------------------------------------------------------
- * Allocate or reallocate body so that is big enough for the given 'slen'.
+ * If the given qs is qls_unset, initialise with the given slen.
  *
- * qstring may NOT be NULL.
+ * Otherwise, do nothing -- not even if slen exceeds the current body.
  *
- * Returns with a body with size > 0 (even if 'slen' == 0).
- *
- * Expects, but does not require, that 'slen' > 'size'.
- *
- * Does not change 'cp' or 'len' (even if 'len' > 'slen').
- *
- * If is an alias, copies min('len', 'alen', 'slen') characters to the body.
+ * NB: if slen == 0 will NOT allocate a body.
  */
-Private void
-qs_make_to_size(qstring qs, usize slen, usize alen)
+inline static void
+qs_init_if_unset(qstring qs, ulen slen)
 {
-  /* If body needs to be extended, do that now                          */
-  if (slen >= qs->b_size)
-    qs_new_body(qs, slen, (qs->alias && (alen != 0))) ;
-                                            /* keeps alias if required  */
+  if (qs->state == qls_unset)
+    qs_qlump_init(qs, slen) ;
+} ;
 
-  /* Worry about alias.  If we keep it, we keep all of it.              */
-  if (qs->alias)
-    {
-      /* alias or empty                         */
-      usize len = qs_len_nn(qs) ;
+/*------------------------------------------------------------------------------
+ * If the given qs is NULL, make a new qstring with the given slen
+ *
+ * If the given qs is qls_unset, initialise with the given slen.
+ *
+ * Otherwise, do nothing -- not even if slen exceeds the current body.
+ *
+ * NB: if slen == 0 will NOT allocate a body.
+ *
+ * NB: if makes or initialises, sets len = cp = 0.
+ */
+inline static qstring
+qs_make_or_init(qstring qs, ulen slen)
+{
+  if (qs== NULL)
+    return qs_new(slen) ;
 
-      if (alen >= len)
-        alen = len ;            /* keep min(alen, len)                  */
+  qs_init_if_unset(qs, slen) ;
 
-      if (alen > slen)
-        alen = slen ;           /* keep only to new len.                */
-
-      if (alen != 0)
-        memcpy(qs->b_body, qs_body_nn(qs), alen) ;
-
-      qs_set_real_body_nn(qs) ;
-    } ;
+  return qs ;
 } ;
 
 /*==============================================================================
  * Basic operations
  */
+
+static char qs_empty[1] ;       /* for qs_make_string/qs_string */
 
 /*------------------------------------------------------------------------------
  * Return pointer to '\0' terminated string value -- ensure not alias.
@@ -218,8 +247,9 @@ qs_make_to_size(qstring qs, usize slen, usize alen)
  * Sets the '\0' terminator at the 'len' position, extending string if that
  * is required.
  *
- * NB: qstring may NOT be NULL -- but if it is, a pointer to a static one byte
- *     empty string is returned !
+ * NB: qstring should NOT be NULL -- but if it is, a pointer to a static one
+ *     byte '\0' terminated string is returned !  The caller MUST treat this
+ *     as len == 0 and size == 0 !
  *
  * NB: The qstring should not be changed or reset until this pointer has been
  *     discarded !
@@ -230,25 +260,40 @@ qs_make_to_size(qstring qs, usize slen, usize alen)
 extern char*
 qs_make_string(qstring qs)
 {
-  static char empty_string[1] ;
-
-  usize len ;
   char* p ;
+  usize len ;
 
-  qassert(qs != NULL) ;
-
-  if      (qs == NULL)
+  if (qs == NULL)
     {
       len = 0 ;
-      p   = empty_string ;
+      p   = qs_empty ;
+    }
+  else if ((len = qs->len) < qs->size)
+    {
+      /* This is the standard case -- have a non-zero size qstring, with
+       * space for the '\0'.
+       */
+      qassert( (qs->state == qls_normal) ||
+               (qs->state == qls_embedded)) ;
+
+      p = qs->body.c ;
+    }
+  else if (len == 0)
+    {
+      /* Deal with zero length, zero size qstring (of any kind).
+       */
+      p = qs_empty ;
     }
   else
     {
-      len = qs_len_nn(qs) ;
-      if (len >= qs->size)              /* for alias, qs_size == 0      */
-        qs_make_to_size(qs, len, len) ; /* extend and/or copy any alias */
-
-      p = qs_char_nn(qs) ;
+      /* Catch-all -- for strings which for some reason do not have space
+       *              for the '\0'.
+       *
+       *           -- for alias strings of both kinds.
+       *
+       *           -- for completely empty strings with len > 0
+       */
+      p = qs_extend(qs, len) ;
     } ;
 
   *(p + len) = '\0' ;
@@ -279,17 +324,44 @@ qs_string(qstring qs)
   char* p ;
   usize len ;
 
-  if ( (qs == NULL) || ((len = qs_len_nn(qs) ) == 0)
-                    || ((p   = qs_char_nn(qs)) == NULL) )
-    return "" ;
-
-  if (len >= qs->size)              /* for alias, qs_size == 0      */
+  if (qs == NULL)
     {
-      if (qs->alias && (*(p + len) == '\0'))
-        return p ;
+      len = 0 ;
+      p   = qs_empty ;
+    }
+  else if ((len = qs->len) < qs->size)
+    {
+      /* This is the standard case -- have a non-zero size qstring, with
+       * space for the '\0'.
+       */
+      qassert( (qs->state == qls_normal) ||
+               (qs->state == qls_embedded)) ;
 
-      qs_make_to_size(qs, len, len) ;   /* extend and/or copy alias */
-      p = qs_char_nn(qs) ;
+      p = qs->body.c ;
+    }
+  else if (len == 0)
+    {
+      /* Deal with zero length, zero size qstring (of any kind).
+       */
+      len = 0 ;
+      p   = qs_empty ;
+    }
+  else if (qs->state == qls_alias_term)
+    {
+      /* Special case for aliases which are known to be '\0' terminated.
+       */
+      return qs->body.c ;
+    }
+  else
+    {
+      /* Catch-all -- for strings which for some reason do not have space
+       *              for the '\0'.
+       *
+       *           -- for alias strings with unknown '\0' state.
+       *
+       *           -- for completely empty strings with len > 0
+       */
+      p = qs_extend(qs, len) ;
     } ;
 
   *(p + len) = '\0' ;
@@ -298,106 +370,43 @@ qs_string(qstring qs)
 } ;
 
 /*------------------------------------------------------------------------------
- * Clear contents of qstring -- preserves any qstring body, but sets len = 0.
+ * Ensure have space for 'slen' + 1 characters, discarding any alias.
  *
- * Does nothing if qstring is NULL
+ * Allocate new qstring if required.
  *
- * Sets 'cp' = 'len' = 0
- *
- * If is an alias qstring, discard the alias.
- *
- * NB: does not create a qstring body if there isn't one.
- *
- * NB: does not change the qstring body if there is one.  (Which is used in
- *     vio_lc_write_nb().
- */
-extern void
-qs_clear(qstring qs)
-{
-  if (qs != NULL)
-    {
-      if (qs->alias)
-        qs_set_real_body_nn(qs) ;
-      qs_set_len_nn(qs, 0) ;
-      qs_set_cp_nn(qs, 0) ;
-    } ;
-} ;
-
-/*------------------------------------------------------------------------------
- * Ensure have space for a string of 'slen' characters (plus possible '\0'),
- * and discard any alias.
- *
- * Allocate qstring if required (setting 'len' = 'cp' = 0).
+ * Set len = cp = 0.
  *
  * Returns: address of qstring -- with body that can be written upto and
  *          including 'slen' + 1.
- *
- * Has no effect on 'len' -- even if 'len' > 'slen'.
- *
- * Has no effect on 'cp'  -- even if 'cp'  > 'len' or 'cp' > 'slen'.
  *
  * If this is a aliased qstring, the alias is discarded.
  */
 extern qstring
 qs_new_size(qstring qs, usize slen)
 {
-  if      (qs == NULL)
-    qs = qs_new_with_body(slen) ;
-  else if (slen >= qs->size)            /* for alias qs->size == 0 !    */
-    qs_make_to_size(qs, slen, 0) ;      /* extend and/or make body      */
-
-  return qs ;
-} ;
-
-/*------------------------------------------------------------------------------
- * Extend to 'len' + 'elen' -- allocate or extend body as required.
- *
- * Allocate qstring if required (setting 'cp' = 0).
- *
- * Returns: address of qstring -- with body that can be written up to and
- *          including 'len' + 'elen' + 1.
- *
- * Has no effect on 'cp'  -- even if 'cp'  > 'len'.
- *
- * If this is a aliased qstring, a copy is made.
- */
-extern qstring
-qs_extend(qstring qs, usize elen)
-{
   if (qs == NULL)
-    qs = qs_new_with_body(elen) ;
+    qs = qs_new(0) ;                    /* sets len = cp = 0            */
   else
     {
-      elen = qs_len_nn(qs) + elen ;
-      if (elen >= qs->size)             /* for alias qs->size == 0 !    */
-        qs_make_to_size(qs, elen, elen) ; /* extend and/or copy any alias */
+      qs->len = 0 ;
+      qs->cp  = 0 ;
+
+      if (slen < qs->size)
+        return qs ;                     /* no extension required        */
+
+      qlump_alias_clear((qlump)qs) ;    /* if is alias, discard         */
     } ;
 
-  qs_set_len_nn(qs, elen) ;
-
+  /* qs_extend() will create body even if slen == 0 -- because size_term != 0
+   *
+   * This is unlike the xxx_new() and xxx_init() operations, which will not
+   * create a body if the request length is zero.
+   *
+   * NB: an unset qstring has qs->size == 0, and qs_extend() will set
+   *     MTYPE_QSTRING_BODY if the qstring is unset.
+   */
+  qs_extend(qs, slen) ;
   return qs ;
-} ;
-
-/*------------------------------------------------------------------------------
- * Chop to given length -- will neither allocate nor extend body.
- *
- * Does nothing if qstring is NULL.
- *
- * Does not change the 'len' if it is <= length to chop to.
- *
- * NB: has no effect on 'cp'  -- even if 'cp'  > (new) 'len'.
- *
- * NB: if this is a aliased qstring, then it remains an aliased string, but
- *     shorter (unless no change made to the length).
- */
-extern void
-qs_chop(qstring qs, usize clen)
-{
-  if (qs != NULL)
-    {
-      if (clen < qs_len_nn(qs))
-        qs_set_len_nn(qs, clen) ;
-    } ;
 } ;
 
 /*==============================================================================
@@ -410,6 +419,8 @@ qs_chop(qstring qs, usize clen)
  *
  * Sets 'len' to new length
  * Sets 'cp'  = 0
+ *
+ * New size allows for a '\0' terminator beyond the 'len'.
  *
  * Returns: address of the qstring (allocated if required).
  */
@@ -444,10 +455,10 @@ qs_set_n(qstring qs, const void* src, usize len)
   qs = qs_new_size(qs, len) ;           /* ensures have body > len      */
 
   if (len != 0)
-    memcpy(qs_char_nn(qs), src, len) ;
+    memcpy(qs->body.v, src, len) ;
 
-  qs_set_len_nn(qs, len) ;
-  qs_set_cp_nn(qs, 0) ;
+  qs->len = len ;
+  qs->cp  = 0 ;
 
   return qs ;
 } ;
@@ -456,7 +467,7 @@ qs_set_n(qstring qs, const void* src, usize len)
  * Set qstring to be copy of given qstring contents.
  *
  * If the given qstring is an alias, then the contents of the alias are copied
- * (so the result is not an alias).  See qs_copy() for the alternative.
+ * (so the result is not an alias).
  *
  * See notes above -- and note that 'cp' is set to 0.
  */
@@ -483,7 +494,7 @@ qs_set_els(qstring qs, elstring src)
  * Repeats the given pattern as many times as necessary to get to the given
  * length -- using a final partial piece of the pattern as required.
  *
- * If the pattern is zero length, fills with spaces !
+ * If the pattern is NULL or zero length, fills with spaces !
  *
  * See notes above.
  */
@@ -508,7 +519,7 @@ qs_set_fill_n(qstring qs, usize len, const char* src, usize flen)
   char*  q ;
   usize  left ;
 
-  qs = qs_new_size(qs, len) ;           /* ensures have body > len      */
+  qs = qs_new_size(qs, len) ;   /* ensures have body > len      */
 
   if (len != 0)
     {
@@ -521,7 +532,7 @@ qs_set_fill_n(qstring qs, usize len, const char* src, usize flen)
       if (len < flen)
         flen = len ;
 
-      q = p = qs_char_nn(qs) ;
+      q = p = qs->body.c ;
       memcpy(p, src, flen) ;
       p    += flen ;
       left  = len - flen ;
@@ -539,8 +550,8 @@ qs_set_fill_n(qstring qs, usize len, const char* src, usize flen)
         } ;
     } ;
 
-  qs_set_len_nn(qs, len) ;
-  qs_set_cp_nn(qs, 0) ;
+  qs->len = len ;
+  qs->cp  = 0 ;
 
   return qs ;
 } ;
@@ -559,14 +570,11 @@ qs_set_fill_n(qstring qs, usize len, const char* src, usize flen)
  * Sets 'len' to new length.
  * Does not affect 'cp'.
  *
- * Will work even if the stuff being appended is somewhere in the body of the
- * qstring !!
- *
  * Returns: address of the qstring (allocated if required).
  */
 
 /*------------------------------------------------------------------------------
- * Append given qstring to a qstring.
+ * Append given qstring (may be NULL) to a qstring (created if NULL).
  *
  * See notes above.
  */
@@ -577,7 +585,7 @@ qs_append(qstring qs, qstring src)
 } ;
 
 /*------------------------------------------------------------------------------
- * Append given string to a qstring.
+ * Append given string to a qstring (created if NULL).
  *
  * Treats src == NULL as an empty string.  Otherwise src must be a '\0'
  * terminated string.
@@ -593,18 +601,32 @@ qs_append_str(qstring qs, const char* src)
 } ;
 
 /*------------------------------------------------------------------------------
- * Append 'n' copies of given char to a qstring.
+ * Append 'n' copies of given char to a qstring (created if NULL).
  *
  * See notes above.
  */
 extern qstring
 qs_append_ch_x_n(qstring qs, char ch, uint n)
 {
-  qs = qs_extend(qs, n) ; /* allocate, copy any alias, extend body,
-                             set new length, etc                        */
+  ulen  len, nlen ;
+
+  if (qs == NULL)
+    qs = qs_new(0) ;
+
+  len  = qs->len ;
+
+  nlen = len + n ;
+
+  /* NB: an unset qstring has qs->size == 0, and qs_extend() will set
+   *     MTYPE_QSTRING_BODY if the qstring is unset.
+   */
+  if (nlen >= qs->size)                 /* demand space of '\0' */
+    qs_extend(qs, nlen) ;
 
   if (n != 0)
-    memset(qs_ep_char_nn(qs) - n, ch, n) ;
+    memset(qs->body.c + len, ch, n) ;
+
+  qs->len = nlen ;
 
   return qs ;
 } ;
@@ -617,10 +639,24 @@ qs_append_ch_x_n(qstring qs, char ch, uint n)
 extern qstring
 qs_append_ch(qstring qs, char ch)
 {
-  qs = qs_extend(qs, 1) ; /* allocate, copy any alias, extend body,
-                             set new length, etc                        */
+  ulen  len, nlen ;
 
-  *(qs_ep_char_nn(qs) - 1) = ch ;
+  if (qs == NULL)
+    qs = qs_new(0) ;
+
+  len  = qs->len ;
+
+  nlen = len + 1 ;
+
+  /* NB: an unset qstring has qs->size == 0, and qs_extend() will set
+   *     MTYPE_QSTRING_BODY if the qstring is unset.
+   */
+  if (nlen >= qs->size)                 /* demand space of '\0' */
+    qs_extend(qs, nlen) ;
+
+  *(qs->body.c + len) = ch ;
+
+  qs->len = nlen ;
 
   return qs ;
 } ;
@@ -647,11 +683,25 @@ qs_append_els(qstring qs, elstring src)
 extern qstring
 qs_append_n(qstring qs, const void* src, usize n)
 {
-  qs = qs_extend(qs, n) ; /* allocate, copy any alias, extend body,
-                             set new length, etc                        */
+  ulen  len, nlen ;
+
+  if (qs == NULL)
+    qs = qs_new(0) ;
+
+  len  = qs->len ;
+
+  nlen = len + n ;
+
+  /* NB: an unset qstring has qs->size == 0, and qs_extend() will set
+   *     MTYPE_QSTRING_BODY if the qstring is unset.
+   */
+  if (nlen >= qs->size)                 /* demand space of '\0' */
+    qs_extend(qs, nlen) ;
 
   if (n != 0)
-    memmove(qs_ep_char_nn(qs) - n, src, n) ;
+    memcpy(qs->body.c + len, src, n) ;
+
+  qs->len = nlen ;
 
   return qs ;
 } ;
@@ -665,17 +715,14 @@ qs_append_n(qstring qs, const void* src, usize n)
  * NB: it is the caller's responsibility to ensure that the original string
  *     stays put for however long the qstring is an alias for it.
  *
- *     It is also the caller's responsibility to see that the original string
- *     is discarded as required (once the alias is no longer required.)
- *
  * NB: if the qstring is changed in any way, a copy of the aliased string will
  *     be made first.
  *
- * NB: if a pointer to the body of the qstring is taken, then while that is in
- *     use, the qstring must not be released, so that the alias is not
- *     released.
+ * NB: if a pointer to the body of the qstring is taken, then that's a pointer
+ *     to the alias.  If the qstring is altered, that will no longer be the
+ *     value of the qstring !
  *
- * Preserves any existing qstring body.
+ * Discards any existing qstring body.
  *
  * Returns: address of the qstring (allocated if required).
  */
@@ -688,19 +735,33 @@ qs_append_n(qstring qs, const void* src, usize n)
  *
  * Does not count the '\0' terminator.
  *
+ * Sets the state of the qlump to qls_alias_str -- so qs_string() will return
+ * pointer to the alias.
+ *
  * See notes above.
  */
 extern qstring
 qs_set_alias_str(qstring qs, const char* src)
 {
-  return qs_set_alias_n(qs, src, (src != NULL) ? strlen(src) : 0) ;
+  if (src == NULL)
+    return qs_set_alias_n(qs, NULL, 0) ;
+
+  if (qs == NULL)
+    qs = qs_new(0) ;
+
+  qlump_set_alias(qs, qls_alias_term, src, strlen(src), MTYPE_QSTRING_BODY) ;
+  return qs ;
 } ;
 
 /*------------------------------------------------------------------------------
  * Set qstring to be an alias for the leading 'n' bytes of given string.
  *
- * If n == 0, src may be NULL
- * If n > 0, src string MUST be at least 'n' bytes long.
+ * If n == 0, ignores src and simply empties out the qstring.
+ *
+ * If n >  0, src string MUST be at least 'n' bytes long.
+ *
+ * Sets the state of the qlump to qls_alias -- so qs_string() will make a copy
+ * before adding '\0' terminator.
  *
  * See notes above.
  */
@@ -710,14 +771,7 @@ qs_set_alias_n(qstring qs, const void* src, usize n)
   if (qs == NULL)
     qs = qs_new(0) ;
 
-  /* Make the alias.  Note that any existing b_body and b_size are preserved,
-   * so that any current body can be reused at a later date.
-   */
-  qs_set_body_nn(qs, (n != 0) ? src : "") ;
-  qs_set_len_nn(qs, n) ;
-  qs_set_cp_nn(qs, 0) ;
-  qs->alias = true ;
-  qs->size  = 0 ;               /* => empty or alias                    */
+  qlump_set_alias(qs, qls_alias, src, n, MTYPE_QSTRING_BODY) ;
 
   return qs ;
 } ;
@@ -729,6 +783,9 @@ qs_set_alias_n(qstring qs, const void* src, usize n)
  * src -- so must be careful not to disturb that !
  *
  * If the src is an alias, then the qstring is another alias.
+ *
+ * Sets the state of the qlump to qls_alias -- so qs_string() will make a copy
+ * before adding '\0' terminator.
  *
  * See notes above.
  */
@@ -742,7 +799,10 @@ qs_set_alias(qstring qs, qstring src)
  * Construct a qstring which is an alias for the given elstring.
  *
  * If n == 0, src may be NULL
- * If n > 0, src string MUST be at least 'n' bytes long.
+ * If n >  0, src string MUST be at least 'n' bytes long.
+ *
+ * Sets the state of the qlump to qls_alias -- so qs_string() will make a copy
+ * before adding '\0' terminator.
  *
  * See notes above.
  */
@@ -750,6 +810,34 @@ extern qstring
 qs_set_alias_els(qstring qs, elstring src)
 {
   return qs_set_alias_n(qs, els_body(src), els_len(src)) ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Construct a qstring which is an alias for the given elstring -- where the
+ * elstring is known to be '\0' terminated.
+ *
+ * If n == 0, src may be NULL
+ * If n >  0, src string MUST be at least 'n' bytes long.
+ *
+ * Sets the state of the qlump to qls_alias_term -- so qs_string() will return
+ * pointer to the alias.
+ *
+ * See notes above.
+ */
+extern qstring
+qs_set_alias_els_str(qstring qs, elstring src)
+{
+  ulen len ;
+
+  if ((len = els_len(src)) == 0)
+    return qs_set_alias_n(qs, NULL, 0) ;
+
+  if (qs == NULL)
+    qs = qs_new(0) ;
+
+  qlump_set_alias(qs, qls_alias_term, els_body_nn(src), len,
+                                                           MTYPE_QSTRING_BODY) ;
+  return qs ;
 } ;
 
 /*==============================================================================
@@ -765,7 +853,7 @@ qs_set_alias_els(qstring qs, elstring src)
  * If src is NULL it is treated as zero length, with 'cp' == 0.
  *
  * If src is not an alias, a copy is made to dst.
- * If src is an alias, dst becomes another alias for the same thing.
+ * If src is an alias, dst becomes a copy of the alias.
  *
  * If dst is an alias, that is discarded.
  *
@@ -777,17 +865,12 @@ extern qstring
 qs_copy(qstring dst, qstring src)
 {
   if (src == NULL)
-    {
-      qs_clear(dst) ;                   /* if dst not NULL, clear it    */
-      return dst ;
-    } ;
-
-  if (src->alias)
-    dst = qs_set_alias(dst, src) ;
+    qs_clear(dst) ;                     /* if dst not NULL, clear it    */
   else
-    dst = qs_set(dst, src) ;
-
-  qs_set_cp_nn(dst, qs_cp_nn(src)) ;    /* copy in the src cp.          */
+    {
+      dst = qs_make_or_init(dst, 0) ;
+      qlump_copy(dst, src) ;
+    } ;
 
   return dst ;
 } ;
@@ -797,134 +880,275 @@ qs_copy(qstring dst, qstring src)
  *
  * Allocate and/or extend qstring as required.
  *
- * Any alias is discarded.
+ * Any alias is discarded, unless is being appended to.
  *
  *   Sets 'len'  = length of the '\0' terminated result (less the '\0').
  *   Sets 'cp'   = 0
  *
- * If fails and qs != NULL:
+ * Returns: address of (new) qstring
  *
- *   Sets 'len'  = 0
- *   Sets 'cp'   = 0
- *   But retains any existing body.
+ * NB: uses qfs_vprintf().
  *
- * Returns: address of qstring if OK
- *          NULL if failed (unlikely though that is)
+ * NB: when appending, if the current 'len' is beyond the 'size', will
+ *     extend the string to accommodate the 'len' -- which is fine for alias
+ *     strings, but will introduce undefined bytes between the old 'size'
+ *     and 'len'.
  */
 
-static qstring qs_vprintf_x(qstring qs, bool append, const char *format,
-                                                                 va_list args) ;
 /*------------------------------------------------------------------------------
- * Formatted print to qstring -- cf printf()
+ * Formatted print to qstring -- cf printf() -- replacing any current contents.
  *
  * See notes above.
  */
 extern qstring
 qs_printf(qstring qs, const char* format, ...)
 {
-  va_list args;
+  va_list va;
 
-  va_start (args, format);
-  qs = qs_vprintf(qs, format, args);
-  va_end (args);
+  va_start (va, format);
+  qs = qs_vprintf(qs, format, va);
+  va_end (va);
 
   return qs;
 } ;
 
 /*------------------------------------------------------------------------------
- * Formatted print to qstring -- cf vprintf()
+ * Formatted print to qstring -- cf vprintf() -- replacing any current contents.
  *
  * See notes above.
  */
 extern qstring
-qs_vprintf(qstring qs, const char *format, va_list args)
+qs_vprintf(qstring qs, const char *format, va_list va)
 {
-  return qs_vprintf_x(qs, false /* not append */, format, args);
+  qs_clear(qs) ;        /* does nothing if qs == NULL   */
+
+  return qs_vprintf_a(qs, format, va);
 } ;
 
 /*------------------------------------------------------------------------------
- * Formatted print to qstring -- cf printf()
+ * Formatted print to qstring -- cf printf() -- appending to qstring.
  *
  * See notes above.
  */
 extern qstring
 qs_printf_a(qstring qs, const char* format, ...)
 {
-  va_list args;
+  va_list va;
 
-  va_start (args, format);
-  qs = qs_vprintf_a(qs, format, args);
-  va_end (args);
+  va_start (va, format);
+  qs = qs_vprintf_a(qs, format, va);
+  va_end (va);
 
   return qs;
 } ;
 
 /*------------------------------------------------------------------------------
- * Formatted print to qstring -- cf vprintf()
+ * Formatted print to qstring -- cf vprintf() -- appending to qstring.
  *
  * See notes above.
  */
 extern qstring
-qs_vprintf_a(qstring qs, const char *format, va_list args)
+qs_vprintf_a(qstring qs, const char *format, va_list va)
 {
-  return qs_vprintf_x(qs, true /* append */, format, args);
+  uint len ;
+
+  qs = qs_make_or_init(qs, 0) ;
+
+  /* qfs_vprintf() will write to the qs body etc from qs->cp forwards,
+   * advancing cp -- it does not touch qs->len.
+   *
+   * We start with cp == len, so:
+   *
+   *  * if everything fits, cp == new length of the qstring.
+   *
+   *  * if does not fit, cp will be where the end should be
+   *
+   *    If len > size (notably for alias strings), the first call of
+   *    qfs_vprintf() will establish the length of the result, including
+   *    the current len.
+   *
+   * When extending the qstring, we have the original qs->len, and will then
+   * copy any alias.
+   */
+  len = qs->len ;
+
+  qs->cp = len ;
+  qfs_vprintf(qs, format, va) ;
+
+  if (qs->cp > qs->size)
+    {
+      qassert(len == qs->len) ;         /* unchanged    */
+
+      qs_extend(qs, qs->cp) ;
+
+      qs->cp = len ;
+      qfs_vprintf(qs, format, va) ;
+    } ;
+
+  len     = qs->cp ;
+  qs->len = len ;
+  qs->cp  = 0 ;
+
+  /* The qfs_vprintf() succeeds if it fills the fixed length string completely,
+   * so may not leave room for '\0' terminator.
+   *
+   * If cp->len == cp->size == 0, and the result of the qfs_vprintf() is also
+   * zero length, then we need to qs_extend() before putting down the '\0'.
+   */
+  if (len >= qs->size)
+    qs_extend(qs, len) ;
+
+  *(qs->body.c + len) = '\0' ;
+
+  return qs ;
 } ;
 
+/*==============================================================================
+ * Put ip address or ip prefix to qstring -- in field of the given width.
+ *
+ * Allocate and/or extend qstring as required.
+ *
+ * Any alias is discarded, unless is being appended to.
+ *
+ *   Sets 'len'  = length of the '\0' terminated result (less the '\0').
+ *   Sets 'cp'   = 0
+ *
+ * Returns: address of (new) qstring
+ *
+ * NB: uses qfs_ip_address() and qfs_ip_prefix().
+ *
+ * NB: when appending, if the current 'len' is beyond the 'size', will
+ *     extend the string to accommodate the 'len' -- which is fine for alias
+ *     strings, but will introduce undefined bytes between the old 'size'
+ *     and 'len'.
+ */
+
 /*------------------------------------------------------------------------------
- * Formatted print to qstring -- cf vprintf()
+ * Put ip address to qstring -- replacing any current contents.
  *
  * See notes above.
  */
-static qstring
-qs_vprintf_x(qstring qs, bool append, const char *format, va_list args)
+extern qstring
+qs_ip_address(qstring qs, void* p_ip, pf_flags_t flags, int width)
 {
-  va_list  ac ;
-  int      slen ;
-  qstring  qqs ;
+  qs_clear(qs) ;        /* does nothing if qs == NULL   */
 
-  qqs = qs ;            /* NULL => need to make qs                      */
-  if      (qs == NULL)
-    qqs = qs_new(0) ;   /* Sets size, cp & len = 0                      */
-  else if (!append)
-    qs_clear(qqs) ;     /* Sets cp & len = 0, discard any alias, but
-                           keep existing body                           */
+  return qs_ip_address_a(qs, p_ip, flags, width) ;
+} ;
 
-  while (1)
+/*------------------------------------------------------------------------------
+ * Put ip prefix to qstring -- replacing any current contents.
+ *
+ * See notes above.
+ */
+extern qstring
+qs_ip_prefix(qstring qs, void* p_ip, byte plen, pf_flags_t flags, int width)
+{
+  qs_clear(qs) ;        /* does nothing if qs == NULL   */
+
+  return qs_ip_prefix_a(qs, p_ip, plen, flags, width) ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Put ip address to qstring -- appending to qstring.
+ *
+ * See notes above.
+ */
+extern qstring
+qs_ip_address_a(qstring qs, void* p_ip, pf_flags_t flags, int width)
+{
+  uint len ;
+
+  qs = qs_make_or_init(qs, 0) ;
+
+  /* qfs_put_ip_address() will write to the qs body etc from qs->cp forwards,
+   * advancing cp -- it does not touch qs->len.
+   *
+   * We start with cp == len, so:
+   *
+   *  * if everything fits, cp == new length of the qstring.
+   *
+   *  * if does not fit, cp will be where the end should be
+   *
+   *    If len > size (notably for alias strings), the first call of
+   *    qfs_vprintf() will establish the length of the result, including
+   *    the current len.
+   *
+   * When extending the qstring, we have the original qs->len, and will then
+   * copy any alias.
+   */
+  len = qs->len ;
+
+  qs->cp = len ;
+  qfs_put_ip_address(qs, p_ip, flags, width) ;
+
+  if (qs->cp > qs->size)
     {
-      ulen  left ;
-      ulen  len ;
+      qassert(len == qs->len) ;         /* unchanged    */
 
-      left = qs_left_nn(qqs) ;
-      len  = qs_len_nn(qqs) ;
+      qs_extend(qs, qs->cp) ;
 
-      /* Note that vsnprintf() returns the length of what it would like to have
-      * produced, if it had the space.  That length does not include the
-      * trailing '\0'.
-      *
-      * Also note that given a zero length the string address may be NULL, and
-      * the result is still the length required.
-      */
-      va_copy(ac, args);
-      slen = vsnprintf(qs_char_nn(qqs) + len, left, format, ac) ;
-      va_end(ac);
-
-      if (slen < 0)
-        break ;                         /* failed                       */
-
-      if ((ulen)slen < left)
-        {
-          qs_set_len_nn(qqs, len + slen) ;
-          return qqs ;                  /* succeeded                    */
-        } ;
-
-      qs_make_to_size(qqs, len + slen, 0) ;  /* need space for slen     */
+      qs->cp = len ;
+      qfs_put_ip_address(qs, p_ip, flags, width) ;
     } ;
 
-  /* Failed... discard anything that has been allocated.                */
-  if (qs == NULL)
-    qs_reset(qqs, free_it) ;
+  len     = qs->cp ;
+  qs->len = len ;
+  qs->cp  = 0 ;
 
-  return NULL ;
+  /* The qfs_put_ip_address() succeeds if it fills the fixed length string
+   * completely,  so may not leave room for '\0' terminator.
+   *
+   * If cp->len == cp->size == 0, and the result of the qfs_put_ip_address() is
+   * also zero length, then we need to qs_extend() before putting down the '\0'.
+   */
+  if (len >= qs->size)
+    qs_extend(qs, len) ;
+
+  *(qs->body.c + len) = '\0' ;
+
+  return qs ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Put ip prefix to qstring -- appending to qstring.
+ *
+ * See notes above.
+ */
+extern qstring
+qs_ip_prefix_a(qstring qs, void* p_ip, byte plen, pf_flags_t flags, int width)
+{
+  uint len ;
+
+  qs = qs_make_or_init(qs, 0) ;
+
+  /* See qs_ip_address_a() for discussion of logic.
+   */
+  len = qs->len ;
+
+  qs->cp = len ;
+  qfs_put_ip_prefix(qs, p_ip, plen, flags, width) ;
+
+  if (qs->cp > qs->size)
+    {
+      qassert(len == qs->len) ;         /* unchanged    */
+
+      qs_extend(qs, qs->cp) ;
+
+      qs->cp = len ;
+      qfs_put_ip_prefix(qs, p_ip, plen, flags, width) ;
+    } ;
+
+  len     = qs->cp ;
+  qs->len = len ;
+  qs->cp  = 0 ;
+
+  if (len >= qs->size)
+    qs_extend(qs, len) ;
+
+  *(qs->body.c + len) = '\0' ;
+
+  return qs ;
 } ;
 
 /*==============================================================================
@@ -950,60 +1174,36 @@ qs_replace_str(qstring qs, usize r, const char* src)
  *
  * Returns: number of bytes beyond 'cp' that now exist.
  *
- * qstring MUST NOT be NULL
+ * Guarantees at least one spare byte after the new 'len', for '\0'.
  *
- * If 'cp' > 'len', then sets 'len' = 'cp' first -- which will introduce
+ * qstring SHOULD NOT be NULL -- but if it is, returns 0.
+ *
+ * If 'cp' > 'len', then works as if 'len' = 'cp' -- which will introduce
  * one or more undefined bytes.
+ *
+ * If the (effective) 'len' is beyond the size of the qstring, that will
+ * also introduce one or more undefined bytes.
  *
  * If this is a aliased qstring, a copy is made, so is no longer an alias.
  */
 extern usize
 qs_replace_n(qstring qs, usize r, const void* src, usize n)
 {
-  usize cp, len, nlen, after ;
-  const char* ap ;
-  char* np ;
+  char* dst ;
 
-  len  = qs_len_nn(qs) ;
-  cp   = qs_cp_nn(qs) ;
+  if (qs == NULL)
+    return 0 ;
 
-  if ((cp + r) >= len)
-    /* Replacing up to or beyond the end of the string                  */
-    after = 0 ;
-  else
-    /* Replacing section short of the end of the string                 */
-    after = len - (cp + r) ;
+  qs_init_if_unset(qs, 0) ;
 
-  nlen = cp + n + after ;
-  if (nlen >= qs->b_size)
-    qs_new_body(qs, nlen, qs->alias) ;  /* keeping any alias            */
+  dst = qlump_bubble(qs, qs->cp, r, n) ;
 
-  ap = np = qs->b_body ;
+  qassert(((qs->cp + n) <= qs->len) && (qs->len < qs->size)) ;
 
-  if (qs->alias)
-    {
-      ap = qs_body_nn(qs) ;     /* copy from the alias                  */
+  if ((n != 0) && (src != NULL))
+    memcpy(dst + qs->cp, src, n) ;
 
-      uint before = cp ;
-      if (before > len)
-        before = len ;
-
-      if (before > 0)
-        memmove(np, ap, before) ;
-
-      qs_set_real_body_nn(qs) ;
-    } ;
-
-  if (after > 0)                /* move the after part before inserting */
-    memmove(np + cp + n, ap + cp + r, after) ;
-
-  if ((n > 0) && (src != NULL)) /* insert                               */
-    memmove(np + cp, src, n) ;
-
-  /* Set new 'len'                                                      */
-  qs_set_len_nn(qs, nlen) ;
-
-  return n + after ;
+  return qs->len - qs->cp ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -1047,14 +1247,14 @@ qs_find_n(qstring qs, const void* src, usize n)
   usize cp, len ;
   const char* p ;
 
-  len  = qs_len_nn(qs) ;
-  cp   = qs_cp_nn(qs) ;
+  len  = qs->len ;
+  cp   = qs->cp ;
 
   /* Deal with edge cases
    */
   if ((cp + n) > len)
     {
-      qs_set_cp_nn(qs, len) ;
+      qs->cp = len ;
       return 0 ;
     } ;
 
@@ -1063,7 +1263,7 @@ qs_find_n(qstring qs, const void* src, usize n)
 
   /* Search
    */
-  p = qs_char_nn(qs) + cp ;
+  p = qs->body.c + cp ;
   len -= cp - (n - 1) ;                         /* worth searching      */
 
   while (len > 0)
@@ -1081,7 +1281,7 @@ qs_find_n(qstring qs, const void* src, usize n)
         {
           /* Found it !
            */
-          qs_set_cp_nn(qs, q - 1 - qs_char_nn(qs)) ;
+          qs->cp = (q - qs->body.c) - 1 ;
           return n ;
         } ;
 
@@ -1091,7 +1291,7 @@ qs_find_n(qstring qs, const void* src, usize n)
 
   /* Reaches here if string is not found
    */
-  qs_set_cp_nn(qs, qs_len_nn(qs)) ;
+  qs->cp = qs->len ;
 
   return 0 ;
 } ;
@@ -1122,17 +1322,17 @@ qs_globex_str(qstring qs, const char* find, const char* replace)
 
   if (find_len > 0)
     {
-      qs_set_cp_nn(qs, 0) ;
+      qs->cp = 0 ;
 
       while (qs_find_n(qs, find, find_len))
         {
           qs_replace_n(qs, find_len, replace, replace_len) ;
-          qs_move_cp_nn(qs, replace_len) ;
+          qs->cp += replace_len ;
         } ;
     } ;
 
-  qs_set_cp_nn(qs, 0) ;
-  return qs_len_nn(qs) ;
+  qs->cp = 0 ;
+  return qs->len ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -1231,7 +1431,7 @@ qs_reduce(qstring qs, const char* seps, const char* terms)
    *  * discarding trailing terminator.
    */
   q = p = s = qs_make_string(qs) ;
-  e = qs_ep_char_nn(qs) ;
+  e = p + qs->len ;
 
   post_sep = post_term = true ;
 
@@ -1347,8 +1547,8 @@ qs_reduce(qstring qs, const char* seps, const char* terms)
 
   /* Done -- set new len and clear cp
    */
-  qs_set_len_nn(qs, q - s) ;
-  qs_set_cp_nn(qs, 0) ;
+  qs->len = q - s ;
+  qs->cp  = 0 ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -1380,23 +1580,26 @@ qs_next_word(qstring qs)
   const char* body ;
   const char* word ;
   const char* next ;
-  ulen len, cp ;
+  ulen cp ;
 
-  if ((len = qs_len(qs)) == 0)
-    return NULL ;               /* deal with emptiness & NULL qs        */
+  if (qs == NULL)
+    return NULL ;               /* no string => no words                */
 
-  if ((cp = qs_cp_nn(qs)) >= len)
+  cp  = qs->cp ;
+
+  if (cp >= qs->len)
     return NULL ;               /* deal with at or beyond end           */
 
-  body = qs_char_nn(qs) ;
-
-  if ((len >= qs->size) || (*(body + len - 1) != '\0'))
-    body = qs_make_string(qs) ;         /* make to len characters
-                                         * with a trailing '\0'         */
+  /* qs_make_string ensures that the string is terminated at 'len'.
+   *
+   * (If for some bizarre reason len > size, then will extend the sting,
+   *  introducing garbage !)
+   */
+  body = qs_make_string(qs) ;
   word = body + cp ;
   next = strchr(word, '\0') ;
 
-  qs_move_cp_nn(qs, next + 1 - word) ;
+  qs->cp = (next + 1) - body ;
 
   return word ;
 } ;
@@ -1421,9 +1624,10 @@ qs_trim(qstring qs, char term)
   char* s, * p ;
 
   if (qs == NULL)
-    qs = qs_new(0) ;
+    return qs_new(0) ;
 
-  if ((len = qs_len_nn(qs)) == 0)
+  len = qs->len ;
+  if (len == 0)
     return qs ;
 
   s = qs_make_string(qs) ;
@@ -1433,7 +1637,7 @@ qs_trim(qstring qs, char term)
     --p ;
 
   len = p - s ;
-  qs_set_len_nn(qs, len) ;
+  qs->len = len ;
 
   if ((len != 0) && (term != '\0'))
     qs_append_ch(qs, term) ;

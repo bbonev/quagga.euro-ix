@@ -33,12 +33,17 @@ struct capability_header
 };
 
 /* Generic MP capability data */
+typedef struct capability_mp_data  capability_mp_data_t ;
+typedef struct capability_mp_data* capability_mp_data ;
+
 struct capability_mp_data
 {
   afi_t afi;
   u_char reserved;
   safi_t safi;
 };
+CONFIRM(offsetof(capability_mp_data_t, reserved) == 2) ;
+CONFIRM(offsetof(capability_mp_data_t, safi) == 3) ;
 
 #pragma pack(1)
 struct capability_orf_entry
@@ -70,23 +75,6 @@ struct capability_gr
   struct graceful_restart_af gr[];
 };
 
-/* Capability Code */
-#define CAPABILITY_CODE_MP              1 /* Multiprotocol Extensions */
-#define CAPABILITY_CODE_REFRESH         2 /* Route Refresh Capability */
-#define CAPABILITY_CODE_ORF             3 /* Cooperative Route Filtering Capability */
-#define CAPABILITY_CODE_RESTART        64 /* Graceful Restart Capability */
-#define CAPABILITY_CODE_AS4            65 /* 4-octet AS number Capability */
-#define CAPABILITY_CODE_DYNAMIC        66 /* Dynamic Capability */
-#define CAPABILITY_CODE_REFRESH_OLD   128 /* Route Refresh Capability(cisco) */
-#define CAPABILITY_CODE_ORF_OLD       130 /* Cooperative Route Filtering Capability(cisco) */
-
-/* Capability Length */
-#define CAPABILITY_CODE_MP_LEN          4
-#define CAPABILITY_CODE_REFRESH_LEN     0
-#define CAPABILITY_CODE_DYNAMIC_LEN     0
-#define CAPABILITY_CODE_RESTART_LEN     2 /* Receiving only case */
-#define CAPABILITY_CODE_AS4_LEN         4
-
 /* Cooperative Route Filtering Capability.  */
 
 /* ORF Type */
@@ -114,12 +102,13 @@ extern const int orf_type_str_max;
 extern const struct message orf_mode_str[];
 extern const int orf_mode_str_max;
 
+extern void bgp_capability_vty_out (struct vty *, struct peer *);
+
+#if 0
 extern int bgp_open_option_parse (struct peer *, u_char, int *);
 extern void bgp_open_capability (struct stream *, struct peer *);
-extern void bgp_capability_vty_out (struct vty *, struct peer *);
 extern as_t peek_for_as4_capability (struct peer *, u_char);
-extern void bgp_capability_mp_data (struct stream *s,
-    struct capability_mp_data *mpc);
-extern int bgp_afi_safi_valid_indices (afi_t, safi_t *);
+extern qafx_t bgp_afi_safi_valid_indices (iAFI_t i_afi, iSAFI_t i_safi);
+#endif
 
 #endif /* _QUAGGA_BGP_OPEN_H */

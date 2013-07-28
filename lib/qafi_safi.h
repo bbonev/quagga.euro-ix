@@ -36,8 +36,7 @@ typedef uint8_t  safi_t;
 /*==============================================================================
  * iAFI and iSAFI
  *
- * These are the standard IANA registered AFI and SAFI values that Quagga is
- * at all interested in.
+ * These are the standard IANA registered AFI and SAFI values.
  */
 
 typedef enum iAFI  iAFI_t ;
@@ -94,8 +93,8 @@ enum qAFI
   qAFI_max         = 2,         /* maximum valid qAFI           */
   qAFI_count,                   /* number of distinct qAFI      */
 
-  qAFI_IPV4        = qAFI_IP,
-  qAFI_IPV6        = qAFI_IP6
+  qAFI_ipv4        = qAFI_IP,
+  qAFI_ipv6        = qAFI_IP6
 } ;
 
 typedef enum qSAFI qSAFI_t ;
@@ -109,35 +108,36 @@ enum qSAFI
 
   qSAFI_Unicast    =   1,
   qSAFI_Multicast  =   2,
-  qSAFI_Reserved_3 =   3,
-  qSAFI_MPLS_VPN   =   4,
+  qSAFI_MPLS_VPN   =   3,
 
-  qSAFI_last       =   4,       /* last real qSAFI              */
+  qSAFI_last       =   3,       /* last real qSAFI              */
 
-  qSAFI_max        =   4,       /* maximum valid qSAFI          */
+  qSAFI_max        =   3,       /* maximum valid qSAFI          */
   qSAFI_count                   /* number of distinct qSAFI     */
 } ;
 
 /*==============================================================================
  * iAFI_SAFI and qAFI_SAFI structures
  */
+typedef struct iAFI_SAFI  iAFI_SAFI_t ;
+typedef struct iAFI_SAFI* iAFI_SAFI ;
+typedef const struct iAFI_SAFI* iAFI_SAFI_c ;
+
 struct iAFI_SAFI
 {
   iAFI_t   afi ;
   iSAFI_t  safi ;
 } ;
 
-typedef struct iAFI_SAFI  iAFI_SAFI_t ;
-typedef struct iAFI_SAFI* iAFI_SAFI ;
+typedef struct qAFI_SAFI  qAFI_SAFI_t ;
+typedef struct qAFI_SAFI* qAFI_SAFI ;
+typedef const struct qAFI_SAFI* qAFI_SAFI_c ;
 
 struct qAFI_SAFI
 {
   qAFI_t   afi ;
   qSAFI_t  safi ;
 } ;
-
-typedef struct qAFI_SAFI  qAFI_SAFI_t ;
-typedef struct qAFI_SAFI* qAFI_SAFI ;
 
 /*==============================================================================
  * Quagga AFI/SAFI values -- original macro definitions
@@ -158,23 +158,153 @@ CONFIRM(AFI_MAX == qAFI_count) ;
 /* Subsequent Address Family Identifier. */
 #define SAFI_UNICAST              1
 #define SAFI_MULTICAST            2
-#define SAFI_RESERVED_3           3
-#define SAFI_MPLS_VPN             4
-#define SAFI_MAX                  5
+#define SAFI_MPLS_VPN             3
+#define SAFI_MAX                  4
 
-CONFIRM( (SAFI_UNICAST           == qSAFI_Unicast)
-      && (SAFI_UNICAST           == iSAFI_Unicast) ) ;
-CONFIRM( (SAFI_MULTICAST         == qSAFI_Multicast)
-      && (SAFI_MULTICAST         == iSAFI_Multicast) ) ;
-CONFIRM( (SAFI_RESERVED_3        == qSAFI_Reserved_3)
-      && (SAFI_RESERVED_3        == iSAFI_Reserved_3) ) ;
-CONFIRM(SAFI_MPLS_VPN  == qSAFI_MPLS_VPN) ;
-CONFIRM(SAFI_MAX       == qSAFI_count) ;
+CONFIRM(SAFI_UNICAST        == iSAFI_Unicast) ;
+CONFIRM(SAFI_MULTICAST      == iSAFI_Multicast) ;
+CONFIRM(SAFI_MPLS_VPN       == qSAFI_MPLS_VPN) ;
+
+/*==============================================================================
+ * IPv6 Address Extensions
+ *
+ * It is handy to be able to handle IPv6 addresses as pairs of uint64_t or
+ * uint32_t -- so here is an union, overlaying struct in6_addr, which allows
+ * that.
+ *
+ * Note that the in6_addr_t is defined whether or not HAVE_IPV6.
+ *
+ * Also, for IPv6 a pair of "global" and "link-local" addresses is a useful
+ * addition.
+ */
+#include "zebra.h"              /* Need IPv6 stuff      */
+
+/* Convenience name for the base struct in_addr and struct in6_addr
+ */
+typedef struct in_addr  in_addr_s ;
+#if HAVE_IPV6
+typedef struct in6_addr in6_addr_s ;
+#endif
+
+/* For when struct in6_addr does not have these elements
+ */
+union in6_addr_u
+{
+#if HAVE_IPV6
+  in6_addr_s  addr ;
+#endif
+  uint64_t    n64[2] ;          /* Network Order        */
+  uint32_t    n32[4] ;
+  uint8_t     b[16] ;
+};
+
+typedef union in6_addr_u in6_addr_t ;
+
+#if HAVE_IPV6
+CONFIRM(sizeof(in6_addr_t) == sizeof(in6_addr_s)) ;
+#endif
+
+enum in6_addr_type
+{
+  in6_global     = 0,           /* For next-hop         */
+  in6_link_local = 1,
+} ;
+
+/*------------------------------------------------------------------------------
+ * To carry an IPv4 or an IPv6 address -- where have external means to
+ * distinguish the two.
+ */
+typedef union ip_union  ip_union_t ;
+typedef union ip_union* ip_union ;
+
+union ip_union
+{
+  in_addr_t   ipv4 ;
+  in6_addr_t  ipv6 ;
+};
+
+/*------------------------------------------------------------------------------
+ * Address pair -- any of:
+ *
+ *   * address + mask       -- both in Network Order
+ *
+ *   * address + wild-card  -- both in Network Order
+ *
+ *   * address start + end  -- both in Host Order
+ *
+ *     Components of the address range are in HOST ORDER, so that address
+ *     ranges can be compared most readily.
+ *
+ *     IPv6 addresses are held as pairs of uint64_t, where the [0] value is
+ *     the MS of the pair.  (So on a Big-Endian machine the entire address is
+ *     in network order, but on a Little-Endian machine each half is in
+ *     host order, but the two halves are in network order !
+ */
+typedef in_addr_t   in_addr_pair_t[2] ;
+typedef in6_addr_t  in6_addr_pair_t[2] ;
+
+typedef union ip_union_pair  ip_union_pair_t ;
+typedef union ip_union_pair* ip_union_pair ;
+typedef const union ip_union_pair* ip_union_pair_c ;
+
+union ip_union_pair
+{
+  in_addr_pair_t  ipv4 ;
+  in6_addr_pair_t ipv6 ;
+} ;
 
 /*==============================================================================
  * Functions
  */
+Inline sa_family_t afi2family (qAFI_t qafi);
+Inline qAFI_t family2afi (sa_family_t family);
+
 extern name_str_t afitoa_lc(afi_t) ;
 extern name_str_t afitoa_uc(afi_t) ;
+
+/*------------------------------------------------------------------------------
+ * Convert qAFI_xxx to sa_family_t (AF_INET, AF_INET6, ...)
+ *
+ * Maps qAFI_undef and unknown values to AF_UNSPEC
+ */
+enum sa_family
+{
+  sa_family_ipv4  = AF_INET,
+#if HAVE_IPV6
+  sa_family_ipv6  = AF_INET6,
+#endif
+  sa_family_count,
+} ;
+
+#if HAVE_IPV6
+CONFIRM(AF_INET6 > AF_INET) ;
+#endif
+
+extern const sa_family_t qAFI_to_family_map[qAFI_count] ;
+
+Inline sa_family_t
+afi2family (qAFI_t qafi)
+{
+  if ((uint)qafi < (uint)qAFI_count)
+    return qAFI_to_family_map[qafi] ;
+  else
+    return AF_UNSPEC ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Convert sa_family_t (AF_INET, AF_INET6, ...) to qAFI_xxx
+ *
+ * Maps AF_UNSPEC and unknown values to qAFI_undef.
+ */
+extern const qAFI_t qAFI_from_family_map[sa_family_count] ;
+
+Inline qAFI_t
+family2afi(sa_family_t family)
+{
+  if ((uint)family < (uint)sa_family_count)
+    return qAFI_from_family_map[family] ;
+  else
+    return qAFI_undef ;
+} ;
 
 #endif /* _QUAGGA_AFI_SAFI_H */

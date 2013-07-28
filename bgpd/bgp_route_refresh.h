@@ -31,21 +31,21 @@
 /*==============================================================================
  * Structures to hold ROUTE-REFRESH and ORF
  */
-
-typedef struct orf_prefix* orf_prefix ; /* see lib/plist.h      */
-
+typedef struct bgp_orf_unknown_entry  bgp_orf_unknown_entry_t ;
 typedef struct bgp_orf_unknown_entry* bgp_orf_unknown_entry ;
+
 struct bgp_orf_unknown_entry
 {
   bgp_size_t    length ;
   uint8_t       data[] ;
 } ;
 
-typedef struct bgp_orf_entry*  bgp_orf_entry ;
+typedef struct bgp_orf_entry  bgp_orf_entry_t ;
+typedef struct bgp_orf_entry* bgp_orf_entry ;
+
 struct bgp_orf_entry
 {
   uint8_t       orf_type ;      /* BGP_ORF_T_xxx -- _rfc version !      */
-  bgp_form_t    form ;          /* bgp_form_none/_rfc/_pre              */
 
   bool          unknown ;       /* ignore everything other than the     */
                                 /* unknown data part                    */
@@ -56,8 +56,8 @@ struct bgp_orf_entry
   bool          deny ;          /* otherwise: permit                    */
 
   union {                       /* must be last...                      */
-    struct orf_prefix   orf_prefix ;
-    struct bgp_orf_unknown_entry  orf_unknown ; /*... flexible array.   */
+    orf_prefix_value_t       orfpv ;
+    bgp_orf_unknown_entry_t  orf_unknown ;      /*... flexible array.   */
   } body ;
 } ;
 
@@ -67,25 +67,29 @@ struct bgp_orf_entry
 typedef struct bgp_orf_entry bgp_orf_entry_t ;
 enum
 {
-  bgp_orf_unknown_min_l =   sizeof(struct bgp_orf_entry)
+  bgp_orf_unknown_min_l =   sizeof(bgp_orf_entry_t)
                           - offsetof(bgp_orf_entry_t, body.orf_unknown.data)
 } ;
 
 typedef struct bgp_route_refresh* bgp_route_refresh ;
 struct bgp_route_refresh
 {
+  bgp_route_refresh next ;      /* list of same                         */
+
+  qafx_t        qafx ;          /* may be qafx_undef or qafx_other      */
+
   iAFI_t        afi ;           /* NB: Internet AFI/SAFI                */
   iSAFI_t       safi ;
 
-  vector_t      entries ;       /* empty => simple ROUTE-REFRESH        */
+  vector_t      entries[1] ;    /* empty => simple ROUTE-REFRESH        */
 
   bool          defer ;         /* otherwise: immediate                 */
 
   /* These support the output of ROUTE-REFRESH messages.
    *
-   * These are zeroised when the bgp_route_refresh stucture is created.
+   * These are zeroised when the bgp_route_refresh structure is created.
    */
-  unsigned      next ;          /* next entry to process                */
+  uint          next_index ;    /* next entry to process                */
   uint8_t       last_orf_type ; /* type of last ORF entry processed     */
 } ;
 
@@ -93,25 +97,15 @@ struct bgp_route_refresh
  * Prototypes
  */
 
-extern bgp_route_refresh
-bgp_route_refresh_new(iAFI_t afi, iSAFI_t safi, unsigned count) ;
-
-extern void
-bgp_route_refresh_free(bgp_route_refresh rr) ;
-
-extern void
-bgp_route_refresh_set_orf_defer(bgp_route_refresh rr, bool defer) ;
-
-extern bgp_orf_entry
-bgp_orf_add(bgp_route_refresh rr, uint8_t orf_type, bgp_form_t form,
-                                                   bool remove, bool deny) ;
-
-extern void
-bgp_orf_add_remove_all(bgp_route_refresh rr, uint8_t orf_type, bgp_form_t form);
-
-extern void
-bgp_orf_add_unknown(bgp_route_refresh rr, uint8_t orf_type, bgp_size_t length,
-                                                          const void* entries) ;
+extern bgp_route_refresh bgp_route_refresh_new(iAFI_t afi, iSAFI_t safi,
+                                                                   uint count) ;
+extern bgp_route_refresh bgp_route_refresh_free(bgp_route_refresh rr) ;
+extern void bgp_route_refresh_set_orf_defer(bgp_route_refresh rr, bool defer) ;
+extern bgp_orf_entry bgp_orf_add(bgp_route_refresh rr, uint8_t orf_type,
+                                                       bool remove, bool deny) ;
+extern void bgp_orf_add_remove_all(bgp_route_refresh rr, uint8_t orf_type);
+extern void bgp_orf_add_unknown(bgp_route_refresh rr, uint8_t orf_type,
+                                       bgp_size_t length, const void* entries) ;
 
 Inline unsigned
 bgp_orf_get_count(bgp_route_refresh rr)
@@ -120,7 +114,7 @@ bgp_orf_get_count(bgp_route_refresh rr)
 } ;
 
 Inline bgp_orf_entry
-bgp_orf_get_entry(bgp_route_refresh rr, unsigned index)
+bgp_orf_get_entry(bgp_route_refresh rr, uint index)
 {
   return vector_get_item(rr->entries, index) ;
 } ;

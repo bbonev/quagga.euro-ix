@@ -22,168 +22,169 @@ Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
 #define _QUAGGA_BGP_ADVERTISE_H
 
 #include "lib/misc.h"
+#include "lib/list_util.h"
+#include "lib/prefix_id.h"
 
-/* BGP advertise FIFO.  */
-typedef struct bgp_advertise* bgp_advertise ;
+#include "bgpd/bgp_attr_store.h"
+#include "bgpd/bgp_rib.h"
 
-typedef struct bgp_advertise_fifo_base* bgp_advertise_fifo_base ;
+/*------------------------------------------------------------------------------
+ * BGP Advertise Attributes.
+ *
+ * To support the gathering of updates for the same set of attributes together,
+ * there is a vhash table, by attribute "id", which contains a pointer to
+ * the attributes in question and a list of bgp_adv objects for those
+ * attributes.
+ *
+ * The hash is the peer->adv_attr_hash[].
+ */
+#if 0
 
-struct bgp_advertise_fifo
+typedef struct bgp_adv_attr  bgp_adv_attr_t ;
+
+struct bgp_adv_attr
 {
-  bgp_advertise_fifo_base base ;
-  bgp_advertise next;
-  bgp_advertise prev;
+  /* Red Tape for the hash
+   */
+  vhash_node_t  vhash ;
+
+  /* The attributes in question.
+   *
+   * NB: this pointer "owns" a lock on the stored attribute set.
+   *
+   *     Pointers to the bgp_adv_attr own a lock on the vhash node.  They do
+   *     not have their own lock on the attributes.
+   *
+   * NB: the attributes here are the attributes *after* any 'out' route-map.
+   */
+  attr_set attr ;
+
+  /* Base of list of bgp_adv objects which share these attributes.
+   */
+  route_parcel_base_t abase ;
 };
 
-struct bgp_advertise_fifo_base
+CONFIRM(offsetof(bgp_adv_attr_t, vhash) == 0) ; /* see vhash.h  */
+
+#endif
+
+#if 0
+struct bgp_adv
 {
-  bgp_advertise head;
-  bgp_advertise tail;
+  bgp_adv_type_t  type ;        /* update/withdraw                      */
+
+  qafx_t          qafx ;        /* for completeness                     */
+
+  /* List of advertisements for the peer -- peer->sync[]->update/withdraw
+   */
+  struct dl_list_pair(bgp_adv) fifo ;
+
+  /* If this is an Update advertisement, then 'aa' points at the bgp_adv_attr
+   * structure, and the bgp_adv object lives on the bgp_adv_attr list of
+   * advertisements using those attributes.
+   *
+   * So, for update advertisements:   aa->attr are the outgoing attributes.
+   *
+   *     for withdraw advertisements: aa is NULL.
+   */
+  bgp_adv_attr  aa ;
+  struct dl_list_pair(bgp_adv) alist ;
+
+  /* The related bgp_adj_out object points at bgp_adv while there is an
+   * advertisement pending.  Essentially the bgp_adv is an extension of the
+   * adj_out for the duration of the advertisement process.
+   *
+   * This points back to that bgp_adj_out.
+   *
+   * The main purpose of this pointer is:
+   *
+   *   * so that the bgp_adj_out->attr_sent can be updated once an update
+   *     has been sent, or to remove it once a withdraw has been.
+   *
+   *     TODO ... I believe the bgp_adj_out is discarded.............................
+   *
+   *   *
+   */
+  bgp_adj_out  ao ;
+
+  /* The route that is being announced -- this points at the currently
+   * selected bgp_info item on the relevant rn->info list.
+   *
+   * The ri contains the attributes for the route before any 'out' route-map
+   * for the destination.
+   */
+  bgp_info     ri ;
 };
 
-/* BGP advertise attribute.  */
-struct bgp_advertise_attr
-{
-  /* Head of advertisement pointer. */
-  struct bgp_advertise_fifo_base base ;
+/*------------------------------------------------------------------------------
+ * BGP adjacency out.
+ *
+ * For each route, this contains the state of the route as advertised, or in
+ * the process of being advertised, to a given peer.
+ */
+typedef struct bgp_adj_out  bgp_adj_out_t ;
 
-  /* Reference counter.  */
-  unsigned long refcnt;
-
-  /* Attribute pointer to be announced.  */
-  struct attr *attr;
-};
-
-struct bgp_advertise
-{
-  /* FIFO for advertisement.  */
-  struct bgp_advertise_fifo fifo;
-
-  /* Link list for same attribute advertise.  */
-  bgp_advertise adv_next;
-  bgp_advertise adv_prev;
-
-  /* Prefix information.  */
-  struct bgp_node *rn;
-
-  /* Reference pointer.  */
-  struct bgp_adj_out *adj;
-
-  /* Advertisement attribute.  */
-  struct bgp_advertise_attr *baa;
-
-  /* BGP info.  */
-  struct bgp_info *binfo;
-};
-
-/* BGP adjacency out.  */
 struct bgp_adj_out
 {
-  /* Linked list pointer.       */
-  struct bgp_node*   rn ;
-  struct bgp_adj_out *adj_next;
-  struct bgp_adj_out *adj_prev;
+  /* Lives on the bgp_node->adj_out list
+   */
+  bgp_node      rn ;
+  struct dl_list_pair(bgp_adj_out) adj ;
 
-  /* Advertised peer.           */
-  struct peer *peer;
-  struct bgp_adj_out* route_next ;
-  struct bgp_adj_out* route_prev ;
+  /* Lives on the list of routes sent to this peer.
+   */
+  bgp_peer      peer;
+  struct dl_list_pair(bgp_adj_out) route ;
 
-  /* Advertised attribute.      */
-  struct attr *attr;
+  /* Advertisement information -- while update is scheduled.
+   */
+  bgp_adv       adv;
 
-  /* Advertisement information. */
-  struct bgp_advertise *adv;
+  /* The attributes last sent to this peer.
+   *
+   * NB: this field is updated when an UPDATE message is sent, so reflects
+   *     what we last said to the peer.  If we have never sent anything, or
+   *     the last thing we sent was a withdraw, then this is NULL.
+   *
+   *     While there is an advertisement pending (ie adv is not NULL), this is
+   *     NOT the attributes last selected for the peer.
+   *
+   * NB: if an UPDATE fails because the attributes will not fit into a valid
+   *     BGP Message (!), then although the prefix has been withdrawn, it still
+   *     appears as if the (broken) attributes have been sent -- which they
+   *     have, to the extent possible.
+   */
+  attr_set      attr_sent ;
 };
 
-/* BGP adjacency in. */
+
+/*------------------------------------------------------------------------------
+ * BGP adjacency in.
+ *
+ * For each route, this contains the state of the route as received, from a
+ * a given peer.
+ */
+typedef struct bgp_adj_in  bgp_adj_in_t ;
+
 struct bgp_adj_in
 {
-  /* Linked list pointer.       */
-  struct bgp_node*   rn ;
-  struct bgp_adj_in *adj_next;
-  struct bgp_adj_in *adj_prev;
+  /* Linked list pointer
+   */
+  bgp_node      rn ;
+  struct dl_list_pair(bgp_adj_in) adj ;
 
-  /* Received peer.             */
-  struct peer *peer;
-  struct bgp_adj_in* route_next ;
-  struct bgp_adj_in* route_prev ;
+  /* Peer received from
+   */
+  bgp_peer      peer;
+  struct dl_list_pair(bgp_adj_in) route ;
 
-  /* Received attribute.        */
-  struct attr *attr;
+  /* Received attributes and (for RS Clients) the attributes after rs-in.
+   */
+  attr_set    attr ;
+  attr_set    rs_in ;
 };
 
-/* BGP advertisement list.  */
-struct bgp_synchronize
-{
-  struct bgp_advertise_fifo_base update;
-  struct bgp_advertise_fifo_base withdraw;
-  struct bgp_advertise_fifo_base withdraw_low;
-};
-
-/* bgp_advertise_fifo handling
- *
- * Rules: base->head == NULL => empty
- *        base->tail -- only valid if base->head != NULL
- *
- *        adv->fifo.base == NULL => not on fifo
- *
- *        adv->fifo.next == NULL => last   (if fifo.base != NULL)
- *        adv->fifo.prev == NULL => first  (if fifo.base != NULL)
- */
-Inline void
-bgp_advertise_fifo_init(bgp_advertise_fifo_base base)
-{
-  base->head = NULL ;
-} ;
-
-Inline bgp_advertise
-bgp_advertise_fifo_head(bgp_advertise_fifo_base base)
-{
-  return base->head ;
-} ;
-
-Inline void
-bgp_advertise_fifo_add(bgp_advertise_fifo_base base, bgp_advertise adv)
-{
-  adv->fifo.next = NULL ;
-  adv->fifo.base = base ;
-
-  if (base->head == NULL)
-    {
-      adv->fifo.prev  = NULL ;
-      base->head      = adv ;
-    }
-  else
-    {
-      adv->fifo.prev  = base->tail ;
-      base->tail->fifo.next = adv ;
-    } ;
-
-  base->tail = adv ;
-} ;
-
-Inline void
-bgp_advertise_fifo_del(bgp_advertise adv)
-{
-  bgp_advertise_fifo_base base = adv->fifo.base ;
-
-  if (base != NULL)
-    {
-      if (adv->fifo.next == NULL)
-        base->tail = adv->fifo.prev ;
-      else
-        adv->fifo.next->fifo.prev = adv->fifo.prev ;
-
-      if (adv->fifo.prev == NULL)
-        base->head = adv->fifo.next ;
-      else
-        adv->fifo.prev->fifo.next = adv->fifo.next ;
-
-      adv->fifo.base = NULL ;
-    } ;
- } ;
-
+#if 0
 /* BGP adjacency linked list.  */
 #define BGP_INFO_ADD(N,A,TYPE)                        \
   do {                                                \
@@ -209,24 +210,31 @@ bgp_advertise_fifo_del(bgp_advertise adv)
 #define BGP_ADJ_OUT_ADD(N,A)   BGP_INFO_ADD(N,A,adj_out)
 #define BGP_ADJ_OUT_DEL(N,A)   BGP_INFO_DEL(N,A,adj_out)
 
-/* Prototypes.  */
-extern void bgp_adj_out_set (struct bgp_node *, struct peer *, struct prefix *,
-                      struct attr *, afi_t, safi_t, struct bgp_info *);
-extern void bgp_adj_out_unset (struct bgp_node *, struct peer *, struct prefix *,
-                        afi_t, safi_t);
-extern void bgp_adj_out_remove (struct bgp_node *, struct bgp_adj_out *,
-                         struct peer *, afi_t, safi_t);
-extern int bgp_adj_out_lookup (struct peer *, struct prefix *, afi_t, safi_t,
-                        struct bgp_node *);
+#endif
 
-extern void bgp_adj_in_set (struct bgp_node *, struct peer *, struct attr *);
-extern void bgp_adj_in_unset (struct bgp_node *, struct peer *);
-extern void bgp_adj_in_remove (struct bgp_node *, struct bgp_adj_in *);
 
-extern struct bgp_advertise *
-bgp_advertise_clean (struct peer *, struct bgp_adj_out *, afi_t, safi_t);
+/*------------------------------------------------------------------------------
+ * Prototypes.
+ */
+extern void bgp_adj_out_update (bgp_peer peer, prefix_id_entry pie,
+                               attr_set attr, qafx_t qafx, mpls_tag_val_t tag) ;
+
+extern void bgp_adj_out_withdraw (bgp_node rn, bgp_peer peer) ;
+extern void bgp_adj_out_delete (bgp_adj_out ao) ;
+extern bool bgp_adj_out_lookup (bgp_peer peer, bgp_node rn) ;
+
+extern void bgp_adj_in_set (bgp_node rn, bgp_peer peer, attr_set attr) ;
+extern void bgp_adj_rs_in_set (bgp_node rn, bgp_peer peer, attr_set attr,
+                                                               attr_set rs_in) ;
+extern void bgp_adj_in_unset (bgp_node rn, bgp_peer peer);
+extern void bgp_adj_rs_in_unset (bgp_node rn, bgp_peer peer) ;
+extern void bgp_adj_in_remove (bgp_node rn, bgp_adj_in ai);
+
+extern bgp_adv bgp_adv_next_by_attr(bgp_adv adv) ;
+extern bgp_adv bgp_adv_delete(bgp_adv adv) ;
 
 extern void bgp_sync_init (struct peer *);
 extern void bgp_sync_delete (struct peer *);
 
+#endif
 #endif /* _QUAGGA_BGP_ADVERTISE_H */

@@ -50,10 +50,10 @@ accumulate (u_char *buffer, testsz_t len, testoff_t off)
       partial_len = MIN(len, MODX);
 
       for (i = 0; i < partial_len; i++)
-        {
-          ret.c0 = ret.c0 + *(p++);
-          ret.c1 += ret.c0;
-        }
+	{
+	  ret.c0 = ret.c0 + *(p++);
+	  ret.c1 += ret.c0;
+	}
 
       ret.c0 = ret.c0 % 255;
       ret.c1 = ret.c1 % 255;
@@ -258,12 +258,12 @@ struct reductions_t {
   const char *name;
   u_int16_t (*f) (struct csum_vals *, testsz_t, testoff_t);
 } reducts[] = {
-  { .name = "ospfd",            .f = reduce_ospfd },
-  { .name = "ospfd-1",          .f = reduce_ospfd1 },
-  { .name = "isisd",            .f = reduce_isisd },
-  { .name = "isisd-yfix",       .f = reduce_isisd_yfix },
-  { .name = "isisd-mod",        .f = reduce_isisd_mod },
-  { .name = "isisd-mody",       .f = reduce_isisd_mody },
+  { .name = "ospfd",		.f = reduce_ospfd },
+  { .name = "ospfd-1",		.f = reduce_ospfd1 },
+  { .name = "isisd", 		.f = reduce_isisd },
+  { .name = "isisd-yfix", 	.f = reduce_isisd_yfix },
+  { .name = "isisd-mod", 	.f = reduce_isisd_mod },
+  { .name = "isisd-mody", 	.f = reduce_isisd_mody },
   { NULL, NULL },
 };
 
@@ -350,10 +350,10 @@ iso_csum_create (u_char * buffer, testsz_t len, testoff_t off)
       partial_len = MIN(len, MODX);
 
       for (i = 0; i < partial_len; i++)
-        {
-          c0 = c0 + *(p++);
-          c1 += c0;
-        }
+	{
+	  c0 = c0 + *(p++);
+	  c1 += c0;
+	}
 
       c0 = c0 % 255;
       c1 = c1 % 255;
@@ -432,32 +432,32 @@ extern int in_cksum_optimized(void *parg, int nbytes) ;
 int  /* return checksum in low-order 16 bits */
 in_cksum_optimized(void *parg, int nbytes)
 {
-        u_short *ptr = parg;
-        register long           sum;            /* assumes long == 32 bits */
-        register u_short        answer;         /* assumes u_short == 16 bits */
-        register int count;
-        /*
-         * Our algorithm is simple, using a 32-bit accumulator (sum),
-         * we add sequential 16-bit words to it, and at the end, fold back
-         * all the carry bits from the top 16 bits into the lower 16 bits.
-         */
+	u_short *ptr = parg;
+	register long		sum;		/* assumes long == 32 bits */
+	register u_short	answer;		/* assumes u_short == 16 bits */
+	register int count;
+	/*
+	 * Our algorithm is simple, using a 32-bit accumulator (sum),
+	 * we add sequential 16-bit words to it, and at the end, fold back
+	 * all the carry bits from the top 16 bits into the lower 16 bits.
+	 */
 
-        sum = 0;
-        count = nbytes >> 1; /* div by 2 */
-        for(ptr--; count; --count)
-          sum += *++ptr;
+	sum = 0;
+	count = nbytes >> 1; /* div by 2 */
+	for(ptr--; count; --count)
+	  sum += *++ptr;
 
-        if (nbytes & 1) /* Odd */
-          sum += *(u_char *)(++ptr);   /* one byte only */
+	if (nbytes & 1) /* Odd */
+	  sum += *(u_char *)(++ptr);   /* one byte only */
 
-        /*
-         * Add back carry outs from top 16 bits to low 16 bits.
-         */
+	/*
+	 * Add back carry outs from top 16 bits to low 16 bits.
+	 */
 
-        sum  = (sum >> 16) + (sum & 0xffff);    /* add high-16 to low-16 */
-        sum += (sum >> 16);                     /* add carry */
-        answer = ~sum;          /* ones-complement, then truncate to 16 bits */
-        return(answer);
+	sum  = (sum >> 16) + (sum & 0xffff);	/* add high-16 to low-16 */
+	sum += (sum >> 16);			/* add carry */
+	answer = ~sum;		/* ones-complement, then truncate to 16 bits */
+	return(answer);
 }
 
 extern int in_cksum_rfc(void *parg, int count) ;
@@ -466,26 +466,26 @@ int /* return checksum in low-order 16 bits */
 in_cksum_rfc(void *parg, int count)
 /* from RFC 1071 */
 {
-        u_short *addr = parg;
-        /* Compute Internet Checksum for "count" bytes
-         *         beginning at location "addr".
-         */
-        register long  sum = 0;
+	u_short *addr = parg;
+	/* Compute Internet Checksum for "count" bytes
+	 *         beginning at location "addr".
+	 */
+	register long  sum = 0;
 
-        while (count > 1)  {
-          /*  This is the inner loop */
-          sum += *addr++;
-          count -= 2;
-        }
-        /*  Add left-over byte, if any */
-        if (count > 0) {
-          sum += *(u_char *)addr;
-        }
+	while (count > 1)  {
+	  /*  This is the inner loop */
+	  sum += *addr++;
+	  count -= 2;
+	}
+	/*  Add left-over byte, if any */
+	if (count > 0) {
+	  sum += *(u_char *)addr;
+	}
 
-        /*  Fold 32-bit sum to 16 bits */
-        while (sum>>16)
+	/*  Fold 32-bit sum to 16 bits */
+	while (sum>>16)
            sum = (sum & 0xffff) + (sum >> 16);
-        return ~sum;
+	return ~sum;
 }
 
 
@@ -523,8 +523,8 @@ main(int argc, char **argv)
     in_csum_rfc = in_cksum_rfc(buffer, exercise);
     if (in_csum_res != in_csum || in_csum != in_csum_rfc)
       printf ("verify: in_chksum failed in_csum:%x, in_csum_res:%x,"
-              "in_csum_rfc %x, len:%d\n",
-              in_csum, in_csum_res, in_csum_rfc, exercise);
+	      "in_csum_rfc %x, len:%d\n",
+	      in_csum, in_csum_res, in_csum_rfc, exercise);
 
     ospfd = ospfd_checksum (buffer, exercise + sizeof(u_int16_t), exercise);
     if (verify (buffer, exercise + sizeof(u_int16_t)))

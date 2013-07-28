@@ -118,22 +118,22 @@ main (int argc, char **argv)
       opt = getopt_long (argc, argv, "dhf:A:P:v", longopts, 0);
 
       if (opt == EOF)
-        break;
+	break;
 
       switch (opt)
-        {
-        case 0:
-          break;
+	{
+	case 0:
+	  break;
         case 'f':
           config_file = optarg;
           break;
-        case 'd':
-          daemon_mode = 1;
-          break;
-        case 'A':
-          vty_addr = optarg;
-          break;
-        case 'P':
+	case 'd':
+	  daemon_mode = 1;
+	  break;
+	case 'A':
+	  vty_addr = optarg;
+	  break;
+	case 'P':
           /* Deal with atoi() returning 0 on failure */
           if (strcmp(optarg, "0") == 0)
             {
@@ -142,18 +142,18 @@ main (int argc, char **argv)
             }
           vty_port = atoi (optarg);
           vty_port = (vty_port ? vty_port : 4000);
-          break;
-        case 'v':
-          cmd_print_version (cmd_host_program_name());
-          exit (0);
-          break;
-        case 'h':
-          usage (cmd_host_program_name(), 0);
-          break;
-        default:
-          usage (cmd_host_program_name(), 1);
-          break;
-        }
+  	  break;
+	case 'v':
+	  cmd_print_version (cmd_host_program_name());
+	  exit (0);
+	  break;
+	case 'h':
+	  usage (cmd_host_program_name(), 0);
+	  break;
+	default:
+	  usage (cmd_host_program_name(), 1);
+	  break;
+	}
     }
 
   /* Library inits. */

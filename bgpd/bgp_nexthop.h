@@ -21,7 +21,10 @@ Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
 #ifndef _QUAGGA_BGP_NEXTHOP_H
 #define _QUAGGA_BGP_NEXTHOP_H
 
+#include "misc.h"
 #include "if.h"
+#include "sockunion.h"
+#include "bgp_attr_store.h"
 
 #define BGP_SCAN_INTERVAL_DEFAULT   60
 #define BGP_IMPORT_INTERVAL_DEFAULT 15
@@ -30,32 +33,32 @@ Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
 struct bgp_nexthop_cache
 {
   /* This nexthop exists in IGP. */
-  u_char valid;
+  bool  valid;
 
   /* Nexthop is changed. */
-  u_char changed;
+  bool  changed;
 
   /* Nexthop is changed. */
-  u_char metricchanged;
+  bool  metricchanged;
 
   /* IGP route's metric. */
-  u_int32_t metric;
+  uint32_t metric;
 
   /* Nexthop number and nexthop linked list.*/
-  u_char nexthop_num;
+  byte  nexthop_num;
   struct nexthop *nexthop;
 };
 
 extern void bgp_scan_cmd_init (void);
 extern void bgp_scan_init (void);
 extern void bgp_scan_finish (void);
-extern int bgp_nexthop_lookup (afi_t, struct peer *peer, struct bgp_info *,
-                        int *, int *);
+extern bool bgp_nexthop_lookup (qAFI_t q_afi, bgp_peer peer, route_info ri,
+                                                                  bool*, bool*);
 extern void bgp_connected_add (struct connected *c);
 extern void bgp_connected_delete (struct connected *c);
-extern int bgp_multiaccess_check_v4 (struct in_addr, char *);
+extern int bgp_multiaccess_check_v4 (in_addr_t ip, sockunion su);
 extern int bgp_config_write_scan_time (struct vty *);
-extern int bgp_nexthop_onlink (afi_t, struct attr *);
-extern int bgp_nexthop_self (afi_t, struct attr *);
+extern bool bgp_nexthop_onlink (qAFI_t q_afi, attr_next_hop next_hop);
+extern bool bgp_nexthop_self (in_addr_t ip);
 
 #endif /* _QUAGGA_BGP_NEXTHOP_H */

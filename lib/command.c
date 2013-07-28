@@ -2510,32 +2510,44 @@ cmp_desc (const void *p, const void *q)
  * Concatenate argv argument into a single string, inserting ' ' between each
  * argument.
  *
- * Returns an XMALLOC'd MTYPE_TMP string, which the call must dispose of.
+ * Returns:  an XMALLOC'd MTYPE_TMP string, which the caller must dispose of.
+ *
+ * Takes arguments 'argf'..'argc - 1'.
+ *
+ * If 'argf' >= 'argc', returns a newly allocated empty string -- so under
+ * all circumstances a string is returned, which the caller must dispose of.
  */
 extern char *
-argv_concat (const char* const* argv, int argc, int shift)
+argv_concat (const char* const* argv, uint argc, uint argf)
 {
-  int i;
+  uint i;
   size_t len;
   char *str;
   char *p;
 
-  len = 0;
-  for (i = shift; i < argc; i++)
-    len += strlen(argv[i])+1;
-
-  if (!len)
-    return NULL;
+  len = 1 ;                             /* terminating '\0'     */
+  for (i = argf; i < argc; i++)
+    {
+      if (i > argf)
+        len += 1 ;                      /* separating ' '       */
+      len += strlen(argv[i]) ;
+    } ;
 
   p = str = XMALLOC(MTYPE_TMP, len);
-  for (i = shift; i < argc; i++)
+  for (i = argf; i < argc; i++)
     {
       size_t arglen;
-      memcpy(p, argv[i], (arglen = strlen(argv[i])));
+
+      if (i > argf)
+        *p++ = ' ' ;                    /* separating ' '       */
+
+      arglen = strlen(argv[i]) ;
+
+      memcpy(p, argv[i], arglen);
       p += arglen;
-      *p++ = ' ';
-    }
-  *(p-1) = '\0';
+    } ;
+
+  *p = '\0' ;                           /* terminating '\0'     */
   return str;
 } ;
 
@@ -3523,7 +3535,7 @@ config_write_file_node(vty vty, node_type_t node)
 #if 1
         vty_out (vty, "#vtysh-config-node %s\n", cmd_node_name(node)) ;
 #else
-        vty_out (vty, "#vtysh-config-node %s\n", cmd_node_name(node),
+        vty_out (vty, "#vtysh-config-node %s %s\n", cmd_node_name(node),
                                      vtysh_content_type_name(cn->vtysh_stype)) ;
 #endif
       else
@@ -4509,7 +4521,7 @@ cmd_table_init (daemon_set_t daemons)
 
   cmd_install_table(thread_cmd_table) ;
   cmd_install_table(memory_cmd_table) ;
-  cmd_install_table(workqueue_cmd_table) ;
+//cmd_install_table(workqueue_cmd_table) ;
 
   cmd_install_node_config_write(CONFIG_NODE, config_write_host);
 

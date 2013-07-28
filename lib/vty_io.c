@@ -63,13 +63,12 @@
  *
  * This is for command output, which may later be suppressed
  *
- * Returns: >= 0 => OK
- *          <  0 => failed (see errno)
+ * Returns:  number of bytes written
  */
-extern int
+extern uint
 uty_out(vty_io vio, const char *format, ...)
 {
-  int     ret ;
+  uint    ret ;
   va_list args ;
 
   VTY_ASSERT_LOCKED() ;
@@ -94,7 +93,7 @@ uty_out(vty_io vio, const char *format, ...)
  */
 static vio_timer_t vty_watch_dog ;
 
-static vio_timer_time uty_watch_dog_bark(vio_timer timer, void* info) ;
+static vio_timer_time_t uty_watch_dog_bark(vio_timer timer, void* info) ;
 
 /*------------------------------------------------------------------------------
  * Start watch dog -- before a VTY is created.
@@ -120,7 +119,7 @@ uty_watch_dog_stop(void)
 /*------------------------------------------------------------------------------
  * Watch dog vio_timer action
  */
-static vio_timer_time
+static vio_timer_time_t
 uty_watch_dog_bark(vio_timer timer, void* info)
 {
   cmd_host_name(true) ;         /* check for host name change           */
@@ -296,7 +295,7 @@ uty_new(vty_type_t type, node_type_t node)
  * time out value -- which applies only to VIN_TERM.
  */
 extern void
-uty_set_timeout(vty_io vio, vio_timer_time timeout)
+uty_set_timeout(vty_io vio, vio_timer_time_t timeout)
 {
   vio_vf        vin_base ;
 
@@ -2633,7 +2632,7 @@ uty_error_message(vio_vf vf, vio_err_type_t err_type, int err, bool log)
  *                 collected, or can wait no longer ("final" close).
  */
 static void uty_child_collected(vio_child child, int report) ;
-static vio_timer_time vty_child_overdue(vio_timer timer, void* action_info) ;
+static vio_timer_time_t vty_child_overdue(vio_timer timer, void* action_info) ;
 static void uty_child_signal_parent(vio_child child) ;
 static void uty_child_free(vio_child child) ;
 static pid_t uty_waitpid(pid_t for_pid, int* p_report) ;
@@ -2757,7 +2756,7 @@ uty_child_register(pid_t pid, vio_vf parent)
  * If is already waiting, leave existing timer running.
  */
 extern void
-uty_child_awaited(vio_child child, vio_timer_time timeout)
+uty_child_awaited(vio_child child, vio_timer_time_t timeout)
 {
   VTY_ASSERT_CLI_THREAD_LOCKED() ;
 
@@ -2830,7 +2829,7 @@ uty_child_not_awaited(vio_child child)
  *          false  => timed out or final
  */
 extern bool
-uty_child_collect(vio_child child, vio_timer_time timeout, bool final)
+uty_child_collect(vio_child child, vio_timer_time_t timeout, bool final)
 {
   bool first ;
 
@@ -3048,7 +3047,7 @@ uty_child_collected(vio_child child, int report)
 /*------------------------------------------------------------------------------
  * Set child as overdue -- vio_timer action routine.
  */
-static vio_timer_time
+static vio_timer_time_t
 vty_child_overdue(vio_timer timer, void* action_info)
 {
   vio_child child ;

@@ -59,7 +59,7 @@ typedef struct
 /*------------------------------------------------------------------------------
  * Host configuration variable
  */
-typedef unsigned long int name_gen_t ;
+typedef ulong name_gen_t ;      /* accept 32-bits on 32-bit machine !   */
 
 struct host
 {
@@ -110,7 +110,7 @@ struct host
 
   /* Someone has the config symbol of power
    */
-  ulong      config ;           /* zero <=> no owner    */
+  ulong      config ;                   /* zero <=> no owner    */
   ulong      config_brand ;
 
   /* Allow vty to start without password
@@ -123,7 +123,7 @@ struct host
 
   /* vty timeout value -- see "exec-timeout" command
    */
-  unsigned long vty_timeout_val ;
+  uint       vty_timeout_val ;
 
   /* vty access-class for IPv4 and IPv6
    */

@@ -27,16 +27,29 @@ enum as_filter_type
   AS_FILTER_PERMIT
 };
 
-struct as_list ;
+typedef enum as_filter_type as_filter_type_t ;
+
+typedef struct as_list  as_list_t ;
+typedef struct as_list* as_list ;
 
 extern void bgp_filter_cmd_init (void);
 extern void bgp_filter_init (void);
 extern void bgp_filter_reset (void);
 
-extern enum as_filter_type as_list_apply (struct as_list *, void *);
-
-extern struct as_list *as_list_lookup (const char *);
 extern void as_list_add_hook (void (*func) (void));
 extern void as_list_delete_hook (void (*func) (void));
+
+extern as_list as_list_lookup (const char* name);
+extern as_list as_list_find(const char* name) ;
+extern as_list as_list_get_ref(const char* name) ;
+extern as_list as_list_set_ref(as_list flist) ;
+extern as_list as_list_clear_ref(as_list flist) ;
+extern const char* as_list_get_name(as_list flist) ;
+extern bool as_list_is_set(as_list flist) ;
+extern bool as_list_is_active(as_list flist) ;
+
+extern as_filter_type_t as_list_apply (as_list, void *);
+
+
 
 #endif /* _QUAGGA_BGP_FILTER_H */

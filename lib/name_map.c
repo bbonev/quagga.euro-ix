@@ -43,7 +43,7 @@ map_direct(const map_direct_t map, int val)
     name = map->body[index] ;
 
   if      (name != NULL)
-    qfs_append(qfs, name) ;
+    qfs_put_str(qfs, name) ;
   else if (map->deflt != NULL)
     qfs_printf(qfs, map->deflt, val) ;
 
@@ -53,9 +53,54 @@ map_direct(const map_direct_t map, int val)
 } ;
 
 /*------------------------------------------------------------------------------
+ * Map given value to "name(val)" or to the default.
+ *
+ * Returns:  address of known name
+ *       or: NULL -- name not known
+ */
+extern name_str_t
+map_direct_with_value(const map_direct_t map, int val)
+{
+  const char* name ;
+  int         index ;
+
+  name_str_t QFB_QFS(st, qfs) ;
+
+  name = NULL ;
+  if ((val >= map->min_val) && ((index = val - map->min_val) < map->count))
+    name = map->body[index] ;
+
+  if (name == NULL)
+    qfs_printf(qfs, "%s(%d)", name, val) ;
+  else if (map->deflt != NULL)
+    qfs_printf(qfs, map->deflt, val) ;
+
+  qfs_term(qfs) ;
+
+  return st ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Map given value to name, using a map_direct_t, for known values only.
+ *
+ * Returns:  address of known name
+ *       or: NULL -- name not known
+ */
+extern const char*
+map_direct_known(const map_direct_t map, int val)
+{
+  int index ;
+
+  if ((val >= map->min_val) && ((index = val - map->min_val) < map->count))
+    return map->body[index] ;
+  else
+    return NULL ;
+} ;
+
+#if 0
+/*------------------------------------------------------------------------------
  * Tiny test of map_direct()
  */
-#if 0
 
 #include "stdio.h"
 
@@ -98,3 +143,102 @@ test_map_direct(void)
 } ;
 
 #endif
+
+/*==============================================================================
+ * Bits map.
+ *
+ * The map is scanned from the start, looking for entries all of whose bits
+ * match the given value.
+ */
+
+/*------------------------------------------------------------------------------
+ * Scans the given map looking for the first entry all of whose bits are set
+ * in the given value.
+ *
+ * If finds one, returns the string and unsets those bits.
+ *
+ * Otherwise, returns NULL.
+ */
+extern const char*
+map_bits_first(const map_bit_names_s* map, uint64_t* p_bits)
+{
+  if (*p_bits != 0)
+    {
+      while (map->bits != 0)
+        {
+          if ((*p_bits & map->bits) == map->bits)
+            {
+              *p_bits ^= map->bits ;
+              return map->str ;
+            } ;
+
+          map += 1 ;
+        } ;
+    } ;
+
+  return NULL ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Scans the given map looking for entries all of whose bits are set in the
+ * given value.  When finds that, appends the name to the result, separated
+ * from any previous name by " ", and removes the bits from the set being
+ * considered.
+ *
+ * If ends up with unknown bits, appends a hex rendering of the remaining bits.
+ */
+extern bits_str_t
+map_bits_all(const map_bit_names_s* map, uint64_t bits)
+{
+  bits_str_t QFB_QFS(st, qfs) ;
+
+  while ((bits != 0) && (map->bits != 0))
+    {
+      if ((bits & map->bits) == map->bits)
+        {
+          bits ^= map->bits ;
+
+          if (qfs->cp != 0)
+            qfs_put_str(qfs, " ") ;
+
+          qfs_put_str(qfs, map->str) ;
+        } ;
+
+      map += 1 ;
+    } ;
+
+  if (bits != 0)
+    qfs_printf(qfs, "%s*unknown=0x%lx*", (qfs->cp != 0 ? " " : ""), bits) ;
+
+  qfs_term(qfs) ;
+
+  return st ;
+}
+
+/*------------------------------------------------------------------------------
+ * Scans the given map looking for the first entry all of whose bits are set
+ * in the given value.
+ *
+ * If finds one, returns the ordinal and unsets those bits.
+ *
+ * Otherwise, returns 0.
+ */
+extern uint
+map_bit_ord_first(const map_bit_ords_s* map, uint64_t* p_bits)
+{
+  if (*p_bits != 0)
+    {
+      while (map->bits != 0)
+        {
+          if ((*p_bits & map->bits) == map->bits)
+            {
+              *p_bits ^= map->bits ;
+              return map->ord ;
+            } ;
+
+          map += 1 ;
+        } ;
+    } ;
+
+  return 0 ;
+} ;
