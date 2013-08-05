@@ -104,7 +104,7 @@ UNLOCK_QATOMIC(void)
  * Get pointer
  */
 Inline void*
-qa_get_pointer(void** p_ptr)
+qa_get_ptr(void** p_ptr)
 {
   void* out ;
   qa_wrap(out = *p_ptr) ;
@@ -115,7 +115,7 @@ qa_get_pointer(void** p_ptr)
  * Get pointer const
  */
 Inline const void*
-qa_get_pointer_c(void* const* p_ptr_c)
+qa_get_ptr_c(void* const* p_ptr_c)
 {
   void* out_c ;
   qa_wrap(out_c = *p_ptr_c) ;
@@ -141,7 +141,7 @@ qa_get_uint(uint* p_uint)
  * Set pointer
  */
 Inline void
-qa_set_pointer(void** p_ptr, void* ptr)
+qa_set_ptr(void** p_ptr, void* ptr)
 {
   qa_wrap(*p_ptr = ptr) ;
 } ;
@@ -172,7 +172,7 @@ qa_set_time_t(time_t* p_time_t, time_t val)
  * Swap pointer -- sets given pointer to "in" value and returns original.
  */
 Inline void*
-qa_swap_pointers(void** p_ptr, void* in)
+qa_swap_ptrs(void** p_ptr, void* in)
 {
   void* out ;
   qa_wrap(out = *p_ptr ; *p_ptr = in) ;
@@ -183,7 +183,7 @@ qa_swap_pointers(void** p_ptr, void* in)
  * Swap pointer const -- sets given pointer to "in" value and returns original.
  */
 Inline const void*
-qa_swap_pointers_c(const void** p_ptr_c, const void* in_c)
+qa_swap_ptrs_c(const void** p_ptr_c, const void* in_c)
 {
   const void* out_c ;
   qa_wrap(out_c = *p_ptr_c ; *p_ptr_c = in_c) ;

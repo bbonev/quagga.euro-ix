@@ -146,7 +146,7 @@ inline static int
 sockunion_sin6_len(sockunion su)
 {
       return
-#ifdef SIN6_LEN
+#ifdef HAVE_STRUCT_SOCKADDR_IN6_SIN6_LEN
              su->sin6.sin6_len =
 #endif
                                  sizeof(struct sockaddr_in6);
@@ -171,7 +171,7 @@ sockunion_set_family(sockunion su, sa_family_t family)
   if (family == AF_INET)
     sockunion_sin_len(su) ;
 #endif
-#if defined(HAVE_IPV6) && defined(SIN6_LEN)
+#ifdef HAVE_STRUCT_SOCKADDR_IN6_SIN6_LEN
   if (family == AF_INET6)
     sockunion_sin6_len(su) ;
 #endif
@@ -244,14 +244,28 @@ extern sockunion
 sockunion_init_new(sockunion su, sa_family_t family)
 {
   if (su == NULL)
-    su = XCALLOC(MTYPE_SOCKUNION, sizeof(union sockunion)) ;
-  else
-    memset(su, 0, sizeof(union sockunion)) ;
+    su = XMALLOC(MTYPE_SOCKUNION, sizeof(sockunion_t)) ;
+
+  sockunion_clear(su) ;
 
   if (family != AF_UNSPEC)
     sockunion_set_family(su, family) ;
   else
     confirm(AF_UNSPEC == 0) ;
+
+  return su ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Clear given sockunion (if any) -- setting AF_UNSPEC
+ *
+ * Returns:  sockunion as given
+ */
+extern sockunion
+sockunion_clear(sockunion su)
+{
+  if (su != NULL)
+    memset(su, 0, sizeof(*su)) ;
 
   return su ;
 } ;

@@ -1600,8 +1600,9 @@ static bgp_notify bgp_msg_open_bad_as(as_t asn, bool as4) ;
 extern bgp_notify
 bgp_msg_open_parse(bgp_connection connection, bgp_msg_reader reader)
 {
-  bgp_open_state   open_recv ;
-  bgp_session_args args_recv ;          /* pointer into open_recv       */
+  bgp_open_state     open_recv ;
+  bgp_session_args   args_recv ;        /* pointer into open_recv       */
+  bgp_session_args_c args_config ;      /* pointer from session         */
   bgp_notify       reject ;
   bgp_connection_logging plox ;
   sucker_t    sr[1] ;
@@ -1636,15 +1637,17 @@ bgp_msg_open_parse(bgp_connection connection, bgp_msg_reader reader)
                               = bgp_open_state_init_new(connection->open_recv) ;
   args_recv = connection->open_recv->args ;
 
+  args_config = connection->session->args_config ;
+
   /* Parse fixed part of the open packet
    */
   suck_init(sr, reader->msg_body, reader->msg_body_length) ;
 
   version = suck_b(sr) ;
-  open_recv->my_as =
+  args_recv->remote_as =
          open_recv->my_as2 = suck_w(sr) ;
   args_recv->holdtime_secs = suck_w(sr) ;
-  open_recv->bgp_id        = suck_ipv4(sr) ;
+  args_recv->remote_id     = suck_ipv4(sr) ;
 
   optlen = suck_b(sr) ;
 
@@ -1657,8 +1660,8 @@ bgp_msg_open_parse(bgp_connection connection, bgp_msg_reader reader)
     plog_debug (plox->log,
          "%s rcv OPEN, version %d, remote-as (in open) %u, holdtime %d, id %s",
                 plox->host, version,
-                   open_recv->my_as, args_recv->holdtime_secs,
-                                      siptoa(AF_INET, &open_recv->bgp_id).str) ;
+                   args_recv->remote_as, args_recv->holdtime_secs,
+                                  siptoa(AF_INET, &args_recv->remote_id ).str) ;
 
   /* Peer BGP version check.
    */
@@ -1675,13 +1678,13 @@ bgp_msg_open_parse(bgp_connection connection, bgp_msg_reader reader)
 
   /* Remote bgp_id must be valid unicast and must not be the same as here
    */
-  if ( IPV4_NET0 (ntohl(open_recv->bgp_id))         ||
-       IPV4_CLASS_DE (ntohl(open_recv->bgp_id))     ||
-       (open_recv->bgp_id == connection->local_id) )
+  if ( IPV4_NET0 (ntohl(args_recv->remote_id ))         ||
+       IPV4_CLASS_DE (ntohl(args_recv->remote_id ))     ||
+       (args_recv->remote_id  == args_config->local_id) )
     {
       plog_debug (plox->log, "%s rcv OPEN, multicast or our id %s",
-                plox->host, siptoa(AF_INET, &open_recv->bgp_id).str) ;
-      return bgp_msg_open_bad_id(open_recv->bgp_id) ;
+                      plox->host, siptoa(AF_INET, &args_recv->remote_id ).str) ;
+      return bgp_msg_open_bad_id(args_recv->remote_id ) ;
     } ;
 
   /* RFC4271: "...a BGP speaker MUST calculate the value of the Hold Timer by
@@ -1722,7 +1725,7 @@ bgp_msg_open_parse(bgp_connection connection, bgp_msg_reader reader)
    *
    * ASN == 0 is an error !
    */
-  if (open_recv->my_as == 0)
+  if (args_recv->remote_as == 0)
     {
       if (args_recv->can_as4)
         {
@@ -1741,7 +1744,7 @@ bgp_msg_open_parse(bgp_connection connection, bgp_msg_reader reader)
 
   /* ASN = BGP_AS_TRANS is odd for AS2, error for AS4
    */
-  if (open_recv->my_as == BGP_ASN_TRANS)
+  if (args_recv->remote_as == BGP_ASN_TRANS)
     {
       if (args_recv->can_as4)
         {
@@ -1759,34 +1762,34 @@ bgp_msg_open_parse(bgp_connection connection, bgp_msg_reader reader)
 
   /* For AS4 speaker: worry about my_as2, if as2 != as4
    */
-  if ((args_recv->can_as4) && (open_recv->my_as != open_recv->my_as2))
+  if ((args_recv->can_as4) && (args_recv->remote_as != open_recv->my_as2))
     {
       if (open_recv->my_as2 == BGP_ASN_TRANS)
         {
-          if ((open_recv->my_as <= BGP_AS2_MAX) && BGP_DEBUG(as4, AS4))
+          if ((args_recv->remote_as <= BGP_AS2_MAX) && BGP_DEBUG(as4, AS4))
             plog_debug(plox->log, "%s [AS4] OPEN remote_as is AS_TRANS,"
                                " but AS4 (%u) fits in 2-bytes, very odd peer",
-                                                 plox->host, open_recv->my_as) ;
+                                             plox->host, args_recv->remote_as) ;
         }
       else
         {
           plog_err(plox->log, "%s bad OPEN, got AS4 capability, "
                                      "but remote_as %u != 'my asn' %u in open",
-                              plox->host, open_recv->my_as, open_recv->my_as2) ;
+                          plox->host, args_recv->remote_as, open_recv->my_as2) ;
 
-          return bgp_msg_open_bad_as(open_recv->my_as, true) ;
+          return bgp_msg_open_bad_as(args_recv->remote_as, true) ;
         } ;
     } ;
 
   /* Finally -- require the AS to be the configured AS
    */
-  if (open_recv->my_as != connection->remote_as)
+  if (args_recv->remote_as != args_config->remote_as)
     {
       if (BGP_DEBUG (normal, NORMAL))
         plog_debug (plox->log, "%s bad OPEN, remote AS is %u, expected %u",
-                 plox->host, open_recv->my_as, connection->remote_as) ;
+                    plox->host, args_recv->remote_as, args_config->remote_as) ;
 
-      return bgp_msg_open_bad_as(open_recv->my_as, args_recv->can_as4) ;
+      return bgp_msg_open_bad_as(args_recv->remote_as, args_recv->can_as4) ;
     } ;
 
   /* Success !
@@ -1856,7 +1859,7 @@ bgp_msg_open_bad_id(bgp_id_t id)
  *   * args->can_mp_ext            -- false
  *   * args->can_as4               -- false
  *   * args->can_af                -- empty
- *   * args->can_r_refresh         -- none
+ *   * args->can_rr                -- none
  *   * args->gr.can                -- false
  *   * args->gr.restarting         -- false
  *   * args->gr.restart_time       -- 0
@@ -2328,11 +2331,11 @@ bgp_msg_capability_option_parse(bgp_open_state open_recv,
             break;
 
           case BGP_CAN_R_REFRESH:
-            open_recv->args->can_r_refresh |= bgp_form_rfc ;
+            open_recv->args->can_rr |= bgp_form_rfc ;
             break ;
 
           case BGP_CAN_R_REFRESH_pre:
-            open_recv->args->can_r_refresh |= bgp_form_pre ;
+            open_recv->args->can_rr |= bgp_form_pre ;
             break;
 
           case BGP_CAN_ORF:
@@ -2871,14 +2874,12 @@ static cap_ret_t
 bgp_msg_capability_as4 (bgp_open_state open_recv,
                                          sucker sr, bgp_connection_logging plox)
 {
-  open_recv->args->can_as4 = true ;
-  open_recv->my_as        = suck_l(sr) ;
+  open_recv->args->can_as4   = true ;
+  open_recv->args->remote_as = suck_l(sr) ;
 
   if (BGP_DEBUG (as4, AS4))
-    plog_debug (plox->log,
-                      "%s [AS4] about to set cap PEER_CAP_AS4_RCV, got as4 %u",
-                                                 plox->host, open_recv->my_as) ;
-
+    plog_debug (plox->log, "%s [AS4] received AS4 Capability ASN=%u",
+                                       plox->host, open_recv->args->remote_as) ;
   return cap_ret_ok ;
 } ;
 
@@ -2937,7 +2938,7 @@ bgp_msg_route_refresh_parse(bgp_route_refresh* p_rr,
         break ;
     } ;
 
-  if ((connection->session->args->can_r_refresh & form) == bgp_form_none)
+  if ((connection->session->args->can_rr & form) == bgp_form_none)
     return bgp_msg_read_bad_type(reader) ;
 
   qa_add_to_uint(&connection->session->stats.refresh_in, 1) ;

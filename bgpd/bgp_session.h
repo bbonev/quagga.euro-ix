@@ -142,21 +142,8 @@ struct bgp_session
    *
    * The peer_ie pointer is only used by the BE.
    */
-  bgp_peer             peer ;
-  bgp_peer_index_entry peer_ie ;
-
-  /* These are private to the RE.
-   */
-//bgp_peer_session_state_t peer_state ;
-
-  int               flow_control ;      /* limits number of updates sent
-                                         * by the Routing Engine        */
-
-  bool              xon_awaited ;       /* set when XON is requested    */
-
-  bool              delete_me ;         /* when next goes psDown        */
-
-  bgp_connection_ord_t ordinal_established ;    /* when pEstablished    */
+  bgp_peer              peer ;
+  bgp_peer_index_entry  peer_ie ;
 
   /* These are private to the RE, and are set each time a session event message
    * is received from the BE.
@@ -165,61 +152,60 @@ struct bgp_session
    * the event is for.  In the case of an eEstablished event, the ordinal is
    * the ordinal *before* the session became established.
    */
+  bgp_session_state_t   state_seen ;    /* last state seen by RE        */
+
   bgp_fsm_event_t       fsm_event ;     /* last event                   */
   bgp_notify            notification ;  /* if any sent/received         */
   int                   err ;           /* errno, if any                */
-  bgp_connection_ord_t  ordinal ;       /* primary/secondary connection */
+  bgp_conn_ord_t  ordinal ;       /* primary/secondary connection */
+
+  /* This is private to the RE, and set when goes pEstablished.
+   */
+  bgp_conn_ord_t  ordinal_established ;   /* when pEstablished    */
 
   /* The following are set by the RE before a session is enabled, and not
    * changed at any other time by either engine.
    */
-  qtime_t           idle_hold_timer_interval ;
-
-  as_t              local_as ;          /* ASN here                     */
-  in_addr_t         local_id ;          /* BGP-Id here                  */
-
-  as_t              remote_as ;         /* ASN of the peer              */
-
-  sockunion         su_peer ;           /* address of the peer          */
+  qtime_t               idle_hold_timer_interval ;
 
   bgp_connection_logging_t lox ;
 
-  /* The session arguments and open messages.
+  /* The session arguments configuration.
    *
-   * The Routeing Engine sets the session arguments when the session is
-   * enabled.
-
-   *   * args_tx -- transfer from RE to BE.
+   *   * args_config -- session configuration -- belong to the BE once psUp
+   *
+   *     The Routeing Engine sets the args_config before enabling the session.
+   *
+   *     When the session is psUP, the args_config belong to the BE.  If the
+   *     peer's arguments are changed, the RE creates a new set of arguments,
+   *     and sets args_tx.  If args_tx existed before, those are now redundant.
+   *     If no args_tx existed before, the BE needs to be kicked.
+   *
+   *   * args_tx -- transfer from RE to BE, while psUp.
    *
    *     The args_tx is set by the RE and cleared by the BE -- using an atomic
    *     swap.
-   *
-   *     These are created when a session is enabled, and set by the RE.
-   *     If the arguments are changed, the RE creates a new set of arguments,
-   *     sets args_tx.  If args_tx existed before, those are now redundant.
-   *     If no args_tx existed before, the BE needs to be kicked.
-   *
-   *   * args_config -- session configuration -- belong to the BE *ALWAYS*.
-   *
-   *     The args_config are set from the args_tx when the BE is kicked, or a
-   *     session is enabled.  It is copied to connections when a connection is
-   *     made or accepted.
+   */
+  bgp_session_args      args_config ;
+  bgp_session_args      args_tx ;
+
+  /* The session arguments for Established Session.
    *
    *   * args -- actual session state, once established -- transfer BE to RE.
    *
-   *     The args are set from the current connection when a session is
-   *     established, and not changed again by the BE.  These are copied to the
-   *     peer when the session is established.
+   *   * open_sent -- actual OPEN as sent for session, once established
+   *                                                    -- transfer BE to RE.
+   *   * open_recv -- actual OPEN as received for session, once established
+   *                                                    -- transfer BE to RE.
    *
-   * The BGP Engine sets the state of the OPEN message which was sent and the
-   * one received for the session which is now established.
+   *     The args, open_sent and open_recv copied from the current connection
+   *     when a session is established, and not changed again by the BE.
+   *
+   *     So, while pEstablished, these belong to the peer !
    */
-  bgp_session_args  args_tx ;
-  bgp_session_args  args_config ;
-  bgp_session_args  args ;
-
-  bgp_open_state    open_sent ;         /* set when session Established */
-  bgp_open_state    open_recv ;         /* set when session Established */
+  bgp_session_args      args ;
+  bgp_open_state        open_sent ;
+  bgp_open_state        open_recv ;
 
   /* Session ring-buffers -- created by BE, belong to RE once Established
    *
@@ -230,8 +216,16 @@ struct bgp_session
    * While the session is established, these are shared by the BE and RE.
    * When the session stops, the BE stops using these, and the RE can discard.
    */
-  ring_buffer   read_rb ;
-  ring_buffer   write_rb ;
+  ring_buffer           read_rb ;
+  ring_buffer           write_rb ;
+
+  /* Statistics -- embedded structure
+   *
+   * Read by Routeing Engine atomically.
+   *
+   * Updated by the BGP Engine atomically.
+   */
+  bgp_session_stats_t   stats;
 
   /* Connection options
    *
@@ -256,9 +250,9 @@ struct bgp_session
    *     established, and not changed again by the BE.  These are copied to the
    *     peer when the session is established.
    */
-  bgp_connection_options  cops_tx ;
-  bgp_connection_options  cops_config ;
-  bgp_connection_options  cops ;
+  bgp_cops  cops_tx ;
+  bgp_cops  cops_config ;
+  bgp_cops  cops ;
 
   /* These values are are private to the BGP Engine.
    *
@@ -266,43 +260,16 @@ struct bgp_session
    * touched by the Routeing Engine at any other time.
    *
    * Before stopping a session the BGP Engine unlinks any connections from
-   * the session, and sets the stopped flag.
-   *
-   * The active flag is set when one or more connections are activated, and
-   * cleared when either the BGP Engine stops the session or the Routing
-   * Engine disables it.  When not "active" all messages other than disable
-   * and enable are ignored.  This deals with the hiatus that exists between
-   * the BGP Engine signalling that it has stopped (because of some exception)
-   * and the Routing Engine acknowledging that (by disabling the session).
-   *
-   * The accept flag is set when the secondary connection is completely ready
-   * to accept connections.  It is cleared otherwise, or when the active flag
-   * is cleared.
+   * the session, and sets the sStopped.
    */
-  bgp_connection    connections[bc_count] ;
+  bgp_connection        connections[bc_count] ;
 
-  bgp_session_state_t state ;
+  bgp_session_state_t   state ;
 
   /* The acceptor belongs to the BE *ALWAYS*.  It is created when the session
    * is created and will run while-ever the peer is not shut-down.
    */
-  bgp_acceptor  acceptor ;
-
-#if 0
-  /* These are cleared by the Routeing Engine before a session is enabled,
-   * and set by the BGP Engine when the session is established.
-   */
-  sockunion         su_local ;          /* set when session Established   */
-  sockunion         su_remote ;         /* set when session Established   */
-#endif
-
-  /* Statistics -- embedded structure
-   *
-   * Read by Routeing Engine atomically.
-   *
-   * Updated by the BGP Engine atomically.
-   */
-  bgp_session_stats_t stats;
+  bgp_acceptor          acceptor ;
 } ;
 
 /*==============================================================================
@@ -382,7 +349,7 @@ struct bgp_session_event_args           /* to Routeing Engine           */
   bgp_fsm_event_t      fsm_event ;      /* what just happened           */
   bgp_notify           notification ;   /* sent or received (if any)    */
   int                  err ;            /* errno if any                 */
-  bgp_connection_ord_t ordinal ;        /* primary/secondary connection */
+  bgp_conn_ord_t ordinal ;        /* primary/secondary connection */
   int                  stopped ;        /* session has stopped          */
 } ;
 MQB_ARGS_SIZE_OK(struct bgp_session_event_args) ;
@@ -431,7 +398,7 @@ extern void bgp_session_delete(bgp_peer peer);
 extern void bgp_session_event(bgp_session session, bgp_fsm_event_t fsm_event,
                                        bgp_notify           notification,
                                        int                  err,
-                                       bgp_connection_ord_t ordinal,
+                                       bgp_conn_ord_t ordinal,
                                        bool                 stopped) ;
 extern void bgp_session_update_send(bgp_session session, stream_fifo fifo) ;
 extern void bgp_session_route_refresh_send(bgp_session session,
@@ -446,8 +413,8 @@ extern bool bgp_session_is_XON(bgp_peer peer);
 extern bool bgp_session_dec_flow_count(bgp_peer peer) ;
 extern void bgp_session_self_XON(bgp_peer peer) ;
 extern void bgp_session_set_ttl(bgp_session session, ttl_t ttl, bool gtsm) ;
-extern void bgp_session_get_stats(bgp_session session,
-                                              struct bgp_session_stats *stats) ;
+extern void bgp_session_get_stats(bgp_session_stats stats,
+                                                          bgp_session session) ;
 
 /*==============================================================================
  * Session data access functions.

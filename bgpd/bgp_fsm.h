@@ -174,18 +174,21 @@ struct bgp_fsm_timer
 /*==============================================================================
  * Prototypes.
  */
-extern void bgp_fsms_init(void) ;
-extern void bgp_fsms_stop(void) ;
-extern void bgp_fsm_events_flush(bgp_connection connection) ;
-
-extern int bgp_fsm_events_run(void) ;
-
 extern void bgp_fsm_enable_session(bgp_session session) ;
 extern void bgp_fsm_disable_session(bgp_session session,
                                                       bgp_notify notification) ;
+extern void bgp_fsm_enable_connection(bgp_session session,
+                                                     bgp_conn_ord_t ord) ;
+extern void bgp_fsm_restart_connection(bgp_connection connection,
+                                                      bgp_notify notification) ;
+extern void bgp_fsm_disable_connection(bgp_connection connection,
+                                                      bgp_notify notification) ;
 
-extern void bgp_fsm_admin_event(bgp_connection connection,
-                           bgp_fsm_event_t fsm_event, bgp_notify notification) ;
+extern void bgp_fsms_init(void) ;
+extern void bgp_fsms_stop(void) ;
+extern void bgp_fsm_events_flush(bgp_connection connection) ;
+extern int bgp_fsm_events_run(void) ;
+
 extern void bgp_fsm_io_event(bgp_connection connection) ;
 
 extern void bgp_fsm_accept_event(bgp_session session,

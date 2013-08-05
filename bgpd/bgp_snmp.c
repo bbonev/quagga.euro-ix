@@ -281,7 +281,7 @@ bgpLocalAs (struct variable *v, oid name[], size_t *length,
   if (! bgp)
     return NULL;
 
-  return SNMP_INTEGER (bgp->as);
+  return SNMP_INTEGER (bgp->my_as);
 }
 
 static struct peer *

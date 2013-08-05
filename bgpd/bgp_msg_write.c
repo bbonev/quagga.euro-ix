@@ -1415,7 +1415,7 @@ static ptr_t bgp_msg_write_get_temp(bgp_msg_writer writer, uint size) ;
  * Creates connection->open_sent if required, and fills it in from the
  * connection->session arguments etc.
  *
- * If connection->cap_suppress, the opensent->args refelect the effect of
+ * If connection->cap_suppress, the open_sent->args reflect the effect of
  * the suppression.
  *
  * NB: actual I/O occurs in the qpselect action function -- so this cannot
@@ -1435,9 +1435,18 @@ bgp_msg_write_open(bgp_connection connection)
 
   /* Fill in connection->open_sent (creating, if required.)
    *
-   * We copy the session arguments if !connection->cap_suppress.  But if is
-   * cap_suppress we leave everything turned off and just fill in what we can
-   * do and copy just the bits we need.
+   * We copy the session args_config, but suppress if connection->cap_suppress.
+   * (Also suppress if !args_config->can_capability -- for completeness.)
+   *
+   * NB: for args_config:
+   *
+   *       can_af is the af we would like, ignoring can_mp_ext and
+   *              can_capabiity if we have cap_af_override.
+   *
+   *     for args_sent:
+   *
+   *       can_af is the af we actually announce, which is implicitly
+   *       IPv4-Unicast is is !can_mp_ext.
    *
    * NB: args_sent->keepalive_secs is the value the session is configured for.
    *
@@ -1447,48 +1456,28 @@ bgp_msg_write_open(bgp_connection connection)
    *     Nevertheless, in the args_sent we keep the configured KeepaliveTime,
    *     and that is used when the values for the session are negotiated.
    *
-   * NB: neither args_sent->connect_retry_secs nor args_sent->open_hold_secs
-   *     are actually sent either... for completeness we copy from the
-   *     session configured values, anyway.
+   * NB: we expect the args_config->remote_as to be the configured AS for the
+   *     neighbor... though we don't much care.  The remote_id we clear, since
+   *     (in theory) that can vary in every OPEN from the other end.
    */
   open_sent = connection->open_sent =
                                 bgp_open_state_init_new(connection->open_sent) ;
-
-  open_sent->my_as   = connection->session->local_as ;
-  open_sent->my_as2  = (open_sent->my_as <= BGP_AS2_MAX)
-                                  ? (uint16_t)open_sent->my_as : BGP_ASN_TRANS ;
-  open_sent->bgp_id  = connection->session->local_id ;
-
   args_sent   = open_sent->args ;
   args_config = connection->session->args_config  ;
 
-  if (!connection->cap_suppress)
-    {
-      bgp_session_args_copy(args_sent, args_config) ;
-      args_sent->cap_suppressed  = false ;      /* for completeness     */
-    }
-  else
-    {
-      /* Suppressing capabilities.
-       *
-       * The args_sent have already been reset when the open_sent was created,
-       * see bgp_session_args_reset().  So here we copy across what is left
-       * after capability negotiation is suppressed !
-       *
-       * Note that cap_af_override and cap_strict still have effect.
-       */
-      args_sent->cap_suppressed  = true ;
+  bgp_session_args_copy(args_sent, args_config) ;
+  args_sent->cap_suppressed = connection->cap_suppress ;
 
-      args_sent->can_af          = args_config->can_af ;
-      args_sent->cap_af_override = args_config->cap_af_override ;
-      args_sent->cap_strict      = args_config->cap_strict ;
+  if (connection->cap_suppress || !args_sent->can_capability)
+    bgp_session_args_suppress(args_sent) ;
 
-      if (!args_sent->cap_af_override)
-        args_sent->can_af &= qafx_ipv4_unicast ;
+  open_sent->my_as2 = (args_sent->local_as <= BGP_AS2_MAX)
+                             ? (uint16_t)args_sent->local_as : BGP_ASN_TRANS ;
 
-      args_sent->holdtime_secs      = args_config->holdtime_secs ;
-      args_sent->keepalive_secs     = args_config->keepalive_secs ;
-    } ;
+  if (!args_sent->can_mp_ext)
+    args_sent->can_af &= qafx_ipv4_unicast ;    /* make sure    */
+
+  args_sent->remote_id = 0 ;
 
   /* We are completely paranoid about this.
    */
@@ -1505,7 +1494,7 @@ bgp_msg_write_open(bgp_connection connection)
   blow_b(br, BGP_VERSION_4) ;
   blow_w(br, open_sent->my_as2) ;
   blow_w(br, args_sent->holdtime_secs) ;
-  blow_ipv4(br, open_sent->bgp_id) ;
+  blow_ipv4(br, args_sent->local_id) ;
 
   qassert(blow_has_not_overrun(br)) ;
 
@@ -1550,9 +1539,9 @@ bgp_msg_write_open(bgp_connection connection)
 
       zlog_debug("%s sending OPEN, version %d, my as %u%s, "
                                                         "holdtime %d, id %s%s",
-                  connection->lox.host, BGP_VERSION_4, open_sent->my_as, as4,
+                  connection->lox.host, BGP_VERSION_4, args_sent->local_as, as4,
                     args_sent->holdtime_secs,
-                     siptoa(AF_INET, &open_sent->bgp_id).str, no_cap) ;
+                      siptoa(AF_INET, &args_sent->local_id).str, no_cap) ;
     } ;
 
   /* Finally -- write the temp buffer away
@@ -1592,18 +1581,25 @@ bgp_open_options(blower br, bgp_open_state open_state)
    * is IPv4 Unicast.  If there are no afi/safi, then no CAP_MP_EXT can be
    * sent.  The peer will assume that IPv4 Unicast is (implicitly) supported,
    * but the session will be dropped because there are no agreed afi/safi !
+   *
+   * For ORF and for Graceful Restart, we will advertise for afi/safi we
+   * announce explicitly by mp_ext, or implicitly (IPv4-Unicast) if !can_mp_ext.
+   * We do NOT advertise for afi/safi we may later force, by cap_af_override,
+   * because cap_af_override is there to overcome issues from before the
+   * existence of Capabilities... so deemed not to apply if we are doing ORF
+   * and/or Graceful Restart !
    */
   wrap = false ;                /* ie: one Option               */
 
   bgp_open_make_cap_option(sbr, br, !wrap) ;
 
-  if (!args->can_mp_ext)
+  if (args->can_mp_ext)
     bgp_open_make_cap_mp_ext(sbr, args->can_af, wrap) ;
 
-  bgp_open_make_cap_r_refresh(sbr, args->can_r_refresh, wrap) ;
+  bgp_open_make_cap_r_refresh(sbr, args->can_rr, wrap) ;
 
   if (args->can_as4)
-    bgp_open_make_cap_as4(sbr, open_state->my_as, wrap) ;
+    bgp_open_make_cap_as4(sbr, args->local_as, wrap) ;
 
   if (args->can_orf & bgp_form_rfc)
     {
@@ -1615,11 +1611,11 @@ bgp_open_options(blower br, bgp_open_state open_state)
       bool have ;
 
       have = bgp_open_prepare_orf_type(orf_type, BGP_CAP_ORFT_T_PFX,
-                            args->can_orf_pfx, bgp_form_rfc, args->can_mp_ext) ;
+                                args->can_orf_pfx, bgp_form_rfc, args->can_af) ;
       if (have)
         {
           bgp_open_make_cap_orf(sbr, BGP_CAN_ORF, 1, orf_type,
-                                                      args->can_mp_ext, wrap) ;
+                                                           args->can_af, wrap) ;
           if (!blow_is_ok(sbr))
             {
               goto quit ;
@@ -1637,11 +1633,11 @@ bgp_open_options(blower br, bgp_open_state open_state)
       bool have ;
 
       have = bgp_open_prepare_orf_type(orf_type, BGP_CAP_ORFT_T_PFX_pre,
-                            args->can_orf_pfx, bgp_form_pre, args->can_mp_ext) ;
+                                args->can_orf_pfx, bgp_form_pre, args->can_af) ;
       if (have)
         {
           bgp_open_make_cap_orf(sbr, BGP_CAN_ORF, 1, orf_type,
-                                                       args->can_mp_ext, wrap) ;
+                                                           args->can_af, wrap) ;
           if (!blow_is_ok(sbr))
             {
               goto quit ;
@@ -1651,15 +1647,17 @@ bgp_open_options(blower br, bgp_open_state open_state)
 
   if (args->can_dynamic_dep)
     {
+      args->can_dynamic_dep = false ;
     } ;
 
   if (args->can_dynamic)
     {
+      args->can_dynamic = false ;
     } ;
 
   if (args->gr.can)
     {
-      bgp_open_make_cap_gr(sbr, &args->gr, args->can_mp_ext, wrap) ;
+      bgp_open_make_cap_gr(sbr, &args->gr, args->can_af, wrap) ;
 
       if (!blow_is_ok(sbr))
         {
@@ -2064,13 +2062,13 @@ bgp_msg_write_rr(bgp_msg_writer writer, ptr_t rb_body, uint rb_length,
 
   msg_buff = bgp_msg_write_get_temp(writer, msg_size) ;
 
-  /* Decide early on what form of Route Refresh and ORF Prefix Type we can use,
-   * if any.
+  /* We prefer to use the RFC ROUTE-REFRESH message, and the RFC ORF Prefix
+   * type.
    */
   args = session->args ;
 
-  msg_type = (args->can_r_refresh == bgp_form_pre) ? BGP_MT_ROUTE_REFRESH_pre
-                                                   : BGP_MT_ROUTE_REFRESH ;
+  msg_type = (args->can_rr == bgp_form_pre) ? BGP_MT_ROUTE_REFRESH_pre
+                                            : BGP_MT_ROUTE_REFRESH ;
 
   if      (args->can_orf_pfx[rr->qafx] & ORF_SM)
     form = bgp_form_rfc ;

@@ -68,7 +68,8 @@ extern bgp_ret_t peer_timers_set (bgp_peer peer, uint keepalive,
                                                  uint holdtime) ;
 extern bgp_ret_t peer_timers_unset (bgp_peer peer);
 
-extern bgp_ret_t peer_timers_connect_set (bgp_peer peer, uint connect);
+extern bgp_ret_t peer_timers_connect_set (bgp_peer peer,
+                                                      uint connect_retry_secs) ;
 extern bgp_ret_t peer_timers_connect_unset (bgp_peer peer);
 
 extern bgp_ret_t peer_advertise_interval_set (bgp_peer, uint32_t);

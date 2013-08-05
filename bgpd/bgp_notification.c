@@ -318,6 +318,19 @@ bgp_notify_default(bgp_notify notification, bgp_nom_code_t code,
   return notification ;
 } ;
 
+/*------------------------------------------------------------------------------
+ * Duplicate or Create a new default Code and Subcode.
+ */
+extern bgp_notify
+bgp_notify_dup_default(bgp_notify notification, bgp_nom_code_t code,
+                                                      bgp_nom_subcode_t subcode)
+{
+  if (notification == NULL)
+    return bgp_notify_new(code, subcode) ;
+
+  return bgp_notify_dup(notification) ;
+} ;
+
 /*==============================================================================
  * Appending stuff to a notification
  */

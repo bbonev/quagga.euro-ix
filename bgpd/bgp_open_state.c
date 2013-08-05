@@ -45,12 +45,9 @@
  *
  * Zeroizing sets:
  *
- *   * my_as                -- BGP_ASN_NULL
- *   * my_as2               -- BGP_ASN_NULL
- *   * bgp_id               -- 0
- *
  *   * args                 -- see bgp_session_args_init_new() below
  *
+ *   * my_as2               -- BGP_ASN_NULL
  *   * afi_safi             -- empty vector -- embedded
  *   * unknowns             -- empty vector -- embedded
  */
@@ -81,12 +78,9 @@ bgp_open_state_init_new(bgp_open_state state)
  *
  * Sets:
  *
- *   * my_as                -- BGP_ASN_NULL
- *   * my_as2               -- BGP_ASN_NULL
- *   * bgp_id               -- 0
- *
  *   * args                 -- see bgp_session_args_reset() below
  *
+ *   * my_as2               -- BGP_ASN_NULL
  *   * afi_safi             -- empty vector
  *   * unknowns             -- empty vector
  */
@@ -96,11 +90,9 @@ bgp_open_state_reset(bgp_open_state state)
   if (state == NULL)
     return bgp_open_state_init_new(NULL) ;
 
-  state->my_as    = BGP_ASN_NULL ;
-  state->my_as2   = BGP_ASN_NULL ;
-  state->bgp_id   = 0 ;
-
   state->args     = bgp_session_args_reset(state->args) ;
+
+  state->my_as2   = BGP_ASN_NULL ;
 
   vector_clear(state->afi_safi, 0) ;
   vector_clear(state->unknowns, 0) ;
@@ -171,31 +163,39 @@ bgp_session_args_unset(bgp_session_args args)
  *
  * The args are already initialised to zero:
  *
- *   * cap_override           -- false
- *   * cap_strict             -- false
+ *   * local_as                 -- BGP_ASN_NULL
+ *   * local_id                 -- 0
  *
- *   * can_capability         -- false
- *   * can_mp_ext             -- false
- *   * can_as4                -- false
+ *   * remote_as                -- BGP_ASN_NULL
+ *   * remote_id                -- 0
  *
- *   * can_af                 -- empty
+ *   * can_capability           -- false
+ *   * can_mp_ext               -- false
+ *   * can_as4                  -- false
  *
- *   * can_r_refresh          -- bgp_form_none
+ *   * cap_suppressed           -- false
  *
- *   * gr.can                 -- false
- *   * gr.restarting          -- false
- *   * gr.restart_time        -- 0
- *   * gr.can_preserve        -- empty
- *   * gr.has_preserved       -- empty
+ *   * cap_af_override          -- false
+ *   * cap_strict               -- false
  *
- *   * can_orf                -- bgp_form_none
- *   * can_orf_pfx[]          -- all empty
+ *   * can_af                   -- empty
  *
- *   * can_dynamic            -- false
- *   * can_dynamic_dep        -- false
+ *   * can_rr                   -- bgp_form_none
  *
- *   * holdtime_secs          -- 0
- *   * keepalive_secs         -- 0
+ *   * gr.can                   -- false
+ *   * gr.restarting            -- false
+ *   * gr.restart_time          -- 0
+ *   * gr.can_preserve          -- empty
+ *   * gr.has_preserved         -- empty
+ *
+ *   * can_orf                  -- bgp_form_none
+ *   * can_orf_pfx[]            -- all empty
+ *
+ *   * can_dynamic              -- false
+ *   * can_dynamic_dep          -- false
+ *
+ *   * holdtime_secs            -- 0
+ *   * keepalive_secs           -- 0
  */
 extern bgp_session_args
 bgp_session_args_reset(bgp_session_args args)
@@ -207,7 +207,71 @@ bgp_session_args_reset(bgp_session_args args)
 
   memset(args, 0, sizeof(bgp_session_args_t)) ;
 
+  confirm(BGP_ASN_NULL == 0) ;
+
   return args ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Suppress a set of session arguments for not sending capabilities.
+ *
+ * Forces:
+ *
+ *   * cap_strict               -- false iff !can_capability
+ *
+ *                                 This means that cap_strict is suppressed if
+ *                                 capability negotiation is turned off by
+ *                                 configuration, but not by failure of the far
+ *                                 end to accept capabilities.
+ *
+ *   * can_af                   -- if !cap_af_override, mask qafx_ipv4_unicast
+ *
+ *   * can_capability           -- false
+ *   * can_mp_ext               -- false
+ *   * can_as4                  -- false
+ *
+ *   * can_rr                   -- bgp_form_none
+ *
+ *   * gr.can                   -- false
+ *   * gr.restarting            -- false
+ *   * gr.restart_time          -- 0
+ *   * gr.can_preserve          -- empty
+ *   * gr.has_preserved         -- empty
+ *
+ *   * can_orf                  -- bgp_form_none
+ *   * can_orf_pfx[]            -- all empty
+ *
+ *   * can_dynamic              -- false
+ *   * can_dynamic_dep          -- false
+ *
+ * But retains: cap_suppressed  -- so we know what is going on.
+ *
+ *              cap_af_override -- and any overridden can_af.
+ *
+ *              cap_strict      -- unless oriinally can_capability.
+ */
+extern void
+bgp_session_args_suppress(bgp_session_args args)
+{
+  if (!args->can_capability)
+    args->cap_strict     = false ;
+
+  if (!args->cap_af_override)
+    args->can_af        &= qafx_ipv4_unicast ;
+
+  args->can_capability   = false ;
+  args->can_mp_ext       = false ;
+  args->can_as4          = false ;
+
+  args->can_rr           = bgp_form_none ;
+
+  memset(&args->gr, 0, sizeof(args->gr)) ;
+
+  args->can_orf          = bgp_form_none ;
+  memset(&args->can_orf_pfx, 0, sizeof(args->can_orf_pfx)) ;
+
+  args->can_dynamic      = false ;
+  args->can_dynamic_dep  = false ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -263,256 +327,6 @@ bgp_open_state_set_mov(bgp_open_state dst, bgp_open_state* p_src)
 
   return dst ;
 } ;
-
-/*==============================================================================
- * Construction of bgp_open_state for sending OPEN message
- */
-
-#if 0
-/*------------------------------------------------------------------------------
- * Construct new bgp_open_state for the given peer -- allocate if required.
- *
- * Initialises the structure according to the current peer state.
- *
- * Sets: peer->cap         -- to what we intend to advertise, clearing
- *                            all the received state.
- *       peer->af_adv     -- to what we intend to advertise
- *       peer->af_rcv     -- cleared
- *       peer->af_use     -- cleared
- *
- * NB: if is PEER_FLAG_DONT_CAPABILITY, sets what would like to advertise, if
- *     could.
- *
- *     When (if) session becomes established, then if either
- *     PEER_FLAG_DONT_CAPABILITY or
- *
- * Returns:  address of existing or new bgp_open_state, initialised as required
- */
-extern bgp_open_state
-bgp_peer_open_state_init_new(bgp_open_state open_send, bgp_peer peer)
-{
-  qafx_t  qafx ;
-
-  /* Allocate if required.  Zeroise in any case.
-   */
-  open_send = bgp_open_state_init_new(open_send) ;
-
-  /* Reset what we expect to advertise and clear received and usable
-   * capabilities.
-   */
-  peer->caps_adv = 0 ;
-  peer->caps_rcv = 0 ;
-  peer->caps_use = 0 ;
-
-  peer->af_adv   = qafx_set_empty ;
-  peer->af_rcv   = qafx_set_empty ;
-  peer->af_use   = qafx_set_empty ;
-
-  for (qafx = qafx_first ; qafx <= qafx_last ; ++qafx)
-    {
-      peer_rib   prib ;
-      qafx_bit_t qb ;
-
-      prib = peer->prib[qafx] ;
-      qb   = qafx_bit(qafx) ;
-
-      qassert((prib != NULL) == (peer->af_configured & qb)) ;
-
-      if (prib == NULL)
-        qassert(!(peer->af_enabled & qb)) ;
-      else
-        {
-          prib->af_caps_adv = 0 ;
-          prib->af_caps_rcv = 0 ;
-          prib->af_caps_use = 0 ;
-        } ;
-    } ;
-
-  /* Set address families to announce/accept and whether we are sending
-   * any capabilities at all.
-   *
-   * PEER_FLAG_DONT_CAPABILITY
-   *
-   * This is set to avoid sending capabilities to a peer which is so broken
-   * that it will crash if it receives same.
-   *
-   * The effect is to force the open_state, peer->caps_adv, peer->af_adv etc.
-   * to the basic "No Capabilities" open_send, ie:
-   *
-   *   * IPv4 Unicast enabled
-   *
-   *   * nothing else
-   *
-   * The expectation is that the peer will not send any capabilities, so
-   * the result will the most basic session.
-   *
-   * If peer->af_enabled does not include IPv4 Unicast, then there is not
-   * much point bringing up the session... but it will try, and then drop.
-   *
-   * Except, if PEER_FLAG_OVERRIDE_CAPABILITY, when:
-   *
-   *   * the peer is deemed to behave as if peer->af_enabled afi/safi had been
-   *     advertised.
-   *
-   *   * and the peer is deemed to have advertised those afi/safi.
-   *
-   * So... we set the defaults and then adjust as required.
-   */
-  open_send->can_capability = true ;
-  open_send->can_mp_ext     = true ;
-  open_send->can_af         = peer->af_enabled ;
-
-  if (peer->flags & PEER_FLAG_DONT_CAPABILITY)
-    {
-      /* Turning off the sending of capabilities, as required by configuration.
-       *
-       * If is not also PEER_FLAG_OVERRIDE_CAPABILITY, then this means we
-       * are effectively only advertising IPv4 Unicast.
-       */
-      open_send->can_capability = false ;
-      open_send->can_mp_ext     = false ;
-
-      if (!(peer->flags & PEER_FLAG_OVERRIDE_CAPABILITY))
-        open_send->can_af &= qafx_ipv4_unicast_bit ;
-    } ;
-
-  /* Set the ASN we are peering as.
-   *
-   * For iBGP and Confederation peers, this will be bgp->as.
-   *
-   * For eBGP this will be peer->change_local_as, or bgp->confed_id or bgp->as
-   * in that order.
-   */
-  open_send->my_as  = peer->local_as ;
-  open_send->my_as2 = (peer->local_as > BGP_AS2_MAX ) ? BGP_ASN_TRANS
-                                                      : peer->local_as ;
-
-  /* Choose the appropriate hold time -- this follows the peer's configuration
-   * or the default for the bgp instance.
-   *
-   * It is probably true already, but enforces a minimum of 3 seconds for the
-   * hold time (if it is is not zero) -- per RFC4271.
-   */
-  open_send->holdtime = peer_get_holdtime(peer) ;
-
-  if ((open_send->holdtime < 3) && (open_send->holdtime != 0))
-    open_send->holdtime = 3 ;
-
-  /* Choose the appropriate keepalive time -- this follows the peer's
-   * configuration or the default for the bgp instance.
-   *
-   * It is probably true already, but enforces a maximum of holdtime / 3 for
-   * the keepalive time -- noting that holdtime cannot be 1 or 2 !
-   */
-  open_send->keepalive = peer_get_keepalive(peer) ;
-
-  if (open_send->keepalive > (open_send->holdtime / 3))
-    open_send->keepalive = (open_send->holdtime / 3) ;
-
-  /* Announce self as AS4 speaker if required
-   */
-  if (!bm->as2_speaker && open_send->can_capability)
-    {
-      peer->caps_adv |= PEER_CAP_AS4 ;
-      open_send->can_as4 = true ;
-    } ;
-
-  /* Fill in the supported AFI/SAFI and the RFC ORF capabilities.
-   */
-  for (qafx = qafx_first ; qafx <= qafx_last ; ++qafx)
-    {
-      peer_rib   prib ;
-      qafx_bit_t qb ;
-
-      prib = peer->prib[qafx] ;
-
-      if (prib == NULL)
-        continue ;
-
-      qb = qafx_bit(qafx) ;
-
-      if ((open_send->can_af & qb) && (open_send->can_capability))
-        {
-          /* For the families we are going to advertise, see if we wish to send
-           * or are prepared to receive Prefix ORF.
-           *
-           * At this stage we set the RFC Type -- deal with pre-RFC below.
-           */
-          if (prib->af_flags & PEER_AFF_ORF_PFX_SM)
-            open_send->can_orf_pfx_send_rfc |= qb ;
-          if (prib->af_flags & PEER_AFF_ORF_PFX_RM)
-            open_send->can_orf_pfx_recv_rfc |= qb ;
-        } ;
-    } ;
-
-  /* Arrange to send both RFC and pre forms of the ORF capability, as and
-   * where required...
-   *
-   * ...sends RFC capability if wishes to send and/or is willing to receive the
-   * Prefix ORF RFC Type, in at least one advertised family.
-   *
-   * ...sends pre-RFC capability if wishes to send and/or is willing to receive
-   * the Prefix ORF pre-RFC Type, in at least one advertised family.
-   */
-  open_send->can_orf_pfx_send_pre = open_send->can_orf_pfx_send_rfc ;
-  open_send->can_orf_pfx_recv_pre = open_send->can_orf_pfx_recv_rfc ;
-
-  open_send->can_orf = bgp_form_none ;
-  if (open_send->can_orf_pfx_send_rfc | open_send->can_orf_pfx_recv_rfc)
-    open_send->can_orf |= bgp_form_rfc ;
-  if (open_send->can_orf_pfx_send_pre | open_send->can_orf_pfx_recv_pre)
-    open_send->can_orf |= bgp_form_pre ;
-
-  /* Route refresh -- always advertise both forms
-   */
-  if (open_send->can_capability)
-    {
-      peer->caps_adv |= PEER_CAP_RR | PEER_CAP_RR_old ;
-      open_send->can_r_refresh = bgp_form_pre | bgp_form_rfc ;
-    } ;
-
-  /* Dynamic Capabilities
-   *
-   * TODO: currently not supported, no how.
-   */
-  open_send->can_dynamic_dep = false && open_send->can_capability ;
-  if (open_send->can_dynamic_dep)
-    peer->caps_adv |= PEER_CAP_DYNAMIC_dep ;
-
-  open_send->can_dynamic = false && open_send->can_capability;
-  if (open_send->can_dynamic)
-    peer->caps_adv |= PEER_CAP_DYNAMIC ;
-
-  /* Graceful restart capability
-   */
-  if ((peer->bgp->flags & BGP_FLAG_GRACEFUL_RESTART) &&
-                                                      open_send->can_capability)
-    {
-      peer->caps_adv |= PEER_CAP_GR ;
-      open_send->can_g_restart    = true ;
-      open_send->gr.restart_time  = peer->bgp->restart_time ;
-    }
-  else
-    {
-      open_send->can_g_restart    = false ;
-      open_send->gr.restart_time  = 0 ;
-    } ;
-
-  /* TODO: check not has restarted and not preserving forwarding open_send (?)
-   */
-  open_send->gr.can_preserve    = 0 ;   /* cannot preserve forwarding     */
-  open_send->gr.has_preserved   = 0 ;   /* has not preserved forwarding   */
-  open_send->gr.restarting      = false ;       /* is not restarting      */
-
-  /* After all that... if PEER_FLAG_DONT_CAPABILITY we should be advertising
-   *                   nothing at all, capabilities-wise !
-   */
-  if (peer->flags & PEER_FLAG_DONT_CAPABILITY)
-    qassert(peer->caps_adv == PEER_CAP_NONE) ;
-
-  return open_send;
-} ;
-#endif
 
 /*==============================================================================
  * Unknown capabilities handling.
@@ -657,302 +471,6 @@ bgp_open_state_afi_safi_cmp(const cvp* pp_val, const cvp* item)
 } ;
 
 /*==============================================================================
- *
- */
-
-/*------------------------------------------------------------------------------
- * Received an open, update the peer's state
- *
- * Takes the: peer->session->open_sent  ) these are set when the session is
- *            peer->session->open_recv  ) established, and not changed again
- *            peer->session->args       ) by the BE.
- *
- * and fills in:
- *
- *   peer->current_holdtime    ) per negotiated values
- *   peer->current_keepalive   )
- *
- *   peer->remote_id
- *
- *   peer->cap_adv          -- as *actually* advertised
- *   peer->cap_rcv          -- as received
- *   peer->cap_use          -- result
- *
- *   peer->af_adv           -- as *actually* advertised (perhaps implicitly)
- *   peer->af_rcv           -- as received (perhaps implicitly)
- *   peer->af_use           -- result
- *   peer->af_running       -- copy of af_use
- *
- * and for each configured address family
- *
- *   prib->af_caps_adv      -- as *actually* advertised
- *   prib->af_caps_rcv      -- as received
- *   prib->af_caps_use      -- result
- */
-void
-bgp_peer_open_state_receive(bgp_peer peer)
-{
-  bgp_session        session ;
-  bgp_open_state_c   open_recv, open_sent ;
-  bgp_session_args_c session_args, args_sent, args_recv ;
-  qafx_t             qafx ;
-
-  session      = peer->session;
-  session_args = session->args ;
-
-  open_recv    = session->open_recv ;
-  args_recv    = open_recv->args ;
-
-  open_sent    = session->open_sent ;
-  args_sent    = open_sent->args ;
-
-  /* Prepare received capabilities and those we therefore expect to use.
-   *
-   * We also set the advertised capabilities to what were actually advertised.
-   * This should not change anything, unless we had to suppress capabilities
-   * (because the far end refused).  Note:
-   *
-   *   * if PEER_FLAG_DONT_CAPABILITY, then we will end up with
-   *     peer->caps_adv == PEER_CAP_NONE, so signal that we set out to
-   *     advertise nothing.
-   *
-   *   * peer->caps_use will have PEER_CAP_NONE to signal that outbound
-   *     capabilities were suppressed.
-   *
-   *     But note that some inbound capabilities will still be usable
-   *     (e.g. Route Refresh).
-   */
-  if      (args_sent->can_capability)
-    {
-      peer->caps_adv  = 0 ;
-      peer->caps_use  = 0 ;
-    }
-  else if (args_sent->cap_suppressed)
-    {
-      peer->caps_adv  = 0 ;
-      peer->caps_use  = PEER_CAP_NONE ;
-    }
-  else
-    {
-      peer->caps_adv  = PEER_CAP_NONE ;
-      peer->caps_use  = 0 ;
-    } ;
-
-  if (args_recv->can_capability)
-    peer->caps_rcv = 0 ;
-  else
-    peer->caps_rcv = PEER_CAP_NONE ;
-
-  for (qafx = qafx_first ; qafx <= qafx_last ; ++qafx)
-    {
-      peer_rib   prib ;
-      qafx_bit_t qb ;
-
-      prib = peer->prib[qafx] ;
-      qb   = qafx_bit(qafx) ;
-
-      qassert((prib != NULL) == (peer->af_configured & qb)) ;
-
-      if (prib == NULL)
-        continue ;
-
-      prib->af_caps_adv = 0 ;
-      prib->af_caps_rcv = 0 ;
-      prib->af_caps_use = 0 ;
-
-      prib->af_orf_pfx_adv = 0 ;
-      prib->af_orf_pfx_rcv = 0 ;
-      prib->af_orf_pfx_use = 0 ;
-    } ;
-
-  /* The BGP Engine sets the session's HoldTimer and KeepaliveTimer intervals
-   * to the values negotiated when the OPEN messages were exchanged.
-   */
-  peer->current_holdtime  = session_args->holdtime_secs ;
-  peer->current_keepalive = session_args->keepalive_secs ;
-
-  /* Set remote router-id
-   */
-  peer->remote_id = open_recv->bgp_id;
-
-  /* AS4
-   */
-  if (args_sent->can_as4)
-    peer->caps_adv |= PEER_CAP_AS4 ;
-
-  if (args_recv->can_as4)
-    peer->caps_rcv |= PEER_CAP_AS4 ;
-
-  if (session_args->can_as4)
-    peer->caps_use |= PEER_CAP_AS4 ;
-
-  /* AFI/SAFI -- as received, or assumed or overridden
-   *
-   * TODO is it possible that afc_use now includes stuff which has been
-   *      deactivated or disabled ??
-   */
-  if (args_sent->can_mp_ext)
-    peer->caps_adv |= PEER_CAP_MP_EXT ;
-
-  if (args_recv->can_mp_ext)
-    peer->caps_rcv |= PEER_CAP_MP_EXT ;
-
-  if (session_args->can_mp_ext)
-    peer->caps_use |= PEER_CAP_MP_EXT ;
-
-  if (!args_recv->can_mp_ext)
-    qassert(args_recv->can_af == qafx_ipv4_unicast_bit) ;
-
-  peer->af_adv     = args_sent->can_af ;
-  peer->af_rcv     = args_recv->can_af ;
-  peer->af_use     = session_args->can_af ;
-  peer->af_running = session_args->can_af ;
-
-  /* Route Refresh.
-   */
-  if (args_sent->can_r_refresh & bgp_form_rfc)
-    peer->caps_adv |= PEER_CAP_RR ;
-  if (args_sent->can_r_refresh & bgp_form_pre)
-    peer->caps_adv |= PEER_CAP_RR_old ;
-
-  if (args_recv->can_r_refresh & bgp_form_rfc)
-    peer->caps_rcv |= PEER_CAP_RR ;
-  if (args_recv->can_r_refresh & bgp_form_pre)
-    peer->caps_rcv |= PEER_CAP_RR_old ;
-
-  if      (session_args->can_r_refresh & bgp_form_rfc)
-    peer->caps_use |= PEER_CAP_RR ;
-  else if (session_args->can_r_refresh & bgp_form_pre)
-    peer->caps_use |= PEER_CAP_RR | PEER_CAP_RR_old ;
-
-  /* Graceful restart
-   *
-   * NB: appear not to care about args_recv->restarting !
-   */
-  if (args_sent->gr.can)
-    peer->caps_adv |= PEER_CAP_GR ;
-  if (args_recv->gr.can)
-    peer->caps_rcv |= PEER_CAP_GR ;
-  if (session_args->gr.can)
-    peer->caps_use |= PEER_CAP_GR ;
-
-  for (qafx = qafx_first ; qafx <= qafx_last ; ++qafx)
-    {
-      peer_rib prib ;
-      qafx_bit_t qb ;
-
-      qb = qafx_bit(qafx) ;
-
-      if (!(peer->af_configured & qb))
-        continue ;
-
-      prib = peer->prib[qafx] ;
-      qassert(prib != NULL) ;
-
-      if (qb & args_sent->gr.can_preserve)
-        {
-          prib->af_caps_adv |= PEER_AF_CAP_GR_CAN_PRESERVE ;
-          if (qb & args_sent->gr.has_preserved)
-            prib->af_caps_adv |= PEER_AF_CAP_GR_HAS_PRESERVED ;
-        } ;
-
-      if (qb & args_recv->gr.can_preserve)
-        {
-          prib->af_caps_rcv |= PEER_AF_CAP_GR_CAN_PRESERVE ;
-          if (qb & args_recv->gr.has_preserved)
-            prib->af_caps_rcv |= PEER_AF_CAP_GR_HAS_PRESERVED ;
-        } ;
-
-      if (qb & session_args->gr.can_preserve)
-        {
-          prib->af_caps_use |= PEER_AF_CAP_GR_CAN_PRESERVE ;
-          if (qb & session_args->gr.has_preserved)
-            prib->af_caps_use |= PEER_AF_CAP_GR_HAS_PRESERVED ;
-        } ;
-    }
-
-  peer->v_gr_restart = args_recv->gr.restart_time;
-  /* TODO: should we do anything with this? */
-#if 0
-  int         restarting ;            /* Restart State flag                 */
-#endif
-  /* ORF
-   *
-   * There are two Capabilities for ORF -- RFC and pre-RFC.  There are two
-   * types for Prefix ORF -- also RFC and pre-RFC.  There are, therefore,
-   * four possible settings for "wish to send" and "willing to receive", but
-   * we rather expect that only the RFC type will be advertised by the RFC
-   * capability, and only the pre-RFC type will be advertised by the pre-RFC
-   * capability.  However:
-   *
-   *   * any setting provided by the RFC capability takes precedence over any
-   *     setting provided by the pre-RFC capability.
-   *
-   *     The capability handling code does this, and issues suitable logging
-   *     message(s) if there are any inconsistent settings.
-   *
-   *   * any setting provided for an RFC type takes precedence over any
-   *     setting provided for a pre-RFC type.
-   *
-   *     We do that here, and issue suitable logging message(s) if there are
-   *     inconsistent settings.
-   *
-   * We record exactly what we advertised and what we received.  This is
-   * tedious, but improves the diagnostic and other information.
-   *
-   * For actual use we record whether to send or receive Prefix ORF, and if
-   * we did not receive the RFC type, set pre-RFC so that we use that.  (So,
-   * use RFC Type for preference.)
-   */
-  if (args_sent->can_orf & bgp_form_rfc)
-    peer->caps_adv |= PEER_CAP_ORF ;
-  if (args_sent->can_orf & bgp_form_pre)
-    peer->caps_adv |= PEER_CAP_ORF_pre ;
-
-  if (args_recv->can_orf & bgp_form_rfc)
-    peer->caps_rcv |= PEER_CAP_ORF ;
-  if (args_recv->can_orf & bgp_form_pre)
-    peer->caps_rcv |= PEER_CAP_ORF_pre ;
-
-  if      (session_args->can_orf & bgp_form_rfc)
-    peer->caps_use |= PEER_CAP_ORF ;
-  else if (session_args->can_orf & bgp_form_rfc)
-    peer->caps_use |= PEER_CAP_ORF | PEER_CAP_ORF_pre ;
-
-  for (qafx = qafx_first ; qafx <= qafx_last ; ++qafx)
-    {
-      peer_rib prib ;
-
-      if (!(peer->af_configured & qafx_bit(qafx)))
-        continue ;
-
-      prib = peer->prib[qafx] ;
-      qassert(prib != NULL) ;
-
-      prib->af_orf_pfx_adv = args_sent->can_orf_pfx[qafx] ;
-      prib->af_orf_pfx_rcv = args_recv->can_orf_pfx[qafx] ;
-      prib->af_orf_pfx_use = session_args->can_orf_pfx[qafx] ;
-    } ;
-
-  /* Dynamic Capabilities -- never used !!
-   */
-  if (args_sent->can_dynamic)
-    peer->caps_adv |= PEER_CAP_DYNAMIC ;
-  if (args_sent->can_dynamic_dep)
-    peer->caps_adv |= PEER_CAP_DYNAMIC_dep ;
-
-  if (args_recv->can_dynamic)
-    peer->caps_rcv |= PEER_CAP_DYNAMIC ;
-  if (args_recv->can_dynamic_dep)
-    peer->caps_rcv |= PEER_CAP_DYNAMIC_dep ;
-
-  if      (session_args->can_dynamic)
-    peer->caps_use |= PEER_CAP_DYNAMIC ;
-  else if (session_args->can_dynamic_dep)
-    peer->caps_use |= PEER_CAP_DYNAMIC | PEER_CAP_DYNAMIC_dep ;
-} ;
-
-/*==============================================================================
  * Functions for constructing various OPEN Message Capabilities
  *
  * Unpacked here so can be used when constructing an OPEN message and when
@@ -1029,7 +547,7 @@ bgp_open_make_cap_as4(blower br, as_t my_as, bool wrap)
  * Do nothing if the set is empty.
  */
 extern void
-bgp_open_make_cap_mp_ext(blower br, qafx_set_t mp, bool wrap)
+bgp_open_make_cap_mp_ext(blower br, const qafx_set_t mp, bool wrap)
 {
   qafx_t qafx ;
 
@@ -1110,7 +628,7 @@ bgp_open_make_cap_r_refresh(blower br, bgp_form_t form, bool wrap)
  * Then scans the given vector for any address family for which we wish to
  * advertise the given type of ORF, in the given form(s).
  *
- * If !can_mp_ext, only considers IPv4/Unicast.
+ * Discards anything not included in the given can_af.
  *
  * For an RFC orft will usually specify bgp_form_rfc, and for a pre-RFC orft,
  * a bgp_form_pre.
@@ -1119,10 +637,10 @@ bgp_open_make_cap_r_refresh(blower br, bgp_form_t form, bool wrap)
  */
 extern bool
 bgp_open_prepare_orf_type(bgp_open_orf_type orf_type, uint8_t orft,
-                          bgp_orf_cap_v modes, bgp_form_t form, bool can_mp_ext)
+                        bgp_orf_cap_v modes, bgp_form_t form, qafx_set_t can_af)
 {
   bgp_orf_cap_bits_t want ;
-  qafx_t qafx, last ;
+  qafx_t qafx ;
 
   orf_type->type = orft ;
   orf_type->sm   = 0 ;
@@ -1134,23 +652,22 @@ bgp_open_prepare_orf_type(bgp_open_orf_type orf_type, uint8_t orft,
   if (form & bgp_form_pre)
     want |= ORF_SM_pre | ORF_RM_pre ;
 
-  if (can_mp_ext)
-    last = qafx_last ;
-  else
-    last = qafx_ipv4_unicast ;
-
-  confirm(qafx_ipv4_unicast == qafx_first) ;
-
-  for (qafx = qafx_first ; qafx <= last ; ++qafx)
+  for (qafx = qafx_first ; qafx <= qafx_last ; ++qafx)
     {
+      qafx_bit_t qb ;
       bgp_orf_cap_bits_t have ;
+
+      qb = qafx_bit(qafx) ;
+
+      if (!(can_af & qb))
+        continue ;
 
       have = modes[qafx] & want ;
 
       if (have & (ORF_SM | ORF_SM_pre))
-        orf_type->sm |= qafx_bit(qafx) ;
+        orf_type->sm |= qb ;
       if (have & (ORF_RM | ORF_RM_pre))
-        orf_type->rm |= qafx_bit(qafx) ; ;
+        orf_type->rm |= qb ; ;
     } ;
 
   return ((orf_type->sm | orf_type->rm) != 0) ;
@@ -1164,12 +681,11 @@ bgp_open_prepare_orf_type(bgp_open_orf_type orf_type, uint8_t orft,
  * do so... we here send the RFC type in the RFC Capability, and the pre-RFC
  * type in the pre-RFC Capabilitity.
  *
- * Does nothing if no send or recv afi/safi.  Noting that if cannot send MP-Ext
- * will only consider IPv4/Unicast.
+ * Does nothing if no send or recv afi/safi -- masked down to the given can_af.
  */
 extern void
 bgp_open_make_cap_orf(blower br, uint8_t cap_code, uint count,
-                        bgp_open_orf_type_t types[], bool can_mp_ext, bool wrap)
+                      bgp_open_orf_type_t types[], qafx_set_t can_af, bool wrap)
 {
   uint       i ;
   qafx_set_t set ;
@@ -1183,8 +699,7 @@ bgp_open_make_cap_orf(blower br, uint8_t cap_code, uint count,
   for (i = 0 ; i < count ; ++i)
     set |= types[i].sm | types[i].rm ;
 
-  if (!can_mp_ext)
-    set &= qafx_ipv4_unicast_bit ;
+  set &= can_af ;
 
   if (set == 0)
     return ;
@@ -1266,11 +781,11 @@ bgp_open_make_cap_orf(blower br, uint8_t cap_code, uint count,
  * Create Graceful Restart capability
  */
 extern void
-bgp_open_make_cap_gr(blower br, bgp_session_args_gr cap_gr, bool can_mp_ext,
+bgp_open_make_cap_gr(blower br, bgp_session_args_gr cap_gr, qafx_set_t can_af,
                                                                       bool wrap)
 {
   uint16_t restart_state ;
-  qafx_t   qafx, last ;
+  qafx_t   qafx ;
   blower_t sbr[1], cbr[1] ;
 
   /* The leading part of the capability
@@ -1298,23 +813,14 @@ bgp_open_make_cap_gr(blower br, bgp_session_args_gr cap_gr, bool can_mp_ext,
   blow_w(cbr, restart_state);
 
   /* Now, one entry per AFI/SAFI for which can_preserve forwarding.
-   *
-   * Noting that if we cannot do NP-Ext, we can only do IPv4/Unicast
    */
-  if (can_mp_ext)
-    last = qafx_last ;
-  else
-    last = qafx_ipv4_unicast ;
-
-  confirm(qafx_ipv4_unicast == qafx_first) ;
-
-  for (qafx = qafx_first ; qafx <= last ; ++qafx)
+  for (qafx = qafx_first ; qafx <= qafx_last ; ++qafx)
     {
       qafx_bit_t qb ;
 
       qb = qafx_bit(qafx) ;
 
-      if (!(cap_gr->can_preserve & qb))
+      if (!(cap_gr->can_preserve & qb & can_af))
         continue ;
 
       blow_has_not_overrun(cbr) ;

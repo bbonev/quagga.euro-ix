@@ -91,6 +91,8 @@ extern bgp_notify bgp_notify_reset(bgp_notify notification,
                                bgp_nom_code_t code, bgp_nom_subcode_t subcode) ;
 extern bgp_notify bgp_notify_default(bgp_notify notification,
                                bgp_nom_code_t code, bgp_nom_subcode_t subcode) ;
+extern bgp_notify bgp_notify_dup_default(bgp_notify notification,
+                               bgp_nom_code_t code, bgp_nom_subcode_t subcode) ;
 
 extern bgp_notify bgp_notify_append_data(bgp_notify notification,
                                                    const void* data, uint len) ;

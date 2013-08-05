@@ -434,7 +434,7 @@ route_match_ip_route_source (void* value, prefix_c pfx, route_map_object_t type,
     return RMAP_NOT_MATCH;
 
   p.family    = AF_INET;
-  p.prefix    = brm->peer->su_name.sin.sin_addr;
+  p.prefix    = brm->peer->su_name->sin.sin_addr;
   p.prefixlen = IPV4_MAX_BITLEN;
 
   if (access_list_apply (*(access_list*)value, &p) == FILTER_PERMIT)
@@ -472,7 +472,7 @@ route_match_ip_route_source_prefix_list (void* value, prefix_c pfx,
     return RMAP_NOT_MATCH;
 
   p.family    = AF_INET;
-  p.prefix    = brm->peer->su_name.sin.sin_addr;
+  p.prefix    = brm->peer->su_name->sin.sin_addr;
   p.prefixlen = IPV4_MAX_BITLEN;
 
   if (prefix_list_apply (*(prefix_list*)value, &p) == PREFIX_PERMIT)
@@ -1158,9 +1158,9 @@ route_set_ip_nexthop (void* value, prefix_c pfx,
 
       if (brm->rmap_type & (BGP_RMAP_TYPE_IN | BGP_RMAP_TYPE_RS_IN
                                              | BGP_RMAP_TYPE_IMPORT) )
-        su = brm->peer->su_remote ;
+        su = brm->peer->session->cops->su_remote ;
       else if (brm->rmap_type & BGP_RMAP_TYPE_OUT)
-        su = brm->peer->su_local ;
+        su = brm->peer->session->cops->su_local ;
       else
         su = NULL ;
 

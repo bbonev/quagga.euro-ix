@@ -107,13 +107,10 @@ const map_direct_t bgp_fsm_event_map =
  */
 const char* const bgp_peer_status_map_body[] =
 {
-//[bgp_peer_pClearing]     = "Clearing",
-
   [bgp_pDisabled]     = "Idle (Disabled)",
   [bgp_pEnabled]      = "Idle (Enabled)",
   [bgp_pEstablished]  = "Established",
-  [bgp_pLimping]      = "Down (Limping)",
-  [bgp_pDown]         = "Down",
+  [bgp_pClearing]     = "Clearing",
   [bgp_pDeleting]     = "Deleting",
 };
 

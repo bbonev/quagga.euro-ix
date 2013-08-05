@@ -341,7 +341,8 @@ int
 if_is_operative (struct interface *ifp)
 {
   return ((ifp->flags & IFF_UP) &&
-          (ifp->flags & IFF_RUNNING || !CHECK_FLAG(ifp->status, ZEBRA_INTERFACE_LINKDETECTION)));
+          ( (ifp->flags & IFF_RUNNING)
+                 || !CHECK_FLAG(ifp->status, ZEBRA_INTERFACE_LINKDETECTION) )) ;
 }
 
 /* Is this loopback interface ? */
@@ -649,8 +650,9 @@ connected_free (struct connected *connected)
   XFREE (MTYPE_CONNECTED, connected);
 }
 
+#if 0
 /* Print if_addr structure. */
-static void __attribute__ ((unused))
+static void
 connected_log (struct connected *connected, char *str)
 {
   struct prefix *p;
@@ -674,6 +676,7 @@ connected_log (struct connected *connected, char *str)
     }
   zlog (NULL, LOG_INFO, "%s", logbuf);
 }
+#endif
 
 /* If two connected address has same prefix return 1. */
 static int

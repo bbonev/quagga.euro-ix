@@ -613,7 +613,7 @@ bgp_show_mpls_vpn (vty vty, const char* rd_str, enum bgp_show_type type,
             {
               sockunion su ;
 
-              su = ri->prib->peer->su_remote ;
+              su = ri->prib->peer->session->cops->su_remote ;
 
               if ((su == NULL) || ! sockunion_same(su, (sockunion)output_arg))
                 continue;
@@ -693,7 +693,7 @@ bgp_show_mpls_vpn_neighbor (vty vty, const char* rd_str,
   if (peer == NULL)
     return CMD_WARNING;
 
-  return bgp_show_mpls_vpn (vty, rd_str, bgp_show_type_neighbor, &peer->su_name,
+  return bgp_show_mpls_vpn (vty, rd_str, bgp_show_type_neighbor, peer->su_name,
                                                                          tags) ;
 } ;
 

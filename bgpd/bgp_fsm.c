@@ -429,9 +429,129 @@
  * matters to it !
  */
 
+/*==============================================================================
+ * Starting up and closing down sessions and connections.
+ */
+static bgp_notify bgp_fsm_admin_event(bgp_connection connection,
+                           bgp_fsm_event_t fsm_event, bgp_notify notification) ;
+static void bgp_fsm_raise_meta_event(bgp_connection connection,
+                                                      bgp_fsm_meta_t fsm_meta) ;
 
+/*------------------------------------------------------------------------------
+ * Enable the given session -- must be sInitial or sStopped.
+ *
+ * This is the first step in the FSM, and the connections advance to fsIdle.
+ *
+ * Returns in something of a hurry if not enabled for connect() or for accept().
+ */
+extern void
+bgp_fsm_enable_session(bgp_session session)
+{
+  qassert( (session->state == bgp_sInitial) ||
+           (session->state == bgp_sStopped)) ;
 
+  qassert(session->connections[bc_connect] == NULL) ;
+  qassert(session->connections[bc_accept]  == NULL) ;
+  qassert(session->connections[bc_estd]    == NULL) ;
 
+  memset(session->connections, 0, sizeof(session->connections)) ;
+
+  /* Accept and/or Connect connections enabled now
+   */
+  if (session->cops_config->conn_state == bc_is_enabled)
+    {
+      if (session->cops_config->conn_let & bc_can_connect)
+        bgp_fsm_enable_connection(session, bc_connect) ;
+
+      if (session->cops_config->conn_let & bc_can_accept)
+        bgp_fsm_enable_connection(session, bc_accept) ;
+    } ;
+
+  if ( (session->connections[bc_connect] != NULL) ||
+       (session->connections[bc_accept] != NULL))
+    {
+      /* One or both connections enabled.
+       */
+      session->state = bgp_sAcquiring ;
+    }
+  else
+    {
+      /* Proceed instantly to a dead stop if neither accept nor connect !
+       */
+      bgp_session_event(session, bgp_session_eInvalid, NULL, 0, 0, 1) ;
+    } ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Ultimate exception -- disable the session
+ *
+ * If session is enabled (one or both connections exist), then brings it to
+ * a halt, issuing the given notification (if any).
+ *
+ * If neither connection exists (which implies the session has already been
+ * disabled, or never got off the ground), then has nothing to do, and discards
+ * the notification.
+ *
+ * In all cases, returns a bgp_session_eDisabled event.
+ *
+ * NB: takes responsibility for the given notification.
+ */
+extern bgp_notify
+bgp_fsm_disable_session(bgp_session session, bgp_notify notification)
+{
+  bgp_connection connection ;
+
+  if ((connection = session->connections[bc_connect]) != NULL)
+    bgp_fsm_disable_connection(connection, bgp_notify_dup(notification)) ;
+
+  if ((connection = session->connections[bc_accept]) != NULL)
+    bgp_fsm_disable_connection(connection, bgp_notify_dup(notification)) ;
+
+  return bgp_notify_free(notification) ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Enable connection for session, trying to connect() or accept()
+ */
+extern void
+bgp_fsm_enable_connection(bgp_session session, bgp_conn_ord_t ord)
+{
+  bgp_connection connection ;
+
+  qassert(session->connections[ord] == NULL) ;
+
+  connection = bgp_connection_init_new(NULL, session, ord) ;
+
+  /* Set an fmRun meta-event so is set running and is added to the ring.
+   *
+   * Then throw a manual start to set a high priority event... so that the
+   * fsNULL FSM state has a very, very restricted set of things to worry about.
+   */
+  bgp_fsm_raise_meta_event(connection, bgp_fmRun) ;
+  bgp_fsm_admin_event(connection, bgp_feManualStart, NULL) ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Restart the given connection.
+ *
+ * NB: takes responsibility for the given notification.
+ */
+extern void
+bgp_fsm_restart_connection(bgp_connection connection, bgp_notify notification)
+{
+  return bgp_fsm_admin_event(connection, bgp_feRestart, notification) ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Disable (stop) the given connection.
+ *
+ * NB: takes responsibility for the given notification.
+ */
+extern void
+bgp_fsm_disable_connection(bgp_connection connection, bgp_notify notification)
+{
+  return bgp_fsm_admin_event(connection, bgp_feManualStop, notification) ;
+} ;
 
 /*==============================================================================
  * The bgp_fsm_event mechanics.
@@ -484,7 +604,7 @@ bgp_fsm_events_flush(bgp_connection connection)
  * Raising a straightforward event
  */
 static void
-bgp_fsm_raise_event(bgp_connection connection, bgp_fsm_meta_t fsm_meta)
+bgp_fsm_raise_meta_event(bgp_connection connection, bgp_fsm_meta_t fsm_meta)
 {
   connection->meta_events |= fsm_meta ;
 
@@ -616,6 +736,7 @@ bgp_fsm_meta_event(bgp_connection connection, bgp_fsm_eqb eqb)
           qassert( (fsm_event == bgp_feManualStop)        ||
                    (fsm_event == bgp_feAutomaticStop)     ||
                    (fsm_event == bgp_feOpenCollisionDump) ||
+                   (fsm_event == bgp_feManualStart)       ||
                    (fsm_event == bgp_feRestart)           ||
                    (fsm_event == bgp_feBGPOpenMsgErr) ) ;
           eqb->notification = connection->admin_notif ;
@@ -723,8 +844,10 @@ bgp_fsm_meta_event(bgp_connection connection, bgp_fsm_eqb eqb)
  *
  * Accepts a small number of feXxxx, and sets the event iff there isn't a
  * higher priority event already raised.
+ *
+ * NB: takes responsibility for the given notification.
  */
-extern void
+static bgp_notify
 bgp_fsm_admin_event(bgp_connection connection, bgp_fsm_event_t fsm_event,
                                                         bgp_notify notification)
 {
@@ -732,9 +855,10 @@ bgp_fsm_admin_event(bgp_connection connection, bgp_fsm_event_t fsm_event,
     {
       [bgp_feManualStop]        = 1,
       [bgp_feAutomaticStop]     = 2,
-      [bgp_feOpenCollisionDump] = 3,
-      [bgp_feRestart]           = 4,
-      [bgp_feBGPOpenMsgErr]     = 5,
+      [bgp_feManualStart]       = 3,
+      [bgp_feOpenCollisionDump] = 4,
+      [bgp_feRestart]           = 5,
+      [bgp_feBGPOpenMsgErr]     = 6,
     } ;
 
   uint current_priority, new_priority ;
@@ -763,8 +887,12 @@ bgp_fsm_admin_event(bgp_connection connection, bgp_fsm_event_t fsm_event,
       connection->admin_event  = fsm_event ;
       connection->admin_notif  = notification ;
 
-      bgp_fsm_raise_event(connection, bgp_fmAdmin) ;
+      bgp_fsm_raise_meta_event(connection, bgp_fmAdmin) ;
+
+      notification = NULL ;
     } ;
+
+  return bgp_notify_free(notification) ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -874,7 +1002,7 @@ bgp_fsm_connect_event(bgp_connection connection, int sock_fd, int err)
       connection->socket_err   = err ;
       connection->socket_event = fsm_event ;
 
-      bgp_fsm_raise_event(connection, bgp_fmSocket) ;
+      bgp_fsm_raise_meta_event(connection, bgp_fmSocket) ;
     } ;
 } ;
 
@@ -987,7 +1115,7 @@ bgp_fsm_accept_event(bgp_session session, bgp_fsm_event_t fsm_event)
             /* We do not have an accept connection, in sAcquiring state,
              * so... we must not be prepared to accept !
              */
-            qassert(!session->cops_config->accept) ;
+            qassert(session->cops_config->conn_let & bc_no_accept) ;
             fsm_event = bgp_feNULL ;            /* ignore       */
           }
         else
@@ -1053,112 +1181,10 @@ bgp_fsm_accept_event(bgp_session session, bgp_fsm_event_t fsm_event)
   if (fsm_event != bgp_feNULL)
     {
       connection->socket_event = fsm_event ;
-      bgp_fsm_raise_event(connection, bgp_fmSocket) ;
+      bgp_fsm_raise_meta_event(connection, bgp_fmSocket) ;
     } ;
 } ;
 
-/*==============================================================================
- */
-
-#if 0
-
-
-
-/*==============================================================================
- * Enable the given session -- which must be newly initialised.
- *
- * This is the first step in the FSM, and the connection advances to Idle.
- *
- * Returns in something of a hurry if not enabled for connect() or for accept().
- *
- * NB: requires the session LOCKED
- */
-extern void
-bgp_fsm_enable_session(bgp_session session)
-{
-  bgp_connection connection ;
-
-  /* Proceed instantly to a dead stop if neither connect nor listen !
-   */
-  if (!(session->connect || session->listen))
-    {
-      bgp_session_event(session, bgp_session_eInvalid, NULL, 0, 0, 1) ;
-      return ;
-    } ;
-
-  /* Primary connection -- if connect allowed
-   *
-   * NB: the start event for the primary connection is guaranteed to succeed,
-   *     and nothing further will happen until the initial IdleHoldTimer
-   *     expires -- always has a small, non-zero time.
-   *
-   *     This ensures that the secondary connection can be started before
-   *     there's any change of the session being torn down !!
-   */
-  if (session->connect)
-    {
-      connection = bgp_connection_init_new(NULL, session,
-                                                       bgp_connection_primary) ;
-      bgp_fsm_event(connection, bgp_fsm_eStart) ;
-    } ;
-
-  /* Secondary connection -- if listen allowed
-   */
-  if (session->listen)
-    {
-      connection = bgp_connection_init_new(NULL, session,
-                                                     bgp_connection_secondary) ;
-      bgp_fsm_event(connection, bgp_fsm_eStart) ;
-    } ;
-} ;
-
- /*=============================================================================
- * Signalling events and throwing exceptions.
- *
- */
-
-/*------------------------------------------------------------------------------
- * Ultimate exception -- disable the session
- *
- * If session is enabled (one or both connections exist), then brings it to
- * a halt, issuing the given notification (if any).
- *
- * If neither connection exists (which implies the session has already been
- * disabled, or never got off the ground), then has nothing to do, and discards
- * the notification.
- *
- * In all cases, returns a bgp_session_eDisabled event.
- *
- * NB: takes responsibility for the notification structure.
- *
- * NB: requires the session LOCKED
- */
-extern void
-bgp_fsm_disable_session(bgp_session session, bgp_notify notification)
-{
-  bgp_connection connection ;
-
-  connection = session->connections[bgp_connection_primary] ;
-  if (connection == NULL)
-    connection = session->connections[bgp_connection_secondary] ;
-
-  if (connection != NULL)
-    {
-      /* One or both connections are activated, so throw exception to
-       * terminate them and bring FSM to a halt.
-       */
-      bgp_fsm_exception(connection, bgp_session_eDisabled, notification) ;
-    }
-  else
-    {
-      /* Neither connection is active, so the session has already stopped,
-       * so discard the notification but do nothing else.
-       */
-      bgp_notify_free(notification) ;   /* discard              */
-    } ;
-} ;
-
-#endif
 
 /*==============================================================================
  * For debug...
@@ -1661,7 +1687,7 @@ bgp_fsm_event_handle(bgp_connection connection, bgp_fsm_event_t fsm_event,
        */
       case bgp_fsConnect:
         qassert(session != NULL) ;
-        qassert(connection->ordinal == bc_connect) ;
+        qassert(connection->ord == bc_connect) ;
 
         switch (fsm_event)
           {
@@ -1785,7 +1811,7 @@ bgp_fsm_event_handle(bgp_connection connection, bgp_fsm_event_t fsm_event,
        */
       case bgp_fsActive:
         qassert(session != NULL) ;
-        qassert(connection->ordinal == bc_accept) ;
+        qassert(connection->ord == bc_accept) ;
 
         switch (fsm_event)
           {
@@ -2376,12 +2402,12 @@ bgp_fsm_event_handle(bgp_connection connection, bgp_fsm_event_t fsm_event,
   if (session != NULL)
     {
       if (connection->session == NULL)
-        qassert(session->connections[connection->ordinal] == NULL) ;
+        qassert(session->connections[connection->ord] == NULL) ;
       else
         qassert( (connection->session == session)
-              && (session->connections[connection->ordinal] == connection) ) ;
+              && (session->connections[connection->ord] == connection) ) ;
 
-      bgp_session_event(session, eqb, connection->ordinal) ;
+      bgp_session_event(session, eqb, connection->ord) ;
 
       if (bgp_dump_state_flag)
         bgp_dump_state (session, connection->fsm_state, fsm_state_was) ;
@@ -2659,11 +2685,18 @@ bgp_fsm_stop(bgp_connection connection, bgp_fsm_eqb eqb)
  *
  *       * waiting to process some Stop event.
  *
- *         We know this to be the case if we are fsEstablished.  We will set
- *         the session sStopping, and it will go sStopped when the sibling
- *         notices its condition.
+ *         This must be the case if we are fsEstablished.
+ *
+ *         We will set the session sStopping -- to signal immediately that
+ *         is NOT s Established.  The sibling will set sStopped when it wakes
+ *         up to its condition.
  *
  *       * expected to continue.
+ *
+ *         Which can be the case if we are fsEstablished.
+ *
+ *         This can happen if the accept or the connect connection is
+ *         turned off while in sAcquiring state.
  *
  *     In any case, the sibling is now responsible for the session state.
  *
@@ -2693,7 +2726,7 @@ bgp_fsm_enter_stop(bgp_connection connection)
       bgp_connection sibling ;
 
       qassert(connection->fsm_state != bgp_fsStop) ;
-      qassert(connection == session->connections[connection->ordinal]) ;
+      qassert(connection == session->connections[connection->ord]) ;
 
       /* Get any sibling
        *
@@ -2782,7 +2815,7 @@ bgp_fsm_enter_stop(bgp_connection connection)
 
       /* We can now... detach from the session !
        */
-      session->connections[connection->ordinal] = NULL ;
+      session->connections[connection->ord] = NULL ;
       connection->session = NULL ;
     } ;
 
@@ -3057,7 +3090,7 @@ bgp_fsm_idle_hold_expired(bgp_connection connection)
     {
       qassert(connection->idling_state == bgp_isNULL) ;
 
-      switch (connection->ordinal)
+      switch (connection->ord)
         {
           /* Enter fsConnect
            */
@@ -3072,7 +3105,7 @@ bgp_fsm_idle_hold_expired(bgp_connection connection)
             connection->socket_event =
                              bgp_acceptor_state(connection->session->acceptor) ;
             if (connection->socket_event != bgp_feNULL)
-              bgp_fsm_raise_event(connection, bgp_fmSocket) ;
+              bgp_fsm_raise_meta_event(connection, bgp_fmSocket) ;
             break ;
 
           /* No idea what is going on here... so bring things to a sudden
@@ -3098,7 +3131,7 @@ static void
 bgp_fsm_do_connect(bgp_connection connection)
 {
   qassert(connection->fsm_state == bgp_fsConnect) ;
-  qassert(connection->ordinal   == bc_connect) ;
+  qassert(connection->ord   == bc_connect) ;
 
   bgp_connect(connection) ;
   bgp_connect_retry_timer_start(connection) ;
@@ -3180,9 +3213,9 @@ bgp_fsm_enter_open_sent(bgp_connection connection)
            (connection->fsm_state == bgp_fsActive) ) ;
 
   if (connection->fsm_state == bgp_fsConnect)
-    qassert(connection->ordinal == bc_connect) ;
+    qassert(connection->ord == bc_connect) ;
   else
-    qassert(connection->ordinal == bc_accept) ;
+    qassert(connection->ord == bc_accept) ;
 
   bgp_fsm_new_state(connection, bgp_fsOpenSent) ;
 
@@ -3210,6 +3243,7 @@ bgp_fsm_enter_open_confirm(bgp_connection connection)
     {
       bgp_connection loser ;
       bgp_session    session ;
+      bgp_id_t       remote_id, sibling_id, local_id ;
 
       session = connection->session ;
 
@@ -3220,29 +3254,28 @@ bgp_fsm_enter_open_confirm(bgp_connection connection)
        * astonishing (but also disturbing) to find that they had different
        * BGP Ids !!!
        */
-      if (connection->open_recv->bgp_id != sibling->open_recv->bgp_id)
+      remote_id  = connection->open_recv->args->remote_id ;
+      sibling_id =    sibling->open_recv->args->remote_id ;
+
+      if (remote_id != sibling_id)
         {
           plog_warn(connection->lox.log,
                                      "%s [FSM] received two BGP-ID: %s and %s",
-                    connection->lox.host,
-                           siptoa(AF_INET, connection->open_recv->bgp_id).str,
-                           siptoa(AF_INET,    sibling->open_recv->bgp_id).str) ;
-
-          bgp_fsm_admin_event(sibling,    bgp_feBGPOpenMsgErr,
-                            bgp_msg_open_bad_id(sibling->open_recv->bgp_id)) ;
+                    connection->lox.host, siptoa(AF_INET, &remote_id).str,
+                                          siptoa(AF_INET, &sibling_id).str) ;
 
           bgp_fsm_admin_event(connection, bgp_feBGPOpenMsgErr,
-                         bgp_msg_open_bad_id(connection->open_recv->bgp_id)) ;
-
+                                              bgp_msg_open_bad_id(remote_id)) ;
+          bgp_fsm_admin_event(sibling,    bgp_feBGPOpenMsgErr,
+                                              bgp_msg_open_bad_id(sibling_id)) ;
           return ;
         } ;
 
       /* NB: bgp_id in open_state is in *network* order
        */
-      loser = (ntohl(session->local_id) < ntohl(sibling->open_recv->bgp_id))
-                ? connection
-                : sibling ;
-
+      local_id = session->open_sent->args->local_id ;
+      loser = (ntohl(local_id) < ntohl(remote_id)) ? connection
+                                                   : sibling ;
       if (BGP_DEBUG(fsm, FSM))
         plog_debug(connection->lox.log,
                    "%s [FSM] BGP is loser in collision, fd %d",
@@ -3317,7 +3350,7 @@ bgp_fsm_enter_established(bgp_connection connection)
                          bgp_notify_new(BGP_NOMC_CEASE, BGP_NOMS_C_COLLISION)) ;
     } ;
 
-  if (connection->ordinal == bc_connect)
+  if (connection->ord == bc_connect)
     bgp_acceptor_squelch(connection->session->acceptor) ;
 
 } ;
@@ -3993,7 +4026,7 @@ bgp_fsm_timer_action(qtimer qtr, void* timer_info, qtime_mono_t when)
 
   ft->state = bfts_expired ;
 
-  bgp_fsm_raise_event(connection,ft->fsm_meta) ;
+  bgp_fsm_raise_meta_event(connection,ft->fsm_meta) ;
 } ;
 
 /*==============================================================================
@@ -4011,7 +4044,7 @@ extern void
 bgp_fsm_io_event(bgp_connection connection)
 {
   if (!(connection->meta_events & bgp_fmIO))
-    bgp_fsm_raise_event(connection, bgp_fmIO) ;
+    bgp_fsm_raise_meta_event(connection, bgp_fmIO) ;
 }
 
 /*------------------------------------------------------------------------------

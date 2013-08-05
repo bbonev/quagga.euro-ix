@@ -2881,6 +2881,9 @@ bgp_adj_out_next_announce(peer_rib prib, route_out_parcel parcel)
                    (((((adj_out)af)->bits >> aob_type_shift) & aob_type_mask)
                                                                   == aob_eor)) ;
           parcel->action = ra_out_eor ;
+
+          prib->af_flags |= PEER_AFS_EOR_SENT ;
+
           return parcel ;
         } ;
 

@@ -491,7 +491,7 @@ bgp_scan (qAFI_t q_afi)
 
               peer = ri->prib->peer ;
 
-              if ((peer->sort == BGP_PEER_EBGP) && (peer->ttl == 1))
+              if ((peer->sort == BGP_PEER_EBGP) && (peer->cops.ttl == 1))
                 valid = bgp_nexthop_onlink (q_afi, &ri->attr->next_hop);
               else
                 valid = bgp_nexthop_lookup (q_afi, peer, ri,

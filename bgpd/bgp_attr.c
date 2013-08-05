@@ -29,6 +29,7 @@ Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
 #include "log.h"
 
 #include "bgp.h"
+#include "bgpd/bgp_session.h"
 #include "bgpd/bgp_attr.h"
 #include "bgpd/bgpd.h"
 #include "bgpd/bgp_peer.h"
@@ -41,45 +42,45 @@ Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
 /*==============================================================================
  * Parsing of Attributes Section of UPDATE Message
  */
-static const byte* bgp_attr_origin(bgp_attr_parser_args restrict args,
+static const byte* bgp_attr_origin(bgp_attr_parsing restrict prs,
                                                            const byte* attr_p) ;
-static const byte* bgp_attr_aspath(bgp_attr_parser_args restrict args,
+static const byte* bgp_attr_aspath(bgp_attr_parsing restrict prs,
                                            const byte* attr_p, as_path* p_asp) ;
-static const byte* bgp_attr_nexthop(bgp_attr_parser_args restrict args,
+static const byte* bgp_attr_nexthop(bgp_attr_parsing restrict prs,
                                                            const byte* attr_p) ;
-static const byte* bgp_attr_med(bgp_attr_parser_args restrict args,
+static const byte* bgp_attr_med(bgp_attr_parsing restrict prs,
                                                            const byte* attr_p) ;
-static const byte* bgp_attr_local_pref(bgp_attr_parser_args restrict args,
+static const byte* bgp_attr_local_pref(bgp_attr_parsing restrict prs,
                                                            const byte* attr_p) ;
-static const byte* bgp_attr_atomic(bgp_attr_parser_args restrict args,
+static const byte* bgp_attr_atomic(bgp_attr_parsing restrict prs,
                                                            const byte* attr_p) ;
-static const byte* bgp_attr_aggregator(bgp_attr_parser_args restrict args,
+static const byte* bgp_attr_aggregator(bgp_attr_parsing restrict prs,
                                                            const byte* attr_p) ;
-static const byte* bgp_attr_as4_aggregator(bgp_attr_parser_args restrict args,
+static const byte* bgp_attr_as4_aggregator(bgp_attr_parsing restrict prs,
                                                            const byte* attr_p) ;
-static const byte* bgp_attr_community(bgp_attr_parser_args restrict args,
+static const byte* bgp_attr_community(bgp_attr_parsing restrict prs,
                                                            const byte* attr_p) ;
-static const byte* bgp_attr_originator_id(bgp_attr_parser_args args,
+static const byte* bgp_attr_originator_id(bgp_attr_parsing prs,
                                                            const byte* attr_p) ;
-static const byte* bgp_attr_cluster_list(bgp_attr_parser_args restrict args,
+static const byte* bgp_attr_cluster_list(bgp_attr_parsing restrict prs,
                                                            const byte* attr_p) ;
-static const byte* bgp_attr_mp_reach_parse(bgp_attr_parser_args restrict args,
+static const byte* bgp_attr_mp_reach_parse(bgp_attr_parsing restrict prs,
                                                            const byte* attr_p) ;
-static const byte* bgp_attr_mp_unreach_parse(bgp_attr_parser_args restrict args,
+static const byte* bgp_attr_mp_unreach_parse(bgp_attr_parsing restrict prs,
                                        const byte* attr_p,
                                        const byte* start_p, const byte* end_p) ;
-static const byte* bgp_attr_ecommunities(bgp_attr_parser_args restrict args,
+static const byte* bgp_attr_ecommunities(bgp_attr_parsing restrict prs,
                                                            const byte* attr_p) ;
-static const byte* bgp_attr_unknown(bgp_attr_parser_args restrict args,
+static const byte* bgp_attr_unknown(bgp_attr_parsing restrict prs,
                                                            const byte* attr_p) ;
 
 static bgp_attr_parse_ret_t bgp_attr_munge_as4_aggr(
-                                           bgp_attr_parser_args restrict args) ;
+                                           bgp_attr_parsing restrict prs) ;
 static bgp_attr_parse_ret_t bgp_attr_munge_as4_path(
-                                           bgp_attr_parser_args restrict args) ;
-static void bgp_attr_as_path_set_if_ok(bgp_attr_parser_args restrict args) ;
+                                           bgp_attr_parsing restrict prs) ;
+static void bgp_attr_as_path_set_if_ok(bgp_attr_parsing restrict prs) ;
 
-static void bgp_attr_malformed(bgp_attr_parser_args restrict args,
+static void bgp_attr_malformed(bgp_attr_parsing restrict prs,
                                        byte subcode, bgp_attr_parse_ret_t ret) ;
 
 /*------------------------------------------------------------------------------
@@ -87,7 +88,7 @@ static void bgp_attr_malformed(bgp_attr_parser_args restrict args,
  *
  * This function is called from bgp_update() in bgpd.c.
  *
- * NB: expects the args structure to be initialised, ready to process the
+ * NB: expects the parsing structure to be initialised, ready to process the
  *     attributes, including inter alia:
  *
  *   * peer               -- the peer
@@ -130,7 +131,7 @@ static void bgp_attr_malformed(bgp_attr_parser_args restrict args,
  *
  *          BGP_ATTR_PARSE_CRITICAL -- not good at all: session must be dropped
  *
- * NB: expects caller to tidy up the args, in particular to deal with the:
+ * NB: expects caller to tidy up the result, in particular to deal with the:
  *
  *      attrs     -- this function adds stuff to the working set of the
  *                   attribute pair -- it does not store the result.
@@ -140,7 +141,7 @@ static void bgp_attr_malformed(bgp_attr_parser_args restrict args,
  *      unknown   -- intermediate unknown attributes
  */
 extern void
-bgp_attr_parse (bgp_attr_parser_args restrict args, const byte* start_p,
+bgp_attr_parse (bgp_attr_parsing restrict prs, const byte* start_p,
                                                                   uint attr_len)
 {
   uint  attr_have ;
@@ -153,8 +154,8 @@ bgp_attr_parse (bgp_attr_parser_args restrict args, const byte* start_p,
    *          end_p   = end of all attributes
    *          attr_p  = working pointer as each attribute is processed
    *
-   *          args->start_p = start of the current attribute
-   *          args->end_p   = end of the current attribute
+   *          prs->start_p = start of the current attribute
+   *          prs->end_p   = end of the current attribute
    */
   attr_p = start_p ;
   end_p  = start_p + attr_len ;
@@ -167,7 +168,7 @@ bgp_attr_parse (bgp_attr_parser_args restrict args, const byte* start_p,
       /* Remember the start of the attribute -- used in bgp_attr_malformed()
        * and other error handling.
        */
-      args->start_p = attr_p ;
+      prs->start_p = attr_p ;
 
       /* Fetch attribute flag, type and length -- look out for overflow.
        *
@@ -182,7 +183,7 @@ bgp_attr_parse (bgp_attr_parser_args restrict args, const byte* start_p,
        *     end of the attributes, we treat this as a CRITICAL error.  TODO ***
        */
       flags = attr_p[0] ;
-      args->flags = flags & ~BGP_ATF_ZERO ;     /* discard LS bits      */
+      prs->flags = flags & ~BGP_ATF_ZERO ;     /* discard LS bits      */
 
       if (flags & BGP_ATF_EXTENDED)
         header_length = 4 ;
@@ -191,47 +192,47 @@ bgp_attr_parse (bgp_attr_parser_args restrict args, const byte* start_p,
 
       if (attr_have < header_length)
         {
-          args->type   = (attr_have > 1) ? attr_p[1] : BGP_ATT_UNDEFINED ;
-          args->length = (attr_have > 2) ? attr_p[2] : 0 ;
+          prs->type   = (attr_have > 1) ? attr_p[1] : BGP_ATT_UNDEFINED ;
+          prs->length = (attr_have > 2) ? attr_p[2] : 0 ;
 
-          zlog (args->peer->log, LOG_ERR,
+          zlog (prs->peer->log, LOG_ERR,
                 "%s: broken BGP attribute [0x%x %u %u] have just %u octets for"
                                                             " attribute header",
-                 args->peer->host, flags, args->type, args->length, attr_have) ;
+                 prs->peer->host, flags, prs->type, prs->length, attr_have) ;
 
-          bgp_attr_malformed(args, BGP_NOMS_U_A_LENGTH,
+          bgp_attr_malformed(prs, BGP_NOMS_U_A_LENGTH,
                                                       BGP_ATTR_PARSE_CRITICAL) ;
           return ;
         } ;
 
-      args->type  = attr_p[1] ;
+      prs->type  = attr_p[1] ;
 
       if (header_length == 4)
-        args->length = load_ns(&attr_p[2]) ;
+        prs->length = load_ns(&attr_p[2]) ;
       else
-        args->length = attr_p[2] ;
+        prs->length = attr_p[2] ;
 
       attr_p += header_length ;
 
-      if (attr_have < (header_length + args->length))
+      if (attr_have < (header_length + prs->length))
         {
-          zlog (args->peer->log, LOG_ERR,
+          zlog (prs->peer->log, LOG_ERR,
                 "%s: broken BGP attribute [0x%x %u %u] have just %u octets for"
                                                               " attribute body",
-                      args->peer->host, flags, args->type, args->length,
+                      prs->peer->host, flags, prs->type, prs->length,
                                                   (attr_have - header_length)) ;
 
-          bgp_attr_malformed(args, BGP_NOMS_U_A_LENGTH,
+          bgp_attr_malformed(prs, BGP_NOMS_U_A_LENGTH,
                                                       BGP_ATTR_PARSE_CRITICAL) ;
           return ;
         } ;
 
       /* Parse according to type
        */
-      args->end_p = attr_p + args->length ;
-      args->ret   = BGP_ATTR_PARSE_OK ;
+      prs->end_p = attr_p + prs->length ;
+      prs->ret   = BGP_ATTR_PARSE_OK ;
 
-      switch (args->type)
+      switch (prs->type)
         {
           case BGP_ATT_UNDEFINED:
             break ;
@@ -240,67 +241,67 @@ bgp_attr_parse (bgp_attr_parser_args restrict args, const byte* start_p,
             break ;
 
           case BGP_ATT_ORIGIN:
-            attr_p = bgp_attr_origin (args, attr_p);
+            attr_p = bgp_attr_origin (prs, attr_p);
             break;
 
           case BGP_ATT_AS_PATH:
-            attr_p = bgp_attr_aspath (args, attr_p, &args->asp) ;
+            attr_p = bgp_attr_aspath (prs, attr_p, &prs->asp) ;
             break;
 
           case BGP_ATT_AS4_PATH:
-            attr_p = bgp_attr_aspath (args, attr_p, &args->as4p) ;
+            attr_p = bgp_attr_aspath (prs, attr_p, &prs->as4p) ;
             break;
 
           case BGP_ATT_NEXT_HOP:
-            attr_p = bgp_attr_nexthop (args, attr_p);
+            attr_p = bgp_attr_nexthop (prs, attr_p);
             break;
 
           case BGP_ATT_MED:
-            attr_p = bgp_attr_med (args, attr_p);
+            attr_p = bgp_attr_med (prs, attr_p);
             break;
 
           case BGP_ATT_LOCAL_PREF:
-            attr_p = bgp_attr_local_pref (args, attr_p);
+            attr_p = bgp_attr_local_pref (prs, attr_p);
             break;
 
           case BGP_ATT_ATOMIC_AGGREGATE:
-            attr_p = bgp_attr_atomic (args, attr_p);
+            attr_p = bgp_attr_atomic (prs, attr_p);
             break;
 
           case BGP_ATT_AGGREGATOR:
-            attr_p = bgp_attr_aggregator (args, attr_p);
+            attr_p = bgp_attr_aggregator (prs, attr_p);
             break;
 
           case BGP_ATT_AS4_AGGREGATOR:
-            attr_p = bgp_attr_as4_aggregator (args, attr_p);
+            attr_p = bgp_attr_as4_aggregator (prs, attr_p);
             break;
 
           case BGP_ATT_COMMUNITIES:
-            attr_p = bgp_attr_community (args, attr_p);
+            attr_p = bgp_attr_community (prs, attr_p);
             break;
 
           case BGP_ATT_ORIGINATOR_ID:
-            attr_p = bgp_attr_originator_id (args, attr_p);
+            attr_p = bgp_attr_originator_id (prs, attr_p);
             break;
 
           case BGP_ATT_CLUSTER_LIST:
-            attr_p = bgp_attr_cluster_list (args, attr_p);
+            attr_p = bgp_attr_cluster_list (prs, attr_p);
             break;
 
           case BGP_ATT_MP_REACH_NLRI:
-            attr_p = bgp_attr_mp_reach_parse (args, attr_p);
+            attr_p = bgp_attr_mp_reach_parse (prs, attr_p);
             break;
 
           case BGP_ATT_MP_UNREACH_NLRI:
-            attr_p = bgp_attr_mp_unreach_parse (args, attr_p, start_p, end_p);
+            attr_p = bgp_attr_mp_unreach_parse (prs, attr_p, start_p, end_p);
             break;
 
           case BGP_ATT_ECOMMUNITIES:
-            attr_p = bgp_attr_ecommunities (args, attr_p);
+            attr_p = bgp_attr_ecommunities (prs, attr_p);
             break;
 
           default:
-            attr_p = bgp_attr_unknown (args, attr_p);
+            attr_p = bgp_attr_unknown (prs, attr_p);
             break;
         } ;
 
@@ -309,26 +310,26 @@ bgp_attr_parse (bgp_attr_parser_args restrict args, const byte* start_p,
        *
        * If all is still OK, continue parsing straight away.
        */
-      if (args->ret == BGP_ATTR_PARSE_OK)
+      if (prs->ret == BGP_ATTR_PARSE_OK)
         {
-          if (attr_p == args->end_p)
+          if (attr_p == prs->end_p)
             continue ;
 
           /* This is actually an internal error -- at some point has failed to
            * read everything that was expected (underrun) or have tried to
            * read more than is available (overrun) !
            */
-          zlog (args->peer->log, LOG_CRIT,
+          zlog (prs->peer->log, LOG_CRIT,
                    "%s: BGP attribute %s, parser error: %srun %u bytes (BUG)",
-                args->peer->host, map_direct(bgp_attr_name_map, args->type).str,
-                           attr_p > args->end_p ? "over" : "under",
-                                                                 args->length) ;
+                prs->peer->host, map_direct(bgp_attr_name_map, prs->type).str,
+                           attr_p > prs->end_p ? "over" : "under",
+                                                                 prs->length) ;
 
-          args->notify_code     = BGP_NOMC_CEASE ;
-          args->notify_subcode  = BGP_NOMS_UNSPECIFIC ;
-          args->notify_data_len = 0 ;
+          prs->notify_code     = BGP_NOMC_CEASE ;
+          prs->notify_subcode  = BGP_NOMS_UNSPECIFIC ;
+          prs->notify_data_len = 0 ;
 
-          args->ret |= BGP_ATTR_PARSE_CRITICAL ;
+          prs->ret |= BGP_ATTR_PARSE_CRITICAL ;
         } ;
 
       /* Make sure the overall result is up to date, and step to the next
@@ -336,9 +337,9 @@ bgp_attr_parse (bgp_attr_parser_args restrict args, const byte* start_p,
        *
        * Decide what should do *now* with the return code, if anything
        */
-      args->aret |= args->ret ;
+      prs->aret |= prs->ret ;
 
-      if (args->aret & BGP_ATTR_PARSE_CRITICAL)
+      if (prs->aret & BGP_ATTR_PARSE_CRITICAL)
         return ;
     } ;
 
@@ -354,7 +355,7 @@ bgp_attr_parse (bgp_attr_parser_args restrict args, const byte* start_p,
    * see bgp_attr_munge_as4_aggr().  Then we process any AS4_PATH and AS_PATH
    * together.
    */
-  if (!(args->as4))
+  if (!(prs->as4))
     {
       bgp_attr_parse_ret_t ret ;
 
@@ -364,10 +365,10 @@ bgp_attr_parse (bgp_attr_parser_args restrict args, const byte* start_p,
        *     In this case BGP_ATTR_PARSE_IGNORE does not signal an *error*,
        *     so we do not set "ignored" on the strength of it.
        */
-      ret = bgp_attr_munge_as4_aggr (args) ;
+      ret = bgp_attr_munge_as4_aggr (prs) ;
 
       if (ret == BGP_ATTR_PARSE_OK)
-        args->aret |= bgp_attr_munge_as4_path(args) ;
+        prs->aret |= bgp_attr_munge_as4_path(prs) ;
       else
         qassert(ret == BGP_ATTR_PARSE_IGNORE) ;
     } ;
@@ -376,22 +377,22 @@ bgp_attr_parse (bgp_attr_parser_args restrict args, const byte* start_p,
    * for a potentially synthesized aspath, and if all is well, set the AS Path
    * in the attributes.
    */
-  if (args->asp != NULL)
-    bgp_attr_as_path_set_if_ok(args);
+  if (prs->asp != NULL)
+    bgp_attr_as_path_set_if_ok(prs);
 
   /* Have completed the parsing of the attributes.
    *
    * Finally, deal with the unknown attributes.  Here discards all but the
    * valid Optional Transitive, and sets Partial on those.
    */
-  if (args->unknown != NULL)
+  if (prs->unknown != NULL)
     {
-      if (attr_unknown_transitive(args->unknown))
-        bgp_attr_pair_set_transitive(args->attrs, args->unknown) ;
+      if (attr_unknown_transitive(prs->unknown))
+        bgp_attr_pair_set_transitive(prs->attrs, prs->unknown) ;
       else
-        attr_unknown_free(args->unknown) ;
+        attr_unknown_free(prs->unknown) ;
 
-      args->unknown = NULL ;
+      prs->unknown = NULL ;
     } ;
 } ;
 
@@ -404,14 +405,14 @@ bgp_attr_parse (bgp_attr_parser_args restrict args, const byte* start_p,
  *           LOCAL_PREF  -- if peer is iBGP
  */
 extern void
-bgp_attr_check (bgp_attr_parser_args restrict args)
+bgp_attr_check (bgp_attr_parsing restrict prs)
 {
   attr_set  working ;
   qstring   missing ;
   uint8_t   type ;
 
   missing = NULL ;
-  working = args->attrs->working ;
+  working = prs->attrs->working ;
 
   /* Check for missing stuff in roughly ascending order of significance.
    */
@@ -422,13 +423,13 @@ bgp_attr_check (bgp_attr_parser_args restrict args)
     } ;
   confirm(BGP_ATT_ORG_MIN == 0) ;
 
-  if ((args->sort == BGP_PEER_IBGP) && !(working->have & atb_local_pref))
+  if ((prs->sort == BGP_PEER_IBGP) && !(working->have & atb_local_pref))
     {
       missing = qs_append_str(missing, " local_pref") ;
       type = BGP_ATT_LOCAL_PREF ;
     } ;
 
-  if ((args->update.length != 0) && (args->update.next_hop.type != nh_ipv4))
+  if ((prs->update.length != 0) && (prs->update.next_hop.type != nh_ipv4))
     {
       missing = qs_append_str(missing, " next_hop") ;
       type = BGP_ATT_NEXT_HOP ;
@@ -443,12 +444,12 @@ bgp_attr_check (bgp_attr_parser_args restrict args)
   if (missing == NULL)
     return ;
 
-  zlog (args->peer->log, LOG_ERR, "%s Missing well-known attribute(s)%s.",
-                                         args->peer->host, qs_string(missing)) ;
+  zlog (prs->peer->log, LOG_ERR, "%s Missing well-known attribute(s)%s.",
+                                         prs->peer->host, qs_string(missing)) ;
 
-  args->type = type ;
+  prs->type = type ;
 
-  bgp_attr_malformed (args, BGP_NOMS_U_MISSING, BGP_ATTR_PARSE_SERIOUS) ;
+  bgp_attr_malformed (prs, BGP_NOMS_U_MISSING, BGP_ATTR_PARSE_SERIOUS) ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -472,7 +473,7 @@ bgp_packet_attribute (stream s, peer_rib prib, attr_set attr, prefix p,
 
   send_as4_path       = false ;
   send_as4_aggregator = false ;
-  as4  = peer->caps_use & PEER_CAP_AS4 ;
+  as4  = peer->session->prs->can_as4 ;
   sort = peer->sort ;
 
   /* Remember current pointer
@@ -516,13 +517,13 @@ bgp_packet_attribute (stream s, peer_rib prib, attr_set attr, prefix p,
 
         asp_out->seg = BGP_AS_SEQUENCE ;
         asp_out->prepend_count  = 1 ;
-        asp_out->prepend_asn[0] = peer->local_as ;
+        asp_out->prepend_asn[0] = peer->args.local_as ;
 
         if (peer->change_local_as != BGP_ASN_NULL)
           {
-            qassert(peer->change_local_as == peer->local_as) ;
+            qassert(peer->change_local_as == peer->args.local_as) ;
 
-            if (peer->bgp->ebgp_as != peer->local_as)
+            if (peer->bgp->ebgp_as != peer->args.local_as)
               {
                 asp_out->prepend_count  = 2 ;
                 asp_out->prepend_asn[1] = peer->bgp->ebgp_as ;
@@ -537,7 +538,7 @@ bgp_packet_attribute (stream s, peer_rib prib, attr_set attr, prefix p,
          */
         asp_out->seg    = BGP_AS_CONFED_SEQUENCE ;
         asp_out->prepend_count  = 1 ;
-        asp_out->prepend_asn[0] = peer->local_as ;
+        asp_out->prepend_asn[0] = peer->args.local_as ;
 
         break ;
 
@@ -1144,11 +1145,11 @@ static const size_t attr_flag_str_max =
 
 
 inline static bool bgp_attr_flags_check(
-                   bgp_attr_parser_args restrict args)           Always_Inline ;
+                   bgp_attr_parsing restrict prs)           Always_Inline ;
 inline static bool bgp_attr_seen_flags_check(
-                   bgp_attr_parser_args restrict args)           Always_Inline ;
+                   bgp_attr_parsing restrict prs)           Always_Inline ;
 inline static bool bgp_attr_seen_flags_length_check(
-                   bgp_attr_parser_args restrict args, uint len) Always_Inline ;
+                   bgp_attr_parsing restrict prs, uint len) Always_Inline ;
 
 
 
@@ -1177,13 +1178,13 @@ inline static bool bgp_attr_seen_flags_length_check(
  * This function is not responsible for any logging.  The caller is expected
  * to log all errors in some suitable form.
  *
- * NB: sets args->ret and updates args->aret.
+ * NB: sets prs->ret and updates prs->aret.
  */
 static void
-bgp_attr_malformed (bgp_attr_parser_args restrict args, byte subcode,
+bgp_attr_malformed (bgp_attr_parsing restrict prs, byte subcode,
                                                        bgp_attr_parse_ret_t ret)
 {
-  switch (args->type)
+  switch (prs->type)
     {
       /* where an optional attribute is inconsequential, e.g. it does not
        * affect route selection, and can be safely ignored then any such
@@ -1241,10 +1242,10 @@ bgp_attr_malformed (bgp_attr_parser_args restrict args, byte subcode,
    * in -- same like all other attribute processing.
    */
   if ( (ret & (BGP_ATTR_PARSE_SERIOUS | BGP_ATTR_PARSE_CRITICAL)) &&
-       ((args->aret & (BGP_ATTR_PARSE_SERIOUS | BGP_ATTR_PARSE_CRITICAL)) ==0) )
+       ((prs->aret & (BGP_ATTR_PARSE_SERIOUS | BGP_ATTR_PARSE_CRITICAL)) ==0) )
     {
-      args->notify_code    = BGP_NOMC_UPDATE ;
-      args->notify_subcode = subcode ;
+      prs->notify_code    = BGP_NOMC_UPDATE ;
+      prs->notify_subcode = subcode ;
 
       switch(subcode)
         {
@@ -1253,15 +1254,15 @@ bgp_attr_malformed (bgp_attr_parser_args restrict args, byte subcode,
           case BGP_NOMS_U_AS_LOOP:
           case BGP_NOMS_U_NETWORK:
           default:
-            args->notify_data     = NULL ;
-            args->notify_data_len = 0 ; /* send nothing                 */
+            prs->notify_data     = NULL ;
+            prs->notify_data_len = 0 ; /* send nothing                 */
             break ;
 
           case BGP_NOMS_U_MISSING:
-            args->notify_attr_type = args->type ;
+            prs->notify_attr_type = prs->type ;
 
-            args->notify_data     = &args->notify_attr_type ;
-            args->notify_data_len = 1 ; /* send just the missing type   */
+            prs->notify_data     = &prs->notify_attr_type ;
+            prs->notify_data_len = 1 ; /* send just the missing type   */
             break ;
 
           case BGP_NOMS_U_UNKNOWN:
@@ -1270,17 +1271,17 @@ bgp_attr_malformed (bgp_attr_parser_args restrict args, byte subcode,
           case BGP_NOMS_U_ORIGIN:
           case BGP_NOMS_U_NEXT_HOP:
           case BGP_NOMS_U_OPTIONAL:
-            args->notify_data     = args->start_p ;
-            args->notify_data_len = args->end_p - args->start_p ;
+            prs->notify_data     = prs->start_p ;
+            prs->notify_data_len = prs->end_p - prs->start_p ;
                                         /* send complete attribute      */
             if (qdebug)
               {
-                if (args->start_p[0] & BGP_ATF_EXTENDED)
-                  qassert(args->notify_data_len ==
-                                       ((uint)load_ns(&args->start_p[2]) + 4)) ;
+                if (prs->start_p[0] & BGP_ATF_EXTENDED)
+                  qassert(prs->notify_data_len ==
+                                       ((uint)load_ns(&prs->start_p[2]) + 4)) ;
                 else
-                  qassert(args->notify_data_len ==
-                                                 ((uint)args->start_p[2] + 3)) ;
+                  qassert(prs->notify_data_len ==
+                                                 ((uint)prs->start_p[2] + 3)) ;
               } ;
             break ;
         } ;
@@ -1288,8 +1289,8 @@ bgp_attr_malformed (bgp_attr_parser_args restrict args, byte subcode,
 
   /* Update the overall result.
    */
-  args->ret  |= ret ;
-  args->aret |= ret ;
+  prs->ret  |= ret ;
+  prs->aret |= ret ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -1297,20 +1298,20 @@ bgp_attr_malformed (bgp_attr_parser_args restrict args, byte subcode,
  *
  * Issues a logging message and treats as BGP_NOMS_U_MAL_ATTR
  *
- * Updates args->ret and args->aret.
+ * Updates prs->ret and prs->aret.
  *
  * NB: all length errors are treated as BGP_ATTR_PARSE_SERIOUS, at least.
  *
  * Returns:  false
  */
 static bool
-bgp_attr_seen_malformed (bgp_attr_parser_args restrict args)
+bgp_attr_seen_malformed (bgp_attr_parsing restrict prs)
 {
-  bgp_attr_malformed(args, BGP_NOMS_U_MAL_ATTR, BGP_ATTR_PARSE_SERIOUS) ;
+  bgp_attr_malformed(prs, BGP_NOMS_U_MAL_ATTR, BGP_ATTR_PARSE_SERIOUS) ;
 
-  zlog (args->peer->log, LOG_WARNING,
+  zlog (prs->peer->log, LOG_WARNING,
             "%s: error BGP attribute type %s appears twice in a message",
-              args->peer->host, map_direct(bgp_attr_name_map, args->type).str) ;
+              prs->peer->host, map_direct(bgp_attr_name_map, prs->type).str) ;
 
   return false ;
 } ;
@@ -1320,21 +1321,21 @@ bgp_attr_seen_malformed (bgp_attr_parser_args restrict args)
  *
  * Issues a logging message and treats as BGP_NOMS_U_A_LENGTH
  *
- * Updates args->ret and args->aret.
+ * Updates prs->ret and prs->aret.
  *
  * NB: all length errors are treated as BGP_ATTR_PARSE_SERIOUS, at least.
  *
  * Returns:  false
  */
 static bool
-bgp_attr_length_malformed (bgp_attr_parser_args restrict args,
+bgp_attr_length_malformed (bgp_attr_parsing restrict prs,
                                                               ulen len_required)
 {
-  bgp_attr_malformed(args, BGP_NOMS_U_A_LENGTH, BGP_ATTR_PARSE_SERIOUS) ;
+  bgp_attr_malformed(prs, BGP_NOMS_U_A_LENGTH, BGP_ATTR_PARSE_SERIOUS) ;
 
-  zlog (args->peer->log, LOG_ERR, "%s attribute length is %u -- should be %u",
-                                map_direct(bgp_attr_name_map, args->type).str,
-                                                   args->length, len_required) ;
+  zlog (prs->peer->log, LOG_ERR, "%s attribute length is %u -- should be %u",
+                                map_direct(bgp_attr_name_map, prs->type).str,
+                                                   prs->length, len_required) ;
   return false ;
 } ;
 
@@ -1343,26 +1344,26 @@ bgp_attr_length_malformed (bgp_attr_parser_args restrict args,
  *
  * Issues a logging message and treats as BGP_NOMS_U_A_FLAGS
  *
- * Updates args->ret and args->aret.
+ * Updates prs->ret and prs->aret.
  *
  * NB: all flags errors are treated as BGP_ATTR_PARSE_SERIOUS, at least.
  *
  * Returns:  false
  */
 static bool
-bgp_attr_flags_malformed(bgp_attr_parser_args restrict args,
+bgp_attr_flags_malformed(bgp_attr_parsing restrict prs,
                                                       attr_flags_check_t* check)
 {
   uint8_t diff ;
   bool seen ;
   uint i ;
 
-  bgp_attr_malformed(args, BGP_NOMS_U_A_FLAGS, BGP_ATTR_PARSE_SERIOUS) ;
+  bgp_attr_malformed(prs, BGP_NOMS_U_A_FLAGS, BGP_ATTR_PARSE_SERIOUS) ;
 
-  qassert((args->flags & 0x0F) == 0) ;
+  qassert((prs->flags & 0x0F) == 0) ;
   qassert(check->mask != 0) ;
 
-  diff = (args->flags ^ check->req) & check->mask ;
+  diff = (prs->flags ^ check->req) & check->mask ;
 
   seen = false ;
   for (i = 0; i < attr_flag_str_max ; i++)
@@ -1373,9 +1374,9 @@ bgp_attr_flags_malformed(bgp_attr_parser_args restrict args,
 
       if (diff & bit)
         {
-          zlog (args->peer->log, LOG_ERR,
+          zlog (prs->peer->log, LOG_ERR,
                    "%s attribute must%s be flagged as \"%s\"",
-                   map_direct(bgp_attr_name_map, args->type).str,
+                   map_direct(bgp_attr_name_map, prs->type).str,
                    (check->req & bit) ? "" : " not", attr_flag_str[i].str) ;
           seen = true ;
         } ;
@@ -1392,17 +1393,17 @@ bgp_attr_flags_malformed(bgp_attr_parser_args restrict args,
  * NB: for known attributes *only*
  */
 inline static bool
-bgp_attr_flags_check(bgp_attr_parser_args restrict args)
+bgp_attr_flags_check(bgp_attr_parsing restrict prs)
 {
   const attr_flags_check_t* check ;
 
-  qassert(args->type < BGP_ATT_MAX) ;
+  qassert(prs->type < BGP_ATT_MAX) ;
 
-  check = &attr_flags_check_array[args->type] ;
-  if ((args->flags & check->mask) == check->req)
+  check = &attr_flags_check_array[prs->type] ;
+  if ((prs->flags & check->mask) == check->req)
     return true ;
   else
-    return bgp_attr_flags_malformed(args, check) ;
+    return bgp_attr_flags_malformed(prs, check) ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -1411,10 +1412,10 @@ bgp_attr_flags_check(bgp_attr_parser_args restrict args)
  * Returns:  true <=> first time the attribute has been seen
  */
 inline static bool
-bgp_attr_seen_check(bgp_attr_parser_args restrict args)
+bgp_attr_seen_check(bgp_attr_parsing restrict prs)
 {
-  if (bm_test_set(&args->seen, args->type))
-    return bgp_attr_seen_malformed(args) ;
+  if (bm_test_set(&prs->seen, prs->type))
+    return bgp_attr_seen_malformed(prs) ;
   else
     return true ;
 } ;
@@ -1422,7 +1423,7 @@ bgp_attr_seen_check(bgp_attr_parser_args restrict args)
 /*------------------------------------------------------------------------------
  * Common check for known attributes of variable length
  *
- *   * checks and sets the args->seen bit
+ *   * checks and sets the prs->seen bit
  *
  *   * checks that the flags are valid
  *
@@ -1430,19 +1431,19 @@ bgp_attr_seen_check(bgp_attr_parser_args restrict args)
  *
  */
 inline static bool
-bgp_attr_seen_flags_check(bgp_attr_parser_args restrict args)
+bgp_attr_seen_flags_check(bgp_attr_parsing restrict prs)
 {
-  if (bgp_attr_seen_check(args))
-    return bgp_attr_flags_check(args) ;
+  if (bgp_attr_seen_check(prs))
+    return bgp_attr_flags_check(prs) ;
 
-  bgp_attr_flags_check(args) ;
+  bgp_attr_flags_check(prs) ;
   return false ;
 } ;
 
 /*------------------------------------------------------------------------------
  * Common check for known attributes of fixed length
  *
- *   * checks and sets the args->seen bit
+ *   * checks and sets the prs->seen bit
  *
  *   * checks that the flags are valid
  *
@@ -1452,16 +1453,16 @@ bgp_attr_seen_flags_check(bgp_attr_parser_args restrict args)
  *
  */
 inline static bool
-bgp_attr_seen_flags_length_check(bgp_attr_parser_args restrict args, uint len)
+bgp_attr_seen_flags_length_check(bgp_attr_parsing restrict prs, uint len)
 {
   bool ok ;
 
-  ok = bgp_attr_seen_flags_check(args) ;
+  ok = bgp_attr_seen_flags_check(prs) ;
 
-  if (args->length == len)
+  if (prs->length == len)
     return ok ;
   else
-    return bgp_attr_length_malformed(args, len) ;
+    return bgp_attr_length_malformed(prs, len) ;
 } ;
 
 
@@ -1637,13 +1638,13 @@ bgp_nlri_sanity_check (bgp_peer peer, bgp_nlri nlri)
  * Get origin attribute of the update message.
  */
 static const byte*
-bgp_attr_origin (bgp_attr_parser_args restrict args, const byte* attr_p)
+bgp_attr_origin (bgp_attr_parsing restrict prs, const byte* attr_p)
 {
   uint origin ;
 
   /* Check for: seen already, valid flags, and exact length
    */
-  if (!bgp_attr_seen_flags_length_check(args, 1))
+  if (!bgp_attr_seen_flags_length_check(prs, 1))
     return attr_p ;
 
   /* Fetch origin attribute.
@@ -1658,15 +1659,15 @@ bgp_attr_origin (bgp_attr_parser_args restrict args, const byte* attr_p)
 
   if (origin > BGP_ATT_ORG_MAX)
     {
-      zlog (args->peer->log, LOG_ERR, "Origin attribute value %u is invalid",
+      zlog (prs->peer->log, LOG_ERR, "Origin attribute value %u is invalid",
                                                                        origin) ;
-      bgp_attr_malformed(args, BGP_NOMS_U_ORIGIN, 0) ;
+      bgp_attr_malformed(prs, BGP_NOMS_U_ORIGIN, 0) ;
     }
   else
     {
       /* Set origin attribute.
        */
-      bgp_attr_pair_set_origin(args->attrs, origin) ;
+      bgp_attr_pair_set_origin(prs->attrs, origin) ;
     } ;
 
   return attr_p ;
@@ -1693,18 +1694,18 @@ bgp_attr_origin (bgp_attr_parser_args restrict args, const byte* attr_p)
  *     any logging/debug stuff.
  */
 static const byte*
-bgp_attr_aspath (bgp_attr_parser_args restrict args, const byte* attr_p,
+bgp_attr_aspath (bgp_attr_parsing restrict prs, const byte* attr_p,
                                                                  as_path* p_asp)
 {
   as_path asp ;
   bool as4 ;
 
-  qassert( (args->type == BGP_ATT_AS_PATH)
-        || (args->type == BGP_ATT_AS4_PATH) ) ;
+  qassert( (prs->type == BGP_ATT_AS_PATH)
+        || (prs->type == BGP_ATT_AS4_PATH) ) ;
 
   /* Check for: seen already and valid flags
    */
-  if (!bgp_attr_seen_flags_check(args))
+  if (!bgp_attr_seen_flags_check(prs))
     return attr_p ;
 
   /* Parse the AS_PATH/AS4_PATH body.
@@ -1712,11 +1713,11 @@ bgp_attr_aspath (bgp_attr_parser_args restrict args, const byte* attr_p,
    * For AS_PATH  peer with AS4 => 4Byte ASN otherwise 2Byte ASN
    *     AS4_PATH 4Byte ASN
    */
-  as4 = args->as4 || (args->type == BGP_ATT_AS4_PATH) ;
+  as4 = prs->as4 || (prs->type == BGP_ATT_AS4_PATH) ;
 
-  asp = as_path_parse (attr_p, args->length, as4) ;
+  asp = as_path_parse (attr_p, prs->length, as4) ;
 
-  attr_p += args->length ;
+  attr_p += prs->length ;
 
   if (asp != NULL)
     {
@@ -1726,39 +1727,39 @@ bgp_attr_aspath (bgp_attr_parser_args restrict args, const byte* attr_p,
        * AS_CONFED_SEQUENCE and AS_CONFED_SET... MUST NOT be included in an
        * AS4_PATH.
        */
-      if (args->type == BGP_ATT_AS4_PATH)
+      if (prs->type == BGP_ATT_AS4_PATH)
         {
-          if (args->as4)
+          if (prs->as4)
             {
               if (BGP_DEBUG(as4, AS4))
                 zlog_debug ("[AS4] %s sent AS4_PATH "
-                             "despite being an AS4 speaker", args->peer->host) ;
-              args->ret |= BGP_ATTR_PARSE_IGNORE ;
+                             "despite being an AS4 speaker", prs->peer->host) ;
+              prs->ret |= BGP_ATTR_PARSE_IGNORE ;
             } ;
 
           if (as_path_confed_path_length(asp) != 0)
             {
               /* One or more confed segments in the path -> invalid
                */
-              zlog (args->peer->log, LOG_ERR, "Malformed %s from %s, "
+              zlog (prs->peer->log, LOG_ERR, "Malformed %s from %s, "
                                                  " contains Confed segment(s)",
-                                 map_direct(bgp_attr_name_map, args->type).str,
-                                                      args->peer->host);
-              bgp_attr_malformed (args, BGP_NOMS_U_MAL_AS_PATH , 0) ;
+                                 map_direct(bgp_attr_name_map, prs->type).str,
+                                                      prs->peer->host);
+              bgp_attr_malformed (prs, BGP_NOMS_U_MAL_AS_PATH , 0) ;
             } ;
         } ;
     }
   else
     {
-      zlog (args->peer->log, LOG_ERR, "Malformed %s from %s, length is %u",
-                                 map_direct(bgp_attr_name_map, args->type).str,
-                                               args->peer->host, args->length);
-      bgp_attr_malformed (args, BGP_NOMS_U_MAL_AS_PATH , 0) ;
+      zlog (prs->peer->log, LOG_ERR, "Malformed %s from %s, length is %u",
+                                 map_direct(bgp_attr_name_map, prs->type).str,
+                                               prs->peer->host, prs->length);
+      bgp_attr_malformed (prs, BGP_NOMS_U_MAL_AS_PATH , 0) ;
     } ;
 
   /* Return the as_path if all is well, otherwise discard.
    */
-  if ((args->ret && BGP_ATTR_PARSE_FAILED) == 0)
+  if ((prs->ret && BGP_ATTR_PARSE_FAILED) == 0)
     *p_asp = asp ;
   else
     as_path_free(asp) ;
@@ -1770,13 +1771,13 @@ bgp_attr_aspath (bgp_attr_parser_args restrict args, const byte* attr_p,
  * Nexthop attribute.
  */
 static const byte*
-bgp_attr_nexthop (bgp_attr_parser_args restrict args, const byte* attr_p)
+bgp_attr_nexthop (bgp_attr_parsing restrict prs, const byte* attr_p)
 {
   in_addr_t nexthop_n, nexthop_h ;
 
   /* Check for: seen already, valid flags, and exact length
    */
-  if (!bgp_attr_seen_flags_length_check(args, 4))
+  if (!bgp_attr_seen_flags_length_check(prs, 4))
     return attr_p ;
 
   /* According to section 6.3 of RFC4271, syntactically incorrect NEXT_HOP
@@ -1793,14 +1794,14 @@ bgp_attr_nexthop (bgp_attr_parser_args restrict args, const byte* attr_p)
   if (IPV4_NET0 (nexthop_h) || IPV4_NET127 (nexthop_h)
                             || IPV4_CLASS_DE (nexthop_h))
     {
-      zlog (args->peer->log, LOG_ERR, "Martian nexthop %s",
+      zlog (prs->peer->log, LOG_ERR, "Martian nexthop %s",
                                        siptoa(AF_INET, &nexthop_n).str);
-      bgp_attr_malformed (args, BGP_NOMS_U_NEXT_HOP, 0) ;
+      bgp_attr_malformed (prs, BGP_NOMS_U_NEXT_HOP, 0) ;
     }
   else
     {
-      args->update.next_hop.type  = nh_ipv4 ;
-      args->update.next_hop.ip.v4 = nexthop_n ;
+      prs->update.next_hop.type  = nh_ipv4 ;
+      prs->update.next_hop.ip.v4 = nexthop_n ;
     } ;
 
   return attr_p + 4 ;
@@ -1810,16 +1811,16 @@ bgp_attr_nexthop (bgp_attr_parser_args restrict args, const byte* attr_p)
  * MED attribute.
  */
 static const byte*
-bgp_attr_med (bgp_attr_parser_args restrict args, const byte* attr_p)
+bgp_attr_med (bgp_attr_parsing restrict prs, const byte* attr_p)
 {
   /* Check for: seen already, valid flags, and exact length
    */
-  if (!bgp_attr_seen_flags_length_check(args, 4))
+  if (!bgp_attr_seen_flags_length_check(prs, 4))
     return attr_p ;
 
   /* Get the MED and set in working attributes
    */
-  bgp_attr_pair_set_med(args->attrs, load_nl(attr_p)) ;
+  bgp_attr_pair_set_med(prs->attrs, load_nl(attr_p)) ;
 
   return attr_p + 4 ;
 } ;
@@ -1828,27 +1829,27 @@ bgp_attr_med (bgp_attr_parser_args restrict args, const byte* attr_p)
  * Local preference attribute.
  */
 static const byte*
-bgp_attr_local_pref (bgp_attr_parser_args restrict args, const byte* attr_p)
+bgp_attr_local_pref (bgp_attr_parsing restrict prs, const byte* attr_p)
 {
   /* Check for: seen already, valid flags, and exact length
    */
-  if (!bgp_attr_seen_flags_length_check(args, 4))
+  if (!bgp_attr_seen_flags_length_check(prs, 4))
     return attr_p ;
 
   /* If it is contained in an UPDATE message that is received from an external
    * peer, then this attribute MUST be ignored by the receiving speaker.
    */
-  if (args->sort != BGP_PEER_EBGP)
+  if (prs->sort != BGP_PEER_EBGP)
     {
       /* Get the Local Pref and set in working attributes
        */
-      bgp_attr_pair_set_local_pref(args->attrs, load_nl(attr_p)) ;
+      bgp_attr_pair_set_local_pref(prs->attrs, load_nl(attr_p)) ;
     }
   else
     {
       /* We ignore any local pref received from an eBGP peer (RFC 4271, 5.1.5)
        */
-      args->ret |= BGP_ATTR_PARSE_IGNORE ;
+      prs->ret |= BGP_ATTR_PARSE_IGNORE ;
     } ;
 
   return attr_p + 4 ;
@@ -1858,14 +1859,14 @@ bgp_attr_local_pref (bgp_attr_parser_args restrict args, const byte* attr_p)
  * Atomic Aggregate Attribute.
  */
 static const byte*
-bgp_attr_atomic (bgp_attr_parser_args restrict args, const byte* attr_p)
+bgp_attr_atomic (bgp_attr_parsing restrict prs, const byte* attr_p)
 {
   /* Check for: seen already, valid flags, and exact length
    *
    * If OK, set the flag which is alk we need to know.
    */
-  if (bgp_attr_seen_flags_length_check(args, 0))
-    bgp_attr_pair_set_atomic_aggregate(args->attrs, true) ;
+  if (bgp_attr_seen_flags_length_check(prs, 0))
+    bgp_attr_pair_set_atomic_aggregate(prs->attrs, true) ;
 
   return attr_p ;
 }
@@ -1874,40 +1875,40 @@ bgp_attr_atomic (bgp_attr_parser_args restrict args, const byte* attr_p)
  * Aggregator attribute
  */
 static const byte*
-bgp_attr_aggregator (bgp_attr_parser_args restrict args, const byte* attr_p)
+bgp_attr_aggregator (bgp_attr_parsing restrict prs, const byte* attr_p)
 {
   /* Check for: seen already, valid flags, and exact length
    *
    * NEW_BGP peer will send 4 Byte AS, peer without will send 2 Byte
    */
-  if (!bgp_attr_seen_flags_length_check(args, args->as4 ? 4 + 4 : 4 + 2))
+  if (!bgp_attr_seen_flags_length_check(prs, prs->as4 ? 4 + 4 : 4 + 2))
     return attr_p ;
 
-  if (args->as4)
+  if (prs->as4)
     {
-      args->aggregator_as = load_nl(attr_p) ;
+      prs->aggregator_as = load_nl(attr_p) ;
       attr_p += 4 ;
     }
   else
     {
-      args->aggregator_as = load_ns(attr_p) ;
+      prs->aggregator_as = load_ns(attr_p) ;
       attr_p += 2 ;
     } ;
 
-  args->aggregator_ip = load_l(attr_p) ;
+  prs->aggregator_ip = load_l(attr_p) ;
                                 /* NB: stays in Network Order   */
 
   confirm(BGP_ASN_NULL == 0) ;
 
-  if (args->aggregator_as != BGP_ASN_NULL)
+  if (prs->aggregator_as != BGP_ASN_NULL)
     {
-      bgp_attr_pair_set_aggregator(args->attrs, args->aggregator_as,
-                                                args->aggregator_ip) ;
+      bgp_attr_pair_set_aggregator(prs->attrs, prs->aggregator_as,
+                                                prs->aggregator_ip) ;
     }
   else
     {
-      zlog (args->peer->log, LOG_ERR, "Invalid ASN (0) in AGGREGATOR") ;
-      bgp_attr_malformed (args, BGP_NOMS_U_OPTIONAL, 0) ;
+      zlog (prs->peer->log, LOG_ERR, "Invalid ASN (0) in AGGREGATOR") ;
+      bgp_attr_malformed (prs, BGP_NOMS_U_OPTIONAL, 0) ;
     } ;
 
   return attr_p + 4 ;
@@ -1921,28 +1922,28 @@ bgp_attr_aggregator (bgp_attr_parser_args restrict args, const byte* attr_p)
  *     in any logging/debug stuff.
  */
 static const byte*
-bgp_attr_as4_aggregator (bgp_attr_parser_args restrict args, const byte* attr_p)
+bgp_attr_as4_aggregator (bgp_attr_parsing restrict prs, const byte* attr_p)
 {
   /* Check for: seen already, valid flags, and exact length
    */
-  if (!bgp_attr_seen_flags_length_check(args, 8))
+  if (!bgp_attr_seen_flags_length_check(prs, 8))
     return attr_p ;
 
-  /* Get and set the as4_aggregator_as/_ip, storing in the args.
+  /* Get and set the as4_aggregator_as/_ip, storing in the prs.
    *
    * Those are processed against the AS_AGGREGATOR values, when all
    * attributes have been processed.
    */
-  args->as4_aggregator_as  = load_nl(attr_p) ;
-  args->as4_aggregator_ip  = load_l(attr_p + 4) ;
+  prs->as4_aggregator_as  = load_nl(attr_p) ;
+  prs->as4_aggregator_ip  = load_l(attr_p + 4) ;
                                         /* NB: stays in Network Order   */
 
   confirm(BGP_ASN_NULL == 0) ;
 
-  if (args->as4_aggregator_as == BGP_ASN_NULL)
+  if (prs->as4_aggregator_as == BGP_ASN_NULL)
     {
-      zlog (args->peer->log, LOG_ERR, "Invalid ASN (0) in AGGREGATOR") ;
-      bgp_attr_malformed (args, BGP_NOMS_U_OPTIONAL, 0) ;
+      zlog (prs->peer->log, LOG_ERR, "Invalid ASN (0) in AGGREGATOR") ;
+      bgp_attr_malformed (prs, BGP_NOMS_U_OPTIONAL, 0) ;
     } ;
 
   /* draft-ietf-idr-rfc4893bis-07:
@@ -1951,12 +1952,12 @@ bgp_attr_as4_aggregator (bgp_attr_parser_args restrict args, const byte* attr_p)
    *    message between NEW BGP speakers.  ... MUST discard ... and
    *    continue processing the UPDATE message.
    */
-  if (args->as4)
+  if (prs->as4)
     {
       if (BGP_DEBUG(as4, AS4))
         zlog_debug ("[AS4] %s sent AS4_AGGREGATOR despite being an"
-                                              " AS4 speaker", args->peer->host);
-      args->ret |= BGP_ATTR_PARSE_IGNORE ; // XXX ...............................
+                                              " AS4 speaker", prs->peer->host);
+      prs->ret |= BGP_ATTR_PARSE_IGNORE ; // XXX ...............................
     } ;
 
   return attr_p + 8 ;
@@ -1966,13 +1967,13 @@ bgp_attr_as4_aggregator (bgp_attr_parser_args restrict args, const byte* attr_p)
  * Communities attribute.
  */
 static const byte*
-bgp_attr_community (bgp_attr_parser_args restrict args, const byte* attr_p)
+bgp_attr_community (bgp_attr_parsing restrict prs, const byte* attr_p)
 {
   attr_community comm ;
 
   /* Check for: seen already and valid flags
    */
-  if (!bgp_attr_seen_flags_check(args))
+  if (!bgp_attr_seen_flags_check(prs))
     return attr_p ;
 
   /* Length must be a multiple of 4 -- zero length is acceptable
@@ -1981,11 +1982,11 @@ bgp_attr_community (bgp_attr_parser_args restrict args, const byte* attr_p)
    * Note that a zero length Communities attribute is indistinguishable from
    * an absent one -- except for the "seen" state.
    */
-  if ((args->length % 4) != 0)
+  if ((prs->length % 4) != 0)
     {
-      zlog (args->peer->log, LOG_ERR, "Malformed COMMUNITIES (length is %u)",
-                                                                 args->length) ;
-      bgp_attr_malformed (args, BGP_NOMS_U_A_LENGTH, 0) ;
+      zlog (prs->peer->log, LOG_ERR, "Malformed COMMUNITIES (length is %u)",
+                                                                 prs->length) ;
+      bgp_attr_malformed (prs, BGP_NOMS_U_A_LENGTH, 0) ;
       return attr_p ;
     } ;
 
@@ -1994,24 +1995,24 @@ bgp_attr_community (bgp_attr_parser_args restrict args, const byte* attr_p)
    * NB: at this stage we accept whatever the attribute contains.  If one or
    *     more community is invalid, that is a matter for a higher authority.
    */
-  comm = attr_community_set (attr_p, args->length / 4) ;
+  comm = attr_community_set (attr_p, prs->length / 4) ;
 
-  bgp_attr_pair_set_community(args->attrs, comm) ;
+  bgp_attr_pair_set_community(prs->attrs, comm) ;
 
-  return attr_p + args->length ;
+  return attr_p + prs->length ;
 } ;
 
 /*------------------------------------------------------------------------------
  * Originator ID attribute -- Route Reflector
  */
 static const byte*
-bgp_attr_originator_id (bgp_attr_parser_args args, const byte* attr_p)
+bgp_attr_originator_id (bgp_attr_parsing prs, const byte* attr_p)
 {
   in_addr_t  id ;
 
   /* Check for: seen already, valid flags, and exact length
    */
-  if (!bgp_attr_seen_flags_length_check(args, 4))
+  if (!bgp_attr_seen_flags_length_check(prs, 4))
     return attr_p ;
 
   /* If iBGP, get and set the Originator ID in the cluster sub-attribute,
@@ -2043,14 +2044,14 @@ bgp_attr_originator_id (bgp_attr_parser_args args, const byte* attr_p)
    * The two cases are the same, so we end up accepting ORIGINATOR_ID from any
    * iBGP peer.
    */
-  if (args->sort == BGP_PEER_IBGP)
+  if (prs->sort == BGP_PEER_IBGP)
     {
       id = load_l(attr_p) ;     /* NB: stays in Network Order   */
-      bgp_attr_pair_set_originator_id(args->attrs, id) ;
+      bgp_attr_pair_set_originator_id(prs->attrs, id) ;
     }
   else
     {
-      args->ret |= BGP_ATTR_PARSE_IGNORE ;
+      prs->ret |= BGP_ATTR_PARSE_IGNORE ;
     } ;
 
   return attr_p + 4 ;
@@ -2060,22 +2061,22 @@ bgp_attr_originator_id (bgp_attr_parser_args args, const byte* attr_p)
  * Cluster list attribute -- Route Reflector
  */
 static const byte*
-bgp_attr_cluster_list (bgp_attr_parser_args restrict args, const byte* attr_p)
+bgp_attr_cluster_list (bgp_attr_parsing restrict prs, const byte* attr_p)
 {
   attr_cluster clust ;
 
   /* Check for: seen already and valid flags
    */
-  if (!bgp_attr_seen_flags_check(args))
+  if (!bgp_attr_seen_flags_check(prs))
     return attr_p ;
 
   /* Length must be a multiple of 4 -- zero length is acceptable.
    */
-  if (args->length % 4)
+  if (prs->length % 4)
     {
-      zlog (args->peer->log, LOG_ERR, "Bad cluster list length %u",
-                                                                  args->length);
-      bgp_attr_malformed (args, BGP_NOMS_U_A_LENGTH, 0) ;
+      zlog (prs->peer->log, LOG_ERR, "Bad cluster list length %u",
+                                                                  prs->length);
+      bgp_attr_malformed (prs, BGP_NOMS_U_A_LENGTH, 0) ;
       return attr_p ;
     } ;
 
@@ -2087,61 +2088,61 @@ bgp_attr_cluster_list (bgp_attr_parser_args restrict args, const byte* attr_p)
    * CLUSTER_LIST is optional non-transitive.  See ORIGINATOR_ID for more
    * discussion of the handling.
    */
-  if (args->sort == BGP_PEER_IBGP)
+  if (prs->sort == BGP_PEER_IBGP)
     {
-      clust = attr_cluster_set(attr_p, args->length / 4) ;
-      bgp_attr_pair_set_cluster(args->attrs, clust) ;
+      clust = attr_cluster_set(attr_p, prs->length / 4) ;
+      bgp_attr_pair_set_cluster(prs->attrs, clust) ;
     }
   else
     {
-      args->ret |= BGP_ATTR_PARSE_IGNORE ;
+      prs->ret |= BGP_ATTR_PARSE_IGNORE ;
     } ;
 
-  return attr_p + args->length ;
+  return attr_p + prs->length ;
 } ;
 
 /*------------------------------------------------------------------------------
  * Multiprotocol reachability information parse.
  */
 static const byte*
-bgp_attr_mp_reach_parse (bgp_attr_parser_args restrict args, const byte* attr_p)
+bgp_attr_mp_reach_parse (bgp_attr_parsing restrict prs, const byte* attr_p)
 {
   bgp_nlri  nlri ;
   byte      reserved ;
 
   /* Check for: seen already and valid flags
    */
-  if (!bgp_attr_seen_flags_check(args))
+  if (!bgp_attr_seen_flags_check(prs))
     return attr_p ;
 
   /* Need a minimum of 5 bytes, for AFI, SAFI, nexthop_len and reserved octet.
    */
-  if (args->length < (2 + 1 + 1 + 1))
+  if (prs->length < (2 + 1 + 1 + 1))
     {
-      zlog (args->peer->log, LOG_ERR,
+      zlog (prs->peer->log, LOG_ERR,
                         "%s attribute length is %u -- should be at least 5",
                     map_direct(bgp_attr_name_map, BGP_ATT_MP_REACH_NLRI).str,
-                                                                 args->length) ;
-      bgp_attr_malformed (args, BGP_NOMS_U_A_LENGTH, 0) ;
+                                                                 prs->length) ;
+      bgp_attr_malformed (prs, BGP_NOMS_U_A_LENGTH, 0) ;
       return attr_p ;
     } ;
 
   /* Load AFI, SAFI and Next Hop Length and check that we have enough for the
    * all that plus the reserved octet.
    */
-  nlri = &args->mp_update ;
+  nlri = &prs->mp_update ;
 
   nlri->in.afi          = load_ns(attr_p) ;
   nlri->in.safi         = attr_p[2] ;
   nlri->next_hop_length = attr_p[3] ;
 
-  if (args->length < (2 + 1 + 1 + nlri->next_hop_length + 1))
+  if (prs->length < (2 + 1 + 1 + nlri->next_hop_length + 1))
     {
       zlog_info ("%s: %s, MP nexthop length %u + reserved byte"
                                                    " overruns end of attribute",
-                 __func__, args->peer->host, nlri->next_hop_length);
+                 __func__, prs->peer->host, nlri->next_hop_length);
 
-      bgp_attr_malformed (args, BGP_NOMS_U_A_LENGTH, 0) ;
+      bgp_attr_malformed (prs, BGP_NOMS_U_A_LENGTH, 0) ;
       return attr_p ;
     } ;
 
@@ -2225,9 +2226,9 @@ bgp_attr_mp_reach_parse (bgp_attr_parser_args restrict args, const byte* attr_p)
 
       default:
         zlog_info ("%s: (%s) unknown multiprotocol next hop length: %u",
-                            __func__, args->peer->host, nlri->next_hop_length) ;
+                            __func__, prs->peer->host, nlri->next_hop_length) ;
 
-        bgp_attr_malformed (args, BGP_NOMS_U_OPTIONAL, 0) ;
+        bgp_attr_malformed (prs, BGP_NOMS_U_OPTIONAL, 0) ;
         return attr_p ;
     } ;
 
@@ -2241,7 +2242,7 @@ bgp_attr_mp_reach_parse (bgp_attr_parser_args restrict args, const byte* attr_p)
       if (BGP_DEBUG (update, UPDATE_IN))
         zlog_debug ("%s got two nexthop %s %s "
                                "but second one is not a link-local nexthop",
-                   args->peer->host,
+                   prs->peer->host,
                    siptoa(AF_INET6,
                          &nlri->next_hop.ip.v6[in6_global].addr).str,
                    siptoa(AF_INET6,
@@ -2261,7 +2262,7 @@ bgp_attr_mp_reach_parse (bgp_attr_parser_args restrict args, const byte* attr_p)
   if (reserved != 0)
     zlog_warn("%s sent non-zero value, %u, for defunct SNPA-length field"
                                          " in MP_REACH_NLRI for AFI/SAFI %u/%u",
-                     args->peer->host, reserved, nlri->in.afi, nlri->in.safi) ;
+                     prs->peer->host, reserved, nlri->in.afi, nlri->in.safi) ;
 
   /* Worry about whether we recognise the AFI/SAFI pair.
    *
@@ -2280,9 +2281,9 @@ bgp_attr_mp_reach_parse (bgp_attr_parser_args restrict args, const byte* attr_p)
     {
       case qafx_undef:
         zlog_warn("%s sent undefined AFI/SAFI %u/%u MP_REACH_NLRI",
-                                args->peer->host, nlri->in.afi, nlri->in.safi) ;
+                                prs->peer->host, nlri->in.afi, nlri->in.safi) ;
 
-        args->ret |= BGP_ATTR_PARSE_IGNORE ;
+        prs->ret |= BGP_ATTR_PARSE_IGNORE ;
 
         nlri->qafx = qafx_other ;       /* treat as "other" from now on */
         break ;
@@ -2290,9 +2291,9 @@ bgp_attr_mp_reach_parse (bgp_attr_parser_args restrict args, const byte* attr_p)
       case qafx_other:
       default:
         zlog_warn("%s sent unknown AFI/SAFI %u/%u MP_REACH_NLRI",
-                                args->peer->host, nlri->in.afi, nlri->in.safi) ;
+                                prs->peer->host, nlri->in.afi, nlri->in.safi) ;
 
-        args->ret |= BGP_ATTR_PARSE_IGNORE ;
+        prs->ret |= BGP_ATTR_PARSE_IGNORE ;
         break ;
 
       case qafx_ipv4_unicast:
@@ -2314,24 +2315,24 @@ bgp_attr_mp_reach_parse (bgp_attr_parser_args restrict args, const byte* attr_p)
    * about it in the logging.
    */
   nlri->pnt    = attr_p ;
-  nlri->length = args->length - (2 + 1 + 1 + nlri->next_hop_length + 1) ;
+  nlri->length = prs->length - (2 + 1 + 1 + nlri->next_hop_length + 1) ;
 
   if (nlri->length == 0)
     {
-      if (args->ret == BGP_ATTR_PARSE_OK)
+      if (prs->ret == BGP_ATTR_PARSE_OK)
         zlog_warn("%s sent zero length NLRI in MP_REACH_NLRI"
-         " for AFI/SAFI %u/%u", args->peer->host, nlri->in.afi, nlri->in.safi) ;
+         " for AFI/SAFI %u/%u", prs->peer->host, nlri->in.afi, nlri->in.safi) ;
     }
   else
     {
       /* If the NLRI are not valid drops the session
        */
-      if (!bgp_nlri_sanity_check (args->peer, nlri))
+      if (!bgp_nlri_sanity_check (prs->peer, nlri))
         {
           zlog_info ("%s %s NLRI in MP_REACH_NLRI fails sanity check",
-                                 args->peer->host, get_qafx_name(nlri->qafx)) ;
+                                 prs->peer->host, get_qafx_name(nlri->qafx)) ;
 
-          bgp_attr_malformed (args, BGP_NOMS_U_OPTIONAL,
+          bgp_attr_malformed (prs, BGP_NOMS_U_OPTIONAL,
                                                       BGP_ATTR_PARSE_CRITICAL) ;
         } ;
     } ;
@@ -2346,10 +2347,10 @@ bgp_attr_mp_reach_parse (bgp_attr_parser_args restrict args, const byte* attr_p)
  * Withdraw/Update NLRI.  Takes the start and end of all attributes in order to
  * perform this test.
  *
- * NB: expects the args->mp_withdraw structure to have been zeroized.
+ * NB: expects the prs->mp_withdraw structure to have been zeroized.
  */
 static const byte*
-bgp_attr_mp_unreach_parse (bgp_attr_parser_args restrict args,
+bgp_attr_mp_unreach_parse (bgp_attr_parsing restrict prs,
                                          const byte* attr_p,
                                          const byte* start_p, const byte* end_p)
 {
@@ -2357,22 +2358,22 @@ bgp_attr_mp_unreach_parse (bgp_attr_parser_args restrict args,
 
   /* Check for: seen already and valid flags
    */
-  if (!bgp_attr_seen_flags_check(args))
+  if (!bgp_attr_seen_flags_check(prs))
     return attr_p ;
 
   /* Check for at least enough for AFI and SAFI, and fetch same.
    */
-  if (args->length < (2 + 1))
+  if (prs->length < (2 + 1))
     {
-      zlog (args->peer->log, LOG_ERR,
+      zlog (prs->peer->log, LOG_ERR,
                             "%s attribute length is %u -- should be at least 3",
                     map_direct(bgp_attr_name_map, BGP_ATT_MP_UNREACH_NLRI).str,
-                                                                 args->length) ;
-      bgp_attr_malformed (args, BGP_NOMS_U_A_LENGTH, 0) ;
+                                                                 prs->length) ;
+      bgp_attr_malformed (prs, BGP_NOMS_U_A_LENGTH, 0) ;
       return attr_p ;
     } ;
 
-  nlri = &args->mp_withdraw ;
+  nlri = &prs->mp_withdraw ;
 
   nlri->in.afi   = load_ns(attr_p) ;
   nlri->in.safi  = attr_p[2] ;
@@ -2394,9 +2395,9 @@ bgp_attr_mp_unreach_parse (bgp_attr_parser_args restrict args,
     {
       case qafx_undef:
         zlog_warn("%s sent undefined AFI/SAFI %u/%u MP_REACH_NLRI",
-                                args->peer->host, nlri->in.afi, nlri->in.safi) ;
+                                prs->peer->host, nlri->in.afi, nlri->in.safi) ;
 
-        args->ret |= BGP_ATTR_PARSE_IGNORE ;
+        prs->ret |= BGP_ATTR_PARSE_IGNORE ;
 
         nlri->qafx = qafx_other ;       /* treat as "other" from now on */
         break ;
@@ -2404,9 +2405,9 @@ bgp_attr_mp_unreach_parse (bgp_attr_parser_args restrict args,
       case qafx_other:
       default:
         zlog_warn("%s sent unknown AFI/SAFI %u/%u MP_REACH_NLRI",
-                                args->peer->host, nlri->in.afi, nlri->in.safi) ;
+                                prs->peer->host, nlri->in.afi, nlri->in.safi) ;
 
-        args->ret |= BGP_ATTR_PARSE_IGNORE ;
+        prs->ret |= BGP_ATTR_PARSE_IGNORE ;
         break ;
 
       case qafx_ipv4_unicast:
@@ -2421,9 +2422,9 @@ bgp_attr_mp_unreach_parse (bgp_attr_parser_args restrict args,
   /* What is left of the attribute is the NLRI.
    */
   nlri->pnt    = attr_p       + (2 + 1) ;
-  nlri->length = args->length - (2 + 1) ;
+  nlri->length = prs->length - (2 + 1) ;
 
-  qassert(!args->mp_eor) ;      /* default is no MP End-of-RIB  */
+  qassert(!prs->mp_eor) ;      /* default is no MP End-of-RIB  */
 
   if (nlri->length == 0)
     {
@@ -2443,53 +2444,53 @@ bgp_attr_mp_unreach_parse (bgp_attr_parser_args restrict args,
        * If this is not an End-of-RIB, then no NLRI in an MP_UNREACH_NLRI is
        * noteworthy.
        */
-      if ((args->start_p == start_p) && (args->end_p == end_p))
+      if ((prs->start_p == start_p) && (prs->end_p == end_p))
         {
-          if (args->update.length == 0)
+          if (prs->update.length == 0)
             {
-              if (args->withdraw.length == 0)
-                args->mp_eor = true ;
+              if (prs->withdraw.length == 0)
+                prs->mp_eor = true ;
               else
                 zlog_warn("%s sent apparent End-of-RIB in MP_UNREACH_NLRI"
                        " for AFI/SAFI %u/%u BUT have Withdrawn Routes",
-                                args->peer->host, nlri->in.afi, nlri->in.safi) ;
+                                prs->peer->host, nlri->in.afi, nlri->in.safi) ;
             } ;
         }
       else
         {
-          if (args->ret == BGP_ATTR_PARSE_OK)
+          if (prs->ret == BGP_ATTR_PARSE_OK)
             zlog_warn("%s sent zero length NLRI in MP_UNREACH_NLRI"
                         " for AFI/SAFI %u/%u",
-                                args->peer->host, nlri->in.afi, nlri->in.safi) ;
+                                prs->peer->host, nlri->in.afi, nlri->in.safi) ;
         } ;
     }
   else
     {
-      if (!bgp_nlri_sanity_check (args->peer, nlri))
+      if (!bgp_nlri_sanity_check (prs->peer, nlri))
         {
-          zlog(args->peer->log, LOG_ERR,
+          zlog(prs->peer->log, LOG_ERR,
                  "%s %s NLRI in MP_UNREACH_NLRI fails sanity check",
-                                  args->peer->host, get_qafx_name(nlri->qafx)) ;
+                                  prs->peer->host, get_qafx_name(nlri->qafx)) ;
 
-          bgp_attr_malformed (args, BGP_NOMS_U_OPTIONAL,
+          bgp_attr_malformed (prs, BGP_NOMS_U_OPTIONAL,
                                                       BGP_ATTR_PARSE_CRITICAL) ;
         } ;
     } ;
 
-  return attr_p + args->length ;
+  return attr_p + prs->length ;
 } ;
 
 /*------------------------------------------------------------------------------
  * Extended Community attribute.
  */
 static const byte*
-bgp_attr_ecommunities (bgp_attr_parser_args restrict args, const byte* attr_p)
+bgp_attr_ecommunities (bgp_attr_parsing restrict prs, const byte* attr_p)
 {
   attr_ecommunity ecomm ;
 
   /* Check for: seen already and valid flags
    */
-  if (!bgp_attr_seen_flags_check(args))
+  if (!bgp_attr_seen_flags_check(prs))
     return attr_p ;
 
   /* Length must be a multiple of 8 -- zero length is acceptable
@@ -2498,12 +2499,12 @@ bgp_attr_ecommunities (bgp_attr_parser_args restrict args, const byte* attr_p)
    * Note that a zero length Extended Communities attribute is
    * indistinguishable from an absent one -- except for the "seen" state.
    */
-  if ((args->length % 8) != 0)
+  if ((prs->length % 8) != 0)
     {
-      zlog (args->peer->log, LOG_ERR, "Malformed EXT COMMUNITIES (length is %u)",
-                                                                 args->length) ;
+      zlog (prs->peer->log, LOG_ERR, "Malformed EXT COMMUNITIES (length is %u)",
+                                                                 prs->length) ;
 
-      bgp_attr_malformed (args, BGP_NOMS_U_A_LENGTH, 0) ;
+      bgp_attr_malformed (prs, BGP_NOMS_U_A_LENGTH, 0) ;
 
       return attr_p ;
     } ;
@@ -2514,36 +2515,36 @@ bgp_attr_ecommunities (bgp_attr_parser_args restrict args, const byte* attr_p)
    *     more extended community is invalid, that is a matter for a higher
    *     authority.
    */
-  ecomm = attr_ecommunity_set (attr_p, args->length / 8) ;
+  ecomm = attr_ecommunity_set (attr_p, prs->length / 8) ;
 
-  bgp_attr_pair_set_ecommunity(args->attrs, ecomm) ;
+  bgp_attr_pair_set_ecommunity(prs->attrs, ecomm) ;
 
-  return attr_p + args->length ;
+  return attr_p + prs->length ;
 } ;
 
 /*------------------------------------------------------------------------------
  * BGP unknown attribute treatment
  */
 static const byte*
-bgp_attr_unknown (bgp_attr_parser_args restrict args, const byte* attr_p)
+bgp_attr_unknown (bgp_attr_parsing restrict prs, const byte* attr_p)
 {
   const attr_flags_check_t* check ;
 
   if (BGP_DEBUG (normal, NORMAL))
     zlog_debug ("%s Unknown attribute received "
                                             "(%stransitive type %u, length %u)",
-                   args->peer->host,
-                      (args->flags & BGP_ATF_TRANSITIVE) ? "" : "non-",
-                                                      args->type, args->length);
+                   prs->peer->host,
+                      (prs->flags & BGP_ATF_TRANSITIVE) ? "" : "non-",
+                                                      prs->type, prs->length);
 
   if (BGP_DEBUG (events, EVENTS))
-    zlog (args->peer->log, LOG_DEBUG,
+    zlog (prs->peer->log, LOG_DEBUG,
                           "Unknown attribute type %u length %u received",
-                                                      args->type, args->length);
+                                                      prs->type, prs->length);
 
   /* Check for whether already seen this attribute type
    */
-  bgp_attr_seen_check(args) ;
+  bgp_attr_seen_check(prs) ;
 
   /* Optional, Non-Transitive attributes MUST have Partial Bit == 0
    *
@@ -2557,24 +2558,24 @@ bgp_attr_unknown (bgp_attr_parser_args restrict args, const byte* attr_p)
    *
    * The significance of the Partial Bit is, frankly, a mystery.
    */
-  if (args->flags & BGP_ATF_OPTIONAL)
-    check = (args->flags & BGP_ATF_TRANSITIVE) ? &attr_flags_check_trans
+  if (prs->flags & BGP_ATF_OPTIONAL)
+    check = (prs->flags & BGP_ATF_TRANSITIVE) ? &attr_flags_check_trans
                                                : &attr_flags_check_non_trans ;
   else
     {
-      bgp_attr_malformed(args, BGP_NOMS_U_UNKNOWN, BGP_ATTR_PARSE_SERIOUS) ;
+      bgp_attr_malformed(prs, BGP_NOMS_U_UNKNOWN, BGP_ATTR_PARSE_SERIOUS) ;
       check = &attr_flags_check_known ;
     } ;
 
-  if ((args->flags & check->mask) != check->req)
-    bgp_attr_flags_malformed(args, check) ;
+  if ((prs->flags & check->mask) != check->req)
+    bgp_attr_flags_malformed(prs, check) ;
 
   /* For the time being we simply push a pointer to the raw attribute onto
    * the vector of unknown attributes, for processing later.
    */
-  args->unknown = attr_unknown_add(args->unknown, args->start_p) ;
+  prs->unknown = attr_unknown_add(prs->unknown, prs->start_p) ;
 
-  return attr_p + args->length ;
+  return attr_p + prs->length ;
 }
 
 /*==============================================================================
@@ -2632,11 +2633,11 @@ bgp_attr_unknown (bgp_attr_parser_args restrict args, const byte* attr_p)
  *                                   NB: this is not, strictly, and error
  */
 static bgp_attr_parse_ret_t
-bgp_attr_munge_as4_aggr (bgp_attr_parser_args restrict args)
+bgp_attr_munge_as4_aggr (bgp_attr_parsing restrict prs)
 {
-  qassert(!args->as4) ;
+  qassert(!prs->as4) ;
 
-  if (args->as4_aggregator_as == BGP_ASN_NULL)
+  if (prs->as4_aggregator_as == BGP_ASN_NULL)
     return BGP_ATTR_PARSE_OK ;          /* Easy if no AS4_AGGREGATOR    */
 
   /* AGGREGATOR is Optional Transitive.
@@ -2685,33 +2686,33 @@ bgp_attr_munge_as4_aggr (bgp_attr_parser_args restrict args)
    * an AGGREGATOR from a lone AS4_AGGREGATOR, then some poor AS2 speaker
    * will find that BGP is no longer working as it did before !!!
    */
-  if (args->aggregator_as == BGP_ASN_NULL)
+  if (prs->aggregator_as == BGP_ASN_NULL)
     {
       if ( BGP_DEBUG(as4, AS4))
         zlog_debug ("[AS4] %s BGP not AS4 capable peer"
                     " sent AS4_AGGREGATOR but no AGGREGATOR,"
-                    " so ignore the AS4_AGGREGATOR", args->peer->host);
+                    " so ignore the AS4_AGGREGATOR", prs->peer->host);
 
       return BGP_ATTR_PARSE_OK ;        /* Easy(-ish) if no AGGREGATOR  */
     } ;
 
   /* received both AGGREGATOR and AS4_AGGREGATOR.
    */
-  if (args->aggregator_as != BGP_ASN_TRANS)
+  if (prs->aggregator_as != BGP_ASN_TRANS)
     {
       if ( BGP_DEBUG(as4, AS4))
         zlog_debug ("[AS4] %s BGP not AS4 capable peer"
                     " sent AGGREGATOR %u != AS_TRANS and"
                     " AS4_AGGREGATOR, so ignore"
-                    " AS4_AGGREGATOR and AS4_PATH", args->peer->host,
-                                                          args->aggregator_as) ;
+                    " AS4_AGGREGATOR and AS4_PATH", prs->peer->host,
+                                                          prs->aggregator_as) ;
       return BGP_ATTR_PARSE_IGNORE ;
     } ;
 
   /* Finally -- set the aggregator information from the AS4_AGGREGATOR !
    */
-  bgp_attr_pair_set_aggregator(args->attrs, args->as4_aggregator_as,
-                                            args->as4_aggregator_ip) ;
+  bgp_attr_pair_set_aggregator(prs->attrs, prs->as4_aggregator_as,
+                                            prs->as4_aggregator_ip) ;
 
   return BGP_ATTR_PARSE_OK ;
 } ;
@@ -2724,8 +2725,8 @@ bgp_attr_munge_as4_aggr (bgp_attr_parser_args restrict args)
  *
  * NB: this MUST be done *after* bgp_attr_munge_as4_aggr() -- see there.
  *
- * On entry, args->asp is the AS_PATH attribute and args->as4p is the AS4_PATH.
- * When this function returns, args->asp is the effective path, after any
+ * On entry, prs->asp is the AS_PATH attribute and prs->as4p is the AS4_PATH.
+ * When this function returns, prs->asp is the effective path, after any
  * reconciliation of the two attributes.
  *
  * Returns: BGP_ATTR_PARSE_OK  -- all is well
@@ -2733,16 +2734,16 @@ bgp_attr_munge_as4_aggr (bgp_attr_parser_args restrict args)
  * NB: we quietly ignore AS4_PATH if no AS_PATH -- same like AS4_AGGREGATOR.
  */
 static bgp_attr_parse_ret_t
-bgp_attr_munge_as4_path (bgp_attr_parser_args restrict args)
+bgp_attr_munge_as4_path (bgp_attr_parsing restrict prs)
 {
   as_path merged ;
 
-  qassert(!args->as4) ;
+  qassert(!prs->as4) ;
 
-  if (args->as4p == NULL)
+  if (prs->as4p == NULL)
     return BGP_ATTR_PARSE_OK ;          /* Easy if no AS4_PATH          */
 
-  if (args->asp == NULL)
+  if (prs->asp == NULL)
     {
       /* The lack of an AS_PATH is likely to become a serious issue in the
        * near future.
@@ -2756,16 +2757,16 @@ bgp_attr_munge_as4_path (bgp_attr_parser_args restrict args)
       if (BGP_DEBUG(as4, AS4))
         zlog_debug ("[AS4] %s BGP not AS4 capable peer"
                     " sent AS4_PATH but no AS_PATH,"
-                    " so ignore the AS4_PATH", args->peer->host);
+                    " so ignore the AS4_PATH", prs->peer->host);
 
       return BGP_ATTR_PARSE_OK ;        /* Easy(-ish) if no AS_PATH     */
     } ;
 
   /* need to reconcile NEW_AS_PATH and AS_PATH
    */
-  merged = as_path_reconcile_as4 (args->asp, args->as4p) ;
+  merged = as_path_reconcile_as4 (prs->asp, prs->as4p) ;
 
-  qassert(merged == args->asp) ;
+  qassert(merged == prs->asp) ;
 
   return BGP_ATTR_PARSE_OK ;
 } ;
@@ -2776,8 +2777,8 @@ bgp_attr_munge_as4_path (bgp_attr_parser_args restrict args)
  * Performs final checks on the AS_PATH -- once have resolved any AS4_PATH
  * issues,
  *
- * If all is OK, sets args->asp as the AS Path attribute in the attribute set,
- * and clears args->asp (ownership changes when path is set).
+ * If all is OK, sets prs->asp as the AS Path attribute in the attribute set,
+ * and clears prs->asp (ownership changes when path is set).
  *
  * If path contains any confed stuff, then:
  *
@@ -2795,90 +2796,91 @@ bgp_attr_munge_as4_path (bgp_attr_parser_args restrict args)
  *     The AS_PATH is Well-Known Mandatory.  So bgp_attr_malformed() will
  *     not allow much latitude !
  *
- * Updates args->aret if AS_PATH is not acceptable
+ * Updates prs->aret if AS_PATH is not acceptable
  */
 static void
-bgp_attr_as_path_set_if_ok(bgp_attr_parser_args restrict args)
+bgp_attr_as_path_set_if_ok(bgp_attr_parsing restrict prs)
 {
   as_path asp ;
 
-  asp = args->asp ;
+  asp = prs->asp ;
 
   if (as_path_confed_path_length(asp) != 0)
     {
       /* Have some confed stuff, somewhere in the AS_PATH.
        */
-      if (args->sort == BGP_PEER_EBGP)
+      if (prs->sort == BGP_PEER_EBGP)
         {
-          zlog (args->peer->log, LOG_ERR,
-                    "AS path from %s contains CONFED stuff", args->peer->host) ;
+          zlog (prs->peer->log, LOG_ERR,
+                    "AS path from %s contains CONFED stuff", prs->peer->host) ;
 
-          bgp_attr_malformed (args, BGP_NOMS_U_MAL_AS_PATH, 0) ;
+          bgp_attr_malformed (prs, BGP_NOMS_U_MAL_AS_PATH, 0) ;
           return ;
         } ;
 
       if (!as_path_confed_ok(asp))
         {
-          zlog (args->peer->log, LOG_ERR,
+          zlog (prs->peer->log, LOG_ERR,
                   "AS path from %s contains CONFED stuff, but not all at start",
-                                                             args->peer->host) ;
-          bgp_attr_malformed (args, BGP_NOMS_U_MAL_AS_PATH, 0) ;
+                                                             prs->peer->host) ;
+          bgp_attr_malformed (prs, BGP_NOMS_U_MAL_AS_PATH, 0) ;
           return ;
         } ;
     }
   else
     {
-      if (args->sort == BGP_PEER_CBGP)
+      if (prs->sort == BGP_PEER_CBGP)
         {
-          zlog (args->peer->log, LOG_ERR,
+          zlog (prs->peer->log, LOG_ERR,
                       "AS path from %s does not contain CONFED stuff",
-                                                             args->peer->host) ;
+                                                             prs->peer->host) ;
 
-          bgp_attr_malformed (args, BGP_NOMS_U_MAL_AS_PATH, 0) ;
+          bgp_attr_malformed (prs, BGP_NOMS_U_MAL_AS_PATH, 0) ;
           return ;
         } ;
     } ;
 
   /* First AS check for EBGP -- NB: have already rejected any confed stuff.
    */
-  if ((args->sort == BGP_PEER_EBGP)
-                           && (as_path_first_simple_asn(asp) != args->peer->as))
+  if ((prs->sort == BGP_PEER_EBGP)
+                && (as_path_first_simple_asn(asp) != prs->peer->args.remote_as))
     {
       struct bgp* bgp ;
 
-      bgp = args->peer->bgp;
+      bgp = prs->peer->bgp;
 
       if ((bgp != NULL) && bgp_flag_check (bgp, BGP_FLAG_ENFORCE_FIRST_AS))
         {
-          zlog (args->peer->log, LOG_ERR, "%s incorrect first AS (must be %u)",
-                                             args->peer->host, args->peer->as) ;
+          zlog (prs->peer->log, LOG_ERR,
+                                  "%s incorrect first AS in path (must be %u)",
+                                   prs->peer->host, prs->peer->args.remote_as) ;
 
-          bgp_attr_malformed(args, BGP_NOMS_U_MAL_AS_PATH, 0) ;
+          bgp_attr_malformed(prs, BGP_NOMS_U_MAL_AS_PATH, 0) ;
           return ;
         } ;
     } ;
 
   /* The AS PATH is OK -- so now add to the attribute set.
    */
-  args->asp = NULL ;                    /* Transfer to attributes       */
+  prs->asp = NULL ;                    /* Transfer to attributes       */
 
-  bgp_attr_pair_set_as_path(args->attrs, asp) ;
+  bgp_attr_pair_set_as_path(prs->attrs, asp) ;
 } ;
 
 /*==============================================================================
  * Test interfaces
  */
 extern const byte*
-tx_bgp_attr_mp_reach_parse(bgp_attr_parser_args args, const byte* attr_p)
+tx_bgp_attr_mp_reach_parse(bgp_attr_parsing prs, const byte* attr_p)
 {
-  return bgp_attr_mp_reach_parse(args, attr_p) ;
+  return bgp_attr_mp_reach_parse(prs, attr_p) ;
 } ;
 
 extern const byte*
-tx_bgp_attr_mp_unreach_parse(bgp_attr_parser_args args,
+tx_bgp_attr_mp_unreach_parse(bgp_attr_parsing prs,
                                        const byte* attr_p,
                                        const byte* start_p, const byte* end_p)
 {
-  return bgp_attr_mp_unreach_parse(args, attr_p, start_p, end_p) ;
+  return bgp_attr_mp_unreach_parse(prs, attr_p, start_p, end_p) ;
 } ;
 

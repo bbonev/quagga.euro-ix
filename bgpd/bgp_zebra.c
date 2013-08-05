@@ -34,6 +34,8 @@ Boston, MA 02111-1307, USA.  */
 
 #include "bgpd/bgpd.h"
 #include "bgpd/bgp_peer.h"
+#include "bgpd/bgp_session.h"
+#include "bgpd/bgp_connection.h"
 #include "bgpd/bgp_route.h"
 #include "bgpd/bgp_rib.h"
 #include "bgpd/bgp_attr.h"
@@ -181,11 +183,11 @@ bgp_interface_down (int command, struct zclient *zclient, zebra_size_t length)
 
         for (ALL_LIST_ELEMENTS (bgp->peer, node, nnode, peer))
           {
-            if (peer->ttl != 1)
+            if (peer->cops.ttl != 1)
               continue;
 
-            if (peer->su_name.sa.sa_family == AF_INET)
-              peer_if = if_lookup_by_ipv4 (&peer->su_name.sin.sin_addr);
+            if (peer->su_name->sa.sa_family == AF_INET)
+              peer_if = if_lookup_by_ipv4 (&peer->su_name->sin.sin_addr);
             else
               continue;
 
@@ -556,8 +558,9 @@ bgp_nexthop_set (sockunion local, sockunion remote,
     {
       if (IN6_IS_ADDR_LINKLOCAL (&local->sin6.sin6_addr))
         {
-          if (peer->ifname)
-            ifp = if_lookup_by_index (if_nametoindex (peer->ifname));
+          if (peer->cops.ifname)
+            ifp = if_lookup_by_index (
+                                    if_nametoindex (peer->cops.ifname));
         }
       else
         ifp = if_lookup_by_ipv6 (&local->sin6.sin6_addr);
@@ -592,8 +595,8 @@ bgp_nexthop_set (sockunion local, sockunion remote,
 
       /* IPv4 nexthop.  I don't care about it.
        */
-      if (peer->local_id != 0)
-        nexthop->v4.s_addr = peer->local_id;
+      if (peer->args.local_id != 0)
+        nexthop->v4.s_addr = peer->args.local_id;
 
       /* Global address*/
       if (! IN6_IS_ADDR_LINKLOCAL (&local->sin6.sin6_addr))
@@ -676,8 +679,7 @@ bgp_zebra_route_set(route_zebra zr, bgp_peer peer, route_info ri)
         break ;
 
       case BGP_PEER_EBGP:
-        if ((peer->ttl != 1) ||
-                             (peer->flags & PEER_FLAG_DISABLE_CONNECTED_CHECK))
+        if ((peer->cops.ttl != 1) || (peer->disable_connected_check))
           zr->flags |= ZEBRA_FLAG_INTERNAL ;
         break ;
 
@@ -800,8 +802,9 @@ bgp_zebra_announce (route_zebra zr, bgp_rib_node rn, prefix_c p)
                * Workaround for Cisco's nexthop bug.
                */
               if (IN6_IS_ADDR_UNSPECIFIED(&nh->ip.v6[in6_global])
-                                 && (peer->su_remote->sa.sa_family == AF_INET6))
-                zr->next_hop.ipv6.addr = peer->su_remote->sin6.sin6_addr;
+                 && (peer->session->cops->su_remote.sa.sa_family == AF_INET6))
+                zr->next_hop.ipv6.addr =
+                                peer->session->cops->su_remote.sin6.sin6_addr ;
               else
                 zr->next_hop.ipv6.addr = nh->ip.v6[in6_link_local].addr ;
 
@@ -811,8 +814,8 @@ bgp_zebra_announce (route_zebra zr, bgp_rib_node rn, prefix_c p)
 
           if ((zr->ifindex != 0) && IN6_IS_ADDR_LINKLOCAL (nexthop[0]))
             {
-              if (peer->ifname)
-                zr->ifindex = if_nametoindex (peer->ifname);
+              if (peer->cops.ifname)
+                zr->ifindex = if_nametoindex (peer->cops.ifname);
               else if (peer->nexthop.ifp)
                 zr->ifindex = peer->nexthop.ifp->ifindex;
             } ;

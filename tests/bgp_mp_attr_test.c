@@ -438,7 +438,7 @@ parse_test (struct peer *peer, struct test_segment *t, int type)
   byte flags ;
   bool parsed ;
   int oldfailed = failed;
-  bgp_attr_parser_args_t args[1] ;
+  bgp_attr_parsing_t args[1] ;
   const byte* attr_p ;
 
 #define RANDOM_FUZZ 35

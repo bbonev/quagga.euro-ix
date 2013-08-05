@@ -48,20 +48,21 @@ typedef byte bgp_option_bits_t ;        /* NB: <= 8 bits defined        */
 
 struct bgp_master
 {
-  struct list *bgp ;            /* BGP instance list.                 */
+  struct list *bgp ;            /* BGP instance list.                   */
 
-  struct thread_master *master; /* BGP thread master.                 */
+  struct thread_master *master; /* BGP thread master.                   */
 
-  char*    addresses ;          /* Listener address & port number     */
+  char*    addresses ;          /* Listener address & port number       */
   char*    port_str ;
 
-  time_t   start_time;          /* BGP start time.                    */
+  time_t   start_time;          /* BGP start time.                      */
 
-  bgp_option_bits_t options;    /* Various BGP global configuration.  */
+  bgp_option_bits_t options;    /* Various BGP global configuration.    */
 
-  bool  as2_speaker ;           /* Do not announce AS4                */
+  bool  reading_config ;        /* in the process of reading config.    */
+  bool  as2_speaker ;           /* Do not announce AS4                  */
 
-  uint  peer_linger_count ;     /* Peers lingering in pDeleting       */
+  uint  peer_linger_count ;     /* Peers lingering in pDeleting         */
 
   wq_base_t     fg_wq ;
   wq_base_t     bg_wq ;
@@ -109,7 +110,7 @@ struct bgp
 {
   /* AS number of this BGP instance.
    */
-  as_t  as;
+  as_t  my_as;
 
   /* Name of this BGP instance.
    */
@@ -142,22 +143,22 @@ struct bgp
 
   /* BGP confederation information.
    *
-   * The ebgp_as is:  bgp->as, unless bgp->confed_id is set, when it is that.
+   * The ebgp_as is:  bgp->my_as, unless bgp->confed_id is set, when it is that.
    *
    * So bgp->ebgp_as is the effective as for eBGP sessions (NB: that *excludes*
    * sessions to Confederation peers in different Member ASes).
    *
    * check_confed_id is set iff:  confed_id != BGP_ASN_NULL
-   *                         and: confed_id != bgp->as
+   *                         and: confed_id != bgp->my_as
    *
    * check_confed_id_all is set iff: confed_id not in confed_peers.
    *
    * What check_confed_id means is that for iBGP and for cBGP, we can check
    * that the AS-PATH on incoming routes does NOT contain the confed_id.
    *
-   * NB: the confed_id *may* be the same as the bgp->as.
+   * NB: the confed_id *may* be the same as the bgp->my_as.
    *
-   * NB: the confed_peers *will* exclude the bgp->as, but not necessarily the
+   * NB: the confed_peers *will* exclude the bgp->my_as, but not necessarily the
    *     confed_id !
    */
   as_t    ebgp_as ;
@@ -220,9 +221,9 @@ struct bgp
    */
   uint32_t default_holdtime ;
   uint32_t default_keepalive ;
-  uint32_t default_connect_retry_time ;
-  uint32_t default_accept_retry_time ;
-  uint32_t default_openholdtime ;
+  uint32_t default_connect_retry_secs ;
+  uint32_t default_accept_retry_secs ;
+  uint32_t default_open_hold_secs ;
 
   uint32_t default_ibgp_mrai ;
   uint32_t default_cbgp_mrai ;          /* usually same as eBGP */
@@ -262,26 +263,6 @@ enum { BGP_VERSION_4       =   4 } ;
 /* Default BGP port number.
  */
 enum { BGP_PORT_DEFAULT    = 179 } ;
-
-#if 0
-/* BGP finite state machine events.
- */
-#define BGP_Start                                1
-#define BGP_Stop                                 2
-#define TCP_connection_open                      3
-#define TCP_connection_closed                    4
-#define TCP_connection_open_failed               5
-#define TCP_fatal_error                          6
-#define ConnectRetry_timer_expired               7
-#define Hold_Timer_expired                       8
-#define KeepAlive_timer_expired                  9
-#define Receive_OPEN_message                    10
-#define Receive_KEEPALIVE_message               11
-#define Receive_UPDATE_message                  12
-#define Receive_NOTIFICATION_message            13
-#define Clearing_Completed                      14
-#define BGP_EVENTS_MAX                          15
-#endif
 
 /* BGP timers default values
  */
@@ -330,13 +311,38 @@ enum { BGP_UPTIME_LEN   = 25 } ;
  *   * BGP_PEER_UNSPECIFIED -- for group configuration where the remote-as is
  *                             not set.
  *
- *   * BGP_PEER_IBGP     -- remote peer is in the same AS as us (bpg->as),
- *                          and the same CONFED Member AS (if any).
+ *   * BGP_PEER_IBGP     -- remote peer is in the same AS as us (bpg->my_as),
+ *                          which may be a CONFED Member AS.
  *
- *   * BGP_PEER_CBGP     -- peer is in same AS as us (bgp->as),
- *                          but different CONFED Member AS
+ *   * BGP_PEER_CBGP     -- peer is in same AS as us (bgp->my_as),
+ *                          ant that AS is a (different) CONFED Member AS
  *
- *   * BGP_PEER_EBGP     -- peer is in a different AS to us (bgp->as)
+ *   * BGP_PEER_EBGP     -- peer is in a different AS to us (bgp->my_as)
+ *                          and that is not a CONFED Member AS (if any)
+ *
+ * The CONFED thing is a bit of a tangle.  Suppose we have AS99, and we
+ * configure that as a Confederation with 3 Member ASN: 65001, 65002 and
+ * 65003.  And suppose we are in the 65001 Member AS, then we have:
+ *
+ *   router bgp 65001                           -- so bgp->my_as      == 65001
+ *    bgp confederation identifier 99           -- so bgp->confed_id  == 99
+ *    bgp confereration_peers 65002 65003
+ *
+ * We have a set of CONFED Member ASes, which includes my_as.
+ *
+ * When we speak to other routers in 65001, that is within our CONFED member AS
+ * and is iBGP, and we preserve confed stuff in the path.  We OPEN connections
+ * as AS65001.
+ *
+ * When we speak to other routers in 65002 or 65003, that is "cBGP"... which
+ * almost eBGP, but we maintain the confed stuff in the path.  We OPEN
+ * connections as AS65001.
+ *
+ * When we speak to other routers outside our confederation, that is eBGP, and
+ * we strip any confed stuff from the path.  We OPEN connections as AS99 (the
+ * bgp->confed_id).  IN bgp->ebgp_as we keep a copy of bgp->my_as or
+ * bgp->confed_id, to give the ASN to peer as for eBGP in all cases (unless
+ * have change_local_as... which is another story).
  */
 typedef enum
 {
@@ -511,8 +517,11 @@ extern bgp_ret_t bgp_confederation_peers_scan(bgp_inst bgp) ;
 extern bgp_ret_t bgp_timers_set (bgp_inst bgp, uint holdtime, uint keepalive);
 extern bgp_ret_t bgp_timers_unset (bgp_inst bgp);
 extern bgp_ret_t bgp_connect_retry_time_set (bgp_inst bgp,
-                                                      uint connect_retry_time) ;
+                                                      uint connect_retry_secs) ;
 extern bgp_ret_t bgp_connect_retry_time_unset (bgp_inst bgp) ;
+extern bgp_ret_t bgp_accept_retry_time_set (bgp_inst bgp,
+                                                      uint accept_retry_secs) ;
+extern bgp_ret_t bgp_accept_retry_time_unset (bgp_inst bgp) ;
 extern bgp_ret_t bgp_open_hold_time_set (bgp_inst bgp, uint openholdtime) ;
 extern bgp_ret_t bgp_open_hold_time_unset (bgp_inst bgp) ;
 extern bgp_ret_t bgp_mrai_set (bgp_inst bgp, uint ibgp_mrai, uint cbgp_mrai,

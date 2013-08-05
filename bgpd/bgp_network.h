@@ -29,9 +29,9 @@
 extern uint bgp_listeners_init(const char* addresses, const char* port_str) ;
 extern void bgp_listeners_finish(void) ;
 
-extern bool bgp_listen_set(bgp_connection_options_c cops) ;
-extern void bgp_listen_set_password(bgp_connection_options_c cops) ;
-extern void bgp_listen_unset(bgp_connection_options_c cops) ;
+extern bool bgp_listen_set(bgp_cops_c cops) ;
+extern void bgp_listen_set_password(bgp_cops_c cops) ;
+extern void bgp_listen_unset(bgp_cops_c cops) ;
 
 extern void bgp_connect(bgp_connection connection) ;
 extern void bgp_accept_open(bgp_connection connection) ;

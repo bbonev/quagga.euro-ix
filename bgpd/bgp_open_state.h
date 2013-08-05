@@ -66,20 +66,6 @@ typedef uint8_t bgp_orf_cap_bits_t ;    /* NB: <= 8 flags       */
 
 typedef bgp_orf_cap_bits_t  bgp_orf_cap_v[qafx_count] ;
 
-#if 0
-typedef struct bgp_session_args_orf  bgp_session_args_orf_t ;
-typedef struct bgp_session_args_orf* bgp_session_args_orf ;
-
-struct bgp_session_args_orf
-{
-  qafx_set_t    recv_rfc ;
-  qafx_set_t    send_rfc ;
-
-  qafx_set_t    recv_pre ;
-  qafx_set_t    send_pre ;
-} ;
-#endif
-
 /*------------------------------------------------------------------------------
  * Session Arguments affect the state of a session from the moment a
  * connection is made.
@@ -95,6 +81,29 @@ typedef const struct bgp_session_args* bgp_session_args_c ;
 
 struct bgp_session_args
 {
+  as_t          local_as ;      /* ASN here                     */
+  in_addr_t     local_id ;      /* BGP-Id here                  */
+
+  as_t          remote_as ;     /* ASN of the peer              */
+  in_addr_t     remote_id ;     /* BGP-Id of the peer           */
+
+  /* Whether we can send any capabilities at all and whether can do AS4 and/or
+   * MP-Ext.
+   *
+   * These will, usually all be set !
+   */
+  bool       can_capability ;
+  bool       can_mp_ext ;
+
+  bool       can_as4 ;          /* can be turned off                    */
+
+  /* This is set iff the capabilities have been suppressed.
+   *
+   * Is set in open_sent->args if required, and copied from there back to the
+   * session->args when the session becomes established.
+   */
+  bool       cap_suppressed ;
+
   /* These are configuration properties of the peer which are reflected down
    * to the connection.
    *
@@ -107,23 +116,6 @@ struct bgp_session_args
   bool       cap_strict ;       /* must have all the capabilites we asked
                                  * for.                                 */
 
-  /* This is set iff the capabilities have been suppressed.
-   *
-   * Is set in open_sent->args if required, and copied from there back to the
-   * session->args when the session becomes established.
-   */
-  bool       cap_suppressed ;
-
-  /* Whether we can send any capabilities at all and whether can do AS4 and/or
-   * MP-Ext.
-   *
-   * These will, usually all be set !
-   */
-  bool       can_capability ;
-  bool       can_mp_ext ;
-
-  bool       can_as4 ;          /* can be turned off                    */
-
   /* The can_af is the set of address families we can support -- whether or
    * not we can advertise those by MP-Ext.
    *
@@ -134,7 +126,7 @@ struct bgp_session_args
 
   /* Support for Route Refresh and Graceful Restart.
    */
-  bgp_form_t can_r_refresh ;
+  bgp_form_t can_rr ;
 
   bgp_session_args_gr_t   gr ;
 
@@ -143,7 +135,7 @@ struct bgp_session_args
    * The can_orf says whether one or both of the ORF *capabilities* is
    * supported -- RFC or pre-RFC forms.
    *
-   * The can_orf_pfx says what is supported for each qafx.
+   * The can_orf_pfx says what ORF types are supported for each qafx.
    */
   bgp_form_t     can_orf ;
   bgp_orf_cap_v  can_orf_pfx ;
@@ -237,12 +229,9 @@ typedef const  bgp_open_state_t* bgp_open_state_c ;
 
 struct bgp_open_state
 {
-  as_t        my_as ;           /* Generic ASN                          */
+  bgp_session_args args ;
+
   as2_t       my_as2 ;          /* OPEN Message: "My Autonomous System" */
-
-  in_addr_t   bgp_id ;          /* OPEN Message: "BGP Identifier"       */
-
-  bgp_session_args args ;       /* NB: embedded structure               */
 
   vector_t    afi_safi[1] ;     /* various afi/safi capabilities        */
   vector_t    unknowns[1] ;     /* list of bgp_cap_unknown              */
@@ -273,6 +262,7 @@ extern bgp_open_state bgp_open_state_set_mov(bgp_open_state dst,
 
 extern bgp_session_args bgp_session_args_init_new(bgp_session_args args) ;
 extern bgp_session_args bgp_session_args_reset(bgp_session_args args) ;
+extern void bgp_session_args_suppress(bgp_session_args args) ;
 extern bgp_session_args bgp_session_args_copy(bgp_session_args dst,
                                               bgp_session_args_c src) ;
 extern bgp_session_args bgp_session_args_free(bgp_session_args args) ;
@@ -299,10 +289,10 @@ extern void bgp_open_make_cap_r_refresh(blower br, bgp_form_t form, bool wrap) ;
 extern void bgp_open_make_cap_end(blower sbr, blower br, bool one_option) ;
 
 extern bool bgp_open_prepare_orf_type(bgp_open_orf_type orf_type, uint8_t orft,
-                        bgp_orf_cap_v modes, bgp_form_t form, bool can_mp_ext) ;
+                      bgp_orf_cap_v modes, bgp_form_t form, qafx_set_t can_af) ;
 extern void bgp_open_make_cap_orf(blower br, uint8_t cap_code, uint count,
-                      bgp_open_orf_type_t types[], bool can_mp_ext, bool wrap) ;
+                    bgp_open_orf_type_t types[], qafx_set_t can_af, bool wrap) ;
 extern void bgp_open_make_cap_gr(blower br, bgp_session_args_gr cap_gr,
-                                                   bool can_mp_ext, bool wrap) ;
+                                                 qafx_set_t can_af, bool wrap) ;
 
 #endif /* QUAGGA_BGP_OPEN_STATE_H */

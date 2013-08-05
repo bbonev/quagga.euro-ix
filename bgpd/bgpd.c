@@ -195,9 +195,9 @@ bgp_timers_unset (bgp_inst bgp)
  * NB: changing these values does not affect any running sessions.
  */
 extern bgp_ret_t
-bgp_connect_retry_time_set (bgp_inst bgp, uint connect_retry_time)
+bgp_connect_retry_time_set (bgp_inst bgp, uint connect_retry_secs)
 {
-  bgp->default_connect_retry_time = connect_retry_time ;
+  bgp->default_connect_retry_secs = connect_retry_secs ;
 
   return BGP_SUCCESS ;
 }
@@ -218,7 +218,7 @@ bgp_connect_retry_time_unset (bgp_inst bgp)
 extern bgp_ret_t
 bgp_accept_retry_time_set (bgp_inst bgp, uint accept_retry_time)
 {
-  bgp->default_accept_retry_time = accept_retry_time ;
+  bgp->default_accept_retry_secs = accept_retry_time ;
 
   return BGP_SUCCESS ;
 }
@@ -239,7 +239,7 @@ bgp_accept_retry_time_unset (bgp_inst bgp)
 extern bgp_ret_t
 bgp_open_hold_time_set (bgp_inst bgp, uint openholdtime)
 {
-  bgp->default_openholdtime = openholdtime ;
+  bgp->default_open_hold_secs = openholdtime ;
 
   return BGP_SUCCESS ;
 }
@@ -320,7 +320,7 @@ bgp_router_id_set (bgp_inst bgp, in_addr_t router_id, bool set)
    */
   for (ALL_LIST_ELEMENTS (bgp->peer, node, nnode, peer))
     {
-      peer->local_id = router_id ;
+      peer->args.local_id = router_id ;
       bgp_peer_down(peer, PEER_DOWN_RID_CHANGE) ;
     }
   return 0;
@@ -391,7 +391,7 @@ bgp_cluster_id_set (bgp_inst bgp, in_addr_t cluster_id, bool set)
  *     Another way of looking at this is to consider the "true local_as".  The
  *     true local_as is the local_as which would be used (for eBGP) in the
  *     absence of any change_local_as.  So the true local_as is bgp->confed_id
- *     if that is set, or bgp->as
+ *     if that is set, or bgp->my_as
  */
 extern bgp_ret_t
 bgp_confederation_id_set (bgp_inst bgp, as_t confed_id)
@@ -415,7 +415,7 @@ bgp_confederation_id_set (bgp_inst bgp, as_t confed_id)
 
   bgp_check_confed_id_set(bgp) ;
 
-  /* Walk all the peers and update the peer->sort and peer->local_as as
+  /* Walk all the peers and update the peer->sort and peer->args.local_as as
    * required.
    *
    * If we are enabling CONFED then:
@@ -427,16 +427,16 @@ bgp_confederation_id_set (bgp_inst bgp, as_t confed_id)
    *
    *   * BGP_PEER_EBGP peers will either:
    *
-   *      * if the peer->as is in the confed_peer_set:
+   *      * if the peer->args.remote_as is in the confed_peer_set:
    *
    *        change state to BGP_PEER_CBGP, and reset the session.
    *
-   *        peer->local_as will be set to peer->bgp->as -- change_local_as
-   *        does not apply to BGP_PEER_CBGP.
+   *        peer->args.local_as will be set to peer->bgp->my_as --
+   *        change_local_as does not apply to BGP_PEER_CBGP.
    *
    *     or:
    *
-   *      * if the peer->as is NOT in the confed_peer_set:
+   *      * if the peer->args.remote_as is NOT in the confed_peer_set:
    *
    *        remain as BGP_PEER_EBGP, but the state may change as discussed
    *        above and the session will be reset as required.
@@ -469,8 +469,8 @@ bgp_confederation_id_set (bgp_inst bgp, as_t confed_id)
           /* No change if was iBGP
            */
           case BGP_PEER_IBGP:
-            qassert(peer->as       == bgp->as) ;
-            qassert(peer->local_as == bgp->as) ;
+            qassert(peer->args.remote_as == bgp->my_as) ;
+            qassert(peer->args.local_as  == bgp->my_as) ;
             break ;
 
           /* No change if was CONFED -- we have not changed confed_peers.
@@ -478,10 +478,10 @@ bgp_confederation_id_set (bgp_inst bgp, as_t confed_id)
            * Must previously have had CONFED enabled !
            */
           case BGP_PEER_CBGP:
-            qassert(peer->as       != bgp->as) ;
-            qassert(peer->local_as == bgp->as) ;
-            qassert(old_confed_id  != BGP_ASN_NULL) ;
-            qassert(asn_set_contains(bgp->confed_peers, peer->as)) ;
+            qassert(peer->args.remote_as != bgp->my_as) ;
+            qassert(peer->args.local_as  == bgp->my_as) ;
+            qassert(old_confed_id   != BGP_ASN_NULL) ;
+            qassert(asn_set_contains(bgp->confed_peers, peer->args.remote_as)) ;
             break ;
 
           /* Was eBGP.
@@ -491,9 +491,9 @@ bgp_confederation_id_set (bgp_inst bgp, as_t confed_id)
            * If remains eBGP, need to process as discussed above.
            */
           case BGP_PEER_EBGP:
-            qassert(peer->as != bgp->as) ;
+            qassert(peer->args.remote_as != bgp->my_as) ;
 
-            if (asn_set_contains(bgp->confed_peers, peer->as))
+            if (asn_set_contains(bgp->confed_peers, peer->args.remote_as))
               {
                 /* Change to BGP_PEER_CBGP required -- must previously
                  * NOT have had CONFED enabled !
@@ -510,13 +510,14 @@ bgp_confederation_id_set (bgp_inst bgp, as_t confed_id)
                 if (peer->change_local_as == BGP_ASN_NULL)
                   {
                     /* No change_local_as to worry about, so update the
-                     * peer->local_as, and if that changes, schedule a reset.
+                     * peer->args.local_as, and if that changes, schedule a
+                     * reset.
                      */
-                    qassert(peer->local_as == old_true_local_as) ;
+                    qassert(peer->args.local_as == old_true_local_as) ;
 
-                    if (peer->local_as != bgp->confed_id)
+                    if (peer->args.local_as != bgp->confed_id)
                       {
-                        peer->local_as = bgp->confed_id ;
+                        peer->args.local_as = bgp->confed_id ;
                         peer->down_pending = true ;
                       } ;
                   }
@@ -527,7 +528,7 @@ bgp_confederation_id_set (bgp_inst bgp, as_t confed_id)
                      * The change_local_as will have been in force because:
                      *
                      *   * if old confed_id was not set, then by definition the
-                     *     change_local_as is not equal to bgp->as and takes
+                     *     change_local_as is not equal to bgp->my_as and takes
                      *     precedence over it.
                      *
                      *   * if old_confed_id was set, then it was not equal
@@ -540,20 +541,20 @@ bgp_confederation_id_set (bgp_inst bgp, as_t confed_id)
                      *
                      * So... we need to reset the session.
                      *
-                     * Note that the peer->local_as should not change !
+                     * Note that the peer->args.local_as should not change !
                      */
-                    qassert(peer->local_as    == peer->change_local_as) ;
-                    qassert(old_true_local_as != peer->change_local_as) ;
+                    qassert(peer->args.local_as == peer->change_local_as) ;
+                    qassert(old_true_local_as   != peer->change_local_as) ;
 
-                    peer->local_as = bgp->confed_id ;
-                    peer->down_pending = true ;
+                    peer->args.local_as = bgp->confed_id ;
+                    peer->down_pending  = true ;
                   }
                 else
                   {
                     /* The change_local_as takes precedence over the new
                      * confed_id.
                      */
-                    peer->local_as = peer->change_local_as ;
+                    peer->args.local_as = peer->change_local_as ;
 
                     if (old_confed_id != BGP_ASN_NULL)
                       {
@@ -577,10 +578,11 @@ bgp_confederation_id_set (bgp_inst bgp, as_t confed_id)
                       {
                         /* The old confed_id was not set.
                          *
-                         * Hence, the old true local_as will have been bgp->as.
+                         * Hence, the old true local_as will have been
+                         * bgp->my_as.
                          *
                          * So, change_local_as took precedence before -- by
-                         * definition change_local_as != bgp->as -- so no
+                         * definition change_local_as != bgp->my_as -- so no
                          * change there.
                          *
                          * The new true local_as is the new confed_id.
@@ -591,7 +593,7 @@ bgp_confederation_id_set (bgp_inst bgp, as_t confed_id)
                          * Otherwise, we have a change of true local_as, and
                          * we need to reset.
                          */
-                        qassert(bgp->as == old_true_local_as) ;
+                        qassert(bgp->my_as == old_true_local_as) ;
 
                         if (bgp->confed_id != old_true_local_as)
                           peer->down_pending = true ;
@@ -639,11 +641,11 @@ bgp_confederation_id_unset (bgp_inst bgp)
   qassert(old_true_local_as == bgp->confed_id) ;
 
   bgp->confed_id = BGP_ASN_NULL ;
-  bgp->ebgp_as   = bgp->as ;            /* as you was   */
+  bgp->ebgp_as   = bgp->my_as ;         /* as you was   */
 
   bgp_check_confed_id_set(bgp) ;
 
-  /* Walk all the peers and update the peer->sort and peer->local_as as
+  /* Walk all the peers and update the peer->sort and peer->args.local_as as
    * required.  Since CONFED was enabled before:
    *
    *   * BGP_PEER_IBGP peers do not change, because that state does not
@@ -655,8 +657,8 @@ bgp_confederation_id_unset (bgp_inst bgp)
    *
    *   * BGP_PEER_EBGP peers do not change.
    *
-   *     But, the peer->local_as needs to be updated, and the sessions reset
-   *     if that changes -- and need to take into account change_local_as.
+   *     But, the peer->args.local_as needs to be updated, and the sessions
+   *     reset if that changes -- taking into account change_local_as.
    */
   for (ALL_LIST_ELEMENTS (bgp->peer, node, nnode, peer))
     {
@@ -665,27 +667,27 @@ bgp_confederation_id_unset (bgp_inst bgp)
           /* No change for iBGP
            */
           case BGP_PEER_IBGP:
-            qassert(peer->as       == bgp->as) ;
-            qassert(peer->local_as == bgp->as) ;
+            qassert(peer->args.remote_as == bgp->my_as) ;
+            qassert(peer->args.local_as  == bgp->my_as) ;
             break ;
 
           /* CONFED changes to eBGP.
            */
           case BGP_PEER_CBGP:
-            qassert(peer->as       != bgp->as) ;
-            qassert(peer->local_as == bgp->as) ;
-            qassert(asn_set_contains(bgp->confed_peers, peer->as)) ;
+            qassert(peer->args.remote_as != bgp->my_as) ;
+            qassert(peer->args.local_as  == bgp->my_as) ;
+            qassert(asn_set_contains(bgp->confed_peers, peer->args.remote_as)) ;
 
             peer_sort_set(peer, BGP_PEER_EBGP) ;
             peer->down_pending = true ;
             break ;
 
-          /* eBGP stays eBGP, but peer->local_as may change
+          /* eBGP stays eBGP, but peer->args.local_as may change
            *
            * If peer->change_local_as is not set:
            *
-           *   Need to update the peer->local_as to the current bgp->ebgp_as,
-           *   and if that has changed, reset the session.
+           *   Need to update the peer->args.local_as to the current
+           *   bgp->ebgp_as, and if that has changed, reset the session.
            *
            * If peer->change_local_as is set:
            *
@@ -700,13 +702,13 @@ bgp_confederation_id_unset (bgp_inst bgp)
            *   are not the same.
            */
           case BGP_PEER_EBGP:
-            qassert(peer->as != bgp->as) ;
+            qassert(peer->args.remote_as != bgp->my_as) ;
 
             if (peer->change_local_as == BGP_ASN_NULL)
               {
-                if (peer->local_as != bgp->ebgp_as)
+                if (peer->args.local_as != bgp->ebgp_as)
                   {
-                    peer->local_as = bgp->ebgp_as ;
+                    peer->args.local_as = bgp->ebgp_as ;
                     peer->down_pending = true ;
                   } ;
               }
@@ -714,7 +716,7 @@ bgp_confederation_id_unset (bgp_inst bgp)
               {
                 qassert(peer->change_local_as != bgp->ebgp_as) ;
 
-                peer->local_as = peer->change_local_as ;
+                peer->args.local_as = peer->change_local_as ;
 
                 if ( (peer->change_local_as == old_true_local_as)
                                         || (bgp->ebgp_as != old_true_local_as) )
@@ -742,17 +744,17 @@ bgp_confederation_id_unset (bgp_inst bgp)
  *
  * Returns:  true <=> bgp != NULL and this is a CONFED
  *                                and the given AS is a CONFED Member AS
- *                                and the given AS is NOT the bgp->as
+ *                                and the given AS is NOT the bgp->my_as
  *
- * NB: bgp->confed_peers should not contain the current bgp->as, but we
- *     check for asn == bgp->as in any case -- apart from safety, one notes
+ * NB: bgp->confed_peers should not contain the current bgp->my_as, but we
+ *     check for asn == bgp->my_as in any case -- apart from safety, one notes
  *     that there may be a large number of iBGP sessions.
  */
 extern bool
 bgp_confederation_peers_check (bgp_inst bgp, as_t asn)
 {
   if ((bgp != NULL) && (bgp->confed_id != BGP_ASN_NULL))
-    return  (asn != bgp->as) && asn_set_contains(bgp->confed_peers, asn) ;
+    return  (asn != bgp->my_as) && asn_set_contains(bgp->confed_peers, asn) ;
 
   return false ;
 }
@@ -765,7 +767,7 @@ bgp_confederation_peers_check (bgp_inst bgp, as_t asn)
  * Caller MUST call bgp_confederation_peers_scan() to complete the process.
  * (Caller may add many ASN to the confed_peers set, before doing this.)
  *
- * NB: the ASN may NOT be bgp->as
+ * NB: the ASN may NOT be bgp->my_as
  */
 extern bgp_ret_t
 bgp_confederation_peers_add(bgp_inst bgp, as_t asn)
@@ -773,7 +775,7 @@ bgp_confederation_peers_add(bgp_inst bgp, as_t asn)
   if (bgp == NULL)
     return BGP_ERR_INVALID_BGP ;
 
-  if (bgp->as == asn)
+  if (bgp->my_as == asn)
     return BGP_ERR_INVALID_AS ; /* cannot be self       */
 
   bgp->confed_peers = asn_set_add(bgp->confed_peers, asn) ;
@@ -822,7 +824,7 @@ bgp_confederation_peers_scan(bgp_inst bgp)
 
   bgp_check_confed_id_set(bgp) ;
 
-  /* Walk all the peers and update the peer->sort and peer->local_as as
+  /* Walk all the peers and update the peer->sort and peer->args.local_as as
    * required.  Since CONFED was enabled before:
    *
    *   * BGP_PEER_IBGP peers do not change, because that state does not
@@ -841,17 +843,18 @@ bgp_confederation_peers_scan(bgp_inst bgp)
           /* No change for iBGP.
            */
           case BGP_PEER_IBGP:
-            qassert(peer->as       == bgp->as) ;
-            qassert(peer->local_as == bgp->as) ;
+            qassert(peer->args.remote_as == bgp->my_as) ;
+            qassert(peer->args.local_as  == bgp->my_as) ;
             break ;
 
-          /* CONFED changes to eBGP, if peer->as no longer in confed_peers.
+          /* CONFED changes to eBGP, if peer->args.remote_as no longer in
+           * confed_peers.
            */
           case BGP_PEER_CBGP:
-            qassert(peer->as       != bgp->as) ;
-            qassert(peer->local_as == bgp->as) ;
+            qassert(peer->args.remote_as != bgp->my_as) ;
+            qassert(peer->args.local_as  == bgp->my_as) ;
 
-            if (!asn_set_contains(bgp->confed_peers, peer->as))
+            if (!asn_set_contains(bgp->confed_peers, peer->args.remote_as))
               {
                 /* Change to BGP_PEER_EBGP required.
                  */
@@ -860,12 +863,13 @@ bgp_confederation_peers_scan(bgp_inst bgp)
               } ;
             break ;
 
-          /* eBGP changes to CONFED, if peer->as is now in confed_peers
+          /* eBGP changes to CONFED, if peer->args.remote_as is now in
+           * confed_peers
            */
           case BGP_PEER_EBGP:
-            qassert(peer->as       != bgp->as) ;
+            qassert(peer->args.remote_as != bgp->my_as) ;
 
-            if (asn_set_contains(bgp->confed_peers, peer->as))
+            if (asn_set_contains(bgp->confed_peers, peer->args.remote_as))
               {
                 /* Change to BGP_PEER_EBGP required.
                  */
@@ -889,25 +893,25 @@ bgp_confederation_peers_scan(bgp_inst bgp)
  * Set the bgp->check_confed_id and bgp->check_confed_id_all flags
  *                                                -- depending on current state.
  *
- * When there is a confederation (bgp->confed_id != NULL) then bgp->as is
+ * When there is a confederation (bgp->confed_id != NULL) then bgp->my_as is
  * the Member AS, and:
  *
- *  * for iBGP and cBGP sessions we filter out routes which contain bgp->as in
- *    the AS-PATH in any case.
+ *  * for iBGP and cBGP sessions we filter out routes which contain bgp->my_as
+ *    in the AS-PATH in any case.
  *
- *    If the bgp->as != confed_id, then should check for the confed_id as well.
+ *    If the bgp->my_as != confed_id, then should check for confed_id as well.
  *
  *  * for eBGP sessions we filter out routes which contain the confed_id in
  *    the AS-PATH in any case.
  *
- *    If the bgp->as != confed_id, then should check for the bgp->as as well.
+ *    If the bgp->my_as != confed_id, then should check for bgp->my_as as well.
  *
  * So:
  *
- *   * if confed_id == BGP_ASN_NULL or confed_id == bgp->as
+ *   * if confed_id == BGP_ASN_NULL or confed_id == bgp->my_as
  *
  *     clear both flags -- no check required either because is not in a
- *     confederation, or because we check for confed_id or bgp->as anyway.
+ *     confederation, or because we check for confed_id or bgp->my_as anyway.
  *
  *   * otherwise
  *
@@ -926,7 +930,7 @@ bgp_confederation_peers_scan(bgp_inst bgp)
 static void
 bgp_check_confed_id_set(bgp_inst bgp)
 {
-  if ((bgp->confed_id == BGP_ASN_NULL) || (bgp->confed_id == bgp->as))
+  if ((bgp->confed_id == BGP_ASN_NULL) || (bgp->confed_id == bgp->my_as))
     {
       bgp->check_confed_id     = false ;
       bgp->check_confed_id_all = false ;
@@ -1022,7 +1026,7 @@ bgp_lookup (as_t as, const char *name)
   struct listnode *node, *nnode;
 
   for (ALL_LIST_ELEMENTS (bm->bgp, node, nnode, bgp))
-    if ((bgp->as == as)
+    if ((as == bgp->my_as)
         && ((bgp->name == NULL && name == NULL)
             || (bgp->name && name && strcmp (bgp->name, name) == 0)))
       return bgp;
@@ -1146,11 +1150,11 @@ bgp_get (bgp_inst* p_bgp, as_t* p_as, const char *name)
     }
   else
     {
-      if (bgp->as != *p_as)
+      if (*p_as != bgp->my_as)
         {
           /* Mismatch asn -- return actual ASN and appropriate error.
            */
-          *p_as  = bgp->as;
+          *p_as  = bgp->my_as;
 
           if (name != NULL)
             return BGP_ERR_INSTANCE_MISMATCH;
@@ -1222,7 +1226,7 @@ bgp_create (as_t as, const char *name)
    */
   bgp_lock (bgp);
 
-  bgp->as = bgp->ebgp_as  = as;  /* bgp->confed_id == BGP_ASN_NULL       */
+  bgp->my_as = bgp->ebgp_as  = as;  /* bgp->confed_id == BGP_ASN_NULL       */
 
   if (name)
     bgp->name = strdup (name);
@@ -1462,7 +1466,7 @@ bgp_config_write (struct vty *vty)
    */
   if (bgp_option_check (BGP_OPT_MULTIPLE_INSTANCE))
     {
-      vty_out (vty, "bgp multiple-instance%s", VTY_NEWLINE);
+      vty_out (vty, "bgp multiple-instance\n");
       write++;
     }
 
@@ -1470,7 +1474,7 @@ bgp_config_write (struct vty *vty)
    */
   if (bgp_option_check (BGP_OPT_CONFIG_CISCO))
     {
-      vty_out (vty, "bgp config-type cisco%s", VTY_NEWLINE);
+      vty_out (vty, "bgp config-type cisco\n");
       write++;
     }
 
@@ -1479,10 +1483,10 @@ bgp_config_write (struct vty *vty)
   for (ALL_LIST_ELEMENTS (bm->bgp, mnode, mnnode, bgp))
     {
       if (write)
-        vty_out (vty, "!%s", VTY_NEWLINE);
+        vty_out (vty, "!\n");
 
       /* Router bgp ASN */
-      vty_out (vty, "router bgp %u", bgp->as);
+      vty_out (vty, "router bgp %u", bgp->my_as);
 
       if (bgp_option_check (BGP_OPT_MULTIPLE_INSTANCE))
         {

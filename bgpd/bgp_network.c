@@ -135,13 +135,13 @@ struct bgp_listener_info
 /* Forward references
  */
 static int bgp_socket_set_common_options(int sock_fd,
-                        bgp_connection_options cops, uint rcvbuf, uint sndbuf) ;
+                        bgp_cops cops, uint rcvbuf, uint sndbuf) ;
 static void bgp_accept_action(qfile qf, void* file_info) ;
 
 static bgp_listener_list bgp_listeners_for_port(port_t port) ;
 
 static void bgp_listeners_set_md5(bgp_listener_list listener_list,
-                                  bgp_connection_options_c cops, on_off_b how) ;
+                                  bgp_cops_c cops, on_off_b how) ;
 
 static int bgp_md5_set_socket(int sock_fd, sockunion_c su,
                                                          const char* password) ;
@@ -441,7 +441,7 @@ bgp_listeners_for_port(port_t port)
  */
 static void
 bgp_listeners_set_md5(bgp_listener_list listener_list,
-                                    bgp_connection_options_c cops, on_off_b how)
+                                    bgp_cops_c cops, on_off_b how)
 {
   bgp_listener listener ;
   const char* password ;
@@ -938,7 +938,7 @@ bgp_listener_info_free(bgp_listener_info li)
 /*==============================================================================
  * The accept() logic
  */
-static int bgp_get_names(int sock_fd, bgp_connection_options cops) ;
+static int bgp_get_names(int sock_fd, bgp_cops cops) ;
 
 /*------------------------------------------------------------------------------
  * Set listening on the given port -- incrementing the port's use count.
@@ -958,7 +958,7 @@ static int bgp_get_names(int sock_fd, bgp_connection_options cops) ;
  *           false => failed to set up any listener for the given port.
  */
 extern bool
-bgp_listen_set(bgp_connection_options_c cops)
+bgp_listen_set(bgp_cops_c cops)
 {
   bgp_listener_list listener_list ;
 
@@ -983,7 +983,7 @@ bgp_listen_set(bgp_connection_options_c cops)
  *     changed... but shouldn't make any difference.
  */
 extern void
-bgp_listen_set_password(bgp_connection_options_c cops)
+bgp_listen_set_password(bgp_cops_c cops)
 {
   bgp_listener_list listener_list ;
 
@@ -1004,7 +1004,7 @@ bgp_listen_set_password(bgp_connection_options_c cops)
  *     issue if even of the (then) password is empty.
  */
 extern void
-bgp_listen_unset(bgp_connection_options_c cops)
+bgp_listen_unset(bgp_cops_c cops)
 {
   bgp_listener_list listener_list ;
 
@@ -1184,7 +1184,7 @@ bgp_accept_action(qfile qf, void* file_info)
   /* We recognise the connecting party, so now proceed on the basis of the
    * state of the acceptor.
    */
-  acceptor->cops = bgp_connection_options_copy(acceptor->cops,
+  acceptor->cops = bgp_cops_copy(acceptor->cops,
                                                          session->cops_config) ;
 
   err = bgp_socket_set_common_options(sock_fd, acceptor->cops, 0, 0) ;
@@ -1200,8 +1200,8 @@ bgp_accept_action(qfile qf, void* file_info)
  */
 static void bgp_connect_action(qfile qf, void* file_info) ;
 
-static int bgp_bind_ifname(int sock_fd, bgp_connection_options cops) ;
-static int bgp_bind_ifaddress(int sock_fd, bgp_connection_options cops) ;
+static int bgp_bind_ifname(int sock_fd, bgp_cops cops) ;
+static int bgp_bind_ifaddress(int sock_fd, bgp_cops cops) ;
 
 /*------------------------------------------------------------------------------
  * Open BGP Connection -- connect() to the other end
@@ -1216,7 +1216,7 @@ static int bgp_bind_ifaddress(int sock_fd, bgp_connection_options cops) ;
 extern void
 bgp_connect(bgp_connection connection)
 {
-  bgp_connection_options cops ;
+  bgp_cops cops ;
   qfile  qf ;
   int    sock_fd ;
   int    err ;
@@ -1421,7 +1421,7 @@ bgp_set_new_ttl(bgp_connection connection, int ttl, bool gtsm)
  *     is not currently set !).
  */
 static int
-bgp_set_ttl(int sock_fd, bgp_connection_options cops)
+bgp_set_ttl(int sock_fd, bgp_cops cops)
 {
   uint ttl, ttl_gtsm, ttl_out, ttl_min ;
   bool was_gtsm ;
@@ -1498,7 +1498,7 @@ bgp_set_ttl(int sock_fd, bgp_connection_options cops)
  *        != 0 : error number (from errno or otherwise)
  */
 static int
-bgp_get_names(int sock_fd, bgp_connection_options cops)
+bgp_get_names(int sock_fd, bgp_cops cops)
 {
   int ret, err ;
 
@@ -1530,7 +1530,7 @@ bgp_get_names(int sock_fd, bgp_connection_options cops)
  *        != 0 : error number (from errno or otherwise)
  */
 static int
-bgp_bind_ifname(int sock_fd, bgp_connection_options cops)
+bgp_bind_ifname(int sock_fd, bgp_cops cops)
 {
   enum
     {
@@ -1612,7 +1612,7 @@ bgp_bind_ifname(int sock_fd, bgp_connection_options cops)
  *        != 0 : error number (from errno or otherwise)
  */
 static int
-bgp_bind_ifaddress(int sock_fd, bgp_connection_options cops)
+bgp_bind_ifaddress(int sock_fd, bgp_cops cops)
 {
   if (sockunion_family(&cops->su_local) != AF_UNSPEC)
     {
@@ -1653,7 +1653,7 @@ bgp_bind_ifaddress(int sock_fd, bgp_connection_options cops)
  *                         WARNING or ERROR logged.
  */
 static int
-bgp_socket_set_common_options(int sock_fd, bgp_connection_options cops,
+bgp_socket_set_common_options(int sock_fd, bgp_cops cops,
                                                        uint rcvbuf, uint sndbuf)
 {
   int  err ;

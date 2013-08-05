@@ -95,10 +95,10 @@ struct bgp_nlri
 /* The attribute parser structure carries the current state of the parsing
  * of a set of attributes and delivers the result.
  */
-typedef struct bgp_attr_parser_args  bgp_attr_parser_args_t ;
-typedef struct bgp_attr_parser_args* bgp_attr_parser_args ;
+typedef struct bgp_attr_parsing  bgp_attr_parsing_t ;
+typedef struct bgp_attr_parsing* bgp_attr_parsing ;
 
-struct bgp_attr_parser_args
+struct bgp_attr_parsing
 {
   /* Context in which parsing proceeds.
    */
@@ -165,9 +165,9 @@ struct bgp_attr_parser_args
 /*------------------------------------------------------------------------------
  * Prototypes.
  */
-extern void bgp_attr_parse (bgp_attr_parser_args restrict args,
+extern void bgp_attr_parse (bgp_attr_parsing restrict prs,
                                            const byte* start_p, uint attr_len) ;
-extern void bgp_attr_check (bgp_attr_parser_args restrict args) ;
+extern void bgp_attr_check (bgp_attr_parsing restrict prs) ;
 
 extern bgp_size_t bgp_packet_attribute(stream s, peer_rib prib,
                                     attr_set attr, prefix p, mpls_tags_t tags) ;
@@ -180,9 +180,9 @@ extern void bgp_dump_routes_attr (struct stream* s, attr_set attr, prefix p) ;
 /*------------------------------------------------------------------------------
  * Unit test interfaces
  */
-extern const byte* tx_bgp_attr_mp_reach_parse(bgp_attr_parser_args args,
+extern const byte* tx_bgp_attr_mp_reach_parse(bgp_attr_parsing prs,
                                                            const byte* attr_p) ;
-extern const byte* tx_bgp_attr_mp_unreach_parse(bgp_attr_parser_args args,
+extern const byte* tx_bgp_attr_mp_unreach_parse(bgp_attr_parsing prs,
                                        const byte* attr_p,
                                        const byte* start_p, const byte* end_p) ;
 

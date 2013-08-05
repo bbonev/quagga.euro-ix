@@ -51,15 +51,16 @@ struct bgp_nexthop
 #endif /* HAVE_IPV6 */
 };
 
+typedef enum PEER_DOWN peer_down_t ;
 enum PEER_DOWN
 {
-  PEER_DOWN_first            =  0,
-
-  PEER_DOWN_NULL             =  0, /* Not a PEER_DOWN                      */
+  PEER_DOWN_NULL        =  0,      /* Not a PEER_DOWN                      */
 
   /* Session taken down at this end for some unspecified reason
    */
   PEER_DOWN_UNSPECIFIED,
+
+  PEER_DOWN_first       =  1,      /* first not-NULL                       */
 
   /* Configuration changes that cause a session to be reset.
    */
@@ -114,142 +115,53 @@ enum PEER_DOWN
 
   /* Number of down causes
    */
-  PEER_DOWN_count
+  PEER_DOWN_count,
+  PEER_DOWN_last        = PEER_DOWN_count - 1,
 } ;
 
-typedef enum PEER_DOWN peer_down_t ;
-
-enum peer_cap_bits
+typedef enum peer_flag peer_flag_t ;
+enum peer_flag
 {
-  /* These are general peer capabilities
+//  PEER_FLAG_SHUTDOWN                 = BIT( 0),
+  PEER_FLAG_PASSIVE,
+  PEER_FLAG_DONT_CAPABILITY,
+  PEER_FLAG_OVERRIDE_CAPABILITY,
+  PEER_FLAG_STRICT_CAP_MATCH,
+  PEER_FLAG_DYNAMIC_CAPABILITY,
+  PEER_FLAG_DISABLE_CONNECTED_CHECK,
+  PEER_FLAG_LOCAL_AS_NO_PREPEND,
+};
+
+enum peer_status_bits
+{
+  /* These are states of a peer.
    */
-  PEER_CAP_MP_EXT             = BIT( 0),
-  PEER_CAP_AS4                = BIT( 1),
-  PEER_CAP_RR                 = BIT( 2), /* Route Refresh               */
-  PEER_CAP_GR                 = BIT( 3), /* Graceful Restart            */
-  PEER_CAP_ORF                = BIT( 4), /* ORF of any sort             */
-  PEER_CAP_DYNAMIC            = BIT( 5), /* "Current" Dynamic Caps.     */
+  PEER_STATUS_PREFIX_OVERFLOW   = BIT(0), /* prefix-overflow             */
 
-  PEER_CAP_RR_old             = BIT(10), /* "old" Route Refresh         */
-  PEER_CAP_ORF_pre            = BIT(12), /* pre-RFC ORF of any sort     */
-  PEER_CAP_DYNAMIC_dep        = BIT(13), /* Deprecated Dynamic Caps.    */
+  PEER_STATUS_NSF_MODE          = BIT(1), /* NSF aware peer              */
+  PEER_STATUS_NSF_WAIT          = BIT(2), /* wait comeback peer          */
+} ;
+typedef uint16_t peer_status_bits_t ;   /* NB: <= 16 flags      */
 
-  PEER_CAP_NONE               = BIT(15), /* No capabilities at all      */
-};
-typedef uint16_t peer_cap_bits_t ;      /* NB: <= 16 flags      */
-
-#if 0
-enum peer_cap_bits
+enum peer_config_bits
 {
-  PEER_CAP_REFRESH_ADV        = BIT( 0), /* refresh advertised          */
-  PEER_CAP_REFRESH_OLD_RCV    = BIT( 1), /* refresh old received        */
-  PEER_CAP_REFRESH_NEW_RCV    = BIT( 2), /* refresh rfc received        */
-  PEER_CAP_DYNAMIC_DEP_ADV    = BIT( 3), /* deprecated dynamic advertised */
-  PEER_CAP_DYNAMIC_DEP_RCV    = BIT( 4), /* deprecated dynamic received */
-  PEER_CAP_DYNAMIC_ADV        = BIT( 5), /* dynamic advertised          */
-  PEER_CAP_DYNAMIC_RCV        = BIT( 6), /* dynamic received            */
-  PEER_CAP_RESTART_ADV        = BIT( 7), /* restart advertised          */
-  PEER_CAP_RESTART_RCV        = BIT( 8), /* restart received            */
-  PEER_CAP_AS4_ADV            = BIT( 9), /* as4 advertised              */
-  PEER_CAP_AS4_RCV            = BIT(10), /* as4 received                */
-
-  PEER_CAP_NO_MP_ADV          = BIT(12), /* no MP CAP advertised        */
-  PEER_CAP_NO_MP_RCV          = BIT(13), /* no MP CAP received          */
-
-  PEER_CAP_NONE_ADV           = BIT(14), /* none received               */
-  PEER_CAP_NONE_RCV           = BIT(15), /* none received               */
-
-  PEER_CAP_AS4_BOTH  = PEER_CAP_AS4_ADV | PEER_CAP_AS4_RCV,
-};
-typedef uint16_t peer_cap_bits_t ;      /* NB: <= 16 flags      */
-
-#define PEER_CAP_AS4_USE(peer) \
-  (((peer)->cap & PEER_CAP_AS4_BOTH) == PEER_CAP_AS4_BOTH)
-#endif
-
-enum peer_af_cap_bits
-{
-  /* These are afi/safi specific peer capabilities
+  /* These record that certain configuration settings have been made.
    */
-  PEER_AF_CAP_GR_CAN_PRESERVE      = BIT( 0), /* GR afi/safi received       */
-  PEER_AF_CAP_GR_HAS_PRESERVED     = BIT( 1), /* GR afi/safi F-bit received */
-#if 0
+  PEER_CONFIG_WEIGHT            = BIT(0), /* Default weight.            */
+  PEER_CONFIG_TIMER             = BIT(1), /* HoldTime and KeepaliveTime */
+  PEER_CONFIG_MRAI              = BIT(2), /* MRAI                       */
+  PEER_CONFIG_CONNECT_RETRY     = BIT(3), /* cops->connect_retry_secs   */
 
-  PEER_AF_CAP_ORF_PFX_SM_pre       = BIT( 8), /* pre-RFC Send Mode          */
-  PEER_AF_CAP_ORF_PFX_RM_pre       = BIT( 9), /* pre-RFC Receive Mode       */
+  PEER_CONFIG_INTERFACE         = BIT(8), /* neighbor xx interface      */
 
-  /* For af_caps_use: these bits are set if RFC or pre-RFC has been
-   * negotiated -- uses pre-RFC ORF Type if PEER_AF_CAP_ORF_PFX_SM_pre is set.
+  /* These are all overridden by group configuration.
    */
-  PEER_AF_CAP_ORF_PFX_SM           = BIT( 0), /* RFC Send Mode              */
-  PEER_AF_CAP_ORF_PFX_RM           = BIT( 1), /* RFC Receive Mode           */
-
-  PEER_AF_CAP_ORF_PFX_SEND         = PEER_AF_CAP_ORF_PFX_SM,
-  PEER_AF_CAP_ORF_PFX_RECV         = PEER_AF_CAP_ORF_PFX_RM
-#endif
-};
-typedef uint8_t peer_af_cap_bits_t ;    /* NB: <= 8 flags       */
-
-#if 0
-enum peer_af_cap_bits
-{
-  PEER_AF_CAP_ORF_PFX_OUT_NEG      = BIT( 0), /* sending negotiated         */
-  PEER_AF_CAP_ORF_PFX_IN_NEG       = BIT( 1), /* receiving negotiated       */
-
-  PEER_AF_CAP_RESTART_RCV          = BIT( 2), /* GR afi/safi received       */
-  PEER_AF_CAP_RESTART_PRESERVE_RCV = BIT( 3), /* GR afi/safi F-bit received */
-
-  PEER_AF_CAP_ORF_PFX_SM_RFC_ADV   = BIT( 4), /* RFC advertised             */
-  PEER_AF_CAP_ORF_PFX_RM_RFC_ADV   = BIT( 5), /* RFC advertised             */
-  PEER_AF_CAP_ORF_PFX_SM_RFC_RCV   = BIT( 6), /* RFC received               */
-  PEER_AF_CAP_ORF_PFX_RM_RFC_RCV   = BIT( 7), /* RFC received               */
-  PEER_AF_CAP_ORF_PFX_SM_PRE_ADV   = BIT( 8), /* pre-RFC advertised         */
-  PEER_AF_CAP_ORF_PFX_RM_PRE_ADV   = BIT( 9), /* pre-RFC advertised         */
-  PEER_AF_CAP_ORF_PFX_SM_PRE_RCV   = BIT(10), /* pre-RFC received           */
-  PEER_AF_CAP_ORF_PFX_RM_PRE_RCV   = BIT(11), /* pre-RFC received           */
-};
-typedef uint16_t peer_af_cap_bits_t ;   /* NB: <= 16 flags      */
-#endif
-
-enum peer_flag_bits
-{
-  /* These are configuration flags, for general configuration stuff.
-   *
-   *   * PEER_FLAG_DONT_CAPABILITY
-   *
-   *     Turns off the sending of any capabilities.  This is historic, and
-   *     provided because in the dim and distant past, some BGP implementations
-   *     would fall over when presented with (some) capabilities.
-   *
-   *     In the absence of PEER_FLAG_OVERRIDE_CAPABILITY this implies that
-   *     only IPv4 Unicast can be used.
-   *
-   *   * PEER_FLAG_OVERRIDE_CAPABILITY
-   *
-   *     If the peer does not send any MP-Ext capabilities, then this causes
-   *     Quagga to assume that the peer supports all the afi/safi that the
-   *     session is enabled for.
-   *
-   *     This is also historic, and provided to cope with pre-RFC2858
-   *     Multiprotocol stuff -- before MP-Ext capabilities existed !
-   *
-   *  * PEER_STRICT_CAP_MATCH
-   *
-   *    Mutually exclusive with PEER_FLAG_OVERRIDE_CAPABILITY
-   *                   and with PEER_FLAG_DONT_CAPABILITY.
-   *
-   *    Requires the far end to support all the capabilities this end does.
-   */
-  PEER_FLAG_SHUTDOWN                 = BIT( 0),
-  PEER_FLAG_PASSIVE                  = BIT( 1),
-  PEER_FLAG_DONT_CAPABILITY          = BIT( 2),
-  PEER_FLAG_OVERRIDE_CAPABILITY      = BIT( 3),
-  PEER_FLAG_STRICT_CAP_MATCH         = BIT( 4),
-  PEER_FLAG_DYNAMIC_CAPABILITY       = BIT( 5),
-  PEER_FLAG_DISABLE_CONNECTED_CHECK  = BIT( 6),
-  PEER_FLAG_LOCAL_AS_NO_PREPEND      = BIT( 7),
-};
-typedef uint16_t peer_flag_bits_t ;     /* NB: <= 16 flags      */
+  PEER_CONFIG_GROUP_OVERRIDE    = PEER_CONFIG_WEIGHT
+                                | PEER_CONFIG_TIMER
+                                | PEER_CONFIG_MRAI
+                                | PEER_CONFIG_CONNECT_RETRY,
+} ;
+typedef uint16_t peer_config_bits_t ;   /* NB: <= 16 flags      */
 
 enum peer_af_flag_bits
 {
@@ -267,49 +179,42 @@ enum peer_af_flag_bits
   PEER_AFF_DEFAULT_ORIGINATE        = BIT( 9),
   PEER_AFF_REMOVE_PRIVATE_AS        = BIT(10),
   PEER_AFF_ALLOWAS_IN               = BIT(11),
-  PEER_AFF_ORF_PFX_SM               = BIT(12), /* Prefix ORF Send Mode      */
-  PEER_AFF_ORF_PFX_RM               = BIT(13), /* Prefix ORF Receive Mode   */
-  PEER_AFF_NEXTHOP_LOCAL_UNCHANGED  = BIT(14),
+  PEER_AFF_NEXTHOP_LOCAL_UNCHANGED  = BIT(12),
 } ;
 typedef uint32_t peer_af_flag_bits_t ;  /* NB: <= 32 flags      */
-
-enum peer_status_bits
-{
-  /* These are states of a peer.
-   */
-  PEER_STATUS_PREFIX_OVERFLOW   = BIT(0), /* prefix-overflow             */
-
-  PEER_STATUS_NSF_MODE          = BIT(1), /* NSF aware peer              */
-  PEER_STATUS_NSF_WAIT          = BIT(2), /* wait comeback peer          */
-} ;
-typedef uint16_t peer_status_bits_t ;   /* NB: <= 16 flags      */
 
 enum peer_af_status_bits
 {
   /* These are states of a given afi/safi, mostly while pEstablished.
    */
-  PEER_STATUS_RUNNING           = BIT(0), /* session is up              */
-  PEER_STATUS_DEFAULT_ORIGINATE = BIT(1), /* default-originate peer     */
-  PEER_STATUS_EOR_SEND          = BIT(2), /* end-of-rib send to peer    */
-  PEER_STATUS_EOR_RECEIVED      = BIT(3), /* end-of-rib received from peer */
-  PEER_STATUS_ORF_PREFIX_SENT   = BIT(4), /* prefix-list send peer      */
-  PEER_STATUS_ORF_WAIT_REFRESH  = BIT(5), /* wait refresh received peer */
-  PEER_STATUS_PREFIX_THRESHOLD  = BIT(6), /* exceed prefix-threshold    */
-  PEER_STATUS_PREFIX_LIMIT      = BIT(7), /* exceed prefix-limit        */
-} ;
-typedef uint16_t peer_af_status_bits_t ;        /* NB: <= 16 flags      */
+  PEER_AFS_DISABLED             = BIT( 0), /* configured, but disabled  */
+  PEER_AFS_RUNNING              = BIT( 1), /* session is up             */
+  PEER_AFS_DEFAULT_ORIGINATE    = BIT( 2), /* default-originate peer    */
+  PEER_AFS_EOR_SENT             = BIT( 3), /* end-of-rib send to peer   */
+  PEER_AFS_EOR_RECEIVED         = BIT( 4), /* end-of-rib received from peer */
+  PEER_AFS_PREFIX_THRESHOLD     = BIT( 5), /* exceed prefix-threshold   */
+  PEER_AFS_PREFIX_LIMIT         = BIT( 6), /* exceed prefix-limit       */
 
-enum peer_config_bits
-{
-  /* These record that certain configuration settings have been made.
+  /* These are afi/safi specific peer capabilities
    */
-  PEER_CONFIG_WEIGHT            = BIT(0), /* Default weight.            */
-  PEER_CONFIG_TIMER             = BIT(1), /* HoldTime and KeepaliveTime */
-  PEER_CONFIG_CONNECT           = BIT(2), /* ConnectRetryTime           */
-  PEER_CONFIG_MRAI              = BIT(3), /* MRAI                       */
-} ;
-typedef uint16_t peer_config_bits_t ;   /* NB: <= 16 flags      */
+  PEER_AFS_GR_CAN_PRESERVE      = BIT( 7), /* GR afi/safi received       */
+  PEER_AFS_GR_HAS_PRESERVED     = BIT( 8), /* GR afi/safi F-bit received */
 
+  /* For Prefix ORF:
+   *
+   *   _CAN_SEND => we expressed the wish, and we have received the go-ahead
+   *   _SENT     => we have sent the Prefix ORF.
+   *
+   *   _EXPECT   => we expressed willing-ness, and received the wish to send
+   *   _WAIT     => waiting to receive the Prefix ORF (just established)
+   */
+  PEER_AFS_ORF_PFX_CAN_SEND     = BIT( 9), /* Prefix ORF Send Mode      */
+  PEER_AFS_ORF_PFX_SENT         = BIT(10), /* prefix-list send peer     */
+
+  PEER_AFS_ORF_PFX_MAY_RECV     = BIT(11), /* Prefix ORF Receive Mode   */
+  PEER_AFS_ORF_PFX_WAIT         = BIT(12), /* wait refresh received peer */
+} ;
+typedef uint16_t peer_af_status_bits_t ;   /* NB: <= 16 flags           */
 
 /*------------------------------------------------------------------------------
  * Each peer has a peer rib for each AFI/SAFI it is configured for.
@@ -393,18 +298,10 @@ struct peer_rib
 
   uint        lock;
 
-  /* Per AF configuration and status flags.
+  /* Per AF configuration flags and status bits.
    */
   peer_af_flag_bits_t   af_flags ;
   peer_af_status_bits_t af_status ;
-
-  peer_af_cap_bits_t    af_caps_adv ;
-  peer_af_cap_bits_t    af_caps_rcv ;
-  peer_af_cap_bits_t    af_caps_use ;
-
-  bgp_orf_cap_bits_t    af_orf_pfx_adv ;
-  bgp_orf_cap_bits_t    af_orf_pfx_rcv ;
-  bgp_orf_cap_bits_t    af_orf_pfx_use ;
 
   /* Where a peer is a member of a peer-group in a given AFI/SAFI, the
    * relevant bit is set in the peer->group_membership.  The af_group_member
@@ -537,9 +434,11 @@ typedef struct peer bgp_peer_t ;
 
 struct peer
 {
-  /* BGP structure.
-   *
-   * Peer structures are:
+  /* Parent bgp instance -- all types of peer have a parent.
+   */
+  bgp_inst      bgp;
+
+  /* Peer structures are:
    *
    *   * PEER_TYPE_REAL    -- ordinary "real" peers
    *
@@ -558,15 +457,14 @@ struct peer
    *
    *   * PEER_TYPE_SELF    -- one per bgp instance, for static routes etc.
    */
-  bgp_inst      bgp;
-
   peer_type_t   type ;
   qafx_set_t    group_membership ;
 
   /* State of the peer
    */
-  bgp_peer_state_t state ;
-  bool             clearing ;
+  bgp_peer_state_t  state ;
+
+  bool          clearing ;
 
   bool          down_pending ;
 
@@ -599,119 +497,45 @@ struct peer
    */
   peer_group group ;
 
-  /* Peer's AS numbers.
-   *
-   *   peer->as         -- neighbor remote-as
-   *
-   *                       The OPEN received from the neighbor must have this
-   *                       as the 'My AS'.
-   *
-   *                       The peer-sort will be:
-   *
-   *                         iBGP:   if peer->as == bgp->as
-   *
-   *                         CONFED: if peer->as is any of the
-   *                                           bgp confederation peers (if any)
-   *
-   *                         eBGP:   otherwise
-   *
-   *   peer->local_as   -- our (true) ASN for this peering.
-   *
-   *                       With no CONFED this is a copy of bgp->as
-   *
-   *                       With CONFED this depends on the peer->sort:
-   *
-   *                         - for eBGP:  copy of bgp->confed_id
-   *
-   *                         - otherwise: copy of bgp->as
-   *
-   *                       ... ie: bgp->as is the ASN for talking to peers
-   *                               within the CONFED, and is the Member AS
-   *
-   *                               bgp->confed_id is the ASN for talking to
-   *                               anyone outside the CONFED.
-   *
-   *   peer->change_local_as  -- set when we are pretending that a previous
-   *                             ASN still exists.
-   *
-   *                       for *true* eBGP (ie not different CONFED Member AS)
-   *                       we can pretend that the 'change_local_as' AS sits
-   *                       between us (peer->local_as) and the peer.
-   *
-   *                       This allows the peer to believe that they are
-   *                       peering with 'change_local_as'.
-   *
-   * The OPEN sent to the the peer will contain peer->local_as, unless
-   * peer->change_local_as is set, in which case it contains that.
-   */
-  as_t as ;
-  as_t local_as ;
-  as_t change_local_as ;
-
   /* The sort of peer depends on the ASN of the peer, our ASN, CONFED
    * stuff etc.
+   *
+   *   iBGP: if peer->args.remote_as == bgp->my_as -- whether or not that
+   *         is a confederation member AS.
+   *
+   *   cBGP: if peer->args.remote_as is one of a bgp confederation peer
+   *
+   *   eBGP:   otherwise
    */
   bgp_peer_sort_t  sort ;
-
-  /* Router ID's
-   *
-   *   peer->remote_id    -- BGP Id from the OPEN received.
-   *
-   *   peer->local_id     -- BGP Id in the OPEN sent == bgp router-id A.B.C.D
-   */
-  in_addr_t remote_id;
-  in_addr_t local_id;
-
-  /* Peer RIBS -- contain adj_in and adj_out.
-   */
-  peer_rib  prib[qafx_count];
-
-  /* Packet receive and send buffers -- for PEER_TYPE_REAL.
-   */
-  stream      ibuf;
-
-  stream_fifo obuf_fifo;
-  stream      work;
-
-  /* Peer index, used for dumping TABLE_DUMP_V2 format -- for PEER_TYPE_REAL
-   */
-  uint16_t table_dump_index;
 
   /* Peer information
    *
    * NB: the su_name is IPv4 if the original name was IPv4-Mapped !!  TODO !!!
    */
-  sockunion  su_name ;          /* Name of the peer is address of same  */
-  char *host;                   /* Printable address of the peer.       */
+  sockunion su_name ;           /* Name of the peer is address of same  */
+  char*     host ;              /* Printable address of the peer.       */
+  char*     desc ;              /* Description of the peer.             */
 
   bgp_peer_index_entry  peer_ie ;
   bgp_session  session ;        /* Current session                      */
 
   bgp_peer_session_state_t session_state ;
 
-
-
-
-  ttl_t ttl ;                   /* TTL of TCP connection to the peer.   */
-  bool  gtsm ;                  /* ttl set by neighbor xxx ttl_security */
-
-  char *desc;                   /* Description of the peer.             */
-  uint16_t port;                /* Destination port for peer            */
   time_t uptime;                /* Last Up/Down time                    */
   time_t readtime;              /* Last read time                       */
   time_t resettime;             /* Last reset time                      */
 
-  uint  ifindex;                /* ifindex of the BGP connection.       */
-  char* ifname;                 /* bind interface name.                 */
-  char* update_if;
-  sockunion update_source;
-
   struct zlog *log;
 
-  sockunion  su_local;          /* Sockunion of local address.          */
-  sockunion  su_remote;         /* Sockunion of remote address.         */
   bool       shared_network;    /* Is this peer shared same network.    */
   bgp_nexthop_t nexthop;        /* Nexthop                              */
+
+  /* peer reset cause
+   */
+  peer_down_t last_reset;
+
+  bgp_notify notification ;
 
   /* Peer address family state and negotiation.
    *
@@ -787,7 +611,7 @@ struct peer
    *
    * For (real) peers there are:
    *
-   *   * af_enabled    -- the set of afi/safi which should be enabled.
+   *   * args.can_af    -- the set of afi/safi which are enabled.
    *
    *     This specifies which afi/safi a session should be enabled and started
    *     (or restarted).  This will always be a subset of af_configured.
@@ -804,6 +628,17 @@ struct peer
    *
    *         which is cleared when the timer expires or is cleared.
    *
+   *         [Keeps track of exceeding the threshold and the limit on a per
+   *          afi/safi basis... but as soon as exceeds limit on one family,
+   *          brings the entire session down, setting peer level flag.]
+   *
+   *     An address family may be disabled by:
+   *
+   *       * PEER_AFS_DISABLED   -- so can set up an address family initially
+   *                                disabled, and then enable.  Can also
+   *                                disable an address family, reconfigure and
+   *                                then re-enable.
+   *
    *     When a reason for being disabled is changed, af_enabled is
    *     recalculated, if it changes, then the session (if any) needs to be
    *     started, restarted or stopped.
@@ -811,53 +646,12 @@ struct peer
    * The following are valid for a real peer while it is pEnabled or
    * pEstablished:
    *
-   *   * af_adv        -- the set of afi/safi which were actually advertised
-   *                      when the current session was enabled, or were
-   *                      implied or have been forced.
-   *
-   *                      Generally this is a copy of af_enabled made at the
-   *                      time the session was enabled (or re-enabled).
-   *
-   *                      PEER_CAP_MP_EXT is set in cap_adv if afi/safi were
-   *                      actually advertised.  Otherwise, the sending of
-   *                      capabilities was disabled either by configuration
-   *                      (PEER_FLAG_DONT_CAPABILITY) or because peer rejected
-   *                      the sending of capabilities.
-   *
-   *   * af_rcv        -- the set of afi/safi received in incoming OPEN or
-   *                      implied by it.
-   *
-   *                      This is cleared when pEnabled and set when
-   *                      pEstablished.
-   *
-   *                      If any MP-Ext were received, this will be the
-   *                      afi/safi received and known to us -- configured or
-   *                      otherwise.
-   *
-   *                      Otherwise, this will be IPv4 Unicast.
-   *
-   *                      Note that PEER_FLAG_OVERRIDE_CAPABILITY does NOT
-   *                      affect what is recorded here.
-   *
-   *   * af_use        -- the set of afi/safi which is negotiated.
-   *
-   *                      This is cleared when pEnabled and set when
-   *                      pEstablished.
-   *
-   *                      This is the intersection of the af_adv af_rcv.
-   *
-   *                      Except when PEER_FLAG_OVERRIDE_CAPABILITY and
-   *                      no MP-Ext were received, in which case it is the
-   *                      same as af_adv !
-   *
-   * Finally:
-   *
    *   * af_running    -- the set of afi/safi for which a session is currently
    *                      running.
    *
    *                      This is empty unless is pEstablished.
    *
-   *                      This is set to af_use when becomes pEstablished.
+   *                      This is set when becomes pEstablished.
    *
    *                      When a session for an afi/safi is terminated, it
    *                      is knocked out of the af_running.  (Generally this
@@ -865,46 +659,135 @@ struct peer
    *                      afi/safi may be terminated and the session remain.)
    */
   qafx_set_t af_configured ;
-
-  qafx_set_t af_enabled ;       /* what we want session to carry        */
-
-  qafx_set_t af_adv ;           /* what we advertised                   */
-  qafx_set_t af_rcv ;           /* what we received                     */
-  qafx_set_t af_use ;           /* what we may use                      */
-
   qafx_set_t af_running ;       /* what current session carries         */
 
-  /* Capability flags (reset in bgp_stop) -- peer in general.
-   *
-   *   * caps_adv   -- the set of capabilities actually advertised.
-   *
-   *                   This is set when pEnabled but may be changed when goes
-   *                   pEstablished -- if sending capabilities had to be
-   *                   suppressed because the far end refused them.
-   *
-   *                   PEER_CAP_NONE is set iff PEER_FLAG_DONT_CAPABILITY.
-   *                   (It is NOT set if capabilities were suppressed.)
-   *
-   *   * caps_rcv   -- the set of capabilities actually received.
-   *
-   *                   PEER_CAP_NONE is set if no capability option is received.
-   *
-   *   * caps_use   -- the set of capabilities that have been negotiated.
-   *
-   *                   PEER_CAP_NONE is set if capabilities had to be
-   *                   suppressed (because the far end refused them.)
+  /* Peer RIBS -- contain adj_in and adj_out.
    */
-  peer_cap_bits_t caps_adv ;
-  peer_cap_bits_t caps_rcv ;
-  peer_cap_bits_t caps_use ;
+  peer_rib  prib[qafx_count];
 
-  /* Global configuration flags.
+  /* Peer's configured session arguments
+   *
+   *   * local_as               -- our ASN for this peering -- see below
+   *   * local_id               -- as set by configuration or otherwise
+   *
+   *     The local_as is what we say in any OPEN we send, and for:
+   *
+   *       - iBGP == bgp->my_as
+   *       - cBGP == bgp->my_as
+   *       - eBGP == bgp->ebgp_as -- *except* when is change_local_as
+   *
+   *   * remote_as              -- as set by configuration
+   *   * remote_id              -- as received in most recent session
+   *
+   *     The OPEN received must carry the expected remote_as.
+   *
+   *   * can_capability         -- ! PEER_FLAG_DONT_CAPABILITY
+   *
+   *     Nearly always true !!  Purpose is *deeply* historic... provided to
+   *     cope with pre-RFC2842 peers who crash if given Capability Options !
+   *
+   *     In the absence of cap_af_override this implies that only IPv4 Unicast
+   *     can be used, and all other capabilities are ignored.
+   *
+   *     This is not set if is cap_strict.
+   *
+   *   * can_mp_ext             -- true
+   *
+   *     When a set of session arguments are created, this will be overridden
+   *     by !can_capability.
+   *
+   *     When open_sent arguments are constructed, this may be suppressed by
+   *     cap_suppressed.
+   *
+   *   * can_as4                -- !bm->as2_speaker
+   *
+   *     When a set of session arguments are created, this will be overridden
+   *     by !can_capability.
+   *
+   *     When open_sent arguments are constructed, this may be suppressed by
+   *     cap_suppressed.
+   *
+   *   * cap_suppressed         -- N/A
+   *
+   *   * cap_af_override        -- see PEER_FLAG_OVERRIDE_CAPABILITY
+   *
+   *     If the peer does not send any MP-Ext capabilities, then this causes
+   *     Quagga to assume that the peer supports all the afi/safi that the
+   *     session is enabled for.
+   *
+   *     This is historic, and provided to cope with pre-RFC2858 Multiprotocol
+   *     stuff -- before MP-Ext capabilities existed !
+   *
+   *     This is not set if is cap_strict.
+   *
+   *   * cap_strict             -- PEER_FLAG_STRICT_CAP_MATCH
+   *
+   *     Requires the far end to support all the capabilities this end does.
+   *
+   *     This is not set if is cap_af_override or !can_capability.
+   *
+   *   * can_af                 -- for peer->args: the enabled address families
+   *
+   *     See notes above.
+   *
+   *     When creating a set of session arguments, the can_af will be masked
+   *     down if !can_mp_ext, unless have cap_af_override.
+   *
+   * When creating a set of session arguments, the following will be suppressed
+   * if !can_capability.  And when creating a set of arguments for open_sent,
+   * these will be suppressed if cap_suppressed.
+   *
+   *   * can_rr                 -- bgp_form_both
+   *
+   *     We default to supporting both the RFC and the pre-RFC Route Refresh.
+   *
+   *     Could create an option to turn off one or both.
+   *
+   *   * gr.can                 -- BGP_FLAG_GRACEFUL_RESTART
+   *   * gr.restarting          -- false
+   *   * gr.restart_time        -- 0
+   *   * gr.can_preserve        -- empty
+   *   * gr.has_preserved       -- empty
+   *
+   *     These are set on the fly when a set of session arguments is created.
+   *
+   *   * can_orf                -- bgp_form_both
+   *
+   *     We default to supporting both the RFC and the pre-RFC ORF capability,
+   *     and Prefix ORF types.
+   *
+   *   * can_orf_pfx[]          -- per "neighbor capability orf prefix-list"
+   *
+   *     For the peer->args we register only the RFC types.  As we construct
+   *     arguments for session and for open_sent, will expand this to include
+   *     the pre-RFC types -- where the pre-RFC capability is advertised.
+   *
+   *   * can_dynamic            -- false
+   *   * can_dynamic_dep        -- false
+   *
+   * These are always relevant
+   *
+   *   * holdtime_secs          -- peer->config_holdtime
+   *   * keepalive_secs         -- peer->config_keepalive
    */
-  peer_flag_bits_t flags;
+  bgp_session_args_t  args ;            /* NB: embedded         */
 
-  /* MD5 password
+  /* change_local_as is set when we are pretending that a previous ASN still
+   * exists.
+   *
+   * For eBGP (not cBGP !) we pretend that the 'change_local_as' AS sits
+   * between us (local_as) and the peer.  This allows the peer to believe that
+   * they are peering with 'change_local_as' (as it was before).
+   *
+   * The args.local_as is set to change_local_as (not bgp->ebgp_as), because
+   * that is the AS used for the session (and in the OPEN sent).
    */
-  char* password;
+  as_t          change_local_as ;
+  bool          change_local_as_prepend ;
+
+  /* Other flags
+   */
+  bool          disable_connected_check ;
 
   /* Peer status flags.
    */
@@ -924,40 +807,49 @@ struct peer
    *       Note that where a peer does not have an explicit weight, then if
    *       it is a member of a group, it inherits the group's weight (which
    *       may be inherited from the bgp instance).
-   *
-   *   *
    */
   peer_config_bits_t config;
 
-  uint16_t weight ;             /* valid at all times                   */
+  uint16_t      weight ;        /* valid at all times                   */
 
-  uint32_t config_holdtime;     /* valid iff PEER_CONFIG_TIMER          */
-  uint32_t config_keepalive;    /* valid iff PEER_CONFIG_TIMER          */
-  uint32_t config_connect;      /* valid iff PEER_CONFIG_CONNECT        */
-  uint32_t config_mrai ;        /* valid iff PEER_CONFIG_MRAI           */
+  uint          config_mrai ;   /* default unless PEER_CONFIG_MRAI      */
 
-  /* Current holdtime and keepalive
+  /* The connection options include:
    *
-   *   * for (real) peer which is pEnabled
+   *   * su_remote              -- used by connect() and listen()
    *
-   *     this is the value which is currently being advertised.
+   *                               copy of su_name (but could be something
+   *                               else, eg a link-local address for the peer !
    *
-   *   * for (real) peer which is pEstablished
+   *   * su_local               -- "neighbor xx update-source <addr>" et al.
    *
-   *     this is the value which has been negotiated and is in effect.
+   *   * port                   -- for connect() and listen()
    *
-   *   * otherwise -- see peer_get_holdtime() and peer_get_keepalive().
+   *   * conn_let               -- generally true, once enabled XXX XXX XXX
+   *
+   *   * connect_retry_secs     -- per default, or otherwise
+   *   * accept_retry_secs      -- per default, or otherwise
+   *   * open_hold_secs         -- per default, or otherwise
+   *
+   *   * ttl                    -- "neighbor xx ebgp-multihop" etc.
+   *   * gtsm                   -- "neighbor xx ttl-security hops" etc.
+   *
+   *   * password               -- "neighbor xx password"
+   *
+   *   * ifname                 -- "neighbor xx update-source <name>"
+   *                               "neighbor xx interface <name>"
+   *
+   * The cops_set are the configuration options last passed to the session.
    */
-  uint32_t current_holdtime ;
-  uint32_t current_keepalive ;
+  bgp_cops_t    cops ;
 
   /* Timer values.
    */
-  uint32_t v_start;
+  uint32_t      v_start;
 
-  uint32_t v_asorig;
-  uint32_t v_pmax_restart;
-  uint32_t v_gr_restart;
+  uint32_t      v_asorig;
+  uint32_t      v_pmax_restart;
+  uint32_t      v_gr_restart;
 
   /* Threads
    */
@@ -983,25 +875,19 @@ struct peer
 
 #define MAXIMUM_PREFIX_THRESHOLD_DEFAULT 75
 
-  /* peer reset cause
+
+
+
+  /* Packet receive and send buffers -- for PEER_TYPE_REAL.
    */
-  peer_down_t last_reset;
+  stream      ibuf;
 
-  bgp_notify notification ;
+  stream_fifo obuf_fifo;
+  stream      work;
 
-#if 0
-  /* The kind of route-map Flags.                       */
-  u_int16_t rmap_type;
-#define PEER_RMAP_TYPE_IN             (1 << 0) /* neighbor route-map in       */
-#define PEER_RMAP_TYPE_OUT            (1 << 1) /* neighbor route-map out      */
-#define PEER_RMAP_TYPE_NETWORK        (1 << 2) /* network route-map           */
-#define PEER_RMAP_TYPE_REDISTRIBUTE   (1 << 3) /* redistribute route-map      */
-#define PEER_RMAP_TYPE_DEFAULT        (1 << 4) /* default-originate route-map */
-#define PEER_RMAP_TYPE_NOSET          (1 << 5) /* not allow to set commands   */
-#define PEER_RMAP_TYPE_IMPORT         (1 << 6) /* neighbor route-map import   */
-#define PEER_RMAP_TYPE_EXPORT         (1 << 7) /* neighbor route-map export   */
-#define PEER_RMAP_TYPE_RS_IN          (1 << 8) /* neighbor route-map rs-in    */
-#endif
+  /* Peer index, used for dumping TABLE_DUMP_V2 format -- for PEER_TYPE_REAL
+   */
+  uint16_t table_dump_index;
 } ;
 
 
@@ -1070,7 +956,7 @@ extern peer_group peer_group_get (bgp_inst bgp, const char* name);
 extern bgp_ret_t peer_group_delete (peer_group group) ;
 extern int peer_group_cmp (peer_group g1, peer_group g2) ;
 
-extern int peer_activate(bgp_peer peer, qafx_t qafx);
+extern bgp_ret_t peer_set_af(bgp_peer peer, qafx_t qafx, bool enable);
 extern int peer_deactivate(bgp_peer peer, qafx_t qafx) ;
 
 extern bgp_peer_sort_t peer_sort (bgp_peer peer);
@@ -1105,9 +991,6 @@ extern void bgp_peer_down_error_with_data (bgp_peer peer,
                               bgp_nom_code_t code, bgp_nom_subcode_t subcode,
                                              const byte* data, size_t datalen) ;
 
-extern uint peer_get_keepalive(bgp_peer peer, bool current) ;
-extern uint peer_get_holdtime(bgp_peer peer, bool current) ;
-extern uint peer_get_connect_retry_time(bgp_peer peer) ;
 extern uint peer_get_accept_retry_time(bgp_peer peer) ;
 extern uint peer_get_open_hold_time(bgp_peer peer) ;
 extern uint peer_get_mrai(bgp_peer peer) ;

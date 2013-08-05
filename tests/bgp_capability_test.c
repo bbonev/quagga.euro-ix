@@ -663,7 +663,6 @@ main (int argc, char **argv)
   while (opt_params[i].name)
     parse_test (peer, &opt_params[i++], OPT_PARAM);
 
-  peer->caps_adv |= PEER_CAP_DYNAMIC ;
   peer->state = bgp_pEstablished;
 
   i = 0;

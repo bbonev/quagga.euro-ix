@@ -1520,17 +1520,26 @@ fi
 dnl ---------------------------
 dnl sockaddr and netinet checks
 dnl ---------------------------
-AC_CHECK_TYPES([struct sockaddr, struct sockaddr_in,
-	struct sockaddr_in6, struct sockaddr_un, struct sockaddr_dl,
+AC_CHECK_TYPES([struct sockaddr,
+        struct sockaddr_un,
+	struct sockaddr_in,
+	struct sockaddr_in6,
+	struct sockaddr_dl,
 	socklen_t,
-	struct ifaliasreq, struct if6_aliasreq, struct in6_aliasreq,
-	struct nd_opt_adv_interval, struct rt_addrinfo,
-	struct nd_opt_homeagent_info, struct nd_opt_adv_interval],
+	struct ifaliasreq,
+	struct if6_aliasreq,
+	struct in6_aliasreq,
+	struct nd_opt_adv_interval,
+	struct rt_addrinfo,
+	struct nd_opt_homeagent_info,
+	struct nd_opt_adv_interval],
 	[], [], QUAGGA_INCLUDES)
 
 AC_CHECK_MEMBERS([struct sockaddr.sa_len,
-	struct sockaddr_in.sin_len, struct sockaddr_un.sun_len,
-	struct sockaddr_in6.sin6_scope_id,
+	struct sockaddr_un.sun_len,
+	struct sockaddr_in.sin_len,
+        struct sockaddr_in6.sin6_len,
+        struct sockaddr_in6.sin6_scope_id,
 	struct if6_aliasreq.ifra_lifetime,
 	struct nd_opt_adv_interval.nd_opt_ai_type],
 	[], [], QUAGGA_INCLUDES)

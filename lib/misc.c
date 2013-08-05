@@ -668,7 +668,7 @@ strtrim_blank(char* str)
  * leading zeros).
  */
 extern int
-strcmp_mixed(const void* restrict a, const void* restrict b)
+strcmp_mixed(const void* a, const void* b)
 {
   const uchar* ap ;
   const uchar* bp ;
@@ -814,7 +814,7 @@ strcmp_mixed(const void* restrict a, const void* restrict b)
  *          +1  <=> first mismatch has the string > pattern )
  */
 extern int
-strcmp_lax(const void* restrict a, const void* restrict b)
+strcmp_lax(const void* a, const void* b)
 {
   uint ppch, pch, sch ;
 

@@ -986,14 +986,35 @@ u32tostr(char* ptr,    int v, uint base, bool uc)
 /*==============================================================================
  * String functions
  */
+Inline bool strsame(const char* s1, const char* s2) ;
+Inline bool memsame(const void* p1, const void* p2, size_t len) ;
+
 Inline char* strncpy_x(char* restrict dst, const char* restrict src,
                                                                   size_t size) ;
 extern char* strtolower(char* str) ;
 extern char* strtrim_space(char* str) ;
 extern char* strtrim_blank(char* str) ;
 
-extern int strcmp_mixed(const void* restrict a, const void* restrict b) ;
-extern int strcmp_lax(const void* restrict a, const void* restrict b) ;
+extern int strcmp_mixed(const void* a, const void* b) ;
+extern int strcmp_lax(const void* a, const void* b) ;
+
+/*------------------------------------------------------------------------------
+ * Shorthand for strcmp(s1, s2) == 0 !
+ */
+Inline bool
+strsame(const char* s1, const char* s2)
+{
+  return strcmp(s1, s2) == 0 ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Shorthand for strcmp(s1, s2) == 0 !
+ */
+Inline bool
+memsame(const void* p1, const void* p2, size_t len)
+{
+  return memcmp(p1, p2, len) == 0 ;
+} ;
 
 /*------------------------------------------------------------------------------
  * strncpy() except that it ensures the last byte is '\0'.

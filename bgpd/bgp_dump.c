@@ -658,11 +658,10 @@ bgp_dump_routes_index_table(bgp_dump bd, struct bgp *bgp)
             continue ;          /* Ignore if not known family ! */
         } ;
 
-      stream_putc (s, type) ;                   /* Peer's type          */
-      stream_put_ipv4 (s, peer->remote_id);     /* Peer's BGP ID        */
-      stream_put (s, sockunion_get_addr(su),    /* Peer's IP address    */
-                       sockunion_get_addr_len(su)) ;
-      stream_putl (s, peer->as);                /* Peer's AS (AS4-wise) */
+      stream_putc (s, type) ;
+      stream_put_ipv4 (s, peer->args.remote_id) ;
+      stream_put (s, sockunion_get_addr(su), sockunion_get_addr_len(su)) ;
+      stream_putl (s, peer->args.remote_as) ;   /* AS4  */
 
       peer->table_dump_index = peerno ;         /* set peer number      */
 
@@ -1682,11 +1681,10 @@ bgp_dump_common (bgp_dump bd, bgp_session session, int subtype, bool as4)
 
   /* Source AS number and Destination AS number
    *
-   * NB: if there is a change_local_as in force, then that is the local_as that
-   *     will be recorded.
+   * NB: if there is a change_local_as in force, then local_as is set to that.
    */
-  remote_as = session->remote_as ;
-  local_as  = session->local_as ;
+  remote_as = session->args->remote_as ;
+  local_as  = session->args->local_as ;
 
   if (as4)
     {
@@ -1712,7 +1710,7 @@ bgp_dump_common (bgp_dump bd, bgp_session session, int subtype, bool as4)
    * something "impossible" has happened, then the message will still be
    * "syntactically" well formed.
    */
-  su_remote = session->su_peer ;
+  su_remote = &session->cops->su_remote ;
   su_local  = &session->cops->su_local ;
 
   stream_putw (s, sockunion_get_afi(su_remote)) ;

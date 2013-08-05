@@ -37,6 +37,7 @@
 #include "lib/mqueue.h"
 #include "lib/zassert.h"
 #include "lib/qfstring.h"
+#include "lib/qatomic.h"
 
 /*==============================================================================
  * BGP Session.
@@ -86,18 +87,22 @@ static void bgp_session_do_route_refresh_recv(mqueue_block mqb, mqb_flag_t flag)
  * BGP Session initialisation and tear down.
  *
  */
+static void bgp_session_clear(bgp_session session) ;
 
 /*------------------------------------------------------------------------------
  * Allocate & initialise new session structure.
  *
- * Ties peer and session together.  Sets session psDown and sInitial.
- * Initialises mutex.
+ * Ties peer and session together.  Sets session sInitial.
  *
  * Unsets everything else -- mostly by zeroising it.
  *
  * NB: when a peer is created, its session must also be created and its peer
  *     index entry.  All that must be done before the session is passed to the
  *     BGP Engine.
+ *
+ * NB: the acceptor is not created until the session is enabled.
+ *
+ *     While the acceptor is NULL, no connections will be accepted -- RST.
  */
 extern bgp_session
 bgp_session_init_new(bgp_peer peer)
@@ -109,70 +114,52 @@ bgp_session_init_new(bgp_peer peer)
 
   session = XCALLOC(MTYPE_BGP_SESSION, sizeof(bgp_session_t)) ;
 
-  /*
+  /* Zeroizing sets:
    *
-   *   * peer                   -- X         -- set below
-   *   * mutex                  -- X         -- set below
+   *   * peer                   -- X            -- set below
+   *   * peer_ie                -- X  ???
    *
-   *   * flow_control           -- 0
-   *   * xon_awaited            -- false
+   *   * fsm_event              -- feNULL       -- none, yet
+   *   * notification           -- NULL         -- ditto
+   *   * err                    -- 0            -- ditto
+   *   * ordinal                -- 0            -- ditto
    *
-   *   * delete_me              -- false
+   *   * ordinal_established    -- 0            -- N/A until psEstablished
    *
-   *   * ordinal_established    -- X         -- not established
+   *   * idle_hold_timer_interval
+   *   * local_as               -- X            --
+   *   * local_id               -- X            --
    *
-   *   * event                  -- bgp_session_null_event )
-   *   * notification           -- NULL                   ) nothing, yet
-   *   * err                    -- 0                      )
-   *   * ordinal                -- 0                      )
+   *   * remote_as              -- X
+   *   * su_peer                -- X
    *
-   *   * open_sent              -- NULL      )
-   *   * open_recv              -- NULL      )
-   *   * connect                -- false     ) set when session enabled
-   *   * listen                 -- false     )
+   *   * lox                    -- X
    *
-   *   * cap_af_override        -- false     )
-   *   * cap_strict             -- false     )
-   *   * ttl                    -- 0         )
-   *   * gtsm                   -- false     )
-   *   * port                   -- X         )
-   *   * ifname                 -- NULL      )
-   *   * ifindex                -- X         )
-   *   * ifaddress              -- NULL      )
-   *   * remote_as                -- X         )
-   *   * su_peer                -- NULL      )
-   *   * log                    -- NULL      )
-   *   * host                   -- NULL      )
-   *   * password               -- NULL      )
+   *   * args_tx                -- NULL         -- none, yet
+   *   * args_config            -- NULL         -- none, yet
+   *   * args                   -- NULL         -- none, yet
    *
-   *   * idle_hold_timer_interval      -- X  ) set when session enabled
-
-
-   *   * as4                    -- false     )
-   *   * af_adv                 -- 0         )
-   *   * af_use                 -- 0         )
-   *   * r_refresh              -- 0         )
-   *   * orf_pfx_in_rfc         -- 0         )
-   *   * orf_pfx_out_rfc        -- 0         )
-   *   * orf_pfx_in_pre         -- 0         )
-   *   * orf_pfx_out_pre        -- 0         )
-   *   * su_local               -- NULL      )
-   *   * su_remote              -- NULL      )
+   *   * open_sent              -- NULL         -- none, yet
+   *   * open_recv              -- NULL         -- none, yet
+   *
+   *   * read_rb                -- NULL         -- none, yet
+   *   * write_rb               -- NULL         -- none, yet
    *
    *   * stats                  -- all zero
    *
-   *   * connections            -- NULLs
-   *   * active                 -- false
-   *   * accept                 -- false
+   *   * cops_tx                -- NULL
+   *   * cops_config            -- NULL
+   *   * cops                   -- NULL
+   *
+   *   * connections            -- NULLs        -- none, yet
+   *   * state                  -- sInitial
+   *
+   *   * acceptor               -- NULL         -- none, yet
    */
-  session->mutex = qpt_mutex_new(qpt_mutex_recursive,
-                                        qfs_gen("%s Session", peer->host).str) ;
-
   session->peer  = peer ;
-  bgp_peer_lock(peer) ;             /* Account for the session->peer pointer  */
+  bgp_peer_lock(peer) ;         /* Account for the session->peer pointer */
 
   confirm(bgp_sInitial   == 0) ;
-  confirm(bgp_session_null_event == 0) ;
 
   /* Complete process and return session.
    */
@@ -210,15 +197,11 @@ bgp_session_delete(bgp_peer peer)
    * Without this, the qpt_mutex_destroy() can fail horribly, if the BGP
    * Engine sends the disable acknowledge before finally unlocking the session.
    */
-  BGP_SESSION_LOCK(session) ;   /*<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-*/
-
   qassert(peer == session->peer) ;
 
-  session->peer    = NULL ;
-
-  BGP_SESSION_UNLOCK(session) ; /*->->->->->->->->->->->->->->->->->->->->*/
-
   peer->session = NULL ;
+  session->peer = NULL ;
+  bgp_peer_unlock(peer) ;       /* Account for the session->peer pointer */
 } ;
 
 /*------------------------------------------------------------------------------
@@ -267,17 +250,11 @@ bgp_session_destroy(bgp_peer peer)
    * Without this, the qpt_mutex_destroy() can fail horribly, if the BGP
    * Engine sends the disable acknowledge before finally unlocking the session.
    */
-  BGP_SESSION_LOCK(session) ;   /*<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-*/
-
-  BGP_SESSION_UNLOCK(session) ; /*->->->->->->->->->->->->->->->->->->->->*/
-
-  session->mutex = qpt_mutex_destroy(session->mutex) ;
-
   /* Proceed to dismantle the session.
    */
-  bgp_notify_unset(&session->notification);
-  bgp_open_state_free(session->open_sent);
-  bgp_open_state_free(session->open_recv);
+  session->notification = bgp_notify_free(session->notification);
+  session->open_sent    = bgp_open_state_free(session->open_sent);
+  session->open_recv    = bgp_open_state_free(session->open_recv);
 
 #if 0
   if (session->ifname != NULL)
@@ -287,13 +264,8 @@ bgp_session_destroy(bgp_peer peer)
     XFREE(MTYPE_PEER_PASSWORD, session->password);
 #endif
 
-  sockunion_unset(&session->su_peer) ;
-
   if (session->lox.host != NULL)
     XFREE(MTYPE_BGP_PEER_HOST, session->lox.host);
-
-  sockunion_unset(&session->su_local) ;
-  sockunion_unset(&session->su_remote) ;
 
   /* Drop the peer->session and session->peer pointers
    *
@@ -315,20 +287,127 @@ bgp_session_destroy(bgp_peer peer)
   XFREE(MTYPE_BGP_SESSION, session);
 } ;
 
+/*------------------------------------------------------------------------------
+ * Clear the given session -- assumes already initialised and may have been
+ * enabled.
+ *
+ * Clears down as follows:
+ *
+ *   * peer                     -- N/A
+ *   * peer_ie                  -- N/A
+ *
+ *   * state_seen               -- sInitial
+ *
+ *   * fsm_event                -- feNULL
+ *   * notification             -- NULL         -- none, yet
+ *   * err                      -- 0            -- none, yet
+ *   * ordinal                  -- 0            -- none, yet
+ *   * ordinal_established      -- 0            -- none, yet
+ *
+ *   * idle_hold_timer_interval -- N/A
+ *
+ *   * local_as                 -- N/A
+ *   * local_id                 -- N/A
+ *
+ *   * remote_as                -- N/A
+ *
+ *   * lox.log                  -- NULL
+ *   * lox.host                 -- NULL
+ *
+ *   * args_config              -- NULL
+ *   * args_tx                  -- NULL
+ *   * args                     -- NULL
+ *   * open_sent                -- NULL
+ *   * open_recv                -- NULL
+ *
+ *   * read_rb                  -- NULL
+ *   * write_rb                 -- NULL
+ *
+ *   * stats                    -- zeroized
+ *
+ *   * cops_tx                  -- N/A
+ *   * cops_config              -- N/A
+ *   * cops                     -- N/A
+ *
+ *   * connections              -- NULLs
+ *
+ *   * state                    -- N/A
+ *
+ *   * acceptor                 -- N/A
+ */
+static void
+bgp_session_clear(bgp_session session)
+{
+  session->state_seen   = bgp_sInitial ;
+
+  session->fsm_event    = bgp_feNULL ;
+  session->notification = bgp_notify_free(session->notification) ;
+  session->err          = 0 ;
+  session->ordinal      = 0 ;
+
+  session->ordinal_established = 0 ;
+
+  session->lox.log      = NULL;
+
+  if (session->lox.host != NULL)
+    XFREE(MTYPE_BGP_PEER_HOST, session->lox.host) ;
+                                        /* sets session->lox.host NULL  */
+
+  session->args_config  = bgp_session_args_free(session->args_config) ;
+  session->args_tx      = bgp_session_args_free(session->args_tx) ;
+  session->args         = bgp_session_args_free(session->args) ;
+  session->open_sent    = bgp_open_state_free(session->open_sent) ;
+
+  session->read_rb      = rb_destroy(session->read_rb) ;
+  session->write_rb     = rb_destroy(session->write_rb) ;
+
+  memset(&session->stats, 0, sizeof(session->stats)) ;
+  memset(session->connections, 0, sizeof(session->connections)) ;
+} ;
+
 /*==============================================================================
  * Enabling and disabling sessions and session events
  */
-static void bgp_session_args_set(bgp_peer peer, bgp_session session) ;
+static bgp_session_args bgp_session_args_make(bgp_peer peer) ;
 
 /*------------------------------------------------------------------------------
- * Routing Engine: enable session for given peer -- allocate if required.
+ *
+ *
+ */
+extern void
+bgp_session_prod(bgp_session session)
+{
+
+} ;
+
+/*------------------------------------------------------------------------------
+ * Routing Engine: enable session for given peer.
  *
  * Sets up the session given the current state of the peer.  If the state
  * changes, then need to disable the session and re-enable it again with new
  * parameters -- unless something more cunning is devised.
  *
- * The peer MUST be: pDisabled  -- all quiet
- *               or: pDown      -- was up and is tidying up afterwards
+ * Constructs a new set of session arguments.
+ *
+ * The peer MUST be: pDisabled  -- configured, but disabled for some reason
+ *
+ *
+ *
+ *                   The session_state may be:
+ *
+ *                     * bgp_psInitial  -- time to start up the acceptor, at
+ *                                         least.
+ *
+ *                     * bgp_psDown     -- xxx
+ *
+ *               or: pEnabled   -- ready to run
+ *
+ *                   The session_state may be:
+ *
+ *                     * bgp_psInitial  -- time to start up the acceptor, at
+ *                                         least.
+ *
+ *                     * bgp_psDown     -- xxx
  *
  * In these states there is no activity for the peer in the BGP Engine, and
  * there are no messages outstanding to or from the BGP Engine.
@@ -343,94 +422,43 @@ bgp_session_enable(bgp_peer peer)
   mqueue_block   mqb ;
 
   qassert( (peer->state == bgp_pDisabled) ||
-           (peer->state == bgp_pDown) ) ;
+           (peer->state == bgp_pEnabled) ) ;
 
-  qassert(peer->session_state == bgp_psDown) ;
+  qassert( (peer->session_state == bgp_psInitial) ||
+           (peer->session_state == bgp_psDown) ) ;
 
   session = peer->session ;
 
   assert(session != NULL) ;
 
-  /* Initialise what we need to make and run connections
-   */
-  session->flow_control = 0 ;
-  session->xon_awaited  = false ;
-  session->ordinal_established = 0 ;
+  qassert(session->peer    == peer) ;
+  qassert(session->peer_ie == peer->peer_ie) ;
 
-  session->delete_me    = false ;
-  session->event        = bgp_session_null_event ;
-  bgp_notify_unset(&session->notification) ;
-  session->err          = 0 ;
-  session->ordinal      = 0 ;
-
-
-  bgp_session_args_set(peer, session) ;
-
-#if 0
-  session->open_send = bgp_peer_open_state_init_new(session->open_send, peer) ;
-  bgp_open_state_unset(&session->open_recv) ;
-
-
-
-
-
-  session->connect   = !(peer->flags & PEER_FLAG_PASSIVE) ;
-  session->listen    = true ;
-
-  session->ttl       = peer->ttl ;
-  session->gtsm      = peer->gtsm ;
-  session->port      = peer->port ;
-
-  if (session->ifname != NULL)
-    free(session->ifname) ;
-  session->ifindex = 0 ;
-
-  if (peer->ifname != NULL)
-    {
-      session->ifname  = strdup(peer->ifname) ;
-      session->ifindex = if_nametoindex(peer->ifname) ;
-    } ;
-
-  sockunion_unset(&session->ifaddress) ;
-  if      (peer->update_source != NULL)
-    session->ifaddress = sockunion_dup(peer->update_source) ;
-  else if (peer->update_if != NULL)
-    session->ifaddress = bgp_peer_get_ifaddress(peer, peer->update_if,
-                                                        peer->su.sa.sa_family) ;
-#endif
-
-  /* Set the ASN and BGP-Id we are peering as.
+  /* Clears the session and then sets:
    *
-   * For iBGP and Confederation peers, this will be bgp->as.
+   *   * idle_hold_timer_interval XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
    *
-   * For eBGP this will be peer->change_local_as, or bgp->confed_id or bgp->as
-   * in that order.
+   *   * lox.log                -- copy of peer->log
+   *   * lox.host               -- copy of peer->host
+   *
+   *   * args_config            -- initial arguments
+   *
+   *   * stats                  -- reset to zero   TODO yes ??
+   *
+   *   * cops_tx                -- iff psInitial -- initial cops.
+   *
+   *   * state                  -- iff psInitial -- sInitial
    */
-  session->local_as  = peer->local_as ;
-  session->local_id  = peer->local_id ;
+  bgp_session_clear(session) ;
 
-  /* Identity of the peer.
-   */
-  session->remote_as  = peer->as ;
-  sockunion_set_dup(&session->su_peer, &peer->su_name) ;
+  session->lox.log      = peer->log ;
+  session->lox.host     = XSTRDUP(MTYPE_BGP_PEER_HOST,
+                                    ((peer->host != NULL) ? peer->host
+                                                          : "<unknown-host>")) ;
 
-  /* take copies of peer's logging and host name string
-   */
-  session->lox.log    = peer->log ;
+  session->args_config  = bgp_session_args_make(peer) ;
 
-  if (session->lox.host != NULL)
-    XFREE(MTYPE_BGP_PEER_HOST, session->lox.host);
-  session->lox.host   = (peer->host != NULL)
-                                 ? XSTRDUP(MTYPE_BGP_PEER_HOST, peer->host)
-                                 : NULL;
-
-#if 0
-  if (session->password != NULL)
-    XFREE(MTYPE_PEER_PASSWORD, session->password);
-  session->password = (peer->password != NULL)
-                        ? XSTRDUP(MTYPE_PEER_PASSWORD, peer->password)
-                        : NULL;
-#endif
+  memset(&session->stats, 0, sizeof(struct bgp_session_stats)) ;
 
   /* v_start is set to BGP_INIT_START_TIMER when the peer is first created.
    * It is adjusted when a session drops, so that if sessions going up and
@@ -438,284 +466,149 @@ bgp_session_enable(bgp_peer peer)
    * session, the IdleHoldTime is reduced.
    *
    * v_connect is set by configuration.
-   *
-   * v_holdtime and v_keepalive are set by bgp_peer_reset_idle() to either the
-   * values configured for the peer, or to the bgp instance defaults.  When a
-   * session starts, the negotiated values are set into here -- so that can
-   * be output in (eg) bgp_show_peer().
-   *
-   * TODO -- sort out relationship peer->holdtime & peer->v_holdtime etc.
-   *
-   * TODO -- signalling change of timer values to a running session...
-   *         ...probably only the connect_retry_timer_interval...
-   *         ...except for sessions which are not up yet.
    */
-  session->idle_hold_timer_interval     = QTIME(peer->v_start) ;
+  session->idle_hold_timer_interval  = QTIME(peer->v_start) ;
 
-  /* su_local set when session Established
-   * su_remote  set when session Established
-   *
-   * TODO: check whether session stats should persist
-   */
-  memset(&session->stats, 0, sizeof(struct bgp_session_stats)) ;
   memset(&session->connections, 0, sizeof(session->connections)) ;
 
-  session->active  = false ;
-  session->accept  = false ;
+  /* If this is the very first enable, then we need a copy of the cops_config
+   * from the peer, and we make sure the session->state is kosher.
+   *
+   * Also, need to worry about what state we now go to, depending on whether
+   * the peer is
+   */
+  if (peer->session_state == bgp_psInitial)
+    {
+      bgp_cops  cops_tx ;
+
+      cops_tx = bgp_cops_copy(NULL, &peer->cops) ;
+      cops_tx = qa_swap_ptrs((void**)&session->cops_tx, cops_tx) ;
+
+      qassert(cops_tx               == NULL) ;
+      qassert(session->cops_config  == NULL) ;
+      qassert(session->cops         == NULL) ;
+      qassert(session->state        == bgp_sInitial) ;
+
+      session->state    = bgp_sInitial ;
+
+      qassert(session->acceptor     == NULL) ;
+      session->acceptor = bgp_acceptor_init_new(session->acceptor, session) ;
+    } ;
 
   /* Now pass the session to the BGP Engine and change state.
    *
    * There are no other messages for this peer outstanding, but we issue a
    * priority message to jump past any queue of outbound message events.
    */
+  if (peer->session_state == bgp_psInitial)
+    {
+
+      bgp_session_start(session) ;
+    } ;
+
+
   mqb = mqb_init_new(NULL, bgp_session_do_enable, session) ;
 
   confirm(sizeof(struct bgp_session_enable_args) == 0) ;
 
   ++bgp_engine_queue_stats.event ;
 
-  session->peer_state = bgp_psUp ;
+  peer->session_state = bgp_psUp ;
   bgp_to_bgp_engine(mqb, mqb_priority) ;
 } ;
 
-
-
-
-
-
 /*------------------------------------------------------------------------------
- * Construct new bgp_open_state for the given peer -- allocate if required.
+ * Construct new set of session arguments, based on current state of the peer.
  *
- * Initialises the structure according to the current peer state.
+ * The session arguments are a direct copy of the peer->args, except:
  *
- * Sets: peer->cap        -- to what we intend to advertise, clearing
- *                           all the received state.
- *       peer->af_adv     -- to what we intend to advertise
- *       peer->af_rcv     -- cleared
- *       peer->af_use     -- cleared
+ *   * remote_id                -- 0
+ *   * cap_suppressed           -- false
  *
- * TODO: if we are pEstablished or pEnabled... what to do with the peer->xxx ???
+ * If is !can_capability, flush out what we are not allowed to advertise.
+ * NB: if is cap_af_override, we keep the can_af as the families we are
+ *     "implicitly" advertising.
  *
- * NB: if is PEER_FLAG_DONT_CAPABILITY, sets what would like to advertise, if
- *     could.
+ * And the Prefix ORF stuff:
  *
- *     When (if) session becomes established, then if either
- *     PEER_FLAG_DONT_CAPABILITY or
+ *   * if we are not actually advertising anything, then we suppress
+ *     args->can_orf, so will not send the capability at all.
  *
- * Returns:  address of existing or new bgp_open_state, initialised as required
+ *   * if we are willing to send the per-RFC capability, then update the
+ *     Prefix ORF types to be advertised.
+ *
+ *   * make sure we only advertise things in can_af.
+ *
+ * And the Graceful Restart stuff:            XXX XXX XXX
+ *
+ *   * gr.can                   -- BGP_FLAG_GRACEFUL_RESTART
+ *   * gr.restarting            -- false
+ *   * gr.restart_time          -- 0
+ *   * gr.can_preserve          -- empty
+ *   * gr.has_preserved         -- empty
+ *
+ * Returns:  address of new bgp_session_args
  */
-static void
-bgp_session_args_set(bgp_peer peer, bgp_session session)
+static bgp_session_args
+bgp_session_args_make(bgp_peer peer)
 {
-  bgp_session_args args ;
-  qafx_t  qafx ;
-  bool    can_capability ;
+  bgp_session_args_t args[1] ;
+  qafx_t     qafx ;
+  bgp_form_t can_orf ;
 
-  args = &session->args ;
-  memset(args, 0, sizeof(bgp_session_args_t)) ;
+  memcpy(args, &peer->args, sizeof(args)) ;
 
-  /* Zeroizing the args sets:
-   *
-   */
+  args->remote_id       = 0 ;
+  args->cap_suppressed  = false ;
 
-#if 0
-  /* Allocate if required.  Zeroise in any case.
-   */
-  open_send = bgp_open_state_init_new(open_send) ;
-#endif
+  if (!args->can_capability)
+    bgp_session_args_suppress(args) ;
 
-  /* Reset what we expect to advertise and clear received and usable
-   * capabilities.
-   */
-  peer->caps_adv = 0 ;
-  peer->caps_rcv = 0 ;
-  peer->caps_use = 0 ;
-
-  peer->af_adv   = qafx_set_empty ;
-  peer->af_rcv   = qafx_set_empty ;
-  peer->af_use   = qafx_set_empty ;
-
-  for (qafx = qafx_first ; qafx <= qafx_last ; ++qafx)
-    {
-      peer_rib   prib ;
-      qafx_bit_t qb ;
-
-      prib = peer->prib[qafx] ;
-      qb   = qafx_bit(qafx) ;
-
-      qassert((prib != NULL) == (peer->af_configured & qb)) ;
-
-      if (prib == NULL)
-        qassert(!(peer->af_enabled & qb)) ;
-      else
-        {
-          prib->af_caps_adv    = 0 ;
-          prib->af_caps_rcv    = 0 ;
-          prib->af_caps_use    = 0 ;
-          prib->af_orf_pfx_adv = 0 ;
-          prib->af_orf_pfx_rcv = 0 ;
-          prib->af_orf_pfx_use = 0 ;
-        } ;
-    } ;
-
-  /* Set address families to announce/accept and whether we are sending
-   * any capabilities at all.
-   *
-   * PEER_FLAG_DONT_CAPABILITY
-   *
-   * This is set to avoid sending capabilities to a peer which is so broken
-   * that it will crash if it receives same.
-   *
-   * The effect is to force the open_state, peer->caps_adv, peer->af_adv etc.
-   * to the basic "No Capabilities" open_send, ie:
-   *
-   *   * IPv4 Unicast enabled
-   *
-   *   * nothing else
-   *
-   * The expectation is that the peer will not send any capabilities, so
-   * the result will the most basic session.
-   *
-   * If peer->af_enabled does not include IPv4 Unicast, then there is not
-   * much point bringing up the session... but it will try, and then drop.
-   *
-   * Except, if PEER_FLAG_OVERRIDE_CAPABILITY, when:
-   *
-   *   * the peer is deemed to behave as if peer->af_enabled afi/safi had been
-   *     advertised.
-   *
-   *   * and the peer is deemed to have advertised those afi/safi.
-   *
-   * So... we set the defaults and then adjust as required.
-   */
-  can_capability = !(peer->flags & PEER_FLAG_DONT_CAPABILITY) ;
-
-  args->can_capability  = can_capability ;
-  args->can_mp_ext      = can_capability ;
-
-  args->cap_af_override = (peer->flags & PEER_FLAG_OVERRIDE_CAPABILITY) ;
-  args->cap_strict      = (peer->flags & PEER_FLAG_STRICT_CAP_MATCH) ;
-
-  /* We expect to say we can handle all the address families we are enabled
-   * for.
-   *
-   * But, if not sending capabilities and not overriding the MP-Ext, then we
-   * are (effectively) only advertising IPv4 Unicast.
-   */
-  args->can_af = peer->af_enabled ;
-
-  if (!can_capability && !args->cap_af_override)
-    args->can_af &= qafx_ipv4_unicast_bit ;
-
-  /* Get timer values -- these follow the configuration for the peer or the
-   * default for the bgp instance.
-   *
-   * NB: the current_holdtime and current_keepalive are significant only when
-   *     the peer is pEnabled or pEstablished.
-   *
-   *     TODO ???  should we be dicking with this when pEstablished ???
-   *
-   */
-  args->holdtime_secs      = peer_get_holdtime(peer, false /* config */) ;
-  args->keepalive_secs     = peer_get_keepalive(peer, false /* config */) ;
-
-  peer->current_holdtime   = args->holdtime_secs ;
-  peer->current_keepalive  = args->holdtime_secs / 3 ;
-
-  args->connect_retry_secs = peer_get_connect_retry_time(peer) ;
-  args->accept_retry_secs  = peer_get_accept_retry_time(peer) ;
-  args->open_hold_secs     = peer_get_open_hold_time(peer) ;
-
-  /* Announce self as AS4 speaker if required
-   */
-  if (!bm->as2_speaker && can_capability)
-    {
-      peer->caps_adv |= PEER_CAP_AS4 ;
-      args->can_as4 = true ;
-    } ;
-
-  /* Fill in the supported AFI/SAFI and the ORF capabilities.
-   *
-   * If we want to send one or both forms of ORF capability, we collect that
-   * in args->can_orf.
+  /* We have the Prefix ORF wishes -- but not for pre-RFC, if that is being
+   * supported.  (If !args->can_capability then the whole thing has been swept
+   * away, already, and what follows adds nothing.)
    *
    * NB: if we cannot send MP-Ext, we can only send ORF for IPv4/Unicast.
    */
-  args->can_orf = bgp_form_none ;
+  can_orf = bgp_form_none ;             /* assume we want nothing.      */
 
   for (qafx = qafx_first ; qafx <= qafx_last ; ++qafx)
     {
-      peer_rib   prib ;
-      qafx_bit_t qb ;
+      bgp_orf_cap_bits_t orf_pfx, orf_wish ;
 
-      prib = peer->prib[qafx] ;
-
-      if (prib == NULL)
-        continue ;
-
-      if (!args->can_mp_ext && (qafx != qafx_ipv4_unicast))
-        continue ;
-
-      qb = qafx_bit(qafx) ;
-
-      if ((args->can_af & qb) && can_capability)
+      orf_wish = args->can_orf_pfx[qafx] & (ORF_SM | ORF_RM) ;
+      orf_pfx  = 0 ;
+      if ((args->can_af & qafx_bit(qafx)) && (orf_wish != 0))
         {
-          /* For the families we are going to advertise, see if we wish to send
-           * or are prepared to receive Prefix ORF.
+          /* For the families we are going to advertise, see if we wish to
+           * send or are prepared to receive Prefix ORF.
            *
            * Note that we set both the RFC Type and the pre-RFC one, so we
-           * arrange to end the RFC Capability and the pre-RFC one.
+           * arrange to send the RFC Capability and the pre-RFC one.
            */
-          bgp_orf_cap_bits_t orf_pfx ;
+          can_orf = args->can_orf ;
 
-          orf_pfx = 0 ;
+          if (can_orf & bgp_form_rfc)
+            orf_pfx = orf_wish ;
 
-          if (prib->af_flags & PEER_AFF_ORF_PFX_SM)
-            orf_pfx |= ORF_SM | ORF_SM_pre ;
-          if (prib->af_flags & PEER_AFF_ORF_PFX_RM)
-            orf_pfx |= ORF_RM | ORF_RM_pre;
+          if (can_orf & bgp_form_pre)
+            orf_pfx |= (orf_wish << 4) ;
 
-          args->can_orf_pfx[qafx] = prib->af_orf_pfx_adv = orf_pfx ;
-
-          if (orf_pfx & (ORF_SM | ORF_RM))
-            args->can_orf |= bgp_form_rfc ;
-          if (orf_pfx & (ORF_SM_pre | ORF_RM_pre))
-            args->can_orf |= bgp_form_pre ;
+          confirm(ORF_SM_pre == (ORF_SM << 4)) ;
+          confirm(ORF_RM_pre == (ORF_RM << 4)) ;
         } ;
+
+      args->can_orf_pfx[qafx] = orf_pfx ;
     } ;
 
-  /* Route refresh -- always advertise both forms
-   */
-  if (can_capability)
-    {
-      peer->caps_adv |= PEER_CAP_RR | PEER_CAP_RR_old ;
-      args->can_r_refresh = bgp_form_pre | bgp_form_rfc ;
-    } ;
-
-  /* Dynamic Capabilities
-   *
-   * TODO: currently not supported, no how.
-   */
-  args->can_dynamic_dep = false && can_capability ;
-  if (args->can_dynamic_dep)
-    peer->caps_adv |= PEER_CAP_DYNAMIC_dep ;
-
-  args->can_dynamic     = false && can_capability;
-  if (args->can_dynamic)
-    peer->caps_adv |= PEER_CAP_DYNAMIC ;
+  args->can_orf = can_orf ;
 
   /* Graceful restart capability
    */
-  if ((peer->bgp->flags & BGP_FLAG_GRACEFUL_RESTART) && can_capability)
+  if ((peer->bgp->flags & BGP_FLAG_GRACEFUL_RESTART) && args->can_capability)
     {
-      peer->caps_adv |= PEER_CAP_GR ;
       args->gr.can           = true ;
       args->gr.restart_time  = peer->bgp->restart_time ;
-    }
-  else
-    {
-      args->gr.can           = false ;
-      args->gr.restart_time  = 0 ;
     } ;
 
   /* TODO: check not has restarted and not preserving forwarding open_send (?)
@@ -724,12 +617,34 @@ bgp_session_args_set(bgp_peer peer, bgp_session session)
   args->gr.has_preserved   = 0 ;        /* has not preserved forwarding */
   args->gr.restarting      = false ;    /* is not restarting            */
 
-  /* After all that... if PEER_FLAG_DONT_CAPABILITY we should be advertising
-   *                   nothing at all, capabilities-wise !
+  /* Return the new set of arguments.
    */
-  if (!can_capability)
-    qassert(peer->caps_adv == PEER_CAP_NONE) ;
+  return args ;
 } ;
+
+/*==============================================================================
+ * Sending of messages to the BGP Engine, and the handling of same.
+ */
+
+/*------------------------------------------------------------------------------
+ * Enable/Refresh/Disable messages
+ *
+ *   * start     --
+ *
+ *   * refresh   --
+ *
+ *   * stop      --
+ *
+ *   * kill      --
+ */
+static void
+bgp_session_start(bgp_session session)
+{
+
+}
+
+
+
 
 
 
@@ -740,6 +655,9 @@ bgp_session_args_set(bgp_peer peer, bgp_session session)
 
 /*------------------------------------------------------------------------------
  * BGP Engine: session enable message action
+ *
+ * This is sent when: (a) peer is first configured and !SHUT_DOWN
+ *                    (b) ready to start a new session
  */
 static void
 bgp_session_do_enable(mqueue_block mqb, mqb_flag_t flag)
@@ -750,12 +668,7 @@ bgp_session_do_enable(mqueue_block mqb, mqb_flag_t flag)
 
       session = mqb_get_arg0(mqb) ;
 
-      BGP_SESSION_LOCK(session) ;   /*<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-*/
-
-      session->active = true ;
       bgp_fsm_enable_session(session) ;
-
-      BGP_SESSION_UNLOCK(session) ; /*->->->->->->->->->->->->->->->->->->->->*/
     } ;
 
   mqb_free(mqb) ;
@@ -1024,7 +937,7 @@ extern void
 bgp_session_event(bgp_session session, bgp_fsm_event_t      event,
                                        bgp_notify           notification,
                                        int                  err,
-                                       bgp_connection_ord_t ordinal,
+                                       bgp_conn_ord_t ordinal,
                                        bool                 stopped)
 {
   struct bgp_session_event_args* args ;
@@ -1625,14 +1538,410 @@ bgp_session_is_active(bgp_session session)
  * Get a copy of the session statistics, copied all at once so
  * forms a consistent snapshot
  */
-void
-bgp_session_get_stats(bgp_session session, struct bgp_session_stats *stats)
+extern void
+bgp_session_get_stats(bgp_session_stats stats, bgp_session session)
 {
   if (session == NULL)
-    {
-      memset(stats, 0, sizeof(struct bgp_session_stats)) ;
-      return;
-    }
-
-  qa_memcpy(stats, session->stats, sizeof(struct bgp_session_stats)) ;
+    memset(stats, 0, sizeof(bgp_session_stats_t)) ;
+  else
+    qa_memcpy(stats, &session->stats, sizeof(bgp_session_stats_t)) ;
 }
+
+/*==============================================================================
+ * BGP Engine end of the transfer of cops and/or session arguments.
+ */
+
+/*------------------------------------------------------------------------------
+ * Update the current session->cops_config, if required.
+ *
+ * If the session is sAcquiring, then this may (well) affect the accept and/or
+ * connect connections that are trying to acquire a session.
+ *
+ * If is sEstablished and sEstablished, then will stop the session if required
+ * by the 'stop_established' argument, IF there is a material change in the
+ * cops.
+ *
+ * NB: !cops->accept && !cops->connect <=> SHUTDOWN
+ *
+ *     ...which affects sEstablished whether or not 'stop_established'
+ *
+ * NB: in sEstablished, provided is cops->accept || cops->connect, does not
+ *     care what is now set, or whether the current session was accepted or
+ *     connected.
+ *
+ * Will cope early in the morning, when is not sAcquiring and no current
+ * cops_config.
+ *
+ * NB: caller remains responsible for the given notification.
+ */
+static void
+bgp_session_cops_update(bgp_session session, bool stop_established,
+                                                        bgp_notify notification)
+{
+  bgp_cops  cops_new ;
+
+  cops_new = qa_swap_ptrs((void**)&session->cops_tx, NULL) ;
+
+  if (cops_new == NULL)
+    return ;
+
+  /* Pass the new cops to the acceptor, which may or may not care, and will
+   * take a copy if it wants.
+   */
+  bgp_acceptor_set_options(session->acceptor, cops_new) ;
+
+  /* Now worry about whether the cops changes have any effect on the making of
+   * connection(s).
+   *
+   * We bring down an sEstablished session iff required by 'stop_established'
+   * and a change in the cops.
+   *
+   *   su_remote              -- change => restart accept/connect/session
+   *   su_local               -- change => restart connect/session
+   *
+   *   port                   -- change => restart accept/connect/session
+   *
+   *   conn_state             -- if now !bc_is_enabled, stop session
+   *                             if is now bc_is_enabled, but was not, start
+   *
+   *   conn_let               -- if is and was bc_is_enabled, then:
+   *
+   *                               if is sAcquiring: change => stop/start
+   *                                                             accept/connect
+   *
+   *                               if is sEstablished: no effect, keep existing
+   *                                                                    session
+   *
+   *   can_notify_before_open -- change affects next connection
+   *
+   *   connect_retry_secs     -- change affects the next timer
+   *   accept_retry_secs      -- affects acceptor, only
+   *
+   *   ttl                    -- change => restart accept/connect/session
+   *   gtsm                   -- change => restart accept/connect/session
+   *
+   *   ttl_out                -- N/A
+   *   ttl_gtsm               -- N/A
+   *
+   *   password               -- change => restart accept/connect/session
+   *
+   *   ifname                 -- change => restart connect/session
+   *   ifindex                -- N/A
+   */
+  if ( (session->state == bgp_sAcquiring) ||
+       (session->state == bgp_sEstablished) )
+    {
+      bgp_cops  cops_config ;
+
+      qassert(session->cops_config != NULL) ;
+      cops_config = session->cops_config ;
+
+      if      (cops_new->conn_state != bc_is_enabled)
+        {
+          /* SHUTDOWN or Disable -- affecting sAcquiring and sEstablished
+           * equally.
+           */
+          if (cops_config->conn_state == bc_is_enabled)
+            {
+              if (cops_new->conn_state == bc_is_shutdown)
+                bgp_fsm_disable_session(session,
+                                   bgp_notify_dup_default(notification,
+                                         BGP_NOMC_CEASE, BGP_NOMS_C_SHUTDOWN)) ;
+              else
+                bgp_fsm_disable_session(session,
+                                       bgp_notify_dup_default(notification,
+                                            BGP_NOMC_CEASE, BGP_NOMS_C_RESET)) ;
+            } ;
+        }
+      else if (cops_new->conn_state != bc_is_enabled)
+        {
+          /* Now bc_enabled, but was not... so fire up the session.
+           */
+          bgp_fsm_enable_session(session) ;
+        }
+      else if ((session->state == bgp_sAcquiring) || stop_established)
+        {
+          /* Is not and was not SHUTDOWN or disabled, so start/stop/restart
+           * connection(s) or session if required:
+           *
+           *   If we are sAcquiring, then:
+           *
+           *     * may start/stop accept and or connect.
+           *
+           *       NB: we have to make sure we start connection before stopping
+           *           any, because stopping the only connection for a session
+           *           brings it to sStopped !
+           *
+           *     * will restart connections if something material has changed.
+           *
+           *   If we are sEstablished, then we restart the current connection,
+           *   if something material has changed.
+           */
+          bool  restart_accept, restart_connect ;
+
+          /* For accept we need to restart if any of these are true.
+           */
+          restart_accept =
+                !sockunion_same(&cops_new->su_remote, &cops_config->su_remote)
+             || (cops_new->port != cops_config->port)
+             || (cops_new->ttl  != cops_config->ttl)
+             || (cops_new->gtsm != cops_config->gtsm)
+             || (strcmp(cops_new->password, cops_config->password) != 0) ;
+
+          /* There are a few more things which can cause a restart for connect
+           * or for established session.
+           */
+          restart_connect = restart_accept
+             || !sockunion_same(&cops_new->su_local, &cops_config->su_local)
+             || (strcmp(cops_new->ifname, cops_config->ifname) != 0) ;
+
+          /* If we are acquiring, may need to start/stop accept/connect.
+           *
+           * NB: does starts before stops.
+           */
+          if ((session->state == bgp_sAcquiring)
+                               && (cops_new->conn_let != cops_config->conn_let))
+            {
+              bool will_accept,  did_accept ;
+              bool will_connect, did_connect ;
+
+              will_accept  = (cops_new->conn_let    & bc_can_accept) ;
+              will_connect = (cops_new->conn_let    & bc_can_connect) ;
+
+              did_accept   = (cops_config->conn_let & bc_can_accept) ;
+              did_connect  = (cops_config->conn_let & bc_can_connect) ;
+
+              /* If will but did not, start accept/connect
+               */
+              if (will_accept && !did_accept)
+                {
+                  qassert(session->connections[bc_accept] == NULL) ;
+                  bgp_fsm_enable_connection(session, bc_accept) ;
+                  restart_accept = false ;
+                } ;
+
+              if (will_connect && !did_connect)
+                {
+                  qassert(session->connections[bc_connect] == NULL) ;
+                  bgp_fsm_enable_connection(session, bc_connect) ;
+                  restart_connect = false ;
+                } ;
+
+              /* If did but will not, stop accept/connect.
+               *
+               * We are continuing with session... so don't really have a very
+               * specific notification to send, if none is already given.
+               */
+              if (!will_accept && did_accept)
+                {
+                  qassert(session->connections[bc_accept] != NULL) ;
+                  bgp_fsm_disable_connection(session->connections[bc_accept],
+                                      bgp_notify_dup_default(notification,
+                                         BGP_NOMC_CEASE, BGP_NOMS_UNSPECIFIC)) ;
+                  restart_accept = false ;
+                } ;
+
+              if (!will_connect && did_connect)
+                {
+                  qassert(session->connections[bc_connect] != NULL) ;
+                  bgp_fsm_disable_connection(session->connections[bc_connect],
+                                      bgp_notify_dup_default(notification,
+                                         BGP_NOMC_CEASE, BGP_NOMS_UNSPECIFIC)) ;
+                  restart_connect = false ;
+                } ;
+            } ;
+
+          /* Now, if we need to restart accept/connect/session, now is the
+           * time to do so.
+           */
+          if (restart_accept && (session->state == bgp_sAcquiring))
+            {
+              bgp_connection connection ;
+
+              connection = session->connections[bc_accept] ;
+
+              qassert( (cops_new->conn_let    & bc_can_accept) ==
+                       (cops_config->conn_let & bc_can_accept) ) ;
+              qassert( (cops_config->conn_let & bc_can_accept) ==
+                                                         (connection != NULL)) ;
+              if (connection != NULL)
+                bgp_fsm_restart_connection(connection,
+                                        bgp_notify_dup_default(notification,
+                                           BGP_NOMC_CEASE, BGP_NOMS_C_CONFIG)) ;
+            } ;
+
+          if (restart_connect)
+            {
+              bgp_connection connection ;
+
+              if (session->state == bgp_sAcquiring)
+                {
+                  connection = session->connections[bc_connect] ;
+
+                  qassert( (cops_new->conn_let    & bc_can_connect) ==
+                           (cops_config->conn_let & bc_can_connect) ) ;
+                  qassert( (cops_config->conn_let & bc_can_connect) ==
+                                                         (connection != NULL)) ;
+                }
+              else
+                {
+                  connection = session->connections[bc_connect] ;
+                  qassert(connection != NULL) ;
+                } ;
+
+              if (connection != NULL)
+                bgp_fsm_restart_connection(connection,
+                                        bgp_notify_dup_default(notification,
+                                           BGP_NOMC_CEASE, BGP_NOMS_C_CONFIG)) ;
+            } ;
+        } ;
+    } ;
+
+  /* All set, can now discard any previous configuration and replace it.
+   */
+  bgp_cops_free(session->cops_config) ;
+  session->cops_config = cops_new ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Update the current session->args_config, if required.
+ *
+ * If the session is sAcquiring, then this may (well) affect the accept and/or
+ * connect connections that are trying to acquire a session.
+ *
+ * It is assumed that if the session is being shut-down, then that will be by
+ * an explicit disable... so not use this stuff, which is designed for running
+ * or runnable sessions.  However, will disable the session if finds that
+ * neither accept nor connect are now enabled, and is sAcquiring !
+ *
+ * Will cope early in the morning, when is not sAcquiring and no current
+ * cops_config.
+ *
+ * NB: caller remains responsible for the given notification.
+ */
+static void
+bgp_session_args_update(bgp_session session, bgp_notify notification)
+{
+  bgp_session_args  args_new ;
+
+  args_new = qa_swap_ptrs((void**)&session->args_tx, NULL) ;
+
+  if (args_new == NULL)
+    return ;
+
+  /* Now worry about whether the args changes have any effect on the session,
+   * which (unless nothing has changed) is extremely likely, for connections
+   * at fsOpenSent and beyond.
+   *                                         fsOpenSent or
+   *                                         fsOpenConfirm  |  fsEstablished
+   *   * local_as               -- change =>    restart     |     restart
+   *   * local_id               -- change =>    restart     |      keep
+   *
+   *   * remote_as              -- change =>    restart     |     restart
+   *   * remote_id              -- N/A
+   *
+   *   * cap_af_override        -- change =>    restart     |     restart
+   *   * cap_strict             -- change =>    restart     |     restart
+   *
+   *   * cap_suppressed         -- N/A
+   *
+   *   * can_capability         -- change =>    restart     |     restart
+   *   * can_mp_ext             -- change =>    restart     |     restart
+   *   * can_as4                -- change =>    restart     |     restart
+   *
+   *   * can_af                 -- change =>    restart     |     restart
+   *
+   *   * can_rr                 -- change =>    restart     |     restart
+   *
+   *   * gr.can                 -- change =>    restart     |      keep
+   *   * gr.restarting          -- change =>    restart     |      keep
+   *   * gr.restart_time        -- change =>    restart     |      keep
+   *   * gr.can_preserve        -- change =>    restart     |      keep
+   *   * gr.has_preserved       -- change =>    restart     |      keep
+   *
+   *   * can_orf                -- change =>    restart     |     restart
+   *   * can_orf_pfx[]          -- change =>    restart     |     restart
+   *
+   *   * can_dynamic            -- change =>    restart     |      keep
+   *   * can_dynamic_dep        -- change =>    restart     |      keep
+   *
+   *   * holdtime_secs          -- change =>    restart     |      keep
+   *   * keepalive_secs         -- change =>                               XXX
+   */
+  if ( (session->state == bgp_sAcquiring) ||
+       (session->state == bgp_sEstablished) )
+    {
+      bgp_session_args  args_config ;
+      bool restart ;
+
+      args_config = session->args_config ;
+
+      /* In all cases, we need to restart if any of these are true.
+       */
+      restart = (args_new->local_as        != args_config->local_as)
+             || (args_new->remote_as       != args_config->remote_as)
+             || (args_new->cap_af_override != args_config->cap_af_override)
+             || (args_new->cap_strict      != args_config->cap_strict)
+             || (args_new->can_capability  != args_config->can_capability)
+             || (args_new->can_mp_ext      != args_config->can_mp_ext)
+             || (args_new->can_as4         != args_config->can_as4)
+             || (args_new->can_af          != args_config->can_af)
+             || (args_new->can_rr          != args_config->can_rr)
+             || (args_new->can_orf         != args_config->can_orf)
+             || (memcmp(args_new->can_orf_pfx, args_config->can_orf_pfx,
+                                          sizeof(args_new->can_orf_pfx)) != 0) ;
+
+      if (session->state == bgp_sEstablished)
+        {
+          /* Stop the current session, if restart is required.
+           */
+          if (restart)
+            bgp_fsm_disable_session(session, notification) ;
+        }
+      else
+        {
+          /* Restart the accept and/or connect connections, if they are
+           * fsOpenSent or fsOpenConfirm.
+           *
+           * In these states a few more things require a restart.
+           */
+          restart = restart
+                 || (args_new->local_id        != args_config->local_id)
+                 || (args_new->gr.can          != args_config->gr.can)
+                 || (args_new->can_dynamic     != args_config->can_dynamic)
+                 || (args_new->can_dynamic_dep != args_config->can_dynamic_dep)
+                 || (args_new->holdtime_secs   != args_config->holdtime_secs) ;
+
+          if (!restart && args_new->gr.can)
+            restart =
+                 (args_new->gr.restarting    != args_config->gr.restarting)
+              || (args_new->gr.restart_time  != args_config->gr.restart_time)
+              || (args_new->gr.can_preserve  != args_config->gr.can_preserve)
+              || (args_new->gr.has_preserved != args_config->gr.has_preserved) ;
+
+          if (restart)
+            {
+              bgp_conn_ord_t ord ;
+
+              for (ord = bc_first ; ord <= bc_last ; ++ord)
+                {
+                  bgp_connection connection ;
+
+                  connection = session->connections[ord] ;
+                  if (connection == NULL)
+                    continue ;
+
+                  if ( (connection->fsm_state == bgp_fsOpenSent) ||
+                       (connection->fsm_state == bgp_fsOpenConfirm) )
+                    bgp_fsm_restart_connection(connection, notification) ;
+                } ;
+            } ;
+        } ;
+    } ;
+
+  /* All set, can now discard any previous configuration and replace it.
+   */
+  bgp_session_args_free(session->args_config) ;
+  session->args_config = args_new ;
+} ;
+

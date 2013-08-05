@@ -132,6 +132,7 @@ sockunion_port(sockunion_c su)
  * Prototypes.
  */
 extern sockunion sockunion_init_new(sockunion su, sa_family_t family) ;
+extern sockunion sockunion_clear(sockunion su) ;
 extern afi_t sockunion_get_afi(sockunion_c su) ;
 extern int sockunion_get_len(sockunion_c su) ;
 extern int sockunion_get_addr_len(sockunion_c su) ;

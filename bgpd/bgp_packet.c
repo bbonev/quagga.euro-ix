@@ -79,7 +79,7 @@ bgp_write (bgp_peer peer, struct stream* s)
   /* If we are given a message, send that first and no matter what
    */
   if (s != NULL)
-    if (bgp_packet_check_size(s, peer->su_remote) > 0)
+    if (bgp_packet_check_size(s, peer->su_name) > 0)
       stream_fifo_push(peer->obuf_fifo, stream_dup(s)) ;
 
   /* While we are XON, queue pending updates (while there are any to go)
@@ -90,7 +90,7 @@ bgp_write (bgp_peer peer, struct stream* s)
       if (s == NULL)
         break;
 
-      if (bgp_packet_check_size(s, peer->su_remote) > 0)
+      if (bgp_packet_check_size(s, peer->su_name) > 0)
         {
           /* Append to fifo
            */
@@ -243,7 +243,7 @@ bgp_update_packet (peer_rib prib, route_out_parcel parcel)
    * NB: we allocate BGP_STREAM_SIZE, which is larger than BGP_MSG_MAX_L,
    *     so that if the overflow is marginal, we can tell what it was.
    */
-  if (bgp_packet_check_size(s, prib->peer->su_remote) > 0)
+  if (bgp_packet_check_size(s, prib->peer->su_name) > 0)
     {
       /* Eat the prefix we have already included in the message.
        *
@@ -799,7 +799,7 @@ bgp_route_refresh_send (peer_rib prib, byte orf_type,
           orf_refresh = true ;
           if (remove)
             {
-              prib->af_status &= ~PEER_STATUS_ORF_PREFIX_SENT ;
+              prib->af_status &= ~PEER_AFS_ORF_PFX_SENT ;
 
               bgp_orf_add_remove_all(rr, BGP_ORF_T_PFX);
               if (BGP_DEBUG (normal, NORMAL))
@@ -813,7 +813,7 @@ bgp_route_refresh_send (peer_rib prib, byte orf_type,
               orf_prefix_value_t orfpv;
               vector_index_t i;
 
-              prib->af_status |= PEER_STATUS_ORF_PREFIX_SENT ;
+              prib->af_status |= PEER_AFS_ORF_PFX_SENT ;
 
               for (i = 0; prefix_bgp_orf_get(&orfpv, plist, i); ++i)
                 {
@@ -915,7 +915,7 @@ bgp_update_receive(bgp_peer peer, bgp_size_t size)
 {
   bgp_size_t attribute_len;
   byte* attr_p ;
-  bgp_attr_parser_args_t args[1] ;
+  bgp_attr_parsing_t args[1] ;
   route_in_action_t action ;
   peer_rib  prib ;
 
@@ -980,7 +980,7 @@ bgp_update_receive(bgp_peer peer, bgp_size_t size)
   args->peer = peer ;
 
   args->sort = peer->sort ;
-  args->as4  = per->caps_use & PEER_CAP_AS4 ;
+  args->as4  = peer->session->args->can_as4 ;
 
   bgp_attr_pair_load_new(args->attrs) ;
 
@@ -1252,7 +1252,7 @@ bgp_update_receive(bgp_peer peer, bgp_size_t size)
         {
           /* End-of-RIB received
            */
-          prib->af_status |= PEER_STATUS_EOR_RECEIVED ;
+          prib->af_status |= PEER_AFS_EOR_RECEIVED ;
 
           /* NSF delete stale route
            */
@@ -1316,7 +1316,7 @@ bgp_update_receive(bgp_peer peer, bgp_size_t size)
            */
           if (!qafx_is_mpls_vpn(args->mp_withdraw.qafx))
             {
-              prib->af_status |= PEER_STATUS_EOR_RECEIVED ;
+              prib->af_status |= PEER_AFS_EOR_RECEIVED ;
               if (prib->nsf)
                 bgp_clear_stale_route (peer, args->mp_withdraw.qafx);
             } ;
@@ -1640,7 +1640,7 @@ bgp_route_refresh_recv(bgp_peer peer, bgp_route_refresh rr)
   if (prib == NULL)
     return ;
 
-  prefix_bgp_orf_name_set(name, &peer->su_name, qafx) ;
+  prefix_bgp_orf_name_set(name, peer->su_name, qafx) ;
 
   if ((e = bgp_orf_get_count(rr)) > 0)
     {
@@ -1692,7 +1692,7 @@ bgp_route_refresh_recv(bgp_peer peer, bgp_route_refresh rr)
   /* If we were deferring sending the RIB to the peer, then we stop doing
    * so, now.
    */
-  UNSET_FLAG (prib->af_status, PEER_STATUS_ORF_WAIT_REFRESH) ;
+  UNSET_FLAG (prib->af_status, PEER_AFS_ORF_PFX_WAIT) ;
 
   /* Perform route refreshment to the peer
    */
@@ -1739,6 +1739,7 @@ bgp_afi_safi_valid_indices (iAFI_t i_afi, iSAFI_t i_safi)
   return qafx ;
 } ;
 
+#if 0
 /*==============================================================================
  * Dynamic Capability Message handling.
  */
@@ -1908,3 +1909,5 @@ bgp_capability_receive (struct peer *peer, bgp_size_t size)
    */
   return bgp_capability_msg_parse (peer, stream_get_pnt (peer->ibuf), size);
 }
+
+#endif

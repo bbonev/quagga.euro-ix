@@ -37,44 +37,44 @@
  * Here are a number of "incomplete" declarations, which allow a number of
  * bgpd structures to refer to each other.
  */
-typedef struct bgp*            bgp_inst ;
-typedef struct peer*           bgp_peer ;
-typedef struct peer_group*     peer_group ;
-typedef struct bgp_session*    bgp_session ;
-typedef struct bgp_connection* bgp_connection ;
-typedef struct bgp_connection_options* bgp_connection_options ;
-typedef const struct bgp_connection_options* bgp_connection_options_c ;
+typedef struct bgp*             bgp_inst ;
+typedef struct peer*            bgp_peer ;
+typedef struct peer_group*      peer_group ;
+typedef struct bgp_session*     bgp_session ;
+typedef struct bgp_connection*  bgp_connection ;
+typedef struct bgp_cops*        bgp_cops ;
+typedef const struct bgp_cops*  bgp_cops_c ;
 typedef struct bgp_session_args* bgp_session_args ;
-typedef struct bgp_acceptor*   bgp_acceptor ;
-typedef struct bgp_open_state* bgp_open_state ;
-typedef struct bgp_nexthop*    bgp_nexthop ;
+typedef struct bgp_acceptor*    bgp_acceptor ;
+typedef struct bgp_open_state*  bgp_open_state ;
+typedef struct bgp_nexthop*     bgp_nexthop ;
 typedef struct bgp_peer_index_entry* bgp_peer_index_entry ;
-typedef struct bgp_msg_reader* bgp_msg_reader ;
-typedef struct bgp_notify*     bgp_notify ;
-typedef struct bgp_fsm_eqb*    bgp_fsm_eqb ;
+typedef struct bgp_msg_reader*  bgp_msg_reader ;
+typedef struct bgp_notify*      bgp_notify ;
+typedef struct bgp_fsm_eqb*     bgp_fsm_eqb ;
 
 //typedef struct bgp_event*      bgp_event ;
 
-typedef struct attr_set*       attr_set ;
-typedef struct asn_set*        asn_set ;
+typedef struct attr_set*        attr_set ;
+typedef struct asn_set*         asn_set ;
 
-typedef struct bgp_rib*        bgp_rib ;
-typedef struct peer_rib*       peer_rib ;
-typedef struct bgp_rib_node*   bgp_rib_node ;
-typedef struct bgp_rib_walker* bgp_rib_walker ;
-typedef struct bgp_rib_item*   bgp_rib_item ;
+typedef struct bgp_rib*         bgp_rib ;
+typedef struct peer_rib*        peer_rib ;
+typedef struct bgp_rib_node*    bgp_rib_node ;
+typedef struct bgp_rib_walker*  bgp_rib_walker ;
+typedef struct bgp_rib_item*    bgp_rib_item ;
 
-typedef struct route_info*     route_info ;
-typedef struct route_extra*    route_extra ;
-typedef struct route_zebra*    route_zebra ;
+typedef struct route_info*      route_info ;
+typedef struct route_extra*     route_extra ;
+typedef struct route_zebra*     route_zebra ;
 
-typedef struct adj_out*        adj_out ;
+typedef struct adj_out*         adj_out ;
 typedef struct route_in_parcel*  route_in_parcel ;
 typedef struct route_out_parcel* route_out_parcel ;
 
-typedef struct route_mpls*     route_mpls ;
-typedef struct attr_flux*      attr_flux ;
-typedef struct route_flux*     route_flux ;
+typedef struct route_mpls*      route_mpls ;
+typedef struct attr_flux*       attr_flux ;
+typedef struct route_flux*      route_flux ;
 
 
 
@@ -83,16 +83,16 @@ typedef struct route_flux*     route_flux ;
 
 
 
-typedef struct bgp_table*      bgp_table ;
-typedef struct bgp_node*       bgp_node ;
-typedef struct bgp_info*       bgp_info ;
-typedef struct bgp_info_extra* bgp_info_extra ;
-typedef struct bgp_adj_out*    bgp_adj_out ;
-typedef struct bgp_adj_in*     bgp_adj_in ;
-typedef struct bgp_sync*       bgp_sync ;
-typedef struct bgp_adv_attr*   bgp_adv_attr ;
+typedef struct bgp_table*       bgp_table ;
+typedef struct bgp_node*        bgp_node ;
+typedef struct bgp_info*        bgp_info ;
+typedef struct bgp_info_extra*  bgp_info_extra ;
+typedef struct bgp_adj_out*     bgp_adj_out ;
+typedef struct bgp_adj_in*      bgp_adj_in ;
+typedef struct bgp_sync*        bgp_sync ;
+typedef struct bgp_adv_attr*    bgp_adv_attr ;
 
-typedef struct bgp_adv*        bgp_adv ;
+typedef struct bgp_adv*         bgp_adv ;
 
 /*==============================================================================
  * AFI/SAFI encodings for bgpd
@@ -247,7 +247,7 @@ enum bgp_form
 /*==============================================================================
  * Common data types
  */
-enum
+enum bgp_password_length
 {
   BGP_PASSWORD_MIN_LEN    =   1,
   BGP_PASSWORD_MAX_LEN    = 103,        /* 104 divides exactly by 8     */
@@ -265,6 +265,33 @@ struct bgp_connection_logging
   char*             host ;              /* peer "name" (+ tag)          */
   struct zlog*      log ;               /* where to log to              */
 } ;
+
+#if 0
+typedef enum bgp_update_source_type bgp_update_source_type_t ;
+enum bgp_update_source_type
+{
+  bgp_upst_none    = 0,
+
+  bgp_upst_source_address,      /* neighbor xx update-source <address>  */
+  bgp_upst_source_interface,    /* neighbor xx update-source <if-name>  */
+
+  bgp_upst_interface,           /* neighbor xx interface <if-name>      */
+} ;
+
+typedef struct bgp_update_source  bgp_update_source_t ;
+typedef struct bgp_update_source* bgp_update_source ;
+
+struct bgp_update_source
+{
+  bgp_update_source_type_t  type ;
+
+  union
+    {
+      sockunion_t   su ;        /* embedded             */
+      bgp_ifname_t  if_name ;   /* embedded             */
+    } u ;
+} ;
+#endif
 
 /*==============================================================================
  * BGP FSM States and events.
@@ -503,11 +530,10 @@ enum bgp_session_events
 #endif
 
 /*==============================================================================
- * States of Peer and Session
+ * States of Peer and Session and Connections
  */
-/* The state of the peer.
- *
- * This is strongly related to the state of the session !
+
+/* The state of the peer -- strongly related to the state of the session !
  *
  *   0. pDisabled
  *
@@ -520,18 +546,21 @@ enum bgp_session_events
  *           Note that PEER_TYPE_GROUP_CONF and PEER_TYPE_SELF are permanently
  *           pDisabled.
  *
- *        b. all address families are disabled/deactivated
+ *        b. not one address family is configured *and* enabled
  *
  *        c. peer is administratively down/disabled/deactivated
  *
  *        d. peer is waiting for route flap or other such timer before
  *           reawakening.
  *
- *      The session states relate to the above as follows:
+ *      The peer-session states relate to the above as follows:
  *
- *        no session at all -- (a)
+ *        psInitial -- case (a)
  *
- *        sDown -- all of the above
+ *        psDown    -- all of the above
+ *
+ *                     NB: in pDisabled and psDown, the acceptor will be
+ *                         running if the current cops->accept is true.
  *
  *        all other states are IMPOSSIBLE
  *
@@ -550,14 +579,14 @@ enum bgp_session_events
  *
  *      The BGP Engine may send event messages, which signal:
  *
- *        * eEstablished -> pEstablished
- *
- *        * eXxxxx, but not "stopped"  -> remains pEnabled
+ *        * feXxxxx, but not "stopped"    -> remains pEnabled
  *
  *          the BGP Engine signals various events which do not stop it from
  *          trying to establish a session, but may be of interest.
  *
- *        * eXxxxx, and "stopped"  -> pDown (however briefly) and sDown
+ *        * session is (now) sEstablished -> pEstablished
+ *
+ *        * feXxxxx, and "stopped"        -> pClearing (however briefly)
  *
  *      All other messages are discarded -- there should not be any.
  *
@@ -567,58 +596,48 @@ enum bgp_session_events
  *
  *      The session must be sUp.
  *
- *      If the Routeing Engine disables the session -> pLimping and sLimping
+ *      If the Routeing Engine disables the session -> pClearing and psLimping.
+ *
+ *          The Routeing Engine sets the "down reason" etc. according to why
+ *          the session is being disabled.  While psLimping, this is
+ *          provisional.  When a "stopped" event arrives, it may be found that
+ *          the session stopped in the BGP Engine before the disable message
+ *          arrived, in which case the "down reason" will change to whatever
+ *          happened in the BGP Engine.
  *
  *      The BGP Engine may signal:
  *
- *        * eXxxxx, but not "stopped"  -> remains pEstablished
+ *        * feXxxxx, but not "stopped"    -> remains pEstablished
  *
  *          the BGP Engine may signal events which do not stop the established
  *          session, but may be of interest.
  *
- *        * eXxxxx, and "stopped"  -> pDown (however briefly) and sDown
+ *        * feXxxxx, and "stopped"        -> pClearing (however briefly)
+ *                                           and psDown
+ *
+ *          The "down reason" is set according to what the BGP Engine reports.
  *
  *      Accepts and sends UPDATE etc messages while is pEstablished.
  *
- *   3. pLimping
+ *   4. pClearing
  *
- *      In this state the Routeing Engine has sent a disable message to the
- *      BGP Engine, but has not yet received notice that the session has
- *      stopped.
+ *      Reaches this state from pEnabled or pEstablished, as above.
  *
- *      The session must be sLimping.
+ *      When a disable message is sent to the BGP Engine it is set psLimping,
+ *      and will go psDown when is seen to stop.  While is psLimping, all
+ *      messages from the BGP Engine are discarded, until it is seen to stop,
+ *      and is set psDown.
  *
- *      All messages from the BGP Engine are ignored, until an event which
- *      signals "stopped" arrives, when -> pDown (however briefly) and sDown.
- *
- *      The Routeing Engine sets the "down reason" etc. according to why the
- *      session is being disabled.  While pLimping, this is provisional.  When
- *      a "stopped" event arrives, it may be found that the session stopped in
- *      the BGP Engine before the disable message arrived, in which case the
- *      "down reason" will change to whatever happened in the BGP Engine.
- *
- *      While pLimping the tidy up of the peer's state may proceed, so this
- *      is like pDown except that the "down reason" is provisional.
- *
- *   4. pDown
- *
- *      Reaches this state from pEnabled, pEstablished or pLimping, as above.
- *
- *      The session must be sDown.
- *
- *      On entry to pDown, will flush all message queues for the session, since
- *      the BGP Engine is now done with it.
- *
- *      The peer->clearing flag is set while any clearing of routes is being
- *      performed in the background.
+ *      (When psDown is set, will flush all message queues for the session,
+ *      since the BGP Engine is now done with it.)
  *
  *      Tidies up the peer, including clearing routes etc.  Once the peer is
- *      completely tidy:
+ *      completely tidy, and the session is psDown:
  *
- *         peer    -> pDisabled/sDown or pEnabled/sUp
+ *         peer    -> pDisabled/psDown or pEnabled/psUp
  *
- *      NB: while pDown or pLimping the peer's routes and RIBs may be being
- *          processed (and may or may not be being discarded).
+ *      NB: while pClearing the peer's routes and RIBs may be being processed
+ *         (and may or may not be being discarded).
  *
  *          All other parts of the peer may be modified... but mindful of the
  *          "background" tasks which are yet to complete.
@@ -646,11 +665,11 @@ enum bgp_peer_states
 
   bgp_pDisabled     = 1,        /* may not be started                   */
   bgp_pEnabled      = 2,        /* started, but not yet established     */
-  bgp_pEstablished  = 3,        /* established                          */
-  bgp_pLimping      = 4,        /* disabled, not yet stopped            */
-  bgp_pDown         = 5,        /* stopped, not yet cleared state       */
+  bgp_pEstablished  = 3,        /* session established                  */
+  bgp_pClearing     = 4,        /* session stopping/stopped, clearing   */
 
-  bgp_pDeleting     = 6,        /* lingers until lock count == 0        */
+  bgp_pDown,
+  bgp_pDeleting     = 5,        /* lingers until lock count == 0        */
 
   bgp_peer_state_max     = 6
 } ;
@@ -664,15 +683,12 @@ enum bgp_peer_states
  *                     are about to be).
  *
  *   * psDown       -- means that the session is not running (nothing at all
- *                     is happening for the session in the BE, but the acceptor
- *                     may be running).
+ *                     is happening for the session in the BE, EXCEPT that the
+ *                     acceptor may be running and the cops remain in force).
  *
  *   * psUp         -- means that the session is running (something is, as far
  *                     as the RE is concerned, happening for the session in the
  *                     BE).
- *
- *   * psLimping    -- the RE has sent a disable (it was psUp), but has not yet
- *                     seen the session go down (stop).
  *
  *   * psDeleted    -- means that the peer is being deleted, and session has
  *                     been -- at least, the peer has cut the session away,
@@ -687,7 +703,7 @@ enum bgp_peer_session_state
 
   bgp_psDown         = 1,
   bgp_psUp           = 2,
-  bgp_psLimping      = 3,       /* Neither psUP nor psDown              */
+  bgp_psLimping      = 3,       /* neither up nor down                  */
 
   bgp_psDeleted      = 4,       /* gone                                 */
 
@@ -755,14 +771,46 @@ enum bgp_session_state
   bgp_session_state_max     = 5
 } ;
 
-typedef enum bgp_connection_ord bgp_connection_ord_t ;
-enum bgp_connection_ord
+typedef enum bgp_conn_ord bgp_conn_ord_t ;
+enum bgp_conn_ord
 {
   bc_estd       = 0,
   bc_connect    = 1,
   bc_accept     = 2,
 
+  bc_first      = bc_connect,   /* for stepping through same !  */
+  bc_last       = bc_accept,
+
   bc_count,
+} ;
+
+/* Whether the connection is prepared to accept and/or connect.
+ *
+ * If is not prepared to accept:  will not run a bc_accept connection
+ *                          and:  will reject (RST) at accept() time
+ *
+ * If is not prepared to connect: will not run a bc_connect connection
+ */
+typedef enum bgp_conn_let bgp_conn_let_t ;
+enum bgp_conn_let
+{
+  bc_can_nothing    = 0,
+
+  bc_can_accept     = BIT(0),           /* ie "passive" */
+  bc_can_connect    = BIT(1),
+
+  bc_can_both       = bc_can_accept | bc_can_connect,
+} ;
+
+/* Whether the connection(s) are enabled or not.
+ */
+typedef enum bgp_conn_state bgp_conn_state_t ;
+enum bgp_conn_state
+{
+  bc_is_shutdown    = 0,        /* "administratively SHUTDOWN"  */
+
+  bc_is_disabled,               /* for some (other) reason      */
+  bc_is_enabled
 } ;
 
 /*==============================================================================

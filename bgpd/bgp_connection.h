@@ -46,16 +46,20 @@
  * This is a discrete structure so that the accept() handling can handle these
  * things without requiring the complete bgp_connection or bgp_session !
  */
-typedef struct bgp_connection_options bgp_connection_options_t ;
+typedef struct bgp_cops bgp_cops_t ;
 
-struct bgp_connection_options
+struct bgp_cops
 {
   /* For configuration options:
    *
    *   su_remote    = peer->su_name      -- used by connect() and listen()
-   *   su_local     = peer->ifaddress    -- used by connect()
+   *   su_local     = for bind()         -- used by connect()
    *
-   * For connections once connect() or accept()
+   *   The su_local is, for example, set by "neighbor xx update-source <addr>".
+   *
+   *   NB: ifname takes precedence over su_local.
+   *
+   * For connections once connect() or accept() have succeeded
    *
    *   su_remote    = getpeername()
    *   su_local     = getsockname()
@@ -69,10 +73,13 @@ struct bgp_connection_options
    */
   in_port_t port ;
 
-  /* Flags indicating whether to allow inbound and/or outbound connections.
+  /* Whether to connections are shutdown/disabled/enabled.
    */
-  bool      accept ;
-  bool      connect ;
+  bgp_conn_state_t  conn_state ;
+
+  /* Whether to allow disallow inbound and/or outbound connections.
+   */
+  bgp_conn_let_t    conn_let ;
 
   /* Flag so can suppress sending NOTIFICATION messages without first
    * sending an OPEN -- just in case, but default is to not send !
@@ -114,12 +121,24 @@ struct bgp_connection_options
    */
   bgp_password_t password ;     /* copy of MD5 password                 */
 
-  /* Only connect() worries about these.
+  /* For configuration options:
    *
-   * NB: the interface name is embedded, so can be copied around etc. without
-   *     fuss.
+   *   ifname       = if to bid to, if any -- used by connect()
+   *   ifindex      = N/A
+   *
+   *   The ifname is set, for example, by "neighbor xx update-source <name>"
+   *
+   *   Note that if the ifname is set, su_local is ignored.
+   *
+   * For connections once connect() or accept() have succeeded
+   *
+   *   ifname       = set to the interface name   ) from the getsockname()
+   *   ifindex      = set to the interface index  ) address, via certain magic
+   *
+   * NB: these are embedded, so can be copied around etc. without fuss.
    */
   bgp_ifname_t ifname ;         /* interface to bind to, if any         */
+
   uint         ifindex ;        /* and its index, if any                */
 } ;
 
@@ -158,7 +177,7 @@ struct bgp_connection
   bgp_session       session ;           /* parent session
                                          * NULL if connection stopping  */
 
-  bgp_connection_ord_t ordinal ;        /* accept/connect connection    */
+  bgp_conn_ord_t    ord ;               /* accept/connect connection    */
   bgp_connection_logging_t lox ;        /* how to log                   */
 
   /* The event state
@@ -201,7 +220,7 @@ struct bgp_connection
    * cops_config.
    */
   qfile             qf ;                /* qpselect file structure      */
-  bgp_connection_options cops ;         /* connection options in force  */
+  bgp_cops cops ;         /* connection options in force  */
 
   /* The opens as sent and received and stuff.
    *
@@ -213,9 +232,6 @@ struct bgp_connection
    */
   bgp_open_state    open_sent ;         /* the open as sent             */
   bgp_open_state    open_recv ;         /* the open received.           */
-
-  in_addr_t         local_id ;          /* BGP-Id here                  */
-  as_t              remote_as ;         /* ASN of the peer              */
 
   /* Properties of a connection while we are trying to make one.
    *
@@ -399,7 +415,7 @@ struct bgp_acceptor
   bgp_accept_pending_t  pending ;
   bgp_notify    notification ;
 
-  bgp_connection_options cops ;
+  bgp_cops cops ;
 
   qfile          qf ;
   bgp_msg_reader reader ;
@@ -417,9 +433,9 @@ extern void bgp_connections_init(void) ;
 extern void bgp_connections_stop(void) ;
 
 extern bgp_connection bgp_connection_init_new(bgp_connection connection,
-                            bgp_session session, bgp_connection_ord_t ordinal) ;
+                            bgp_session session, bgp_conn_ord_t ordinal) ;
 extern void bgp_connection_free(bgp_connection connection) ;
-extern bgp_connection_options bgp_connection_prepare(
+extern bgp_cops bgp_connection_prepare(
                                                     bgp_connection connection) ;
 extern qfile bgp_connection_connecting(bgp_connection connection, int sock_fd) ;
 extern bool bgp_connection_io_start(bgp_connection connection) ;
@@ -437,7 +453,7 @@ extern int bgp_connection_queue_process(void) ;
 extern bgp_acceptor bgp_acceptor_init_new(bgp_acceptor acceptor,
                                                           bgp_session session) ;
 extern void bgp_acceptor_set_options(bgp_acceptor acceptor,
-                                            bgp_connection_options new_config) ;
+                                                        bgp_cops_c new_config) ;
 extern void bgp_acceptor_unset(bgp_acceptor acceptor) ;
 extern bgp_acceptor bgp_acceptor_free(bgp_acceptor acceptor) ;
 extern void bgp_acceptor_accept(bgp_acceptor acceptor, int sock_fd, bool ok,
@@ -446,16 +462,9 @@ extern void bgp_acceptor_accept(bgp_acceptor acceptor, int sock_fd, bool ok,
 extern bgp_fsm_event_t bgp_acceptor_state(bgp_acceptor acceptor) ;
 extern void bgp_acceptor_squelch(bgp_acceptor acceptor) ;
 
-
-
-extern bgp_connection_options bgp_connection_options_init_new(
-                                                  bgp_connection_options cops) ;
-extern bgp_connection_options bgp_connection_options_copy(
-                                                 bgp_connection_options dst,
-                                                 bgp_connection_options_c src) ;
-extern bgp_connection_options bgp_connection_options_reset(
-                                                  bgp_connection_options cops) ;
-extern bgp_connection_options bgp_connection_options_free(
-                                                  bgp_connection_options cops) ;
+extern bgp_cops bgp_cops_init_new(bgp_cops cops) ;
+extern bgp_cops bgp_cops_copy(bgp_cops dst, bgp_cops_c src) ;
+extern bgp_cops bgp_cops_reset(bgp_cops cops) ;
+extern bgp_cops bgp_cops_free(bgp_cops cops) ;
 
 #endif /* QUAGGA_BGP_CONNECTION_H */
