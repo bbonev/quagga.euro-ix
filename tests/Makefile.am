@@ -8,7 +8,7 @@ noinst_PROGRAMS = testsig testbuffer testmemory heavy heavythread \
                   testprivs teststream \
                   testchecksum testvector testheap \
                   testlistutil testqpath testqlump testavl testqfs testprefix \
-                  testpqueue
+                  testpqueue testpfifo
 
 testsig_SOURCES          = test-sig.c
 testbuffer_SOURCES       = test-buffer.c
@@ -39,6 +39,7 @@ testprefix_SOURCES       = test-prefix.c
 ##testbgpattrstore_SOURCES = test_bgp_attr_store.c
 
 testpqueue_SOURCES       = test-pqueue.c
+testpfifo_SOURCES        = test-pfifo.c
 
 testsig_LDADD          = ../lib/libzebra.la @LIBCAP@
 testbuffer_LDADD       = ../lib/libzebra.la @LIBCAP@
@@ -68,3 +69,4 @@ testprefix_LDADD       = ../lib/libzebra.la @LIBCAP@
 ##testbgpattrstore_LDADD = ../lib/libzebra.la @LIBCAP@ ../bgpd/libbgp.a  -lm
 
 testpqueue_LDADD       = ../lib/libzebra.la @LIBCAP@
+testpfifo_LDADD        = ../lib/libzebra.la @LIBCAP@
