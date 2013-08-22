@@ -17,3 +17,20 @@ testsig
 *~
 *.loT
 
+aspathtest
+ecommtest
+heavy
+heavythread
+testavl
+testchecksum
+testheap
+testlistutil
+testpqueue
+testprefix
+testprivs
+testqfs
+testqlump
+testqpath
+teststream
+testsymtab
+testvector
