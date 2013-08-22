@@ -84,12 +84,7 @@ struct attr_next_hop
 {
   nh_type_t       type ;
 
-  union ip_union
-    {
-      in_addr_t         v4 ;
-      struct in_addr    in_addr ;
-      in6_addr_pair_t   v6 ;
-    } ip ;
+  union ip_union ip;
 } ;
 
 enum { BGP_ATTR_DEFAULT_WEIGHT = 32768 } ;
