@@ -2090,7 +2090,7 @@ prefix_list_verify(prefix_list plist, bool show)
   if (plist == NULL)
     return ;
 
-  qassert((plist->afi == qAFI_ipv4) || (plist->afi == qAFI_ipv6)) ;
+  qassert((plist->afi == qAFI_IPv4) || (plist->afi == qAFI_IPv6)) ;
 
   prefix_default(pfx, afi2family(plist->afi)) ;
 
@@ -2215,7 +2215,7 @@ prefix_list_verify_tree(prefix_list_node root, ip_union_pair limits,
 
       switch (afi)
         {
-          case qAFI_ipv4:
+          case qAFI_IPv4:
             qassert(pf->pair->ipv4[0] >= limits->ipv4[0]) ;
             qassert(pf->pair->ipv4[1] <= limits->ipv4[1]) ;
 
@@ -2223,7 +2223,7 @@ prefix_list_verify_tree(prefix_list_node root, ip_union_pair limits,
             break ;
 
 #ifdef HAVE_IPV6
-          case qAFI_ipv6:
+          case qAFI_IPv6:
             if (pf->pair->ipv6[0].n64[0] != limits->ipv6[0].n64[0])
               qassert(pf->pair->ipv6[0].n64[0] >  limits->ipv6[0].n64[0]) ;
             else
@@ -2563,7 +2563,9 @@ vty_prefix_list_value_print(struct vty* vty, prefix_list_entry pe, qAFI_t afi,
 /*------------------------------------------------------------------------------
  *
  */
-static void __attribute__ ((unused))
+static void prefix_list_print (prefix_list plist) Unused ;
+
+static void
 prefix_list_print (prefix_list plist)
 {
   prefix_list_entry pe ;

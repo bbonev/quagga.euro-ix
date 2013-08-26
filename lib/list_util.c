@@ -54,22 +54,25 @@
  *          false => item not found on list (or item == NULL)
  */
 extern bool
-ssl_del_func(void** p_prev, void* item, size_t link_offset)
+ssl_del_func(void** prev_p, void* item, void** item_p)
 {
-  void* prev ;
+  size_t offset ;
+  void*  prev ;
 
   if (item == NULL)
     return false ;
 
-  while ((prev = *p_prev) != item)
+  offset = (char*)item_p - (char*)item ;
+
+  while ((prev = *prev_p) != item)
     {
       if (prev == NULL)
         return false ;
 
-      p_prev = _sl_p_next(prev, link_offset) ;
+      prev_p = sl_list_ptr_make(prev, offset) ;
     } ;
 
-  *p_prev = _sl_next(item, link_offset) ;
+  *prev_p = *item_p ;
 
   return true ;
 } ;
@@ -82,14 +85,18 @@ ssl_del_func(void** p_prev, void* item, size_t link_offset)
  * See notes on p_prev above.
  */
 extern void
-ssl_append_func(void** p_prev, void* item, size_t link_offset)
+ssl_append_func(void** prev_p, void* item, void** item_p)
 {
+  size_t offset ;
   void* prev ;
 
-  while ((prev = *p_prev) != NULL)
-    p_prev = _sl_p_next(prev, link_offset) ;
+  offset = (char*)item_p - (char*)item ;
 
-  *p_prev = item ;
+  while ((prev = *prev_p) != NULL)
+    prev_p = sl_list_ptr_make(prev, offset) ;
+
+  *prev_p = item ;
+  *item_p = NULL ;
 } ;
 
 /*==============================================================================
@@ -101,51 +108,34 @@ ssl_append_func(void** p_prev, void* item, size_t link_offset)
  *
  * Have to chase down list to find item.
  *
- * Note that p_this:
- *
- *   * starts as pointer to the base pointer, so should really be void**,
- *     but that causes all sorts of problems with strict-aliasing.
- *
- *     So: have to cast to (void**) before dereferencing to get the address
- *         of the first item on the list.
- *
- *   * as steps along the list p_this points to the "next pointer" in the
- *     previous item.
- *
- *     The _sl_p_next() macro adds the offset of the "next pointer" to the
- *     address of the this item.
- *
- *   * at the end, assigns the item's "next pointer" to the "next pointer"
- *     field pointed at by p_this.
- *
- *     Note again the cast to (void**).
- *
  * Returns: true  => removed item from list
  *          false => item not found on list (or item == NULL)
  */
 extern bool
-dsl_del_func(struct dl_void_base_pair* p_base, void* item, size_t link_offset)
+dsl_del_func(dl_base_pair_v base, void* item, void** item_p)
 {
   void*  this ;
-  void** p_this ;
+  void** this_p ;
+  size_t offset ;
 
   if (item == NULL)
     return false ;
 
-  p_this = &p_base->head ;
+  this_p = &base->head ;
+  offset = (char*)item_p - (char*)item ;
 
-  while ((this = *p_this) != item)
+  while ((this = *this_p) != item)
     {
       if (this == NULL)
         return false ;
 
-      p_this = _sl_p_next(this, link_offset) ;
+      this_p = sl_list_ptr_make(this, offset) ;
     } ;
 
-  *p_this = _sl_next(item, link_offset) ;
+  *this_p = *item_p ;
 
-  if (item == p_base->tail)
-    p_base->tail = *p_this ;
+  if (item == base->tail)
+    base->tail = *item_p ;
 
   return true ;
 } ;

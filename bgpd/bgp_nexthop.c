@@ -24,7 +24,6 @@ Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
 #include "thread.h"
 #include "prefix.h"
 #include "zclient.h"
-#include "stream.h"
 #include "network.h"
 #include "log.h"
 #include "memory.h"

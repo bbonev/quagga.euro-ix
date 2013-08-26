@@ -1,19 +1,17 @@
-#include <zebra.h>
 #include "misc.h"
 #include "qlib_init.h"
 #include "command.h"
-#include "list_util.h"
+
 #include <string.h>
+
+#include "svector.h"
 #include "vector.h"
 
-/* List util torture tests
- *
+/* Small-Vector torture tests
  */
 
 /* prototypes */
-static void test_ssl(void);
-static void test_sdl(void);
-static void test_ddl(void);
+static void test_svl(void);
 
 static uint assert_limit ;
 
@@ -44,60 +42,22 @@ main(int argc, char **argv)
   qlib_init_first_stage(0);     /* Absolutely first     */
   host_init(argv[0]) ;
 
-  printf("Starting list_util tests -- %s\n",
-#ifdef __GNUC__LIST_UTIL
-      "GNUC version"
-#else
-      "not GNUC version"
-#endif
-      " -- v0.01 26-Feb-2010") ;
+  printf("Starting 'svector' tests -- v0.01 23-Aug-2010\n") ;
 
   srand(22) ;                   /* Consistent testing required          */
 
   assert_limit = 25 ;
 
-  test_ssl() ;
+  test_svl() ;
   test_sdl() ;
   test_ddl() ;
 
-#if 1
-  printf("Timing of qt_get_monotonic() -- %s CLOCK_MONOTONIC\n",
-                               qt_have_clock_monotonic ? "with" : "*without*") ;
-
-  {
-#include <sys/times.h>
-    struct tms start_times ;
-    struct tms end_times ;
-    clock_t start_clock, end_clock ;
-    qtime_mono_t start_mono, end_mono ;
-    volatile uint count, counter ;
-
-    count = counter = 1000000 ;
-
-    start_mono  = qt_get_monotonic() ;
-    start_clock = times(&start_times) ;
-
-    do
-      end_mono = qt_get_monotonic() ;
-    while (--counter != 0) ;
-
-    end_clock = times(&end_times) ;
-
-    printf("  %20u cycles\n", count) ;
-    printf("  %20lu elapsed clock\n", (ulong)(end_clock - start_clock)) ;
-    printf("  %20lu elapsed monotonic\n", (ulong)(end_mono - start_mono)) ;
-    printf("  %20lu elapsed user CPU\n", (ulong)(end_times.tms_utime
-                                                  - start_times.tms_utime)) ;
-    printf("  %20lu elapsed system CPU\n", (ulong)(end_times.tms_stime
-                                                    - start_times.tms_stime)) ;
-  } ;
-#endif
 
 
   return 0;
 }
 
-/*------------------------------------------------------------------------------
+/*==============================================================================
  * Construct a majic mark from two addresses
  */
 static unsigned majic(void* a, void* b)
@@ -123,1114 +83,390 @@ static void* aux_pop_tail(vector aux) ;
 static int aux_find(vector aux, void* item) ;
 
 /*==============================================================================
- * Single Base, Single Link
+ * Testing the Basic Small-Vector operations -- for:
  *
- *   ssl_push(base, item, next)    -- add at head of list
- *   ssl_del(base, item, next)     -- delete from list
- *   ssl_del_head(base, next)      -- delete head of list
- *   ssl_pop(dst, base, next)      -- pop head of list, if any
- *   ssl_head(base)                -- return head of list
- *   ssl_next(item, next)          -- step to next item, if any
+ *   svec_0t         -- no embedded items
+ *   svec_1t         -- 1 embedded item   ) bit special for initial set up
+ *   svec_2t         -- 2 embedded items  ) of extended body
+ *   svec_3t         -- 3 embedded items  )
+ *   svec_4t         -- 4 embedded items
+ *   svec_11t        -- our own invention
  *
- * Cases to cover:
+ * Initialisation/Destruction.
  *
- *   a) adding when list is empty
- *   b) adding when list is not empty
- *   c) deletion of first item and more than one item on list
- *   d) deletion of first item when only one item on the list
- *   e) deletion of arbitrary item (list implicitly not empty)
- *   f) deletion when item not on list and list not empty
- *   g) deletion when item not on list and list is empty
- *   h) deletion of NULL item and list not empty
- *   i) deletion of NULL item and list empty
- *   j) pop of head when list not empty
- *   k) pop of head when list contains one item
- *   l) pop of head when list empty
- *   m) deletion of head when list not empty
- *   n) deletion of head when contains one item
- *   o) deletion of head when list empty
- *   p) head when list not empty
- *   q) head when list is empty
- *   r) next when not last
- *   s) next when last
+ *   * svec_init(sv)          -- initialise from scratch
+ *
+ *                               No different from zeroizing !
+ *
+ *   * svec_reset(sv)         -- set empty, retaining any extended body.
+ *
+ *   * svec_clear(sv)         -- set empty, freeing any extended body
+ *
+ * The basic add/del/get operations.
+ *
+ *   * svec_add(sv, item)     -- add given item to the svec
+ *
+ *                               Returns: index of the item.
+ *
+ *   * svec_del(sv, i)        -- remove item at the given index from the svec.
+ *
+ *                               Returns: item removed.
+ *
+ *   * svec_get(sv, i)        -- get address of item at the given index.
+ *
+ *                               Returns: item
+ *
+ * NB: the svec_get() in particular is "light-weight" -- no checking is done
+ *     on the index, the state of the svec or anything else.
  */
+struct svecN(1) ;
+struct svecN(2) ;
+struct svecN(3) ;
+struct svecN(11) ;
 
-typedef struct ssl_test* ssl_test ;
-struct ssl_test
+typedef struct svec1   svec1_t ;
+typedef struct svec1*  svec1 ;
+typedef struct svec2   svec2_t ;
+typedef struct svec2*  svec2 ;
+typedef struct svec3   svec3_t ;
+typedef struct svec3*  svec3 ;
+typedef struct svec11  svec11_t ;
+typedef struct svec11* svec11 ;
+
+typedef struct test_svec  test_svec_t ;
+typedef struct test_svec* test_svec ;
+
+struct test_svec
 {
-  ssl_test   next ;            /* pointer at start of structure        */
-
-  unsigned    majic ;
-  char        dummy ;
-
-  ssl_test   other_next ;      /* pointer elsewhere in structure       */
+  uint          e ;
+  union
+    {
+      svec_t    sv0[1] ;
+      svec1_t   sv1 ;
+      svec2_t   sv2 ;
+      svec3_t   sv3[1] ;
+      svec4_t   sv4 ;
+      svec11_t  sv11 ;
+    } u ;
 } ;
 
-struct ssl_test_parent
-{
-  unsigned    rubbish ;
-  char        fred ;
+static void test_svec_init(test_svec tsv) ;
+static void test_svec_reset(test_svec tsv) ;
+static void test_svec_clear(test_svec tsv) ;
 
-  ssl_test   base ;
+static svec_index_t test_svec_add(test_svec tsv, void* item) ;
+static svec_item test_svec_del(test_svec tsv, svec_index_t i) ;
+static svec_item test_svec_get(test_svec tsv, svec_index_t i) ;
 
-  int         z[5] ;
-} ;
 
-static struct ssl_test_parent  ssl_parent ;
 
+
+
+
+
+
+/*------------------------------------------------------------------------------
+ * Run svec_init()
+ */
 static void
-test_ssl(void)
+test_svec_init(test_svec tsv)
 {
-  ssl_test base       = NULL ;
-
-  ssl_test del        = NULL ;
-  ssl_test other_del  = NULL ;
-  ssl_test last       = NULL ;
-  ssl_test first      = NULL ;
-
-  struct ssl_test  dummy ;
-
-  int n = 47 ;
-
-  int i_del       =  7 ;        /* NB: neither of these may be 0 or 1   */
-  int i_other_del = 37 ;
-
-  ssl_test prev ;
-  ssl_test this ;
-  ssl_test other_this ;
-  ssl_test take ;
-  ssl_test temp ;
-
-  int i ;
-  int ret ;
-
-  static struct ssl_test_parent* other = &ssl_parent ;
-
-  memset(other, 77, sizeof(struct ssl_test_parent)) ;
-  other->base = NULL ;
-
-  /* Repeated insertion, starting from empty list
-   *
-   *   a) adding when list is empty
-   *   b) adding when list is not empty
-   *
-   * Creates lists for following tests.
-   */
-  printf("=== Testing ssl -- Single Base, Single Link -- stuff\n") ;
-
-  printf("  Creating list of items") ;
-  for (i = 1 ; i <= n ; ++i)
+  switch (tsv->e)
     {
-      ssl_test this = calloc(1, sizeof(struct ssl_test)) ;
-
-      if (last == NULL)
-        last = this ;
-
-      this->majic = majic(this, &base) ;
-
-      this->dummy = i ;
-
-      ssl_push(base, this, next) ;
-      if (i & 1)
-        ssl_push(other->base, this, other_next) ;
-      else
-        ssl_push(ssl_parent.base, this, other_next) ;
-
-      if (i == i_del)
-        del = this ;
-      if (i == i_other_del)
-        other_del = this ;
-
-      first = this ;
-
-      printf("+") ;
-    } ;
-
-  test_assert((base == first) && (other->base == first),
-                                          "Failed to create consistent lists") ;
-  printf("\n") ;
-
-  passert((del != base)       && (del       != last)) ;
-  passert((other_del != base) && (other_del != last)) ;
-
-  /* Walk to check that have the expected items
-   *
-   *   l) head when list not empty
-   *   r) next when not last
-   *   s) next when last
-   */
-  printf("  Walking list of items") ;
-
-  this = ssl_head(base) ;
-  test_assert(this == first, "ssl_head failed") ;
-
-  this = ssl_head(other->base) ;
-  test_assert(this == first, "ssl_head failed") ;
-
-  this = ssl_head(ssl_parent.base) ;
-  test_assert(this == first, "ssl_head failed") ;
-
-  this = ssl_next(del, next) ;
-  test_assert((this == del->next) && (this != NULL), "ssl_next failed") ;
-  this = ssl_next(last, next) ;
-  test_assert((this == last->next) && (this == NULL),
-                                                    "ssl_next failed at end") ;
-
-  this = ssl_next(other_del, other_next) ;
-  test_assert((this == other_del->other_next) && (this != NULL),
-                                                           "ssl_next failed") ;
-  this = ssl_next(last, other_next) ;
-  test_assert((this == last->other_next) && (this == NULL),
-                                                    "ssl_next failed at end") ;
-
-  this = base ;
-  other_this = other->base ;
-
-  prev = NULL ;
-  i = n ;
-  while (1)
-    {
-      test_assert(this == other_this, "this and other_this not in step") ;
-      if (this == NULL)
+      case 0:
+        svec_init(tsv->u.sv0) ;
         break ;
 
-      test_assert(this != prev, "this is same as prev") ;
-      prev = this ;
-
-      test_assert(this->dummy == i--, "don't have the right dummy") ;
-      test_assert(this->majic == majic(this, &base),
-                                      "don't have the right majic") ;
-
-      printf(".") ;
-      this = ssl_next(this, next) ;
-      other_this = ssl_next(other_this, other_next) ;
-    } ;
-  printf("\n") ;
-
-  /* Deletion specifically at the start of the list
-   *
-   *   c) deletion of first item and more than one item on list
-   */
-  printf("  Deleting the first item") ;
-
-  this = base ;
-  first = base->next ;
-  ret = ssl_del(base, this, next) ;
-  test_assert(ret == true, "ssl_del did not return true") ;
-  test_assert(first == base, "ssl_del of first item failed") ;
-
-  this = other->base ;
-  ret = ssl_del(other->base, this, other_next) ;
-  test_assert(ret == true, "ssl_del did not return true") ;
-  test_assert(first == other->base, "ssl_del of first item failed") ;
-
-  printf("\n") ;
-
-  --n ;         /* one less on the lists !      */
-
-  /* Deletion of items from arbitrary place in list
-   *
-   *   e) deletion of arbitrary item (list implicitly not empty)
-   */
-  printf("  Deleting arbitrary items") ;
-  ret = ssl_del(base, del, next) ;
-  test_assert(ret == true, "ssl_del did not return true") ;
-  ret = ssl_del(ssl_parent.base, other_del, other_next) ;
-  test_assert(ret == true, "ssl_del did not return true") ;
-  printf("\n") ;
-
-  /* Deletion of items from arbitrary place in list
-   *
-   *   f) deletion when item not on list and list not empty
-   */
-  printf("  Deleting non-existant items") ;
-  ret = ssl_del(base, &dummy, next) ;
-  test_assert(ret == false, "ssl_del did not return false") ;
-  ret = ssl_del(other->base, &dummy, other_next) ;
-  test_assert(ret == false, "ssl_del did not return false") ;
-  printf("\n") ;
-
-  /* Deletion of NULL items
-   *
-   *   h) deletion of NULL item and list not empty
-   */
-  printf("  Deleting NULL items") ;
-
-  this = NULL ;
-
-  ret = ssl_del(base, this, next) ;
-  test_assert(ret == false, "ssl_del did not return false") ;
-
-  ret = ssl_del(ssl_parent.base, this, other_next) ;
-  test_assert(ret == false, "ssl_del did not return false") ;
-
-  printf("\n") ;
-
-  /* Scan lists to check after deletion                                 */
-  printf("    Base list scan") ;
-
-  this = base ;
-  prev = NULL ;
-  i = n ;
-  while (1)
-    {
-      if (this == NULL)
+      case 1:
+        svec_init(tsv->u.sv1) ;
         break ;
 
-      test_assert(this != prev, "this is same as prev") ;
-      prev = this ;
-
-      if (i == i_del)
-        --i ;
-
-      test_assert(this->dummy == i--, "don't have the right dummy") ;
-      test_assert(this->majic == majic(this, &base),
-                                      "don't have the right majic") ;
-
-      printf("*") ;
-      this = ssl_next(this, next) ;
-    } ;
-  printf("\n") ;
-
-  printf("    Other list scan") ;
-
-  other_this = other->base ;
-  prev = NULL ;
-  i = n ;
-  while (1)
-    {
-      if (other_this == NULL)
+      case 2:
+        svec_init(tsv->u.sv2) ;
         break ;
 
-      test_assert(other_this != prev, "this is same as prev") ;
-      prev = other_this ;
-
-      if (i == i_other_del)
-        --i ;
-
-      test_assert(other_this->dummy == i--, "don't have the right dummy") ;
-      test_assert(other_this->majic == majic(other_this, &base),
-                                            "don't have the right majic") ;
-
-      printf("*") ;
-      other_this = ssl_next(other_this, other_next) ;
-    } ;
-  printf("\n") ;
-
-  /* Dismantle lists
-   *
-   *   j) pop of head when list not empty
-   *   k) pop of head when list contains one item
-   *   l) pop of head when list empty
-   *   p) head when list not empty
-   *   q) head when list is empty
-   */
-  printf("  Popping the head until list is empty\n") ;
-  printf("    Base list") ;
-
-  prev = NULL ;
-  i = n ;
-  while (1)
-    {
-      this = base ;
-      test_assert(this == ssl_head(base), "this is not head !") ;
-
-      temp = ssl_pop(&take, base, next) ;
-      test_assert(this == take, "this is not same as deleted head !") ;
-      test_assert(temp == take, "temp is not same as deleted head !") ;
-
-      if (this == NULL)
+      case 3:
+        svec_init(tsv->u.sv3) ;
         break ;
 
-      test_assert(base == this->next, "ssl_pop broken") ;
-
-      test_assert(this != prev, "this is same as prev") ;
-      prev = this ;
-
-      if (i == i_del)
-        --i ;
-
-      test_assert(this->dummy == i--, "don't have the right dummy") ;
-      test_assert(this->majic == majic(this, &base),
-                                      "don't have the right majic") ;
-      printf("-") ;
-    } ;
-  test_assert(i == 0, "not the expected final value of 'i'") ;
-  test_assert(base == NULL, "Base list should be empty") ;
-
-  this = ssl_head(base) ;
-  test_assert(this == NULL, "ssl_head of empty list failed") ;
-
-  printf("\n") ;
-
-  printf("   Other list") ;
-
-  prev = NULL ;
-  i = n ;
-  while (1)
-    {
-      this = other->base ;
-      test_assert(this == ssl_head(other->base), "this is not head !") ;
-
-      if (i & 1)
-        temp = ssl_pop(&take, other->base, other_next) ;
-      else
-        temp = ssl_pop(&take, ssl_parent.base, other_next) ;
-
-      test_assert(this == take, "this is not same as deleted head !") ;
-      test_assert(temp == take, "temp is not same as deleted head !") ;
-
-      if (this == NULL)
+      case 4:
+        svec_init(tsv->u.sv4) ;
         break ;
 
-      test_assert(other->base == this->other_next, "ssl_pop broken") ;
-
-      test_assert(this != prev, "this is same as prev") ;
-      prev = this ;
-
-      if (i == i_other_del)
-        --i ;
-
-      test_assert(this->dummy == i--, "don't have the right dummy") ;
-      test_assert(this->majic == majic(this, &base),
-                                      "don't have the right majic") ;
-      printf("-") ;
-    } ;
-  test_assert(i == 0, "not the expected final value of 'i'") ;
-  test_assert(other->base == NULL, "Other list should be empty") ;
-
-  this = ssl_head(other->base) ;
-  test_assert(this == NULL, "ssl_head of empty list failed") ;
-
-  printf("\n") ;
-
-  /* Rebuild lists to do:
-   *
-   *   m) deletion of head when list not empty
-   *   n) deletion of head when contains one item
-   *   o) deletion of head when list empty
-   */
-  passert((base == NULL) && (other->base == NULL)) ;
-
-  last  = NULL ;
-  first = NULL ;
-  prev  = NULL ;
-  printf("  Building list of items again") ;
-  for (i = 1 ; i <= n ; ++i)
-    {
-      ssl_test this = calloc(1, sizeof(struct ssl_test)) ;
-
-      if (last == NULL)
-        last = this ;
-
-      this->majic = majic(this, &base) ;
-      this->dummy = i ;
-
-      ssl_push(base, this, next) ;
-      if (i & 1)
-        ssl_push(ssl_parent.base, this, other_next) ;
-      else
-        ssl_push(other->base, this, other_next) ;
-
-      test_assert(this->next       == prev, "broken ssl_push") ;
-      test_assert(this->other_next == prev, "broken ssl_push") ;
-
-      test_assert(base       == this, "broken ssl_push") ;
-      test_assert(other->base == this, "broken ssl_push") ;
-
-      first = this ;
-      prev  = this ;
-
-      printf("+") ;
-    } ;
-
-  printf("\n") ;
-
-  printf("  Deleting the head until list is empty\n") ;
-  printf("    Base list") ;
-
-  prev = NULL ;
-  i = n ;
-  while (1)
-    {
-      this = base ;
-
-      ssl_del_head(base, next) ;
-
-      if (this == NULL)
+      case 11:
+        svec_init(tsv->u.sv11) ;
         break ;
 
-      test_assert(base == this->next, "ssl_del_head broken") ;
-
-      test_assert(this != prev, "this is same as prev") ;
-      prev = this ;
-
-      test_assert(this->dummy == i--, "don't have the right dummy") ;
-      test_assert(this->majic == majic(this, &base),
-                                      "don't have the right majic") ;
-      printf("-") ;
+      default:
+        assert(false) ;
     } ;
-  test_assert(i == 0, "not the expected final value of 'i'") ;
-  test_assert(base == NULL, "Base list should be empty") ;
+} ;
 
-  printf("\n") ;
-
-  printf("   Other list") ;
-
-  prev = NULL ;
-  i = n ;
-  while (1)
+/*------------------------------------------------------------------------------
+ * Run svec_reset()
+ */
+static void
+test_svec_reset(test_svec tsv)
+{
+  switch (tsv->e)
     {
-      this = other->base ;
-
-      if (i & 1)
-        ssl_del_head(ssl_parent.base, other_next) ;
-      else
-        ssl_del_head(other->base, other_next) ;
-
-      if (this == NULL)
+      case 0:
+        svec_reset(tsv->u.sv0) ;
         break ;
 
-      test_assert(other->base == this->other_next, "ssl_del_head broken") ;
+      case 1:
+        svec_reset(tsv->u.sv1) ;
+        break ;
 
-      test_assert(this != prev, "this is same as prev") ;
-      prev = this ;
+      case 2:
+        svec_reset(tsv->u.sv2) ;
+        break ;
 
-      test_assert(this->dummy == i--, "don't have the right dummy") ;
-      test_assert(this->majic == majic(this, &base),
-                                      "don't have the right majic") ;
-      printf("-") ;
+      case 3:
+        svec_reset(tsv->u.sv3) ;
+        break ;
+
+      case 4:
+        svec_reset(tsv->u.sv4) ;
+        break ;
+
+      case 11:
+        svec_reset(tsv->u.sv11) ;
+        break ;
+
+      default:
+        assert(false) ;
     } ;
-  test_assert(i == 0, "not the expected final value of 'i'") ;
-  test_assert(other->base == NULL, "Other list should be empty") ;
+} ;
 
-  printf("\n") ;
+/*------------------------------------------------------------------------------
+ * Run svec_clear()
+ */
+static void
+test_svec_clear(test_svec tsv)
+{
+  switch (tsv->e)
+    {
+      case 0:
+        svec_clear(tsv->u.sv0) ;
+        break ;
 
-  /* Final few tests
-   *
-   *   d) deletion of first item when only one item on the list
-   *   g) deletion when item not on list and list is empty
-   *   i) deletion of NULL item and list empty
-   */
+      case 1:
+        svec_clear(tsv->u.sv1) ;
+        break ;
 
-  /* Deletion of items from arbitrary place in list                     */
-  printf("  Miscellaneous") ;
+      case 2:
+        svec_clear(tsv->u.sv2) ;
+        break ;
 
-  del->next = &dummy ;
-  ssl_push(base, del, next) ;
-  test_assert((base == del) && (del->next == NULL), "ssl_push failed ??") ;
-  ssl_del(base, del, next) ;
-  test_assert(base == NULL, "ssl_del of first and only item failed") ;
+      case 3:
+        svec_clear(tsv->u.sv3) ;
+        break ;
 
-  other_del->other_next = &dummy ;
-  ssl_push(other->base, other_del, other_next) ;
-  test_assert((other->base == other_del) && (other_del->other_next == NULL),
-                                                         "ssl_push failed ??") ;
-  ssl_del(other->base, other_del, other_next) ;
-  test_assert(other->base == NULL, "ssl_del of first and only item failed") ;
+      case 4:
+        svec_clear(tsv->u.sv4) ;
+        break ;
 
-  ret = ssl_del(base, del, next) ;
-  test_assert(ret == false, "ssl_del did not return false") ;
-  test_assert(base == NULL, "ssl_del on empty list") ;
+      case 11:
+        svec_clear(tsv->u.sv11) ;
+        break ;
 
-  ret = ssl_del(other->base, other_del, other_next) ;
-  test_assert(ret == false, "ssl_del did not return false") ;
-  test_assert(other->base == NULL, "ssl_del on empty list") ;
+      default:
+        assert(false) ;
+    } ;
+} ;
 
-  this = NULL ;
+/*------------------------------------------------------------------------------
+ * Run svec_add()
+ */
+static svec_index_t
+test_svec_add(test_svec tsv, svec_item item)
+{
+  switch (tsv->e)
+    {
+      case 0:
+        return svec_add(tsv->u.sv0, item) ;
+        break ;
 
-  ret = ssl_del(base, this, next) ;
-  test_assert(ret == false, "ssl_del did not return false") ;
-  test_assert(base == NULL, "ssl_del on empty list") ;
+      case 1:
+        return svec_add(tsv->u.sv1, item) ;
+        break ;
 
-  ret = ssl_del(other->base, this, other_next) ;
-  test_assert(ret == false, "ssl_del did not return false") ;
-  test_assert(other->base == NULL, "ssl_del on empty list") ;
+      case 2:
+        return svec_add(tsv->u.sv2, item) ;
+        break ;
 
-  printf("\n") ;
+      case 3:
+        return svec_add(tsv->u.sv3, item) ;
+        break ;
 
+      case 4:
+        return svec_add(tsv->u.sv4, item) ;
+        break ;
+
+      case 11:
+        return svec_add(tsv->u.sv11, item) ;
+        break ;
+
+      default:
+        assert(false) ;
+    } ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Run svec_del()
+ */
+static svec_item
+test_svec_del(test_svec tsv, svec_index_t i)
+{
+  switch (tsv->e)
+    {
+      case 0:
+        return svec_del(tsv->u.sv0, i) ;
+        break ;
+
+      case 1:
+        return svec_del(tsv->u.sv1, i) ;
+        break ;
+
+      case 2:
+        return svec_del(tsv->u.sv2, i) ;
+        break ;
+
+      case 3:
+        return svec_del(tsv->u.sv3, i) ;
+        break ;
+
+      case 4:
+        return svec_del(tsv->u.sv4, i) ;
+        break ;
+
+      case 11:
+        return svec_del(tsv->u.sv11, i) ;
+        break ;
+
+      default:
+        assert(false) ;
+    } ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Run svec_get()
+ */
+static svec_item
+test_svec_get(test_svec tsv, svec_index_t i)
+{
+  switch (tsv->e)
+    {
+      case 0:
+        return svec_get(tsv->u.sv0, i) ;
+        break ;
+
+      case 1:
+        return svec_get(tsv->u.sv1, i) ;
+        break ;
+
+      case 2:
+        return svec_get(tsv->u.sv2, i) ;
+        break ;
+
+      case 3:
+        return svec_get(tsv->u.sv3, i) ;
+        break ;
+
+      case 4:
+        return svec_get(tsv->u.sv4, i) ;
+        break ;
+
+      case 11:
+        return svec_get(tsv->u.sv11, i) ;
+        break ;
+
+      default:
+        assert(false) ;
+    } ;
 } ;
 
 /*==============================================================================
- * Single Base, Double Link
+ * Small-Vector Linked Lists
  *
- *   sdl_push(base, item, list)     -- add at head of list
- *   sdl_del(base, item, list)      -- delete from list
- *   sdl_pop(&dst, base, next)      -- pop head of list, if any
- *   sdl_head(base)                 -- return head of list
- *   sdl_next(item, next)           -- step to next item, if any
- *   sdl_prev(item, next)           -- step to prev item, if any
+ *   * svl_init(base)            -- clear the given base (lvalue)
  *
- * Cases to cover:
+ *   * svl_init_p(item_p)        -- clear the given pointer pair (lvalue)
  *
- *   a) adding when list is empty
- *   b) adding when list is not empty
- *   c) deletion of first item and more than one item on list
- *   d) deletion of first item when only one item on the list
- *   e) deletion of arbitrary item (list implicitly not empty)
- *   f) deletion of NULL item and list not empty
- *   g) deletion of NULL item and list empty
- *   h) pop of head when list not empty
- *   i) pop of head when list contains one item
- *   j) pop of head when list empty
- *   k) deletion of head when list not empty
- *   l) deletion of head when list contains one item
- *   m) deletion of head when list empty
- *   n) head when list not empty
- *   o) head when list is empty
- *   p) next when not last
- *   q) next when last
- *   r) prev when not first
- *   s) prev when first
+ *   * svl_head(base, sv)        -- get item which is head of given list
+ *   * svl_tail(base, sv)        -- get item which is tail of the the given list
  *
- * NB: unlike single link stuff, cannot attempt to remove item which is
- *     not on the list !
+ *     If the list is empty these return NULL.
+ *
+ *   * svl_prepend(base, sv, i, it_t, lp)   -- place item on front of list
+ *   * svl_push(base, sv, i, it_t, lp)
+ *
+ *     It is *vital* that item 'i' exists in the given sv, but is NOT on any
+ *     list (including not on the given one).
+ *
+ *     These (and other) macros take a *type* and a *field* as arguments, where
+ *     the field is the svec_list_p_t pair, so that the offset of that field
+ *     can be calculated by: offsetof(it_t, lp).
+ *
+ *     Suppose we have items of item_t:
+ *
+ *       typedef struct item item_t ;
+ *       struct item
+ *         {
+ *           ....
+ *           svec_list_p_t  list ;
+ *           ....
+ *         } ;
+ *
+ *     we can push item 'i' onto a given list by:
+ *
+ *       svl_push(base, sv, item_t, list) ;
+ *
+ *     And similarly for most of the other list operations.
+ *
+ *   * svl_append(base, sv, i, it_t, lp)    -- place item on tail of list
+ *
+ *     It is *vital* that item 'i' exists in the given sv, but is NOT on any
+ *     list (including not on the given one).
+ *
+ *   * svl_in_before(ib, base, sv, i, it_t, lp) -- place item before given one
+ *   * svl_in_after(ia, base, sv, i, it_t, lp)  -- place item after given one
+ *
+ *     If ib == SVEC_NULL, append to list.
+ *     If ia == SVEC_NULL, prepend.
+ *
+ *     Consider a list in some ascending order.  A loop searching for the
+ *     first item greater than some new value may run off the end of the list.
+ *     Hence, for svl_in_before it makes sense to treat SVEC_NULL as append.
+ *     For svl_in_after() the same logic applies, assuming working backwards
+ *     along a sorted list.
+ *
+ *     If the list is empty, 'ib' and 'ia' can only be SVEC_NULL, and it
+ *     matters not whether the operation is append or prepend !
+ *
+ *     It is *vital* that item 'i' exists in the given sv, but is NOT on any
+ *     list (including not on the given one).
+ *
+ *     It is also *vital* that items 'ia' and 'ib' exist are on the list !
+ *
+ *   * svl_del_head(base, sv, it_t, lp) -- remove and return head of list
+ *   * svl_pop(base, sv, it_t, lp)
+ *
+ *     If the list is empty these return NULL.
+ *
+ *   * svl_del_tail(base, sv, it_t, lp) -- remove and return tail of list
+ *   * svl_crop(base, sv, it_t, lp)
+ *
+ *     If the list is empty these return NULL.
+ *
+ *   * svl_del(base, sv, i, it_t, lp)   -- remove item from list
+ *
+ *     It is *vital* that item 'i' exists in the given sv, and is on the list.
  */
 
-typedef struct sdl_test* sdl_test ;
-struct sdl_test
-{
-  struct dl_list_pair(sdl_test)   list ;
-
-  unsigned    majic ;
-  char        dummy ;
-
-  struct dl_list_pair(sdl_test)   other_list ;
-};
-
-struct sdl_test_parent
-{
-  long        rubbish ;
-  char        fred ;
-
-  sdl_test   base ;
-
-  int         z[7] ;
-} ;
-
-static struct sdl_test_parent  sdl_parent ;
-
-static void
-test_sdl(void)
-{
-  sdl_test base       = NULL ;
-
-  sdl_test del        = NULL ;
-  sdl_test other_del  = NULL ;
-  sdl_test last       = NULL ;
-  sdl_test first      = NULL ;
-
-  struct sdl_test  dummy ;
-
-  int n = 57 ;
-
-  int i_del       =  9 ;        /* NB: neither of these may be 0 or 1   */
-  int i_other_del = 49 ;
-
-  sdl_test prev ;
-  sdl_test this ;
-  sdl_test other_this ;
-  sdl_test take ;
-  sdl_test temp ;
-
-  int i ;
-
-  static struct sdl_test_parent* other = &sdl_parent ;
-
-  memset(other, 99, sizeof(struct sdl_test_parent)) ;
-  other->base = NULL ;
-
-  /* Repeated insertion, starting from empty list
-   *
-   *   a) adding when list is empty
-   *   b) adding when list is not empty
-   *
-   * Creates lists for following tests.
-   */
-  printf("=== Testing sdl -- Single Base, Double Link -- stuff\n") ;
-
-  printf("  Creating list of items") ;
-  for (i = 1 ; i <= n ; ++i)
-    {
-      sdl_test this = calloc(1, sizeof(struct sdl_test)) ;
-
-      if (last == NULL)
-        last = this ;
-
-      this->majic = majic(this, &base) ;
-
-      this->dummy = i ;
-
-      sdl_push(base, this, list) ;
-      if (i & 1)
-        sdl_push(other->base, this, other_list) ;
-      else
-        sdl_push(sdl_parent.base, this, other_list) ;
-
-      if (i == i_del)
-        del = this ;
-      if (i == i_other_del)
-        other_del = this ;
-
-      first = this ;
-
-      printf("+") ;
-    } ;
-
-  test_assert((base == first) && (other->base == first),
-                                          "Failed to create consistent lists") ;
-
-  printf("\n") ;
-
-  passert((del != base)       && (del       != last)) ;
-  passert((other_del != base) && (other_del != last)) ;
-
-  /* Walk to check that have the expected items
-   *
-   *   n) head when list not empty
-   *   p) next when not last
-   *   q) next when last
-   *   r) prev when not first
-   *   s) prev when first
-   */
-  printf("  Walking list of items") ;
-
-  this = sdl_head(base) ;
-  test_assert(this == first, "sdl_head failed") ;
-
-  this = sdl_head(other->base) ;
-  test_assert(this == first, "sdl_head failed") ;
-
-  this = sdl_head(sdl_parent.base) ;
-  test_assert(this == first, "sdl_head failed") ;
-
-  /* next on both lists                                         */
-  this = sdl_next(first, list) ;
-  test_assert((this == first->list.next) && (this != NULL),
-                                                  "sdl_next failed at start") ;
-  this = sdl_next(del, list) ;
-  test_assert((this == del->list.next) && (this != NULL), "sdl_next failed") ;
-  this = sdl_next(last, list) ;
-  test_assert((this == last->list.next) && (this == NULL),
-                                                    "sdl_next failed at end") ;
-
-  this = sdl_next(first, other_list) ;
-  test_assert((this == first->other_list.next) && (this != NULL),
-                                                  "sdl_next failed at start") ;
-  this = sdl_next(other_del, other_list) ;
-  test_assert((this == other_del->other_list.next) && (this != NULL),
-                                                           "sdl_next failed") ;
-  this = sdl_next(last, other_list) ;
-  test_assert((this == last->other_list.next) && (this == NULL),
-                                                    "sdl_next failed at end") ;
-
-  /* prev on both lists                                         */
-  this = sdl_prev(first, list) ;
-  test_assert((this == first->list.prev) && (this == NULL),
-                                                  "sdl_prev failed at start") ;
-  this = sdl_prev(del, list) ;
-  test_assert((this == del->list.prev) && (this != NULL), "sdl_prev failed") ;
-  this = sdl_prev(last, list) ;
-  test_assert((this == last->list.prev) && (this != NULL),
-                                                    "sdl_prev failed at end") ;
-
-  this = sdl_prev(first, other_list) ;
-  test_assert((this == first->other_list.prev) && (this == NULL),
-                                                  "sdl_prev failed at start") ;
-  this = sdl_prev(other_del, other_list) ;
-  test_assert((this == other_del->other_list.prev) && (this != NULL),
-                                                           "sdl_prev failed") ;
-  this = sdl_prev(last, other_list) ;
-  test_assert((this == last->other_list.prev) && (this != NULL),
-                                                    "sdl_prev failed at end") ;
-
-  this = base ;
-  other_this = other->base ;
-
-  prev = NULL ;
-  i = n ;
-  while (1)
-    {
-      test_assert(this == other_this, "this and other_this not in step") ;
-      if (this == NULL)
-        break ;
-
-      test_assert(this != prev, "this is same as prev") ;
-      prev = this ;
-
-      test_assert(this->dummy == i--, "don't have the right dummy") ;
-      test_assert(this->majic == majic(this, &base),
-                                      "don't have the right majic") ;
-
-      printf(".") ;
-      this = sdl_next(this, list) ;
-      other_this = sdl_next(other_this, other_list) ;
-    } ;
-  printf("\n") ;
-
-  /* Deletion specifically at the start of the list
-   *
-   *   c) deletion of first item and more than one item on list
-   */
-  printf("  Deleting the first item") ;
-
-  this = base ;
-  first = base->list.next ;
-  sdl_del(base, this, list) ;
-  test_assert(first == base, "sdl_del of first item failed") ;
-  test_assert((base == NULL) || (base->list.prev == NULL), "sdl_del failed") ;
-
-  this = other->base ;
-  sdl_del(sdl_parent.base, this, other_list) ;
-  test_assert(first == other->base, "sdl_del of first item failed") ;
-  test_assert((base == NULL) || (base->other_list.prev == NULL),
-                                                            "sdl_del failed") ;
-
-  printf("\n") ;
-
-  --n ;         /* one less on the lists !      */
-
-  /* Deletion of items from arbitrary place in list
-   *
-   *   e) deletion of arbitrary item (list implicitly not empty)
-   */
-  printf("  Deleting arbitrary items") ;
-  sdl_del(base, del, list) ;
-  test_assert((base == NULL) || (base->list.prev == NULL), "sdl_del failed") ;
-  sdl_del(sdl_parent.base, other_del, other_list) ;
-  test_assert((base == NULL) || (base->other_list.prev == NULL),
-                                                            "sdl_del failed") ;
-  printf("\n") ;
-
-  /* Deletion of NULL items
-   *
-   *   f) deletion of NULL item and list not empty
-   */
-  printf("  Deleting NULL items") ;
-  this = NULL ;
-  sdl_del(base, this, list) ;
-  test_assert((base == NULL) || (base->list.prev == NULL), "sdl_del failed") ;
-  sdl_del(other->base, this, other_list) ;
-  test_assert((base == NULL) || (base->other_list.prev == NULL),
-                                                            "sdl_del failed") ;
-  printf("\n") ;
-
-  /* Scan lists to check after deletion                                 */
-  printf("    Base list scan") ;
-
-  this = base ;
-  prev = NULL ;
-  i = n ;
-  while (1)
-    {
-      if (this == NULL)
-        break ;
-
-      test_assert(this != prev, "this is same as prev") ;
-      test_assert(this->list.prev == prev, "broken prev pointer") ;
-
-      if (i == i_del)
-        --i ;
-
-      test_assert(this->dummy == i--, "don't have the right dummy") ;
-      test_assert(this->majic == majic(this, &base),
-                                      "don't have the right majic") ;
-      printf("*") ;
-
-      prev = this ;
-      this = sdl_next(this, list) ;
-
-      test_assert(this == prev->list.next, "broken sdl_next") ;
-      if (this != NULL)
-        test_assert(prev == sdl_prev(this, list), "broken sdl_prev") ;
-    } ;
-  printf("\n") ;
-
-  printf("    Other list scan") ;
-
-  this = other->base ;
-  prev = NULL ;
-  i = n ;
-  while (1)
-    {
-      if (this == NULL)
-        break ;
-
-      test_assert(this != prev, "this is same as prev") ;
-      test_assert(this->other_list.prev == prev, "broken prev pointer") ;
-
-      if (i == i_other_del)
-        --i ;
-
-      test_assert(this->dummy == i--, "don't have the right dummy") ;
-      test_assert(this->majic == majic(this, &base),
-                                            "don't have the right majic") ;
-
-      printf("*") ;
-
-      prev = this ;
-      this = sdl_next(this, other_list) ;
-
-      test_assert(this == prev->other_list.next, "broken sdl_next") ;
-      if (this != NULL)
-        test_assert(prev == sdl_prev(this, other_list), "broken sdl_prev") ;
-    } ;
-  printf("\n") ;
-
-  /* Dismantle lists
-   *
-   *   h) pop of head when list not empty
-   *   i) pop of head when list contains one item
-   *   j) pop of head when list empty
-   *   o) head when list is empty
-   */
-  printf("  Popping the head until list is empty\n") ;
-  printf("    Base list") ;
-
-  prev = NULL ;
-  i = n ;
-  while (1)
-    {
-      this = sdl_head(base) ;
-      test_assert(this == base, "broken sdl_head !") ;
-
-      temp = sdl_pop(&take, base, list) ;
-      test_assert(this == take, "take is not same as deleted head !") ;
-      test_assert(this == temp, "temp is not same as deleted head !") ;
-      if (base != NULL)
-        test_assert(base->list.prev == NULL, "sdl_pop failed") ;
-
-      if (this == NULL)
-        break ;
-
-      test_assert(this != prev, "this is same as prev") ;
-      prev = this ;
-
-      if (i == i_del)
-        --i ;
-
-      test_assert(this->dummy == i--, "don't have the right dummy") ;
-      test_assert(this->majic == majic(this, &base),
-                                      "don't have the right majic") ;
-      printf("-") ;
-    } ;
-  test_assert(i == 0, "not the expected final value of 'i'") ;
-  test_assert(base == NULL, "Base list should be empty") ;
-
-  this = sdl_head(base) ;
-  test_assert(this == NULL, "sdl_head of empty list failed") ;
-
-  printf("\n") ;
-
-  printf("   Other list") ;
-
-   prev = NULL ;
-  i = n ;
-  while (1)
-    {
-      this = sdl_head(other->base) ;
-      test_assert(this == other->base, "broken sdl_head !") ;
-
-      if (i & 1)
-        temp = sdl_pop(&take, sdl_parent.base, other_list) ;
-      else
-        temp = sdl_pop(&take, other->base, other_list) ;
-
-      test_assert(this == take, "take is not same as deleted head !") ;
-      test_assert(this == temp, "temp is not same as deleted head !") ;
-      if (other->base != NULL)
-        test_assert(other->base->other_list.prev == NULL,
-                                                       "sdl_pop failed") ;
-      if (this == NULL)
-        break ;
-
-      test_assert(this != prev, "this is same as prev") ;
-      prev = this ;
-
-      if (i == i_other_del)
-        --i ;
-
-      test_assert(this->dummy == i--, "don't have the right dummy") ;
-      test_assert(this->majic == majic(this, &base),
-                                      "don't have the right majic") ;
-
-      printf("-") ;
-    } ;
-  test_assert(i == 0, "not the expected final value of 'i'") ;
-  test_assert(other->base == NULL, "Other list should be empty") ;
-
-  this = sdl_head(other->base) ;
-  test_assert(this == NULL, "sdl_head of empty list failed") ;
-
-  printf("\n") ;
-
-  /* Rebuild lists to do:
-   *
-   *   k) deletion of head when list not empty
-   *   l) deletion of head when list contains one item
-   *   m) deletion of head when list empty
-   */
-  passert((base == NULL) && (other->base == NULL)) ;
-
-  last  = NULL ;
-  first = NULL ;
-  prev  = NULL ;
-  printf("  Building list of items again") ;
-  for (i = 1 ; i <= n ; ++i)
-    {
-      sdl_test this = calloc(1, sizeof(struct sdl_test)) ;
-
-      if (last == NULL)
-        last = this ;
-
-      this->majic = majic(this, &base) ;
-      this->dummy = i ;
-
-      sdl_push(base, this, list) ;
-      if (i & 1)
-        sdl_push(sdl_parent.base, this, other_list) ;
-      else
-        sdl_push(other->base, this, other_list) ;
-
-      test_assert(this->list.next       == prev, "broken sdl_push") ;
-      test_assert(this->other_list.next == prev, "broken sdl_push") ;
-
-      test_assert(base       == this, "broken sdl_push") ;
-      test_assert(other->base == this, "broken sdl_push") ;
-
-      first = this ;
-      prev  = this ;
-
-      printf("+") ;
-    } ;
-
-  printf("\n") ;
-
-  printf("  Deleting the head until list is empty\n") ;
-  printf("    Base list") ;
-
-  prev = NULL ;
-  i = n ;
-  while (1)
-    {
-      this = base ;
-
-      sdl_del_head(base, list) ;
-
-      if (this == NULL)
-        break ;
-
-      test_assert(base == this->list.next, "sdl_del_head broken") ;
-      if (base != NULL)
-        test_assert(base->list.prev == NULL, "sdl_del_head broken") ;
-
-      test_assert(this != prev, "this is same as prev") ;
-      prev = this ;
-
-      test_assert(this->dummy == i--, "don't have the right dummy") ;
-      test_assert(this->majic == majic(this, &base),
-                                      "don't have the right majic") ;
-      printf("-") ;
-    } ;
-  test_assert(i == 0, "not the expected final value of 'i'") ;
-  test_assert(base == NULL, "Base list should be empty") ;
-
-  printf("\n") ;
-
-  printf("   Other list") ;
-
-  prev = NULL ;
-  i = n ;
-  while (1)
-    {
-      this = other->base ;
-
-      if (i & 1)
-        sdl_del_head(other->base, other_list) ;
-      else
-        sdl_del_head(sdl_parent.base, other_list) ;
-
-      if (this == NULL)
-        break ;
-
-      test_assert(other->base == this->other_list.next, "sdl_del_head broken") ;
-      if (other->base != NULL)
-        test_assert(other->base->other_list.prev == NULL,
-                                                       "sdl_del_head broken") ;
-
-      test_assert(this != prev, "this is same as prev") ;
-      prev = this ;
-
-      test_assert(this->dummy == i--, "don't have the right dummy") ;
-      test_assert(this->majic == majic(this, &base),
-                                      "don't have the right majic") ;
-      printf("-") ;
-    } ;
-  test_assert(i == 0, "not the expected final value of 'i'") ;
-  test_assert(other->base == NULL, "Other list should be empty") ;
-
-  printf("\n") ;
-
-  /* Final few tests
-   *
-   *   d) deletion of first item when only one item on the list
-   *   g) deletion of NULL item and list empty
-   */
-
-  /* Deletion of items from arbitrary place in list                     */
-  printf("  Miscellaneous") ;
-
-  del->list.next = &dummy ;
-  sdl_push(base, del, list) ;
-  test_assert((base == del) && (del->list.next == NULL), "sdl_push failed ??") ;
-  sdl_del(base, del, list) ;
-  test_assert(base == NULL, "sdl_del of first and only item failed") ;
-
-  other_del->other_list.next = &dummy ;
-  sdl_push(other->base, other_del, other_list) ;
-  test_assert((other->base == other_del) && (other_del->other_list.next == NULL),
-                                                         "sdl_push failed ??") ;
-  sdl_del(other->base, other_del, other_list) ;
-  test_assert(other->base == NULL, "sdl_del of first and only item failed") ;
-
-  this = NULL ;
-  sdl_del(base, this, list) ;
-  test_assert(base == NULL, "sdl_del of NULL item with empty list") ;
-
-  sdl_del(other->base, this, other_list) ;
-  test_assert(other->base == NULL, "sdl_del of NULL item with empty list") ;
-
-  printf("\n") ;
-} ;
-
-/*==============================================================================
- * Double Base, Double Link
- *
- *   ddl_init(base)                 -- initialise base
- *   ddl_push(base, item, list)     -- insert at head of list
- *   ddl_append(base, item, list)   -- insert at tail of list
- *   ddl_in_after(after, base, item, list)   -- insert after
- *   ddl_in_before(before, base, item, list) -- insert before
- *   ddl_pop(&dst, base, next)      -- pop head of list, if any
- *   ddl_crop(&dst, base, next)     -- crop tail of list, if any
- *   ddl_del(base, item, list)      -- delete from list
- *   ddl_del_head(base, next)       -- delete head of list
- *   ddl_del_tail(base, next)       -- delete tail of list
- *   ddl_head(base)                 -- return head of list
- *   ddl_tail(base)                 -- return tail of list
- *   ddl_next(item, next)           -- step to next item, if any
- *   ddl_prev(item, next)           -- step to prev item, if any
- *
- *   ddl_slice(base, sub, list)     -- remove sublist from given list
- *   ddl_splice_after(after, base, sub, list)
- *                                  -- insert sublist after given item
- *   ddl_splice_before(before, base, sub, list)
- *                                  -- insert sublist before given item
- *
- * Cases to cover:
+/* Testing runs two lists through struct ddt_item objects.
  */
-
-/* Testing runs two lists through struct ddt_item objects.                    */
 
 enum list
   {
@@ -2648,5 +1884,3 @@ aux_find(vector aux, void* item)
 
   return -1 ;
 } ;
-
-

@@ -22,10 +22,10 @@ Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
 
 #include "linklist.h"
 #include "prefix_id.h"
+#include "prefix.h"
 #include "memory.h"
 #include "vector.h"
 #include "vty.h"
-#include "stream.h"
 #include "log.h"
 
 #include "bgp.h"
@@ -264,7 +264,7 @@ bgp_attr_parse (bgp_attr_parsing restrict prs, const byte* start_p,
             attr_p = bgp_attr_local_pref (prs, attr_p);
             break;
 
-          case BGP_ATT_ATOMIC_AGGREGATE:
+          case BGP_ATT_A_AGGREGATE:
             attr_p = bgp_attr_atomic (prs, attr_p);
             break;
 
@@ -454,38 +454,44 @@ bgp_attr_check (bgp_attr_parsing restrict prs)
 
 /*------------------------------------------------------------------------------
  * Make attributes for outgoing BGP Message.
+ *
+ * Returns:  length of attributes -- including any overrun
+ *
+ * NB: assumes the blower has not (yet) overrun !
+ *
+ * NB: does a blow_overrun_check() (or equivalent) before returning
  */
-extern bgp_size_t
-bgp_packet_attribute (stream s, peer_rib prib, attr_set attr, prefix p,
-                                                              mpls_tags_t tags)
+extern ulen
+bgp_packet_write_attribute(blower br, peer_rib prib, attr_set attr)
 {
   bgp_peer  peer ;
-  size_t cp ;
-  bool send_as4_path ;
-  bool send_as4_aggregator ;
-  bool as4 ;
-  as_path_out_t asp_out[1] ;
+  bool as4, send_as4_path, send_as4_aggregator ;
   bgp_peer_sort_t sort ;
-  uint sizep, tp, tl ;
+  ptr_t     p, start ;
+  uint      len ;
+  as_path_out_t asp_out[1] ;
 
   peer = prib->peer ;
   qassert(peer->type == PEER_TYPE_REAL) ;
 
   send_as4_path       = false ;
   send_as4_aggregator = false ;
-  as4  = peer->session->prs->can_as4 ;
+  as4  = peer->session->args->can_as4 ;
   sort = peer->sort ;
 
-  /* Remember current pointer
-   */
-  cp = stream_get_endp (s);
+  start = blow_ptr(br) ;
 
   /* Origin attribute.
    */
-  stream_putc (s, BGP_ATF_TRANSITIVE);
-  stream_putc (s, BGP_ATT_ORIGIN);
-  stream_putc (s, 1);
-  stream_putc (s, attr->origin);
+  p = blow_want(br, 3 + BGP_ATT_ORIGIN_L) ;
+
+  p[0] = BGP_ATF_TRANSITIVE ;
+  p[1] = BGP_ATT_ORIGIN ;
+  p[2] = BGP_ATT_ORIGIN_L ;
+  p[3] = (attr->origin <= BGP_ATT_ORG_MAX) ? attr->origin : BGP_ATT_ORG_INCOMP ;
+
+  confirm(BGP_ATT_ORG_MIN  == 0) ;
+  confirm(BGP_ATT_ORIGIN_L == 1) ;
 
   /* AS path attribute.
    */
@@ -508,12 +514,11 @@ bgp_packet_attribute (stream s, peer_rib prib, attr_set attr, prefix p,
          * need to insert the bgp->ebgp_as (ie the true local-as) just after
          * the (fake) local_as -- except where they are equal.
          */
-        if (prib->af_flags & PEER_AFF_RSERVER_CLIENT)
+        if (prib->route_server_client)
           break ;
 
-        if (prib->af_flags & PEER_AFF_AS_PATH_UNCHANGED)
-          if (!as_path_is_empty(attr->asp))
-            break ;
+        if (prib->as_path_unchanged && !as_path_is_empty(attr->asp))
+          break ;
 
         asp_out->seg = BGP_AS_SEQUENCE ;
         asp_out->prepend_count  = 1 ;
@@ -555,48 +560,73 @@ bgp_packet_attribute (stream s, peer_rib prib, attr_set attr, prefix p,
 
   send_as4_path = as_path_out_prepare(asp_out, attr->asp, as4) ;
 
-  if (asp_out->len[0] > 0)
-    stream_put(s, asp_out->part[0], asp_out->len[0]) ;
-  if (asp_out->len[1] > 0)
-    stream_put(s, asp_out->part[1], asp_out->len[1]) ;
+  blow_n_check(br, asp_out->part[0], asp_out->len[0]) ;
+  blow_n_check(br, asp_out->part[1], asp_out->len[1]) ;
+
+  /* Note... have just checked for blower overrun, the next few attributes
+   *         all add up to rather less than blow_buffer_safe, so we can
+   *         check for overrun once, later.
+   */
+  confirm( ( (3 + BGP_ATT_NEXT_HOP_L) +
+             (3 + BGP_ATT_MED_L)      +
+             (3 + BGP_ATT_L_PREF_L)   +
+             (3 + BGP_ATT_A_AGGREGATE_L) +
+             (3 + BGP_ATT_AGR_AS4_L)       ) < blow_buffer_safe) ;
 
   /* Nexthop attribute.
    */
   if ((prib->qafx == qafx_ipv4_unicast) && (attr->next_hop.type == nh_ipv4))
     {
-      stream_putc (s, BGP_ATF_TRANSITIVE);
-      stream_putc (s, BGP_ATT_NEXT_HOP);
-      stream_putc (s, 4);
-      stream_put_ipv4 (s, attr->next_hop.ip.v4) ;
+      p = blow_step(br, 3 + BGP_ATT_NEXT_HOP_L) ;
+
+      p[0] = BGP_ATF_TRANSITIVE ;
+      p[1] = BGP_ATT_NEXT_HOP ;
+      p[2] = BGP_ATT_NEXT_HOP_L ;
+      store_l(&p[3], attr->next_hop.ip.v4) ;
+
+      confirm(BGP_ATT_NEXT_HOP_L == 4) ;
     } ;
 
-  /* MED attribute. */
+  /* MED attribute.
+   */
   if (attr->have & atb_med)
     {
-      stream_putc (s, BGP_ATF_OPTIONAL);
-      stream_putc (s, BGP_ATT_MED);
-      stream_putc (s, 4);
-      stream_putl (s, attr->med);
+      p = blow_step(br, 3 + BGP_ATT_MED_L) ;
+
+      p[0] = BGP_ATF_OPTIONAL ;
+      p[1] = BGP_ATT_MED ;
+      p[2] = BGP_ATT_MED_L ;
+      store_nl(&p[3], attr->med) ;
+
+      confirm(BGP_ATT_MED_L == 4) ;
     }
 
   /* Local preference.
    */
   if ((sort == BGP_PEER_IBGP) || (sort == BGP_PEER_CBGP))
     {
-      stream_putc (s, BGP_ATF_TRANSITIVE);
-      stream_putc (s, BGP_ATT_LOCAL_PREF);
-      stream_putc (s, 4);
-      stream_putl (s, attr->local_pref);
-    }
+      p = blow_step(br, 3 + BGP_ATT_L_PREF_L) ;
+
+      p[0] = BGP_ATF_TRANSITIVE ;
+      p[1] = BGP_ATT_LOCAL_PREF ;
+      p[2] = BGP_ATT_L_PREF_L ;
+      store_nl(&p[3], attr->local_pref) ;
+
+      confirm(BGP_ATT_L_PREF_L == 4) ;
+    } ;
 
   /* Atomic aggregate.
    */
   if (attr->have & atb_atomic_aggregate)
     {
-      stream_putc (s, BGP_ATF_TRANSITIVE);
-      stream_putc (s, BGP_ATT_ATOMIC_AGGREGATE);
-      stream_putc (s, 0);
-    }
+      p = blow_step(br, 3 + BGP_ATT_A_AGGREGATE_L) ;
+
+      p[0] = BGP_ATF_TRANSITIVE ;
+      p[1] = BGP_ATT_A_AGGREGATE ;
+      p[2] = BGP_ATT_A_AGGREGATE_L ;
+
+      confirm(BGP_ATT_A_AGGREGATE_L == 0) ;
+    } ;
 
   /* Aggregator.
    */
@@ -606,49 +636,58 @@ bgp_packet_attribute (stream s, peer_rib prib, attr_set attr, prefix p,
        *
        * XXX BUG -- need to set BGP_ATF_PARTIAL if not originating this !!
        */
-      stream_putc (s, BGP_ATF_OPTIONAL | BGP_ATF_TRANSITIVE);
-      stream_putc (s, BGP_ATT_AGGREGATOR);
+      len = (as4) ? BGP_ATT_AGR_AS4_L : BGP_ATT_AGR_AS2_L ;
+      p   = blow_step(br, 3 + len) ;
+
+      p[0] = BGP_ATF_OPTIONAL | BGP_ATF_TRANSITIVE ;
+      p[1] = BGP_ATT_AGGREGATOR ;
+      p[2] = len ;
 
       if (as4)
         {
-          /* AS4 capable peer */
-          stream_putc (s, 8);
-          stream_putl (s, attr->aggregator_as);
+          /* AS4 capable peer
+           */
+          store_nl(&p[3], attr->aggregator_as) ;
         }
       else
         {
-          /* 2-byte AS peer */
-          stream_putc (s, 6);
-
-          /* Is ASN representable in 2-bytes? Or must AS_TRANS be used?
+          /* 2-byte AS peer
+           *
+           * Is ASN representable in 2-bytes? Or must AS_TRANS be used?
            */
-          if ( attr->aggregator_as > 65535 )
-            {
-              stream_putw (s, BGP_ASN_TRANS);
+          as_t asn ;
 
+          asn = attr->aggregator_as ;
+
+          if (asn > 65535 )
+            {
               /* we have to send AS4_AGGREGATOR, too.
                * we'll do that later in order to send attributes in ascending
                * order.
                */
               send_as4_aggregator = true ;
-            }
-          else
-            stream_putw (s, attr->aggregator_as);
-        }
-      stream_put_ipv4 (s, attr->aggregator_ip);
-    }
+              asn = BGP_ASN_TRANS ;
+            } ;
+
+          store_ns(&p[3], asn) ;
+        } ;
+
+      store_l(&p[3 + len - 4], attr->aggregator_ip) ;
+    } ;
+
+  /* Quick check for overflow !!
+   *
+   * What we have written since the last overrun check will be less than the
+   * slack -- see above.
+   */
+  blow_overrun_check(br) ;
 
   /* Community attribute.
    */
-  if ( (attr->community != NULL) &&
-                      (prib->af_flags & PEER_AFF_SEND_COMMUNITY) )
+  if ( (attr->community != NULL) && prib->send_community)
     {
-      byte * p ;
-      ulen len ;
-
       p = attr_community_out_prepare(attr->community, &len) ;
-
-      stream_put (s, p, len) ;
+      blow_n_check(br, p, len) ;
     } ;
 
   /* Route Reflection.
@@ -663,10 +702,14 @@ bgp_packet_attribute (stream s, peer_rib prib, attr_set attr, prefix p,
 
       /* Put the BGP_ATT_ORIGINATOR_ID,
        */
-      stream_putc (s, BGP_ATF_OPTIONAL);
-      stream_putc (s, BGP_ATT_ORIGINATOR_ID);
-      stream_putc (s, 4);
-      stream_put_ipv4 (s, attr->originator_id ) ;
+      p = blow_want(br, 3 + BGP_ATT_ORIG_ID_L) ;
+
+      p[0] = BGP_ATF_OPTIONAL ;
+      p[1] = BGP_ATT_ORIGINATOR_ID ;
+      p[2] = BGP_ATT_ORIG_ID_L ;
+      store_l(&p[3], attr->originator_id ) ;
+
+      confirm(BGP_ATT_ORIG_ID_L == 4) ;
 
       /* Prepare and put the cluster list, prepending either the (explicit)
        * cluster_id or the (implicit) router_id.
@@ -675,129 +718,22 @@ bgp_packet_attribute (stream s, peer_rib prib, attr_set attr, prefix p,
 
       attr_cluster_out_prepare(clust_out, attr->cluster) ;
 
-      if (clust_out->len[0] > 0)
-        stream_put(s, clust_out->part[0], clust_out->len[0]) ;
-      if (clust_out->len[1] > 0)
-        stream_put(s, clust_out->part[1], clust_out->len[1]) ;
-    } ;
-
-  /* MP_REACH_NLRI, as required.
-   */
-  switch (prib->qafx)
-    {
-      case qafx_ipv4_unicast:
-        qassert(p->family == AF_INET) ;
-        qassert(p->rd_id == prefix_rd_id_null) ;
-        break ;
-
-      case qafx_ipv4_multicast:
-        qassert(p->family == AF_INET) ;
-        qassert(p->rd_id == prefix_rd_id_null) ;
-
-        stream_putc (s, BGP_ATF_OPTIONAL);
-        stream_putc (s, BGP_ATT_MP_REACH_NLRI);
-        sizep = stream_get_endp (s);
-        stream_putc (s, 0);             /* Marker: Attribute Length.    */
-        stream_putw (s, iAFI_IP);
-        stream_putc (s, iSAFI_Multicast);
-
-        stream_putc (s, 4) ;            /* next hop length              */
-        stream_put_ipv4 (s, attr->next_hop.ip.v4) ;
-
-        stream_putc (s, 0);             /* SNPA                         */
-
-        stream_put_prefix (s, p);
-
-        stream_putc_at (s, sizep, (stream_get_endp (s) - sizep) - 1);
-        break ;
-
-      case qafx_ipv4_mpls_vpn:
-        qassert(p->family == AF_INET) ;
-        qassert(p->rd_id != prefix_rd_id_null) ;
-
-        stream_putc (s, BGP_ATF_OPTIONAL);
-        stream_putc (s, BGP_ATT_MP_REACH_NLRI);
-        sizep = stream_get_endp (s);
-        stream_putc (s, 0);             /* Attribute Length, TBA.       */
-        stream_putw (s, iAFI_IP);
-        stream_putc (s, iSAFI_MPLS_VPN);
-
-        stream_putc (s, 12) ;           /* next hop length              */
-        stream_putl (s, 0) ;            /* first 4 bytes of 0 RD        */
-        stream_putl (s, 0) ;            /* second 4 bytes of same       */
-        stream_put_ipv4 (s, attr->next_hop.ip.v4) ;
-
-        stream_putc (s, 0);             /* SNPA                         */
-
-        tp = stream_get_endp (s) ;
-        stream_putc (s, 0);             /* prefix length place-holder   */
-
-        tl = mpls_tags_to_stream(s, tags) ;
-        stream_put (s, prefix_rd_id_get_val(p->rd_id), 8);
-        stream_put (s, &p->u.prefix, PSIZE (p->prefixlen));
-
-        stream_putc_at (s, tp, p->prefixlen + ((tl + 8) * 8)) ;
-
-        stream_putc_at (s, sizep, (stream_get_endp (s) - sizep) - 1);
-        break ;
-
-#ifdef HAVE_IPV6
-      case qafx_ipv6_unicast:
-      case qafx_ipv6_multicast:
-        stream_putc (s, BGP_ATF_OPTIONAL);
-        stream_putc (s, BGP_ATT_MP_REACH_NLRI);
-        sizep = stream_get_endp (s);
-        stream_putc (s, 0);
-        stream_putw (s, iAFI_IP6);
-        stream_putc (s, get_iSAFI(prib->qafx)) ;
-
-        switch (attr->next_hop.type)
-          {
-            case nh_ipv6_1:             /* "global" address only        */
-              stream_putc(s, 16) ;
-
-              stream_put(s, &attr->next_hop.ip.v6[0].addr, 16) ;
-              break ;
-
-            case nh_ipv6_2:             /* "global" and link-local addresses */
-              stream_putc(s, 32) ;
-
-              stream_put(s, &attr->next_hop.ip.v6, 32) ;
-              break ;
-
-            default:
-              stream_putc(s, 0) ;
-              break ;
-          } ;
-
-        stream_putc (s, 0);               /* SNPA */
-
-        stream_put_prefix (s, p);
-
-        stream_putc_at (s, sizep, (stream_get_endp (s) - sizep) - 1);
-
-        break ;
-#endif /* HAVE_IPV6 */
-
-      default:
-        break ;
+      blow_n_check(br, clust_out->part[0], clust_out->len[0]) ;
+      blow_n_check(br, clust_out->part[1], clust_out->len[1]) ;
     } ;
 
   /* Extended Communities attribute.
    *
    * Send only the transitive community if this is not iBGP and not Confed.
    */
-  if ((attr->ecommunity != NULL) &&
-                                (prib->af_flags & PEER_AFF_SEND_EXT_COMMUNITY))
+  if ((attr->ecommunity != NULL) && prib->send_ecommunity)
     {
       bool trans_only ;
-      byte *p ;
-      ulen len ;
 
       trans_only = (sort != BGP_PEER_IBGP) && (sort != BGP_PEER_CBGP) ;
 
       p = attr_ecommunity_out_prepare(attr->ecommunity, trans_only, &len) ;
-      stream_put (s, p, len) ;          /* len may be zero      */
+      blow_n_check(br, p, len) ;
     } ;
 
   if (send_as4_path)
@@ -820,127 +756,269 @@ bgp_packet_attribute (stream s, peer_rib prib, attr_set attr, prefix p,
 
       as_path_out_prepare(asp_out, attr->asp, true /* want AS4 ASN */) ;
 
-      if (asp_out->len[0] > 0)
-        stream_put(s, asp_out->part[0], asp_out->len[0]) ;
-      if (asp_out->len[1] > 0)
-        stream_put(s, asp_out->part[1], asp_out->len[1]) ;
+      blow_n_check(br, asp_out->part[0], asp_out->len[0]) ;
+      blow_n_check(br, asp_out->part[1], asp_out->len[1]) ;
     } ;
 
   /* AS4_AGGREGATOR, if required.
    */
   if (send_as4_aggregator)
     {
-      stream_putc (s, BGP_ATF_OPTIONAL | BGP_ATF_TRANSITIVE);
-      stream_putc (s, BGP_ATT_AS4_AGGREGATOR);
-      stream_putc (s, 8);
-      stream_putl (s, attr->aggregator_as) ;
-      stream_put_ipv4 (s, attr->aggregator_ip) ;
-    }
+      p = blow_want(br, 3 + BGP_ATT_AGR_AS4_L) ;
+
+      p[0] = BGP_ATF_OPTIONAL | BGP_ATF_TRANSITIVE ;
+      p[1] = BGP_ATT_AS4_AGGREGATOR ;
+      p[2] = BGP_ATT_AGR_AS4_L ;
+      store_nl(&p[3], attr->aggregator_as) ;
+      store_l (&p[7], attr->aggregator_ip) ;
+
+      confirm(BGP_ATT_AGR_AS4_L == 8) ;
+    } ;
 
   /* Unknown Optional, Transitive Attributes, if any.
    */
   if (attr->transitive != NULL)
     {
-      byte *p ;
-      ulen len ;
-
       p = attr_unknown_out_prepare(attr->transitive, &len) ;
-      stream_put (s, p, len) ;
+      blow_n_check(br, p, len) ;
     } ;
 
-  /* Return total size of attribute.
+  /* Return length of attributes -- including any overrun.
    */
-  return stream_get_endp (s) - cp;
-}
+  return blow_ptr_inc_overrun(br) - start ;
+} ;
 
 /*------------------------------------------------------------------------------
- * Construct an MP_UNREACH_NLRI attribute for the given prefix
- */
-extern bgp_size_t
-bgp_unreach_attribute (stream s, prefix p, qafx_t qafx)
-{
-  uint cp;
-  uint attrlen_pnt;
-  bgp_size_t size;
-  iSAFI_t i_safi ;
-
-  cp = stream_get_endp (s);
-
-  stream_putc (s, BGP_ATF_OPTIONAL);
-  stream_putc (s, BGP_ATT_MP_UNREACH_NLRI);
-
-  attrlen_pnt = stream_get_endp (s);
-  stream_putc (s, 0);           /* Length of this attribute. */
-
-  stream_putw (s, get_iAFI(qafx)) ;
-  i_safi = get_iSAFI(qafx) ;
-  stream_putc (s, i_safi) ;
-
-  if (get_qSAFI(qafx) == qSAFI_MPLS_VPN)
-    {
-      qassert(p->rd_id != prefix_rd_id_null) ;
-      bgp_packet_withdraw_vpn_prefix (s, p) ;
-    }
-  else
-    {
-      qassert(p->rd_id == prefix_rd_id_null) ;
-      stream_put_prefix (s, p);
-    } ;
-
-  /* Set MP attribute length. */
-  size = stream_get_endp (s) - attrlen_pnt - 1;
-  stream_putc_at (s, attrlen_pnt, size);
-
-  return stream_get_endp (s) - cp;
-}
-
-/*------------------------------------------------------------------------------
- * Put a withdraw prefix to the given stream.
+ * Lay down the start of an MP_REACH_NLRI attribute.
  *
- * If this is an MPLS_VPN, then insert an empty label and the Route
- * Distinguisher between the prefix length and the address.
+ * Will happily lay down an IPv4_Unicast MP_REACH_NLRI.
+ *
+ * Puts:  Flags    -- BGP_ATF_OPTIONAL
+ *        Type     -- BGP_ATT_MP_REACH_NLRI
+ *        Length   -- 1 bytes of zero         -- NB: NOT Extended Length.
+ *        AFI      -- 2 bytes
+ *        SAFI     -- 1 byte
+ *        Length   -- of next hop
+ *        Next Hop -- 'n' bytes as required
+ *        0        -- defunct "SNPA"
+ *
+ * Returns:  total length of attribute, whether or not overran.
+ *
+ * NB: the *total* length includes the 3 Flags/Type/Length bytes.
  */
-extern void
-bgp_packet_withdraw_prefix (stream s, prefix_c p, qafx_t qafx)
+extern ulen
+bgp_reach_attribute(blower br, peer_rib prib, attr_set attr)
 {
-  if (!qafx_is_mpls_vpn(qafx))
-    {
-      qassert(p->rd_id == prefix_rd_id_null) ;
-      stream_put_prefix (s, p);
-    }
-  else
-    {
-      qassert(p->rd_id != prefix_rd_id_null) ;
+  ptr_t p, s ;
+  uint  len ;
 
-      stream_putc (s, p->prefixlen + ((3 + 8) * 8));
-      stream_put (s, "\x00\x00\x01", 3);
-      stream_put (s, prefix_rd_id_get_val(p->rd_id), 8);
-      stream_put (s, &p->u.prefix, PSIZE (p->prefixlen));
+  /* Start the MP_REACH_NLRI attribute -- with overrun check.
+   */
+  s = blow_want(br, 3 + BGP_ATT_MPR_NH_LEN) ;
+
+  confirm(BGP_ATT_MPR_NH_LEN == 3) ;
+
+  store_b( &s[0], BGP_ATF_OPTIONAL) ;
+  store_b( &s[1], BGP_ATT_MP_REACH_NLRI) ;
+  store_b( &s[2], 0) ;
+  store_ns(&s[3], prib->i_afi) ;
+  store_b (&s[5], prib->i_safi) ;
+
+  /* After the first bytes of the attribute above, we will now write 'len'
+   * bytes of next-hop, preceded by one byte of length and followed by one
+   * byte of "SNPA" -- so, provided the next-hop length is no greater than
+   * this 'len_safe', we don't need any further overrun checks.
+   */
+  enum { len_safe = blow_buffer_safe - (3 + BGP_ATT_MPR_NH_LEN + 1 + 1) } ;
+
+  /* Now the next-hop, as required.
+   */
+  switch (prib->qafx)
+    {
+      case qafx_ipv4_unicast:
+      case qafx_ipv4_multicast:
+        len = 4 ;
+        confirm(4 <= len_safe) ;
+
+        p = blow_step(br, 1 + len) ;
+
+        store_b(&p[0], len) ;
+        store_l(&p[1], attr->next_hop.ip.v4) ;
+        break ;
+
+      case qafx_ipv4_mpls_vpn:
+        len = 12 ;
+        confirm(12 <= len_safe) ;
+
+        p = blow_step(br, 1 + len) ;
+
+        store_b(&p[0], len) ;
+        store_l(&p[1], 0) ;             /* first 4 bytes of 0 RD        */
+        store_l(&p[5], 0) ;             /* second 4 bytes of same       */
+        store_l(&p[9], attr->next_hop.ip.v4) ;
+        break ;
+
+#ifdef HAVE_IPV6
+      case qafx_ipv6_unicast:
+      case qafx_ipv6_multicast:
+        switch (attr->next_hop.type)
+          {
+            case nh_ipv6_1:             /* "global" address only        */
+              len = 16 ;
+              break ;
+
+            case nh_ipv6_2:             /* "global" and link-local addresses */
+              len = 32 ;
+              break ;
+
+            default:
+              len = 0 ;
+              break ;
+          } ;
+
+        confirm(32 <= len_safe) ;
+
+        blow_b(br, len) ;
+        blow_n(br, &attr->next_hop.ip.v6, len) ;
+
+        break ;
+#endif /* HAVE_IPV6 */
+
+      default:
+        len = 0 ;
+        confirm(0 <= len_safe) ;
+
+        blow_b(br, 0) ;
+        break ;
     } ;
-}
+
+  blow_b(br, 0) ;               /* "SNPA"               */
+
+  qassert((blow_ptr(br) - s) == (3 + BGP_ATT_MPR_NH_LEN + 1 + len + 1)) ;
+
+  return (3 + BGP_ATT_MPR_NH_LEN + 1 + len + 1) ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Blow the given prefix and any tags using the given blower.
+ *
+ * NB: caller MUST check for blower overflow -- eg by blow_left() -- BEFORE
+ *     calling this.
+ *
+ *     Caller may (well) want to check for blower overflow on return.
+ *
+ * Returns:  byte length of the prefix -- prefix length + prefix body
+ */
+extern ulen
+bgp_blow_prefix(blower br, peer_rib prib, prefix_id_t pfx_id, mpls_tags_t tags)
+{
+  prefix_id_entry pie ;
+  prefix_raw_t pfx_raw[1] ;
+  size_t       pfx_size ;
+  ptr_t        p_prefixlen ;
+  uint         tl ;
+
+  confirm(sizeof(pfx_raw) <= blow_buffer_safe) ;  /* not quite coincidence */
+
+  pie = prefix_id_get_entry(pfx_id) ;
+
+  switch (prib->qafx)
+    {
+      case qafx_ipv4_unicast:
+      case qafx_ipv4_multicast:
+        qassert(pie->pfx->family == AF_INET) ;
+        qassert(pie->pfx->rd_id == prefix_rd_id_null) ;
+
+        return prefix_blow(br, pie->pfx) ;
+
+      case qafx_ipv4_mpls_vpn:
+        qassert(pie->pfx->family == AF_INET) ;
+        qassert(pie->pfx->rd_id != prefix_rd_id_null) ;
+
+        pfx_size = prefix_to_raw(pfx_raw, pie->pfx) ;
+
+        p_prefixlen = blow_step(br, 1) ;        /* prefix length        */
+
+        tl = mpls_tags_blow(br, tags) ; /* tag length in bytes          */
+        blow_n_check(br, prefix_rd_id_get_val(pie->pfx->rd_id), 8) ;
+        blow_n_check(br, &pfx_raw->prefix, pfx_size - 1) ;
+
+        *p_prefixlen = ((tl + 8) * 8) + pfx_raw->prefix_len ;
+
+        return (tl + 8 + pfx_size) ;
+
+#ifdef HAVE_IPV6
+      case qafx_ipv6_unicast:
+      case qafx_ipv6_multicast:
+        qassert(pie->pfx->family == AF_INET) ;
+        qassert(pie->pfx->rd_id == prefix_rd_id_null) ;
+
+        return prefix_blow(br, pie->pfx) ;
+#endif /* HAVE_IPV6 */
+
+      default:
+        return 0 ;
+    } ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Lay down the start of an MP_UNREACH_NLRI attribute.
+ *
+ * Will happily lay down an IPv4_Unicast MP_REACH_NLRI.
+ *
+ * Puts:  Flags    -- BGP_ATF_OPTIONAL
+ *        Type     -- BGP_ATT_MP_UNREACH_NLRI
+ *        Length   -- 1 bytes of zero         -- NB: NOT Extended Length.
+ *        AFI      -- 2 bytes
+ *        SAFI     -- 1 byte
+ *
+ * Returns:  total length of attribute, whether or not overran.
+ *
+ * NB: the *total* length includes the 3 Flags/Type/Length bytes.
+ */
+extern ulen
+bgp_unreach_attribute(blower br, peer_rib prib)
+{
+  ptr_t p ;
+
+  p = blow_want(br, 3 + BGP_ATT_MPU_NLRI) ;
+  confirm(BGP_ATT_MPU_NLRI == 3) ;
+
+  store_b( &p[0], BGP_ATF_OPTIONAL) ;
+  store_b( &p[1], BGP_ATT_MP_UNREACH_NLRI) ;
+  store_b( &p[2], 0) ;
+  store_ns(&p[3], prib->i_afi) ;
+  store_b (&p[5], prib->i_safi) ;
+
+  return 3 + BGP_ATT_MPU_NLRI ;
+} ;
 
 /*------------------------------------------------------------------------------
  * Make attribute for bgp_dump.
+ *
+ * Returns:  length of what has written, *including* the length word.
  */
-extern void
-bgp_dump_routes_attr (struct stream* s, attr_set attr, prefix p)
+extern ulen
+bgp_dump_routes_attr (blower br, attr_set attr, prefix pfx)
 {
-  uint cp, len ;
+  ptr_t  len_p, p ;
+  ulen   len ;
 
   as_path_out_t asp_out[1] ;
 
   /* Remember current pointer and insert placeholder for the length
    */
-  cp = stream_get_endp (s);
-
-  stream_putw (s, 0);
+  blow_overrun_check(br) ;              /* start carefully      */
+  len_p = blow_step(br, 2) ;
 
   /* Origin attribute.
    */
-  stream_putc (s, BGP_ATF_TRANSITIVE);
-  stream_putc (s, BGP_ATT_ORIGIN);
-  stream_putc (s, 1);
-  stream_putc (s, attr->origin);
+  p = blow_step(br, 4) ;
+
+  store_b (&p[0], BGP_ATF_TRANSITIVE);
+  store_b (&p[1], BGP_ATT_ORIGIN);
+  store_b (&p[2], 1);
+  store_b (&p[3], attr->origin);
 
   /* AS Path attribute
    *
@@ -949,124 +1027,130 @@ bgp_dump_routes_attr (struct stream* s, attr_set attr, prefix p)
   asp_out->seg = BGP_AS_SEG_NULL ;      /* prepend nothing      */
 
   as_path_out_prepare(asp_out, attr->asp, true /* in AS4 form */) ;
-
-  if (asp_out->len[0] > 0)
-    stream_put(s, asp_out->part[0], asp_out->len[0]) ;
-  if (asp_out->len[1] > 0)
-    stream_put(s, asp_out->part[1], asp_out->len[1]) ;
+  blow_n_check(br, asp_out->part[0], asp_out->len[0]) ;
+  blow_n_check(br, asp_out->part[1], asp_out->len[1]) ;
 
   /* Nexthop attribute.
    *
-   * If it's an IPv6 prefix, don't dump the IPv4 nexthop to save space
+   * If it's not IPv4, don't dump the IPv4 nexthop to save space
    */
-  if((p != NULL)
-#ifdef HAVE_IPV6
-     && (p->family != AF_INET6)
-#endif /* HAVE_IPV6 */
-     )
+  if ((pfx != NULL) && (pfx->family == AF_INET6))
     {
-      stream_putc (s, BGP_ATF_TRANSITIVE);
-      stream_putc (s, BGP_ATT_NEXT_HOP);
-      stream_putc (s, 4);
-      stream_put_ipv4 (s, attr->next_hop.ip.v4);
-    }
+      p = blow_step(br, 7) ;
+
+      store_b (&p[0], BGP_ATF_TRANSITIVE);
+      store_b (&p[1], BGP_ATT_NEXT_HOP);
+      store_b (&p[2], 4);
+      store_l (&p[3], attr->next_hop.ip.v4);
+    } ;
 
   /* MED attribute.
    */
   if (attr->have & atb_med)
     {
-      stream_putc (s, BGP_ATF_OPTIONAL);
-      stream_putc (s, BGP_ATT_MED);
-      stream_putc (s, 4);
-      stream_putl (s, attr->med);
+      p = blow_step(br, 7) ;
+
+      store_b (&p[0], BGP_ATF_OPTIONAL);
+      store_b (&p[1], BGP_ATT_MED);
+      store_b (&p[2], 4);
+      store_nl(&p[3], attr->med);
     }
 
   /* Local preference.
    */
   if (attr->have & atb_local_pref)
     {
-      stream_putc (s, BGP_ATF_TRANSITIVE);
-      stream_putc (s, BGP_ATT_LOCAL_PREF);
-      stream_putc (s, 4);
-      stream_putl (s, attr->local_pref);
+      p = blow_step(br, 7) ;
+
+      store_b (&p[0], BGP_ATF_TRANSITIVE);
+      store_b (&p[1], BGP_ATT_LOCAL_PREF);
+      store_b (&p[2], 4);
+      store_nl(&p[3], attr->local_pref);
     }
 
   /* Atomic aggregate. */
   if (attr->have & atb_atomic_aggregate)
     {
-      stream_putc (s, BGP_ATF_TRANSITIVE);
-      stream_putc (s, BGP_ATT_ATOMIC_AGGREGATE);
-      stream_putc (s, 0);
+      p = blow_step(br, 3) ;
+
+      store_b (&p[0], BGP_ATF_TRANSITIVE);
+      store_b (&p[1], BGP_ATT_A_AGGREGATE);
+      store_b (&p[2], 0);
     }
 
   /* Aggregator -- in AS4 form
    */
   if (attr->aggregator_as != BGP_ASN_NULL)
     {
-      stream_putc (s, BGP_ATF_OPTIONAL | BGP_ATF_TRANSITIVE);
-      stream_putc (s, BGP_ATT_AGGREGATOR);
-      stream_putc (s, 8);
-      stream_putl (s, attr->aggregator_as);
-      stream_put_ipv4 (s, attr->aggregator_ip) ;
+      p = blow_step(br, 11) ;
+
+      store_b (&p[0], BGP_ATF_OPTIONAL | BGP_ATF_TRANSITIVE);
+      store_b (&p[1], BGP_ATT_AGGREGATOR);
+      store_b (&p[2], 8);
+      store_nl(&p[3], attr->aggregator_as);
+      store_l (&p[7], attr->aggregator_ip) ;
     }
+
+  blow_overrun_check(br) ;              /* treading carefully   */
 
   /* Community attribute.
    */
   if (attr->community != NULL)
     {
-      byte * p ;
-      ulen len ;
-
       p = attr_community_out_prepare(attr->community, &len) ;
-
-      stream_put (s, p, len) ;
-    } ;
+      blow_n_check(br, p, len) ;
+     } ;
 
 #ifdef HAVE_IPV6
   /* Add a MP_NLRI attribute to dump the IPv6 next hop
    */
-  if ((p != NULL) && (p->family == AF_INET6))
+  if ((pfx != NULL) && (pfx->family == AF_INET6))
     {
       if ( (attr->next_hop.type == nh_ipv6_1) ||
            (attr->next_hop.type == nh_ipv6_2) )
         {
-          uint sizep ;
+          /* Start the MP_REACH_NLRI attribute -- with overrun check.
+           */
+          p = blow_want(br, 3 + BGP_ATT_MPR_NH_LEN) ;
 
-          stream_putc (s, BGP_ATF_OPTIONAL);
-          stream_putc (s, BGP_ATT_MP_REACH_NLRI);
-          sizep = stream_get_endp (s);
-          stream_putc (s, 0);           /* Marker: Attribute length.    */
-          stream_putw (s, AFI_IP6) ;
-          stream_putc (s, SAFI_UNICAST) ;
+          confirm(BGP_ATT_MPR_NH_LEN == 3) ;
+
+          store_b( &p[0], BGP_ATF_OPTIONAL) ;
+          store_b( &p[1], BGP_ATT_MP_REACH_NLRI) ;
+          store_ns(&p[3], iAFI_IP6) ;
+          store_b (&p[5], iSAFI_Unicast) ;
 
           switch (attr->next_hop.type)
             {
               case nh_ipv6_1:           /* "global" address only        */
-                stream_putc(s, 16) ;
-
-                stream_put(s, &attr->next_hop.ip.v6[0].addr, 16) ;
+                len = 16 ;
                 break ;
 
-              case nh_ipv6_2:           /* "global" and link-local      */
-                stream_putc(s, 32) ;
-
-                stream_put(s, &attr->next_hop.ip.v6, 32) ;
+              case nh_ipv6_2:           /* "global" and link-local addresses */
+                len = 32 ;
                 break ;
 
               default:
-                assert(false) ;
+                len = 0 ;
+                break ;
             } ;
 
-          stream_putc (s, 0);               /* SNPA */
-          stream_putc_at (s, sizep, (stream_get_endp (s) - sizep) - 1);
+          blow_b(br, len) ;
+          blow_n_check(br, &attr->next_hop.ip.v6, len) ;
+
+          blow_b(br, 0) ;               /* "SNPA"               */
+
+          store_b(&p[2], 3 + 1 + len + 1) ;
         } ;
     } ;
 #endif /* HAVE_IPV6 */
 
-  /* Return total size of attribute. */
-  len = stream_get_endp (s) - cp - 2;
-  stream_putw_at (s, cp, len);
-}
+  len = blow_ptr_inc_overrun(br) - len_p ;      /* total length */
+
+  store_ns(len_p, len - 2) ;
+
+  return len ;
+} ;
 
 /*==============================================================================
  * Common stuff for attribute parsing and error handling
@@ -1104,7 +1188,7 @@ static const attr_flags_check_t attr_flags_check_array[BGP_ATT_MAX] =
   [BGP_ATT_NEXT_HOP          ] = { BGP_ATTR_FLAGS_WELL_KNOWN         },
   [BGP_ATT_MED               ] = { BGP_ATTR_FLAGS_OPTIONAL_NON_TRANS },
   [BGP_ATT_LOCAL_PREF        ] = { BGP_ATTR_FLAGS_WELL_KNOWN         },
-  [BGP_ATT_ATOMIC_AGGREGATE  ] = { BGP_ATTR_FLAGS_WELL_KNOWN         },
+  [BGP_ATT_A_AGGREGATE       ] = { BGP_ATTR_FLAGS_WELL_KNOWN         },
   [BGP_ATT_AGGREGATOR        ] = { BGP_ATTR_FLAGS_OPTIONAL_TRANS     },
 
   [BGP_ATT_COMMUNITIES       ] = { BGP_ATTR_FLAGS_OPTIONAL_TRANS     },
@@ -1193,7 +1277,7 @@ bgp_attr_malformed (bgp_attr_parsing restrict prs, byte subcode,
        */
       case BGP_ATT_AS4_AGGREGATOR:
       case BGP_ATT_AGGREGATOR:
-      case BGP_ATT_ATOMIC_AGGREGATE:
+      case BGP_ATT_A_AGGREGATE:
         if (ret == BGP_ATTR_PARSE_OK)
           ret = BGP_ATTR_PARSE_IGNORE ;
         break ;
@@ -2132,8 +2216,8 @@ bgp_attr_mp_reach_parse (bgp_attr_parsing restrict prs, const byte* attr_p)
    */
   nlri = &prs->mp_update ;
 
-  nlri->in.afi          = load_ns(attr_p) ;
-  nlri->in.safi         = attr_p[2] ;
+  nlri->in.i_afi        = load_ns(attr_p) ;
+  nlri->in.i_safi       = attr_p[2] ;
   nlri->next_hop_length = attr_p[3] ;
 
   if (prs->length < (2 + 1 + 1 + nlri->next_hop_length + 1))
@@ -2262,7 +2346,7 @@ bgp_attr_mp_reach_parse (bgp_attr_parsing restrict prs, const byte* attr_p)
   if (reserved != 0)
     zlog_warn("%s sent non-zero value, %u, for defunct SNPA-length field"
                                          " in MP_REACH_NLRI for AFI/SAFI %u/%u",
-                     prs->peer->host, reserved, nlri->in.afi, nlri->in.safi) ;
+                   prs->peer->host, reserved, nlri->in.i_afi, nlri->in.i_safi) ;
 
   /* Worry about whether we recognise the AFI/SAFI pair.
    *
@@ -2275,13 +2359,13 @@ bgp_attr_mp_reach_parse (bgp_attr_parsing restrict prs, const byte* attr_p)
    * It's not 100% clear whether can/should check the nexthop type against the
    * AFI/SAFI.  TODO ***********************************************************
    */
-  nlri->qafx = qafx_from_i(nlri->in.afi, nlri->in.safi) ;
+  nlri->qafx = qafx_from_i(nlri->in.i_afi, nlri->in.i_safi) ;
 
   switch (nlri->qafx)
     {
       case qafx_undef:
         zlog_warn("%s sent undefined AFI/SAFI %u/%u MP_REACH_NLRI",
-                                prs->peer->host, nlri->in.afi, nlri->in.safi) ;
+                             prs->peer->host, nlri->in.i_afi, nlri->in.i_safi) ;
 
         prs->ret |= BGP_ATTR_PARSE_IGNORE ;
 
@@ -2291,7 +2375,7 @@ bgp_attr_mp_reach_parse (bgp_attr_parsing restrict prs, const byte* attr_p)
       case qafx_other:
       default:
         zlog_warn("%s sent unknown AFI/SAFI %u/%u MP_REACH_NLRI",
-                                prs->peer->host, nlri->in.afi, nlri->in.safi) ;
+                             prs->peer->host, nlri->in.i_afi, nlri->in.i_safi) ;
 
         prs->ret |= BGP_ATTR_PARSE_IGNORE ;
         break ;
@@ -2321,7 +2405,7 @@ bgp_attr_mp_reach_parse (bgp_attr_parsing restrict prs, const byte* attr_p)
     {
       if (prs->ret == BGP_ATTR_PARSE_OK)
         zlog_warn("%s sent zero length NLRI in MP_REACH_NLRI"
-         " for AFI/SAFI %u/%u", prs->peer->host, nlri->in.afi, nlri->in.safi) ;
+      " for AFI/SAFI %u/%u", prs->peer->host, nlri->in.i_afi, nlri->in.i_safi) ;
     }
   else
     {
@@ -2375,8 +2459,8 @@ bgp_attr_mp_unreach_parse (bgp_attr_parsing restrict prs,
 
   nlri = &prs->mp_withdraw ;
 
-  nlri->in.afi   = load_ns(attr_p) ;
-  nlri->in.safi  = attr_p[2] ;
+  nlri->in.i_afi  = load_ns(attr_p) ;
+  nlri->in.i_safi = attr_p[2] ;
 
   /* Worry about whether we recognise the AFI/SAFI pair.
    *
@@ -2389,13 +2473,13 @@ bgp_attr_mp_unreach_parse (bgp_attr_parsing restrict prs,
    * It's not 100% clear whether can/should check the nexthop type against the
    * AFI/SAFI.  TODO ***********************************************************
    */
-  nlri->qafx = qafx_from_i(nlri->in.afi, nlri->in.safi) ;
+  nlri->qafx = qafx_from_i(nlri->in.i_afi, nlri->in.i_safi) ;
 
   switch (nlri->qafx)
     {
       case qafx_undef:
         zlog_warn("%s sent undefined AFI/SAFI %u/%u MP_REACH_NLRI",
-                                prs->peer->host, nlri->in.afi, nlri->in.safi) ;
+                             prs->peer->host, nlri->in.i_afi, nlri->in.i_safi) ;
 
         prs->ret |= BGP_ATTR_PARSE_IGNORE ;
 
@@ -2405,7 +2489,7 @@ bgp_attr_mp_unreach_parse (bgp_attr_parsing restrict prs,
       case qafx_other:
       default:
         zlog_warn("%s sent unknown AFI/SAFI %u/%u MP_REACH_NLRI",
-                                prs->peer->host, nlri->in.afi, nlri->in.safi) ;
+                             prs->peer->host, nlri->in.i_afi, nlri->in.i_safi) ;
 
         prs->ret |= BGP_ATTR_PARSE_IGNORE ;
         break ;
@@ -2421,7 +2505,7 @@ bgp_attr_mp_unreach_parse (bgp_attr_parsing restrict prs,
 
   /* What is left of the attribute is the NLRI.
    */
-  nlri->pnt    = attr_p       + (2 + 1) ;
+  nlri->pnt    = attr_p      + (2 + 1) ;
   nlri->length = prs->length - (2 + 1) ;
 
   qassert(!prs->mp_eor) ;      /* default is no MP End-of-RIB  */
@@ -2453,7 +2537,7 @@ bgp_attr_mp_unreach_parse (bgp_attr_parsing restrict prs,
               else
                 zlog_warn("%s sent apparent End-of-RIB in MP_UNREACH_NLRI"
                        " for AFI/SAFI %u/%u BUT have Withdrawn Routes",
-                                prs->peer->host, nlri->in.afi, nlri->in.safi) ;
+                             prs->peer->host, nlri->in.i_afi, nlri->in.i_safi) ;
             } ;
         }
       else
@@ -2461,7 +2545,7 @@ bgp_attr_mp_unreach_parse (bgp_attr_parsing restrict prs,
           if (prs->ret == BGP_ATTR_PARSE_OK)
             zlog_warn("%s sent zero length NLRI in MP_UNREACH_NLRI"
                         " for AFI/SAFI %u/%u",
-                                prs->peer->host, nlri->in.afi, nlri->in.safi) ;
+                             prs->peer->host, nlri->in.i_afi, nlri->in.i_safi) ;
         } ;
     }
   else

@@ -141,7 +141,7 @@ static void bgp_accept_action(qfile qf, void* file_info) ;
 static bgp_listener_list bgp_listeners_for_port(port_t port) ;
 
 static void bgp_listeners_set_md5(bgp_listener_list listener_list,
-                                  bgp_cops_c cops, on_off_b how) ;
+                       sockunion_c su_password, bgp_cops_c cops, on_off_b how) ;
 
 static int bgp_md5_set_socket(int sock_fd, sockunion_c su,
                                                          const char* password) ;
@@ -391,7 +391,7 @@ bgp_listeners_for_port(port_t port)
               dsl_append(listener_list->base, listener, next) ;
 
               qfile_init_new(&listener->qf, NULL) ;
-              qps_add_qfile(bgp_nexus->selection, &listener->qf, li->sock_fd,
+              qps_add_qfile(be_nexus->selection, &listener->qf, li->sock_fd,
                                                                      listener) ;
               qfile_enable_mode(&listener->qf, qps_read_mnum, bgp_accept_action) ;
 
@@ -440,8 +440,8 @@ bgp_listeners_for_port(port_t port)
  *     to set MD5 makes no difference to this !
  */
 static void
-bgp_listeners_set_md5(bgp_listener_list listener_list,
-                                    bgp_cops_c cops, on_off_b how)
+bgp_listeners_set_md5(bgp_listener_list listener_list, sockunion_c su_password,
+                                                  bgp_cops_c cops, on_off_b how)
 {
   bgp_listener listener ;
   const char* password ;
@@ -656,8 +656,7 @@ bgp_listeners_collect_addrinfo(vector collection, const char* address_str,
 
 #if HAVE_IPV6
           case AF_INET6:
-            if ( IN6_IS_ADDR_V4MAPPED(
-                             ((struct sockaddr_in6*)ainfo)->sin6_addr.s6_addr) )
+            if (IN6_IS_ADDR_V4MAPPED(&((struct sockaddr_in6*)ainfo)->sin6_addr))
               port = 0 ;
             else
               port = ntohs(((struct sockaddr_in6*)ainfo)->sin6_port) ;
@@ -969,7 +968,7 @@ bgp_listen_set(bgp_cops_c cops)
 
   listener_list->use_count += 1 ;
 
-  bgp_listeners_set_md5(listener_list, cops, on) ;
+  bgp_listeners_set_md5(listener_list, &cops->su_remote, cops, on) ;
   return true ;
 } ;
 
@@ -990,11 +989,11 @@ bgp_listen_set_password(bgp_cops_c cops)
   listener_list = bgp_listeners_find_list(cops->port, false /* no make */) ;
 
   if (listener_list != NULL)
-    bgp_listeners_set_md5(listener_list, cops, on) ;
+    bgp_listeners_set_md5(listener_list, &cops->su_remote, cops, on) ;
 } ;
 
 /*------------------------------------------------------------------------------
- * Unset all listeners associated with the address and port given by the
+ * Unset listening associated with the address and port given by the
  *                                          given 'cops', clearing any password.
  *
  * This has no effect if there are no listeners.
@@ -1004,7 +1003,7 @@ bgp_listen_set_password(bgp_cops_c cops)
  *     issue if even of the (then) password is empty.
  */
 extern void
-bgp_listen_unset(bgp_cops_c cops)
+bgp_listen_unset(sockunion_c su_password, bgp_cops_c cops)
 {
   bgp_listener_list listener_list ;
 
@@ -1013,7 +1012,7 @@ bgp_listen_unset(bgp_cops_c cops)
   if (listener_list != NULL)
     {
       if (cops->password[0] != '\0')
-        bgp_listeners_set_md5(listener_list, cops, off) ;
+        bgp_listeners_set_md5(listener_list, su_password, cops, off) ;
 
       if (listener_list->use_count > 1)
         listener_list->use_count -= 1 ;
@@ -1138,6 +1137,9 @@ bgp_accept_action(qfile qf, void* file_info)
 
   /* See if the connecting party is configured -- reject with NOTIFICATION if
    * not.
+   *
+   * Note that the acceptor is set up in the BGP Engine, so once we have a
+   * pointer to the session, we can happily look for our acceptor.
    */
   session  = bgp_peer_index_seek_session(sock_su) ;
   acceptor = (session != NULL) ? session->acceptor : NULL ;
@@ -1167,25 +1169,26 @@ bgp_accept_action(qfile qf, void* file_info)
        *     of) extra information is not going to help... and could hinder
        *     legitimate use.
        */
-      bgp_notify notification ;
+      bgp_note note ;
 
       if (BGP_DEBUG(fsm, FSM))
         zlog_debug("[FSM] BGP accept() rejected %s -- peer not configured",
                                                          sutoa(sock_su).str) ;
 
-      notification = bgp_notify_new(BGP_NOMC_CEASE, BGP_NOMS_C_REJECTED) ;
-      bgp_notify_put(sock_fd, notification) ;
-      bgp_notify_free(notification) ;
+      note = bgp_note_new(BGP_NOMC_CEASE, BGP_NOMS_C_REJECTED) ;
+      bgp_note_put(sock_fd, note) ;
+      bgp_note_free(note) ;
 
       close(sock_fd) ;
       return ;          /* socket closed        */
     } ;
 
-  /* We recognise the connecting party, so now proceed on the basis of the
-   * state of the acceptor.
+  /* We have an active acceptor for the connecting party, so now proceed on the
+   * basis of the state of the acceptor.
    */
-  acceptor->cops = bgp_cops_copy(acceptor->cops,
-                                                         session->cops_config) ;
+  qassert(acceptor->cops != NULL) ;
+
+  bgp_acceptor_cops_reset(acceptor) ;
 
   err = bgp_socket_set_common_options(sock_fd, acceptor->cops, 0, 0) ;
 

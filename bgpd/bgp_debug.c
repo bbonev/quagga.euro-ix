@@ -24,7 +24,6 @@ Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
 #include "lib/version.h"
 #include "prefix.h"
 #include "linklist.h"
-#include "stream.h"
 #include "command.h"
 #include "str.h"
 #include "log.h"
@@ -76,7 +75,7 @@ bgp_dump_attr (bgp_peer peer, attr_set attr,
   const char* str ;
 
   if (attr == NULL)
-    return 0;
+    return NULL ;
 
   qs = qs_new(128) ;
 
@@ -162,7 +161,7 @@ bgp_dump_attr (bgp_peer peer, attr_set attr,
  * Log given notification, if required.
  */
 extern void
-bgp_notify_print(bgp_peer peer, bgp_notify notification)
+bgp_notify_print(bgp_peer peer, bgp_note note)
 {
   map_direct_p subcode_map ;
   const char* hex_form ;
@@ -181,15 +180,15 @@ bgp_notify_print(bgp_peer peer, bgp_notify notification)
 
   /* Construct hex_form of data, if required.
    */
-  length = notification->length ;
-  if (notification->length != 0)
+  length = note->length ;
+  if (note->length != 0)
     {
       const char* form ;
-      uint8_t* p = notification->data ;
-      uint8_t* e = p + notification->length ;
+      uint8_t* p = note->data ;
+      uint8_t* e = p + note->length ;
       char* q ;
 
-      hex_form = alloc = XMALLOC(MTYPE_TMP, (notification->length * 3) + 1) ;
+      hex_form = alloc = XMALLOC(MTYPE_TMP, (note->length * 3) + 1) ;
 
       form = "%02x" ;
       q    = alloc ;
@@ -208,20 +207,20 @@ bgp_notify_print(bgp_peer peer, bgp_notify notification)
 
   /* Output the required logging
    */
-  subcode_map = bgp_notify_subcode_msg_map(notification->code) ;
+  subcode_map = bgp_notify_subcode_msg_map(note->code) ;
 
   if (log_neighbor_changes)
     zlog_info("%%NOTIFICATION: %s neighbor %s %s%s (%d/%d) %d bytes %s",
-              notification->received ? "received from" : "sent to", peer->host,
-              map_direct(bgp_notify_msg_map, notification->code).str,
-              map_direct(subcode_map, notification->subcode).str,
-              notification->code, notification->subcode, length, hex_form) ;
+              note->received ? "received from" : "sent to", peer->host,
+              map_direct(bgp_notify_msg_map, note->code).str,
+              map_direct(subcode_map, note->subcode).str,
+              note->code, note->subcode, length, hex_form) ;
   else
     plog_debug(peer->log, "%s %s NOTIFICATION %s%s (%d/%d) %d bytes %s",
-               peer->host, notification->received ? "received" : "sending",
-               map_direct(bgp_notify_msg_map, notification->code).str,
-               map_direct(subcode_map, notification->subcode).str,
-               notification->code, notification->subcode, length, hex_form) ;
+               peer->host, note->received ? "received" : "sending",
+               map_direct(bgp_notify_msg_map, note->code).str,
+               map_direct(subcode_map, note->subcode).str,
+               note->code, note->subcode, length, hex_form) ;
 
   /* Release the space allocated to the hex form of the data, if any
    */

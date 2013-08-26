@@ -40,6 +40,7 @@
 typedef struct bgp*             bgp_inst ;
 typedef struct peer*            bgp_peer ;
 typedef struct peer_group*      peer_group ;
+typedef struct bgp_peer_config* bgp_peer_config ;
 typedef struct bgp_session*     bgp_session ;
 typedef struct bgp_connection*  bgp_connection ;
 typedef struct bgp_cops*        bgp_cops ;
@@ -50,8 +51,8 @@ typedef struct bgp_open_state*  bgp_open_state ;
 typedef struct bgp_nexthop*     bgp_nexthop ;
 typedef struct bgp_peer_index_entry* bgp_peer_index_entry ;
 typedef struct bgp_msg_reader*  bgp_msg_reader ;
-typedef struct bgp_notify*      bgp_notify ;
-typedef struct bgp_fsm_eqb*     bgp_fsm_eqb ;
+
+typedef struct bgp_note*        bgp_note ;
 
 //typedef struct bgp_event*      bgp_event ;
 
@@ -67,6 +68,10 @@ typedef struct bgp_rib_item*    bgp_rib_item ;
 typedef struct route_info*      route_info ;
 typedef struct route_extra*     route_extra ;
 typedef struct route_zebra*     route_zebra ;
+typedef struct nroute*          nroute ;
+typedef struct iroute*          iroute ;
+typedef struct aroute*          aroute ;
+
 
 typedef struct adj_out*         adj_out ;
 typedef struct route_in_parcel*  route_in_parcel ;
@@ -90,7 +95,6 @@ typedef struct bgp_info_extra*  bgp_info_extra ;
 typedef struct bgp_adj_out*     bgp_adj_out ;
 typedef struct bgp_adj_in*      bgp_adj_in ;
 typedef struct bgp_sync*        bgp_sync ;
-typedef struct bgp_adv_attr*    bgp_adv_attr ;
 
 typedef struct bgp_adv*         bgp_adv ;
 
@@ -143,11 +147,14 @@ enum qafx_num
   qafx_other            = 6,    /* place-holder: for unknown AFI/SAFI   */
 
   qafx_max              = 6,    /* maximum qafx                         */
-  qafx_count                    /* number of qafx                       */
+  qafx_count,                   /* number of qafx                       */
+
+  qafx_t_max            = qafx_max
 } ;
 
 CONFIRM(qafx_other >  qafx_last) ;
 CONFIRM(qafx_other == qafx_max) ;
+CONFIRM(qafx_t_max < 256) ;
 
 /*------------------------------------------------------------------------------
  * A qafx_set_t is a set of qafx_bit_t -- a bit-vector
@@ -535,16 +542,16 @@ enum bgp_session_events
 
 /* The state of the peer -- strongly related to the state of the session !
  *
- *   0. pDisabled
+ *   1. pDown
  *
- *      All peers start in this state.
+ *      All real peers start in this state.
  *
  *      This is the case while no address families are enabled, eg:
  *
  *        a. when a bgp_peer structure is first created.
  *
  *           Note that PEER_TYPE_GROUP_CONF and PEER_TYPE_SELF are permanently
- *           pDisabled.
+ *           pDown.
  *
  *        b. not one address family is configured *and* enabled
  *
@@ -555,19 +562,19 @@ enum bgp_session_events
  *
  *      The peer-session states relate to the above as follows:
  *
- *        psInitial -- case (a)
+ *        pssInitial -- case (a)
  *
- *        psDown    -- all of the above
+ *        pssStopped -- all of the above
  *
- *                     NB: in pDisabled and psDown, the acceptor will be
- *                         running if the current cops->accept is true.
+ *                      NB: in pDown and pssStopped, the acceptor will be
+ *                          running if the current cops allow.
  *
  *        all other states are IMPOSSIBLE
  *
- *      When at least one address family is enabled the peer can go pEnabled,
- *      and then a session will be enabled.
+ *      When at least one address family is enabled the peer can go pUp, and
+ *      a session will be enabled.
  *
- *   1. pEnabled
+ *   2. pUp
  *
  *      This is the case when a message has been sent to the BGP engine to
  *      enable a new session, and is now waiting for the session to be
@@ -579,7 +586,7 @@ enum bgp_session_events
  *
  *      The BGP Engine may send event messages, which signal:
  *
- *        * feXxxxx, but not "stopped"    -> remains pEnabled
+ *        * feXxxxx, but not "stopped"    -> remains pUp
  *
  *          the BGP Engine signals various events which do not stop it from
  *          trying to establish a session, but may be of interest.
@@ -590,16 +597,16 @@ enum bgp_session_events
  *
  *      All other messages are discarded -- there should not be any.
  *
- *   2. pEstablished
+ *   3. pEstablished
  *
- *      Reaches this state from pEnabled when a session becomes established.
+ *      Reaches this state from pUp when a session becomes established.
  *
  *      The session must be sUp.
  *
- *      If the Routeing Engine disables the session -> pClearing and psLimping.
+ *      If the Routeing Engine disables the session -> pClearing and pssLimping.
  *
  *          The Routeing Engine sets the "down reason" etc. according to why
- *          the session is being disabled.  While psLimping, this is
+ *          the session is being disabled.  While pssLimping, this is
  *          provisional.  When a "stopped" event arrives, it may be found that
  *          the session stopped in the BGP Engine before the disable message
  *          arrived, in which case the "down reason" will change to whatever
@@ -613,7 +620,7 @@ enum bgp_session_events
  *          session, but may be of interest.
  *
  *        * feXxxxx, and "stopped"        -> pClearing (however briefly)
- *                                           and psDown
+ *                                           and psStopped
  *
  *          The "down reason" is set according to what the BGP Engine reports.
  *
@@ -621,20 +628,20 @@ enum bgp_session_events
  *
  *   4. pClearing
  *
- *      Reaches this state from pEnabled or pEstablished, as above.
+ *      Reaches this state from pUp or pEstablished, as above.
  *
- *      When a disable message is sent to the BGP Engine it is set psLimping,
- *      and will go psDown when is seen to stop.  While is psLimping, all
+ *      When a disable message is sent to the BGP Engine it is set pssLimping,
+ *      and will go pssStopped when is seen to stop.  While is pssLimping, all
  *      messages from the BGP Engine are discarded, until it is seen to stop,
- *      and is set psDown.
+ *      and is set pssStopped.
  *
- *      (When psDown is set, will flush all message queues for the session,
+ *      (When pssStopped is set, will flush all message queues for the session,
  *      since the BGP Engine is now done with it.)
  *
  *      Tidies up the peer, including clearing routes etc.  Once the peer is
- *      completely tidy, and the session is psDown:
+ *      completely tidy, and the session is pssStopped:
  *
- *         peer    -> pDisabled/psDown or pEnabled/psUp
+ *         peer    -> pDown/pssStopped
  *
  *      NB: while pClearing the peer's routes and RIBs may be being processed
  *         (and may or may not be being discarded).
@@ -663,12 +670,12 @@ enum bgp_peer_states
 
   bgp_pInitial      = 0,        /* in the process of being created      */
 
-  bgp_pDisabled     = 1,        /* may not be started                   */
-  bgp_pEnabled      = 2,        /* started, but not yet established     */
+  bgp_pDown         = 1,        /* not yet started/restarted            */
+  bgp_pStarted      = 2,        /* started, but not yet established     */
   bgp_pEstablished  = 3,        /* session established                  */
-  bgp_pClearing     = 4,        /* session stopping/stopped, clearing   */
 
-  bgp_pDown,
+  bgp_pResetting    = 4,        /* session stopping/stopped, clearing   */
+
   bgp_pDeleting     = 5,        /* lingers until lock count == 0        */
 
   bgp_peer_state_max     = 6
@@ -676,21 +683,49 @@ enum bgp_peer_states
 
 /* The state of the session, as far as the peer is concerned.
  *
- * The session->peer_state belongs to the Routing Engine (RE), and is updated
+ * The peer->session_state belongs to the Routing Engine (RE), and is updated
  * as messages are sent to and arrive from the BGP Engine (BE).
  *
- *   * psInitial    -- means that the peer and session are being created (or
+ *   * pssInitial   -- means that the peer and session are being created (or
  *                     are about to be).
  *
- *   * psDown       -- means that the session is not running (nothing at all
+ *   * pssStopped   -- means that the session is not running -- nothing at all
  *                     is happening for the session in the BE, EXCEPT that the
- *                     acceptor may be running and the cops remain in force).
+ *                     acceptor may (well) be running.
  *
- *   * psUp         -- means that the session is running (something is, as far
+ *                     NB: while is pssStopped, any changes to the peer->cops
+ *                         cause the BE to be prodded if this may affect the
+ *                         acceptor, or if becomes pisRunnable.
+ *
+ *                         The pisReset may hold the session pssStopped until
+ *                         the restart timer goes off.
+ *
+ *                         while is pssStopped, any changes to the peer->args
+ *                         do not cause the BE to be prodded.
+ *
+ *   * pssRunning   -- means that the session is running (something is, as far
  *                     as the RE is concerned, happening for the session in the
  *                     BE).
  *
- *   * psDeleted    -- means that the peer is being deleted, and session has
+ *                     NB: changes to peer->cops and/or peer->args will cause
+ *                         the BE to be prodded.
+ *
+ *                         Changing to anything other than pisRunnable will
+ *                         send to pssLimping.
+ *
+ *                         If the session stops spontaneously (from the
+ *                         perspective of the RE) then it drops to pssStopped.
+ *
+ *   * pssLimping   -- means that was pssRunning and the RE is now waiting to
+ *                     see a Stopped message from the BE.
+ *
+ *                     NB: while is pssLimping, changes to peer->cops and
+ *                         peer->args are treated in the same way as in
+ *                         pssStopped.
+ *
+ *                         At a minimum will be pisReset.
+ *
+ *   * pssDeleted   -- means that the peer is being deleted, and session has
  *                     been -- at least, the peer has cut the session away,
  *                     and sent a message to the BE to delete the session..
  */
@@ -699,13 +734,13 @@ enum bgp_peer_session_state
 {
   bgp_peer_session_state_min = 0,
 
-  bgp_psInitial      = 0,       /* in the process of being created      */
+  bgp_pssInitial    = 0,        /* in the process of being created      */
 
-  bgp_psDown         = 1,
-  bgp_psUp           = 2,
-  bgp_psLimping      = 3,       /* neither up nor down                  */
+  bgp_pssStopped    = 1,
+  bgp_pssRunning    = 2,
+  bgp_pssLimping    = 3,        /* neither up nor down                  */
 
-  bgp_psDeleted      = 4,       /* gone                                 */
+  bgp_pssDeleted    = 4,        /* gone                                 */
 
   bgp_peer_session_state_max = 2
 } ;
@@ -715,17 +750,10 @@ enum bgp_peer_session_state
  * The session->state belongs to the BGP Engine (BE), and is updated as
  * messages are sent to and arrive from the Routeing Engine (RE).
  *
- *   * sInitial     -- means that the session has been initialised, but not
- *                     yet kicked into action.  The BE has yet to do anything
- *                     with the session, which may be in a message on its
- *                     way to the BE.
+ *   * sReset       -- means that the session has been initialised, ready to
+ *                     run.
  *
- *                     The acceptor is not yet running.
- *
- *   * sStopped     -- means that the session is stopped, so the fsm(s) are
- *                     not running.
- *
- *                     The acceptor will be running.
+ *                     The acceptor will be running,
  *
  *   * sAcquiring   -- means that the session has been started, so the fsm(s)
  *                     are running and trying to acquire and establish a
@@ -737,12 +765,8 @@ enum bgp_peer_session_state
  *
  *                     The acceptor will be running.
  *
- *   * sStopping    -- means that the session will shortly be stopped.
- *
- *                     This can happen in one (obscure) case... in which the
- *                     established session has been stopped (and detached
- *                     from the session) but its sibling has not yet
- *                     stopped.
+ *   * sStopped     -- means that the session is stopped, so the fsm(s) are
+ *                     not running.
  *
  *                     The acceptor will be running.
  *
@@ -759,16 +783,15 @@ enum bgp_session_state
 {
   bgp_session_state_min     = 0,
 
-  bgp_sInitial      = 0,
+  bgp_sReset        = 0,
+  bgp_sAcquiring,
+  bgp_sEstablished,
+  bgp_sStopped,
 
-  bgp_sStopped      = 1,
-  bgp_sAcquiring    = 2,
-  bgp_sEstablished  = 3,
-  bgp_sStopping     = 4,
+  bgp_sDeleting,
 
-  bgp_sDeleting     = 5,
-
-  bgp_session_state_max     = 5
+  bgp_session_state_count,
+  bgp_session_state_max     = bgp_session_state_count - 1,
 } ;
 
 typedef enum bgp_conn_ord bgp_conn_ord_t ;
@@ -784,34 +807,118 @@ enum bgp_conn_ord
   bc_count,
 } ;
 
-/* Whether the connection is prepared to accept and/or connect.
+/* Whether the connection is prepared to accept and/or connect and/or track.
  *
- * If is not prepared to accept:  will not run a bc_accept connection
- *                          and:  will reject (RST) at accept() time
+ * This is the primary control over the connection handling in the BGP Engine,
+ * and lives in the connection options as transmitted to the BGP Engine.
  *
- * If is not prepared to connect: will not run a bc_connect connection
+ *   * csMayAccept      -- is allowed to accept() a connection
+ *
+ *   * csMayConnect     -- is allowed to make a connect() connection
+ *
+ *   * csTrack          -- run the acceptor and track incoming connections
+ *
+ *                         Ignored if not csMay_Accept !
+ *
+ *                         This is cleared if the peer is pDown
+ *
+ *   * csRun            -- run the session or session acquisition.
+ *
+ *                         Ignored if not csAccept or csConnect.
+ *
+ * When a peer is reset, will clear csRun, and when it is down, will clear
+ * both csRun and csTrack.
  */
-typedef enum bgp_conn_let bgp_conn_let_t ;
-enum bgp_conn_let
+typedef enum bgp_conn_state bgp_conn_state_t ;
+enum bgp_conn_state
 {
-  bc_can_nothing    = 0,
+  bgp_csDown        = 0,
 
-  bc_can_accept     = BIT(0),           /* ie "passive" */
-  bc_can_connect    = BIT(1),
+  bgp_csMayAccept   = BIT(0),
+  bgp_csMayConnect  = BIT(1),
 
-  bc_can_both       = bc_can_accept | bc_can_connect,
+  bgp_csMayMask     = bgp_csMayAccept | bgp_csMayConnect,
+  bgp_csMayBoth     = bgp_csMayAccept | bgp_csMayConnect,
+
+  bgp_csTrack       = BIT(4),
+  bgp_csRun         = BIT(5),
+
+  bgp_csCanTrack    = bgp_csTrack | bgp_csMayAccept,
 } ;
 
+/* Whether and why the peer is "Idle".
+ */
+typedef enum bgp_peer_idle_state bgp_peer_idle_state_t ;
+enum bgp_peer_idle_state
+{
+  bgp_pisRunnable       = 0,
+
+  /* This is the all purpose is reset and pending some sort of restart, flag.
+   *
+   * When the Peering Engine is ready, it will release this and proceed to
+   * restart the session.
+   */
+  bgp_pisReset          = BIT(0),
+
+  /* These are temporary states -- when they are cleared, the connection may
+   * well be up again, and that should trigger session state change.
+   */
+  bgp_pisClearing       = BIT(1),   /* clearing from last session drop  */
+  bgp_pisMaxPrefixWait  = BIT(2),   /* waiting for restart timer        */
+
+  /* These are serious, configuration set issues, and will cause the acceptor
+   * to reject incoming connections.
+   *
+   * NB:
+   */
+  bgp_pisMaxPrefixStop  = BIT(4),   /* max prefix -- no restart         */
+  bgp_pisNoAF           = BIT(5),   /* no address families are enabled  */
+  bgp_pisShutdown       = BIT(6),   /* "administratively SHUTDOWN"      */
+  bgp_pisDeconfigured   = BIT(7),   /* administratively dead            */
+
+  bgp_pisDown           = bgp_pisDeconfigured  |
+                          bgp_pisShutdown      |
+                          bgp_pisNoAF          |
+                          bgp_pisMaxPrefixStop,
+} ;
+
+#if 0
 /* Whether the connection(s) are enabled or not.
  */
 typedef enum bgp_conn_state bgp_conn_state_t ;
 enum bgp_conn_state
 {
-  bc_is_shutdown    = 0,        /* "administratively SHUTDOWN"  */
+  bc_is_up              = 0,
 
-  bc_is_disabled,               /* for some (other) reason      */
-  bc_is_enabled
+  /* This is the all purpose is reset and pending some sort of restart, flag.
+   *
+   * When the Peering Engine is ready, it will release this and proceed to
+   * restart the session.
+   */
+  bc_is_reset           = BIT(0),
+
+  /* These are temporary states -- when they are cleared, the connection may
+   * well be up again, and that should trigger session state change.
+   */
+  bc_is_clearing        = BIT(1),   /* clearing from last session drop  */
+  bc_is_max_prefix_wait = BIT(2),   /* waiting for restart timer        */
+
+  /* These are serious, configuration set issues, and will cause the acceptor
+   * to reject incoming connections.
+   *
+   * NB:
+   */
+  bc_is_max_prefix_stop = BIT(4),   /* max prefix -- no restart         */
+  bc_is_no_af           = BIT(5),   /* no address families are enabled  */
+  bc_is_shutdown        = BIT(6),   /* "administratively SHUTDOWN"      */
+  bc_is_deconfigured    = BIT(7),   /* administratively dead            */
+
+  bc_is_down            = bc_is_deconfigured |
+                          bc_is_shutdown     |
+                          bc_is_no_af        |
+                          bc_is_max_prefix_stop,
 } ;
+#endif
 
 /*==============================================================================
  * A bgp_route_type is a packed value:
@@ -820,8 +927,6 @@ enum bgp_conn_state
  *
  *   * bits 7..2:  the zebra route type (ZEBRA_ROUTE_XXX)
  */
-typedef byte bgp_route_type_t ;
-
 typedef byte bgp_route_subtype_t ;
 typedef byte bgp_zebra_route_t ;
 
@@ -835,16 +940,20 @@ enum bgp_route_subtype
   BGP_ROUTE_SUBTYPE_COUNT
 };
 
+typedef enum bgp_route_type bgp_route_type_t ;
 enum bgp_route_type
 {
   BGP_ZEBRA_ROUTE_SHIFT   = 2,
 
   BGP_ROUTE_SUBTYPE_MASK  = BIT(BGP_ZEBRA_ROUTE_SHIFT)     - 1,
   BGP_ZEBRA_ROUTE_MASK    = BIT(8 - BGP_ZEBRA_ROUTE_SHIFT) - 1,
+
+  bgp_route_type_t_max    = BGP_ROUTE_SUBTYPE_MASK | BGP_ZEBRA_ROUTE_MASK,
 } ;
 
 CONFIRM((BGP_ROUTE_SUBTYPE_COUNT - 1) <= BGP_ROUTE_SUBTYPE_MASK) ;
 CONFIRM((ZEBRA_ROUTE_MAX         - 1) <= BGP_ZEBRA_ROUTE_MASK) ;
+CONFIRM(bgp_route_type_t_max <= 255) ;  /* byte         */
 
 Inline bgp_route_subtype_t bgp_route_subtype(bgp_route_type_t type)
                                                                  Always_Inline ;

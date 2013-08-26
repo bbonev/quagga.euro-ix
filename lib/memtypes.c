@@ -18,6 +18,7 @@ struct memory_list memory_list_lib[] =
   { MTYPE_CMD_STRING,           "Command string"                },
   { MTYPE_VECTOR,               "Vector structure"              },
   { MTYPE_VECTOR_BODY,          "Vector body"                   },
+  { MTYPE_SVEC_EXT_BODY,        "S-Vector extended body"        },
   { MTYPE_VHASH_TABLE,          "Value Hash Table structure"    },
   { MTYPE_VHASH_BASES,          "Value Hash Table chain bases"  },
   { MTYPE_IHASH_TABLE,          "Index Hash Table structure"    },

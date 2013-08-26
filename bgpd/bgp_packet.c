@@ -20,8 +20,6 @@ Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
 
 #include <zebra.h>
 
-#include "thread.h"
-#include "stream.h"
 #include "network.h"
 #include "prefix.h"
 #include "prefix_id.h"
@@ -29,6 +27,7 @@ Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
 #include "log.h"
 #include "memory.h"
 #include "linklist.h"
+#include "ring_buffer.h"
 
 #include "bgpd/bgpd.h"
 
@@ -36,14 +35,12 @@ Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
 #include "bgpd/bgp_rib.h"
 #include "bgpd/bgp_adj_out.h"
 
-//#include "bgpd/bgp_table.h"
 #include "bgpd/bgp_dump.h"
 #include "bgpd/bgp_attr.h"
 #include "bgpd/bgp_debug.h"
 #include "bgpd/bgp_fsm.h"
 #include "bgpd/bgp_route.h"
 #include "bgpd/bgp_packet.h"
-#include "bgpd/bgp_open.h"
 #include "bgpd/bgp_aspath.h"
 #include "bgpd/bgp_community.h"
 #include "bgpd/bgp_ecommunity.h"
@@ -57,718 +54,1184 @@ Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
 /*==============================================================================
  * Construction and output of UPDATE and other messages.
  */
+static bool bgp_packet_write_announce(peer_rib prib, ring_buffer rb,
+                                                      route_out_parcel parcel) ;
+static bool bgp_packet_write_withdraw(peer_rib prib, ring_buffer rb,
+                                                      route_out_parcel parcel) ;
+static bool bgp_packet_write_eor(peer_rib prib, ring_buffer rb,
+                                                      route_out_parcel parcel) ;
+static bool bgp_packet_write_rr(bgp_peer peer, ring_buffer rb) ;
 
-static stream bgp_write_packet (bgp_peer peer) ;
-static stream bgp_update_packet (peer_rib prib, route_out_parcel parcel) ;
-static stream bgp_withdraw_packet (peer_rib prib, route_out_parcel parcel) ;
-static stream bgp_update_packet_eor (peer_rib prib, route_out_parcel parcel) ;
+static qstring bgp_packet_attrs_string(peer_rib prib, route_out_parcel parcel) ;
+static qstring bgp_packet_prefix_string(qstring qs_pfx, peer_rib prib,
+                                                      route_out_parcel parcel) ;
+static bool bgp_packet_write_rr_orf_part(blower br, bgp_route_refresh rr,
+                                               bgp_form_t form, bgp_peer peer) ;
 
 /*------------------------------------------------------------------------------
- * Write packets to the peer -- subject to the XON flow control.
+ * Write what can be written from adj-out to the given peer.
  *
- * Takes an optional stream argument, if not NULL then must be peer->work,
- * in which there is a message to be sent.
+ * This is driven by prompt messages in the Routing Engine message queue.
  *
- * Then processes the peer->sync structure to generate further updates.
- *
- * TODO: work out how bgp_routeadv_timer fits into this.
+ * Each time this is called will take as much as is available from the adj-out,
+ * and try to fill the write_rb ring-buffer.
  */
 extern void
-bgp_write (bgp_peer peer, struct stream* s)
+bgp_packet_write_stuff(bgp_peer peer, ring_buffer rb)
 {
-  /* If we are given a message, send that first and no matter what
-   */
-  if (s != NULL)
-    if (bgp_packet_check_size(s, peer->su_name) > 0)
-      stream_fifo_push(peer->obuf_fifo, stream_dup(s)) ;
-
-  /* While we are XON, queue pending updates (while there are any to go)
-   */
-  while (bgp_session_is_XON(peer))
-    {
-      s = bgp_write_packet(peer);           /* uses peer->work          */
-      if (s == NULL)
-        break;
-
-      if (bgp_packet_check_size(s, peer->su_name) > 0)
-        {
-          /* Append to fifo
-           */
-          stream_fifo_push (peer->obuf_fifo, stream_dup(s)) ;
-
-          /* Count down flow control, send fifo if hits BGP_XON_KICK
-           */
-          if (bgp_session_dec_flow_count(peer))
-            bgp_session_update_send(peer->session, peer->obuf_fifo) ;
-        } ;
-    } ;
-
-  /* In any case, send what's in the FIFO
-   */
-  if (stream_fifo_head(peer->obuf_fifo) != NULL)
-    bgp_session_update_send(peer->session, peer->obuf_fifo) ;
-} ;
-
-/*------------------------------------------------------------------------------
- * Get next update message to be written.
- *
- * Generates complete BGP message in the peer->work stream structure.
- *
- * Returns: peer->work -- if have something to be written.
- *          NULL       -- otherwise
- */
-static stream
-bgp_write_packet (bgp_peer peer)
-{
-  qafx_t       qafx ;
   peer_rib     prib ;
+  peer_rib     running[qafx_count] ;
+  bool         full, first ;
+  uint         i, n ;
   route_out_parcel_t parcel_s ;
   route_out_parcel   parcel ;
 
-  /* Deal with any and all withdrawn prefixes first
+  full = false ;
+
+  /* Flush any pending Route Refresh requests.
+   *
+   * These take precedence over everything else, which requires some
+   * justification:
+   *
+   *   a) even if we busy sending lots of updates to the given peer, it
+   *      is probably best for us to refresh what we know sooner rather than
+   *      later... it might affect what we are currently queuing as updates.
+   *
+   *   b) if a large ORF table is being transmitted, this ensures that all
+   *      messages required for it will be sent together, even if has to break
+   *      off part way through because the ringg-buffer is full.
+   *
+   *      This is certainly convenient.
    */
-  for (qafx = qafx_first ; qafx <= qafx_last ; qafx++)
+  while ((dsl_head(peer->rr_pending) != NULL) && !full)
+    full = bgp_packet_write_rr(peer, rb) ;
+
+  /* Flush withdraw queues for all qafx, before considering announcements.
+   *
+   * Collect the running pribs.
+   *
+   * Note that this will flush out all withdraws for the first running address
+   * family, then all withdraws from the next and so on.
+   *
+   * We will remain in this loop, sending out withdraws, until there are no
+   * more or the ring-buffer fills.
+   */
+  n = peer->af_running_count ;
+  for (i = 0 ; (i <= n) && !full ; ++i)
     {
-      prib = peer->prib[qafx] ;
+      prib = peer->prib_running[i] ;
 
-      if ((prib == NULL) || (true))
-        continue ;
+      running[i] = prib ;               /* copy for announcements       */
 
-      /* If we get a parcel, then we have at least one prefix to withdraw,
-       * so will always generate a message.
-       */
-      parcel = bgp_adj_out_next_withdraw(prib, &parcel_s) ;
-
-      if (parcel != NULL)
-        return bgp_withdraw_packet(prib, parcel) ;
-    } ;
-
-  for (qafx = qafx_first ; qafx <= qafx_last ; qafx++)
-    {
-      prib = peer->prib[qafx] ;
-
-      if ((prib == NULL) || (true))
-        continue ;
-
-      parcel = bgp_adj_out_first_announce(prib, &parcel_s) ;
-
-      while (parcel != NULL)
+      while (1)
         {
-          stream  s ;
+          /* Get the next withdraw from the queue, if any.
+           */
+          parcel = bgp_adj_out_next_withdraw(prib, &parcel_s) ;
+          if (parcel == NULL)
+            break ;
 
-          if (parcel->action == ra_out_eor)
-            s = bgp_update_packet_eor(prib, parcel) ;
-          else
-            s = bgp_update_packet(prib, parcel) ;
-
-          if (s != NULL)
-            return s ;
-
-          parcel = bgp_adj_out_next_announce(prib, &parcel_s) ;
+          /* Eat the current and then as many other withdraws as possible in
+           * a single message.
+           */
+          full = bgp_packet_write_withdraw(prib, rb, parcel) ;
         } ;
     } ;
 
-  return NULL;
-}
+  /* Now flush any updates we can for the running pribs.
+   *
+   * This loop runs round-robin around the running pribs, until there are
+   * none left, or the ring-buffer fills.
+   */
+  first = true ;
+  i     = 0 ;
+  while ((n > 0) && !full)
+    {
+      prib = running[i] ;
+
+      if (first)
+        bgp_adj_out_start_updates(prib) ;
+
+      parcel = bgp_adj_out_next_update(prib, &parcel_s) ;
+      if (parcel == NULL)
+        {
+          /* Nothing more for this prib, so drop it from our local list of
+           * running prib.
+           */
+          uint j ;
+
+          n -= 1 ;
+
+          for (j = i ; j < n ; ++j)
+            running[j] = running[j+1] ;
+        }
+      else
+        {
+          /* We have something for this prib, so create the required packet.
+           *
+           * We processed all withdraws for all address families already.  But
+           * it is (just) possible that an announce would not fit into an
+           * UPDATE message, and has been turned into a withdraw !
+           */
+          switch (parcel->action)
+            {
+              case ra_out_withdraw:
+                full = bgp_packet_write_withdraw(prib, rb, parcel) ;
+                break ;
+
+              case ra_out_initial:
+              case ra_out_update:
+                full = bgp_packet_write_announce(prib, rb, parcel) ;
+                break ;
+
+              case ra_out_eor:
+                full = bgp_packet_write_eor(prib, rb, parcel) ;
+                break ;
+
+              default:
+                qassert(false) ;
+                full = true ;
+                break ;
+            } ;
+
+          /* Step to the next address family -- round robin
+           */
+          i += 1 ;
+          if (i >= n)
+            {
+              i = 0 ;
+              first = false ;
+            } ;
+        } ;
+    } ;
+
+  /* If the BGP Engine is waiting for stuff to send, and the ring-buffer is
+   * not now empty, prompt the BGP Engine.
+   */
+  if (rb_get_prompt(rb, false /* not if empty */))
+    bgp_session_kick_be_write(prib->peer) ;
+} ;
 
 /*------------------------------------------------------------------------------
- * Construct an update from the given route_out_parcel.
+ * Construct an update from the given route_out_parcel, and then eat as many
+ * further prefixes as possible which share the same attributes.
  *
- * Generates complete BGP message in the peer->work stream structure.
+ * Generates any BGP UPDATE message in peer->session->rb_write ring buffer.
  *
- * Returns: peer->work -- if have something to be written.
- *          NULL       -- otherwise
+ * NB: the maximum size of a BGP message is fixed and limited.  If the
+ *     attributes are large:
  *
- * NB: if the attributes overflow the BGP message, suppresses the update and
- *     issues a withdraw for the affected prefixes if required.
+ *       * where the attributes themselves overflow the message.
  *
- *     In this case, if none of the affected prefixes needs to be withdrawn
- *     (ie, this is the initial announce for all of them) then no message
- *     is generated.
+ *         so it is impossible to send any prefix with the attributes, so we
+ *         have to withdraw them all.
+ *
+ *       * where the attributes do not overflow the message, but do not leave
+ *         enough room for some or all prefixes we wish to send.
+ *
+ *         so some prefixes can be sent, and others have to be withdrawn.
+ *
+ * The mechanics here construct the attributes and the leading portion of any
+ * MP_REACH attribute.  Then, any prefix which will fit in, we add to the
+ * UPDATE.  Any prefix which does not fit in, and would not fit on its own,
+ * we re-schedule to be withdrawn (or dropped, if it has never been announced).
+ * When there are no more prefixes, or we have one which does not fit, but
+ * would fit in a new UPDATE message, we stop and send this one.
+ *
+ * Returns: true <=> ring-buffer is full     -- wait for prompt from BE
+ *          false -> ring-buffer is not full -- can keep going !
  */
-static stream
-bgp_update_packet (peer_rib prib, route_out_parcel parcel)
+static bool
+bgp_packet_write_announce(peer_rib prib, ring_buffer rb,
+                                                        route_out_parcel parcel)
 {
-  stream    s;
-  ulen      attr_lp ;
-  ulen      attr_len ;
-  qstring   updates ;
-  uint      count ;
-  prefix_id_entry pie ;
-  attr_set  attr_sent ;
+  bgp_rb_msg_out_type_t rb_type ;
+  ptr_t     p_seg, p_red_tape ;
+  ulen      attrs_len ;
+  ulen      body_len, start_body_len ;
+  ulen      mp_len,   start_mp_len ;
+  bool      mp_reach ;
+  blower_t  br[1] ;
+  qstring   qs_attrs, qs_updates, qs_withdraws ;
+  uint      count, no_count ;
 
   qassert( (parcel->action == ra_out_initial) ||
            (parcel->action == ra_out_update) ) ;
   qassert(parcel->qafx   == prib->qafx) ;
   qassert(parcel->attr   != NULL) ;
 
-  s = prib->peer->work;
-  stream_reset (s);
-
-  pie = prefix_id_get_entry(parcel->pfx_id) ;
-
-  if (BGP_DEBUG (update, UPDATE_OUT))
-    updates = qs_new(100) ;
-  else
-    updates = NULL ;
-
-  /* Generate the message, including one prefix.
-   */
-  bgp_packet_set_marker (s, BGP_MT_UPDATE);
-  stream_putw (s, 0);   /* No AFI_IP/SAFI_UNICAST withdrawn     */
-
-  attr_lp = stream_get_endp (s);
-  qassert(attr_lp == (BGP_MSG_HEAD_L + 2)) ;
-
-  stream_putw (s, 0);   /* Attributes length                    */
-
-  attr_len = bgp_packet_attribute (s, prib, parcel->attr, pie->pfx,
-                                                                  parcel->tag) ;
-  stream_putw_at (s, attr_lp, attr_len) ;
-
-  if (prib->qafx == qafx_ipv4_unicast)
-    stream_put_prefix (s, pie->pfx);
-
-  attr_sent = bgp_attr_lock(parcel->attr) ;
-
-  bgp_adj_out_done_announce(prib, parcel) ;
-  count = 1 ;
-
-  /* If the attributes with at least one prefix have fitted, then all is well,
-   * and for AFI_IP/SAFI_UNICAST we can tack on other prefixes which share the
-   * current attributes.
+  /* We put the update packet directly into the session->write_rb.  So, we
+   * start by demanding enough space for the maximum size message body, plus
+   * the extra bytes we may use.
    *
-   * Otherwise, we have a problem, and we issue a route withdraw, instead.
-   *
-   * NB: we allocate BGP_STREAM_SIZE, which is larger than BGP_MSG_MAX_L,
-   *     so that if the overflow is marginal, we can tell what it was.
+   * See bgp_msg_write_update() for how we lay out the message parts in the
+   * ring-buffer -- we may need 0, 2 or 3 extra bytes.
    */
-  if (bgp_packet_check_size(s, prib->peer->su_name) > 0)
+  p_seg = rb_put_open(rb, BGP_MSG_BODY_MAX_L + 3, true /* set_waiting */) ;
+  if (p_seg == NULL)
+    return true ;                       /* full !               */
+
+  rb_set_blower(br, rb) ;
+  qassert(blow_ptr(br)   == p_seg) ;
+  qassert(blow_total(br) >= (BGP_MSG_BODY_MAX_L + 3)) ;
+
+  /* We do the attributes first
+   *
+   * If we require an mp_reach attribute, we generate a 2 part update in the
+   * ring-buffer.  Otherwise, a conventional 1 part.
+   *
+   * Sets: attrs_len   = length of the attributes so far.
+   *       body_len    = length of red-tape + length of attributes so far.
+   *
+   * By red-tape we mean the UPDATE message red-tape, which is 4 bytes for
+   * (a) the total withdrawn NLRI length, and (b) the total attributes length.
+   */
+  mp_reach = (prib->qafx != qafx_ipv4_unicast) ||
+                                      (parcel->attr->next_hop.type != nh_ipv4) ;
+
+  if (!mp_reach)
     {
-      /* Eat the prefix we have already included in the message.
-       *
-       * Then for AFI_IP/SAFI_UNICAST, eat as many further prefixes as we can
-       * fit into the message.
-       */
-      if (parcel->action == ra_out_initial)
-        prib->scount += 1 ;
-
-      if (prib->qafx == qafx_ipv4_unicast)
-        {
-          qassert(!stream_has_overflowed(s)) ;
-
-          while (1)
-            {
-              ulen   len_was ;
-
-              parcel = bgp_adj_out_next_announce(prib, parcel) ;
-              if ((parcel == NULL) || (parcel->attr != attr_sent))
-                break ;
-
-              pie = prefix_id_get_entry(parcel->pfx_id) ;
-
-              len_was = stream_get_len(s) ;
-              stream_put_prefix (s, pie->pfx) ;
-
-              if (stream_has_written_beyond(s, BGP_MSG_MAX_L))
-                {
-                  stream_set_endp(s, len_was) ;
-                  stream_clear_overflow(s) ;
-                  break ;
-                } ;
-
-              if (parcel->action == ra_out_initial)
-                prib->scount += 1 ;
-
-              bgp_adj_out_done_announce(prib, parcel) ;
-              count += 1 ;
-            } ;
-        } ;
-
-      /* Report the update if required.
-       */
-      if (updates != NULL)
-        {
-          qstring qs ;
-          attr_next_hop_t* next_hop, * mp_next_hop ;
-
-          next_hop = mp_next_hop = NULL ;
-          if (prib->qafx == qafx_ipv4_unicast)
-            next_hop    = &attr_sent->next_hop ;
-          else
-            mp_next_hop = &attr_sent->next_hop ;
-
-          qs = bgp_dump_attr(prib->peer, attr_sent, next_hop, mp_next_hop) ;
-
-          zlog (prib->peer->log, LOG_DEBUG, "%s send %u UPDATE(S) %s/%s:%s%s",
-                      prib->peer->host, count,
-                      map_direct(bgp_afi_name_map, get_iAFI(prib->qafx)).str,
-                      map_direct(bgp_safi_name_map, get_iSAFI(prib->qafx)).str,
-                                            qs_string(qs), qs_string(updates)) ;
-          qs_free(qs) ;
-          qs_free(updates) ;
-        } ;
-
-      bgp_attr_unlock(attr_sent) ;
+      rb_type = bgp_rbm_out_update_a ;
+      blow_step(br, BGP_UPM_ATTR) ;     /* space for the red-tape       */
     }
   else
     {
-      /* Turn advertisement into withdraw of prefixes for which we are
-       * completely unable to generate an update message.
-       *
-       * At this point, we have attempted to place just one NLRI in the output
-       * message -- the one for the bgp_adv we came in on.
-       *
-       * NB: the result looks as though the prefixes *have* been advertised.
-       *
-       *     This avoids trying to send the same set of attributes again...
-       *
-       *     ...but is not a complete solution, yet.   TODO
+      rb_type = bgp_rbm_out_update_b ;  /* assume not extended length   */
+      blow_step(br, 2) ;                /* space for part2 length       */
+    } ;
+
+  attrs_len = bgp_packet_write_attribute(br, prib, parcel->attr) ;
+  body_len  = BGP_UPM_ATTR + attrs_len ;        /* so far               */
+
+  confirm(BGP_UPM_ATTR == 4) ;          /* well known ! */
+
+  /* Set pointer to the message red-tape.
+   *
+   * For mp_reach, prepare the "part 1", including leading part of the
+   * MP_REACH_NLRI attribute and spare byte in case Extended Length required.
+   */
+  if (!mp_reach)
+    {
+      /* For not mp_reach, we have no "part 2", and we have already reserved
+       * space for the red-tape.
        */
-      uint withdrawn ;
+      p_red_tape = p_seg ;
+      mp_len     = 256 ;                /* no MP_REACH attribute        */
+    }
+  else
+    {
+      /* For mp_reach, what we have so far is the "part 2", so we set
+       * the length of that, and then break out the start of "part 1",
+       * which begins with the message red-tape.
+       *
+       * Construct the start of the MP_REACH attribute.
+       *
+       * Update body_len to include the MP_REACH so far.
+       *
+       * Set mp_len so we can know if or when we need to change up to the
+       * Extended Length.
+       *
+       * NB: at this point we are expect Not Extended Length MP_REACH, but we
+       *     leave a 1 byte gap to accommodate Extended Length.
+       */
+      store_s(&p_seg[0], attrs_len) ;
 
-      withdrawn = 0 ;
+      blow_b(br, 0) ;                   /* spare byte                   */
+      p_red_tape = blow_step(br, BGP_UPM_ATTR) ;
 
-      if (updates == NULL)
-        updates = qs_new(100) ;
+      mp_len    = bgp_reach_attribute(br, prib, parcel->attr) ;
+      body_len += mp_len ;              /* total attribute length       */
+      mp_len   -= 3 ;                   /* attribute body length        */
 
-      stream_set_endp(s, attr_lp) ;     /* as you was   */
-      stream_clear_overflow(s) ;
+      if (mp_len > 255)                 /* not likely, but make sure    */
+        body_len += 1 ;                 /* need Extended Length         */
+    } ;
 
-      qassert(attr_lp == (BGP_MSG_HEAD_L + 2)) ;
+  /* We have everything we need, except for the prefix(es).
+   *
+   * Eat the prefix we rode in on, and then eat as many further prefixes as we
+   * can which share the attributes and will fit in the message.
+   */
+  if (BGP_DEBUG (update, UPDATE_OUT))
+    qs_attrs = bgp_packet_attrs_string(prib, parcel) ;
+  else
+    qs_attrs = NULL ;
 
-      if (prib->qafx == qafx_ipv4_unicast)
+  qs_updates = qs_withdraws = NULL ;
+
+  blow_overrun_check(br) ;              /* make sure                    */
+
+  start_body_len = body_len ;           /* with no NLRI at all, at all  */
+  start_mp_len   = mp_len ;             /* likewise                     */
+
+  count = no_count = 0 ;
+  do
+    {
+      ulen pfx_len ;
+      uint extend ;
+
+      /* Generate NLRI at the current buffer position, and check for a fit.
+       */
+      pfx_len = bgp_blow_prefix(br, prib, parcel->pfx_id, parcel->tag) ;
+
+      if ((mp_len <= 255) && ((mp_len + pfx_len) > 255))
+        extend = 1 ;
+      else
+        extend = 0 ;
+
+      if ((body_len + pfx_len + extend) <= BGP_MSG_BODY_MAX_L)
         {
-          /* Fill in withdrawn AFI_IP/SAFI_UNICAST
-           *
-           * We are guaranteed to be able to fit at least one withdraw !
-           * Cope with running out of room in the message, though.
+          /* The prefix fits -- hurrah.
            */
-          ulen  start ;
+          body_len += pfx_len + extend ;
+          mp_len   += pfx_len ;
 
-          qassert(!stream_has_overflowed(s)) ;
+          count += 1 ;
+          if (parcel->action == ra_out_initial)
+            prib->scount += 1 ;
 
-          start = attr_lp ;     /* start of withdrawn pnt              */
+          if (BGP_DEBUG (update, UPDATE_OUT))
+            qs_updates = bgp_packet_prefix_string(qs_updates, prib, parcel) ;
 
-          while(1)
-            {
-              if (parcel->action == ra_out_update)
-                {
-                  stream_put_prefix (s, pie->pfx);
-
-                  if (stream_has_written_beyond(s, BGP_MSG_MAX_L - 2))
-                    {
-                      stream_set_endp(s, attr_lp) ; /* back one     */
-                      stream_clear_overflow(s) ;
-                      break ;
-                    } ;
-
-                  withdrawn += 1 ;
-                } ;
-
-              attr_lp = stream_get_endp(s) ;
-
-              bgp_adj_out_done_announce(prib, parcel) ;
-              count += 1 ;
-
-              parcel = bgp_adj_out_next_announce(prib, parcel) ;
-              if ((parcel == NULL) || (parcel->attr != attr_sent))
-                break ;
-
-              pie = prefix_id_get_entry(parcel->pfx_id) ;
-            } ;
-
-          stream_putw_at(s, start - 2, attr_lp - start) ;
-          stream_putw(s, 0) ;           /* no attributes        */
+          parcel = bgp_adj_out_done_announce(prib, parcel) ;
         }
       else
         {
-          if (parcel->action == ra_out_update)
+          /* The prefix we have will not fit.
+           *
+           * If prefix will fit if we start a new UPDATE message, then we
+           * are done, here.
+           */
+          if ((start_mp_len <= 255) && ((start_mp_len + pfx_len) > 255))
+            extend = 1 ;
+          else
+            extend = 0 ;
+
+          if ((start_body_len + pfx_len + extend) <= BGP_MSG_BODY_MAX_L)
             {
-              stream_putw (s, 0);       /* Attributes length    */
-
-              attr_len = bgp_unreach_attribute (s, pie->pfx, prib->qafx) ;
-
-              stream_putw_at (s, attr_lp, attr_len);
-              withdrawn += 1 ;
+              qassert(count != 0) ;
+              break ;
             } ;
 
-          bgp_adj_out_done_announce(prib, parcel) ;
-          count += 1 ;
+          /* The prefix we have will NEVER fit.
+           */
+          no_count += 1 ;
+
+          if (qs_attrs == NULL)
+            qs_attrs = bgp_packet_attrs_string(prib, parcel) ;
+
+          qs_withdraws = bgp_packet_prefix_string(qs_withdraws, prib, parcel) ;
+
+          parcel = bgp_adj_out_done_no_announce(prib, parcel) ;
+        } ;
+    }
+  while (parcel != NULL) ;
+
+  /* Collected everything for the UPDATE message, if any.
+   */
+  if (count != 0)
+    {
+      /* We have at least one prefix in the UPDATE we have constructed.
+       *
+       * Need to fill in the message red-tape, and complete any MP_REACH
+       * attribute.
+       *
+       * Then close the rb-segment at its true size, which dispatches it.
+       */
+      ptr_t p_put ;
+      uint  rb_len ;
+
+      rb_len = blow_ptr(br) - p_seg ;
+
+      if (!mp_reach)
+        {
+          /* Simple IPv4/Unicast
+           *
+           * We have: rb_type    = bgp_rbm_out_update_a
+           *          p_red_tape = address of the red-tape
+           *          attrs_len  = true length of attributes
+           *          body_len   = length of the rb segment.
+           */
+          qassert(rb_type == bgp_rbm_out_update_a) ;
+          qassert(rb_len == body_len) ;
+        }
+      else
+        {
+          /* MP_REACH form.
+           *
+           * We have: rb_type    = bgp_rbm_out_update_b
+           *          p_red_tape = address of the red-tape -- so far
+           *          attrs_len  = length of Part 2 of attributes
+           *          body_len   = true length of attributes + red_tape
+           *
+           * Adjust the MP_REACH attribute if not need Extended Length, and
+           * then insert the attribute length.
+           */
+          qassert(rb_type == bgp_rbm_out_update_b) ;
+          qassert(mp_len  == (blow_ptr(br) - (p_red_tape + BGP_UPM_ATTR + 3))) ;
+          qassert(p_red_tape[BGP_UPM_ATTR + 0] == BGP_ATF_OPTIONAL) ;
+          qassert(p_red_tape[BGP_UPM_ATTR + 1] == BGP_ATT_MP_REACH_NLRI) ;
+
+          if (mp_len <= 255)
+            {
+              /* We do not need to extend the MP_REACH attribute.
+               */
+              qassert(rb_len == (body_len + 3)) ;
+
+              p_red_tape[BGP_UPM_ATTR + 2] = mp_len ;
+            }
+          else
+            {
+              /* We do need to extend the MP_REACH attribute.
+               */
+              qassert(rb_len == (body_len + 2)) ;
+
+              rb_type = bgp_rbm_out_update_c ;
+
+              p_red_tape -= 1 ;             /* use up the spare byte        */
+
+              store_b( &p_red_tape[BGP_UPM_ATTR + 0],
+                                          BGP_ATF_OPTIONAL | BGP_ATF_EXTENDED) ;
+              store_b( &p_red_tape[BGP_UPM_ATTR + 1], BGP_ATT_MP_REACH_NLRI) ;
+              store_ns(&p_red_tape[BGP_UPM_ATTR + 2], mp_len) ;
+            } ;
+
+          attrs_len = body_len - BGP_UPM_ATTR ;
         } ;
 
-      /* Now log the error
+      store_ns(&p_red_tape[0], 0) ;         /* no withdraws         */
+      store_ns(&p_red_tape[2], attrs_len) ; /* total attributes     */
+
+      /* Complete the ring-buffer message.
        */
-      zlog_err("%s FORCED %u/%u WITHDRAW(S) %s/%s:%s",
-                       prib->peer->host, withdrawn, count,
-                       map_direct(bgp_afi_name_map, get_iAFI(prib->qafx)).str,
-                       map_direct(bgp_safi_name_map, get_iSAFI(prib->qafx)).str,
-                                                           qs_string(updates)) ;
-      qs_free(updates) ;
+      p_put = rb_put_close(rb, rb_len, rb_type) ;
 
-      /* If we have no actual withdraws, exit now
+      qassert((p_put + rbrt_off_body) == p_seg) ;
+
+      /* For qdebug... quick check on the validity of what we just created.
        */
-      bgp_attr_unlock(attr_sent) ;
+      if (qdebug)
+        {
+          qassert(load_s(&p_put[rbrt_off_len])  == rb_len) ;
+          qassert(load_b(&p_put[rbrt_off_type]) == rb_type) ;
 
-      if (withdrawn == 0)
-        return NULL ;
+          // XXX XXX XXX XXX XXX
 
-      prib->scount -= withdrawn ;
+
+
+        } ;
+    }
+  else
+    {
+      /* We have not a single prefix in the UPDATE we have constructed.
+       *
+       * Discard the rb-segment.
+       */
+      rb_put_drop(rb) ;
     } ;
 
-  /* The message is complete -- and kept to size, above.
+  /* Log stuff as required.
    */
-  bgp_packet_set_size (s) ;
+  if (qs_attrs != NULL)
+    {
+      if (qs_updates != NULL)
+        {
+          zlog (prib->peer->log, LOG_DEBUG, "%s send %u UPDATE(S) %s/%s:%s%s",
+                prib->peer->host, count,
+                map_direct(bgp_afi_name_map, get_iAFI(prib->qafx)).str,
+                map_direct(bgp_safi_name_map, get_iSAFI(prib->qafx)).str,
+                                   qs_string(qs_attrs), qs_string(qs_updates)) ;
+          qs_free(qs_updates) ;
+        } ;
 
-  return s ;
+      if (qs_withdraws != NULL)
+        {
+          zlog (prib->peer->log, LOG_WARNING,
+                 "%s unable to send %u UPDATE(S) - %u bytes of attributes"
+                                                               " - %s/%s:%s%s",
+                prib->peer->host, no_count, start_body_len - BGP_UPM_ATTR,
+                map_direct(bgp_afi_name_map, get_iAFI(prib->qafx)).str,
+                map_direct(bgp_safi_name_map, get_iSAFI(prib->qafx)).str,
+                                 qs_string(qs_attrs), qs_string(qs_withdraws)) ;
+          qs_free(qs_withdraws) ;
+        } ;
+
+      qs_free(qs_attrs) ;
+    } ;
+
+  return false ;                /* not full     */
+} ;
+
+/*------------------------------------------------------------------------------
+ * Construct qstring containing the attributes to be announced.
+ */
+static qstring
+bgp_packet_attrs_string(peer_rib prib, route_out_parcel parcel)
+{
+  attr_next_hop_t* next_hop, * mp_next_hop ;
+
+  next_hop = mp_next_hop = NULL ;
+  if (prib->qafx == qafx_ipv4_unicast)
+    next_hop    = &parcel->attr->next_hop ;
+  else
+    mp_next_hop = &parcel->attr->next_hop ;
+
+  return bgp_dump_attr(prib->peer, parcel->attr, next_hop, mp_next_hop) ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Construct qstring containing the attributes to be announced.
+ */
+static qstring
+bgp_packet_prefix_string(qstring qs_pfx, peer_rib prib,
+                                                route_out_parcel parcel)
+{
+  prefix_id_entry pie ;
+
+  pie = prefix_id_get_entry(parcel->pfx_id) ;
+
+  qs_pfx = qs_append_str(qs_pfx, " ") ;
+
+  if (prib->is_mpls)
+    qs_pfx = qs_printf_a(qs_pfx, " %s/%s/",
+                            stgtoa(parcel->tag).str,
+                            srdtoa(prefix_rd_id_get_val(pie->pfx->rd_id)).str) ;
+  else
+    qs_pfx = qs_append_str(qs_pfx, " ") ;
+
+  return qs_append_str(qs_pfx, spfxtoa(pie->pfx).str) ;
 } ;
 
 /*------------------------------------------------------------------------------
  * Construct a withdraw update starting with the given parcel, and then eating
  * as much as possible of the prib's withdraw queue.
  *
- * Generates complete BGP message in the peer->work stream structure.
+ * Generates any BGP UPDATE message in peer->session->rb_write ring buffer.
  *
- * Returns: peer->work -- if have something to be written.
- *
- * NB: the given parcel will be a withdraw, so always creates a message
+ * Returns: true <=> ring-buffer is full     -- wait for prompt from BE
+ *          false -> ring-buffer is not full -- can keep going !
  */
-static stream
-bgp_withdraw_packet (peer_rib prib, route_out_parcel parcel)
+static bool
+bgp_packet_write_withdraw(peer_rib prib, ring_buffer rb,
+                                                        route_out_parcel parcel)
 {
-  stream  s;
-  uint    withdrawn ;
-  qstring updates ;
-  ulen    len_p, len_ap, limit, end_p ;
+  bgp_rb_msg_out_type_t type ;
+  ptr_t     p_seg, p_red_tape ;
+  ulen      body_len, mp_len ;
+  bool      mp_unreach ;
+  blower_t  br[1] ;
+  uint      count ;
+  qstring   qs_withdraws ;
 
-  if (BGP_DEBUG (update, UPDATE_OUT))
-    updates = qs_new(100) ;
-  else
-    updates = NULL ;
+  qassert(parcel->action == ra_out_withdraw) ;
+  qassert(parcel->qafx   == prib->qafx) ;
+  qassert(parcel->attr   == NULL) ;
 
-  s = prib->peer->work;
-  stream_reset (s);
+  /* We put the update packet directly into the session->write_rb.  So, we
+   * start by demanding enough space for the maximum size message body, plus
+   * the extra bytes we may use.
+   *
+   * See bgp_msg_write_update() for how we lay out the message parts in the
+   * ring-buffer -- we may need 1 extra bytes.
+   */
+  p_seg = rb_put_open(rb, BGP_MSG_BODY_MAX_L + 1, true /* set_waiting */) ;
+  if (p_seg == NULL)
+    return true ;                       /* full !               */
 
-  bgp_packet_set_marker (s, BGP_MT_UPDATE);
-  stream_putw (s, 0) ;          /* Withdraw length      */
+  rb_set_blower(br, rb) ;
+  qassert(blow_ptr(br)   == p_seg) ;
+  qassert(blow_total(br) >= (BGP_MSG_BODY_MAX_L + 1)) ;
 
-  if (prib->qafx == qafx_ipv4_unicast)
+  /* Prepare the red_tape and the start of the attribute for MP_UNREACH
+   *
+   * Sets: p_red_tape  = address for the red_tape, so far.
+   *       body_len    = length of red-tape + length of attribute so far.
+   *       mp_len      = length of body of attribute (if required)
+   *
+   * By red-tape we mean the UPDATE message red-tape, which is 4 bytes for
+   * (a) the total withdrawn NLRI length, and (b) the total attributes length.
+   */
+  mp_unreach = (prib->qafx != qafx_ipv4_unicast) ;
+
+  if (!mp_unreach)
     {
-      len_p  = stream_get_endp(s) ;
-      len_ap = 0 ;
-      limit  = BGP_MSG_MAX_L - 2 ;
+      type = bgp_rbm_out_update_a ;
+      p_red_tape = blow_step(br, BGP_UPM_A_LEN) ;
+      confirm(BGP_UPM_A_LEN == 2) ;     /* space for withdraw length    */
+
+      body_len  = BGP_UPM_ATTR ;        /* so far                       */
+      mp_len    = 256 ;                 /* none !                       */
     }
   else
     {
-      stream_putw(s, 0) ;       /* Attributes length    */
+      type = bgp_rbm_out_update_d ;     /* assume not extended length   */
+      blow_step(br, 1) ;                /* one spare byte               */
+      p_red_tape = blow_step(br, BGP_UPM_ATTR) ;
+      confirm(BGP_UPM_ATTR == 4) ;      /* space for red_tape           */
 
-      len_p  = stream_get_endp(s) ;
+      mp_len    = bgp_unreach_attribute(br, prib) ;
+      body_len  = BGP_UPM_ATTR + mp_len ;       /* so far               */
+      mp_len   -= 3 ;                   /* attribute body length        */
 
-      stream_putc(s, BGP_ATF_OPTIONAL | BGP_ATF_EXTENDED) ;
-      stream_putc(s, BGP_ATT_MP_UNREACH_NLRI) ;
-      stream_putw(s, 0) ;
-
-      len_ap = stream_get_endp(s) ;
-      limit  = BGP_MSG_MAX_L ;
-
-      stream_putw (s, get_iAFI(prib->qafx));
-      stream_putc (s, get_iSAFI(prib->qafx));
+      if (mp_len > 255)                 /* not likely, but make sure    */
+        body_len += 1 ;                 /* need Extended Length         */
     } ;
 
-  withdrawn = 0 ;
-  end_p = stream_get_endp(s) ;
+  /* We have everything we need, except for the prefix(es).
+   *
+   * Eat the prefix we rode in on, and then eat as many further prefixes as we
+   * can which share the attributes and will fit in the message.
+   */
+  blow_overrun_check(br) ;              /* make sure                    */
 
+  qs_withdraws = NULL ;
+  count = 0 ;
   do
     {
-      prefix_id_entry pie ;
+      ulen pfx_len ;
+      uint extend ;
 
-      qassert(parcel->action  == ra_out_withdraw) ;
-      qassert(parcel->attr    == NULL) ;
-      qassert(parcel->qafx    == prib->qafx) ;
-
-      pie = prefix_id_get_entry(parcel->pfx_id) ;
-
-      bgp_packet_withdraw_prefix(s, pie->pfx, prib->qafx) ;
-
-      if (stream_has_written_beyond(s, limit))
-        {
-          stream_set_endp(s, end_p) ;       /* as you was   */
-          stream_clear_overflow(s) ;
-          break ;
-        } ;
-
-      end_p = stream_get_endp(s) ;
-
-      withdrawn += 1 ;
-
-      if (updates != NULL)
-        {
-          qs_append_str(updates, " ") ;
-          qs_append_str(updates, spfxtoa(pie->pfx).str) ;
-        } ;
-
-      /* Have dispatched a withdraw, so can now discard the bgp_adj_out, and
-       * with it the scheduled advertisement.
+      /* Generate NLRI at the current buffer position, and check for a fit.
        */
+      pfx_len = bgp_blow_prefix(br, prib, parcel->pfx_id, parcel->tag) ;
+
+      if ((mp_len <= 255) && ((mp_len + pfx_len) > 255))
+        extend = 1 ;
+      else
+        extend = 0 ;
+
+      if ((body_len + pfx_len + extend) > BGP_MSG_BODY_MAX_L)
+        break ;                         /* withdraw message is full     */
+
+      /* The prefix fits -- hurrah.
+       */
+      body_len += pfx_len + extend ;
+      mp_len   += pfx_len ;
+
+      count += 1 ;
+
+      if (BGP_DEBUG (update, UPDATE_OUT))
+        qs_withdraws = bgp_packet_prefix_string(qs_withdraws, prib, parcel) ;
+
       parcel = bgp_adj_out_done_withdraw(prib, parcel) ;
     }
   while (parcel != NULL) ;
 
-  prib->scount -= withdrawn ;
-
-  /* For ipv4_unicast: set Withdrawn Routes Length
-   *                   then set Total Path Attributes Length == 0
-   *
-   *        otherwise: set Total Path Attributes Length
-   *                   then set length of the MP_UNREACH attribute
+  /* Collected everything for the UPDATE message, if any.
    */
-  stream_putw_at(s, len_p - 2, end_p - len_p) ;
-
-  if (prib->qafx == qafx_ipv4_unicast)
-    stream_putw(s, 0) ;         /* no attributes        */
-  else
-    stream_putw_at(s, len_ap - 2, end_p - len_ap) ;
-
-  /* Debug logging as required
-   */
-  if (updates != NULL)
+  if (count != 0)
     {
-      zlog (prib->peer->log, LOG_DEBUG, "%s send %u WITHDRAW(S) %s/%s:%s",
-                 prib->peer->host, withdrawn,
-                 map_direct(bgp_afi_name_map, get_iAFI(prib->qafx)).str,
-                 map_direct(bgp_safi_name_map, get_iSAFI(prib->qafx)).str,
-                                                           qs_string(updates)) ;
-      qs_free(updates) ;
+      /* We have at least one prefix in the UPDATE we have constructed.
+       *
+       * Need to fill in the message red-tape, and complete any MP_UNREACH_NLRI
+       * attribute.
+       *
+       * Then close the rb-segment at its true size, which dispatches it.
+       */
+      ptr_t p_put ;
+      uint  rb_len ;
+
+      prib->scount -= count ;
+
+      if (!mp_unreach)
+        {
+          /* Simple IPv4/Unicast
+           *
+           * Need to fill in: length of the withdraw NLRI
+           *      and append: 0 == length of attributes.
+           *
+           * We have: type       = bgp_rbm_out_update_a
+           *          p_red_tape = address of the red-tape
+           *          body_len   = true length of attributes + red_tape
+           */
+          qassert(type == bgp_rbm_out_update_a) ;
+
+          store_ns(p_red_tape, body_len - BGP_UPM_ATTR) ;
+                                        /* withdraw length      */
+          blow_w(br, 0) ;               /* zero attributes      */
+        }
+      else
+        {
+          /* MP_REACH form.
+           *
+           * We have: type       = bgp_rbm_out_update_d
+           *          p_red_tape = address of the red-tape -- so far
+           *          body_len   = true length of attributes + red_tape
+           *
+           * Adjust the MP_REACH attribute if need Extended Length, and insert
+           * the attribute length.
+           */
+          qassert(type == bgp_rbm_out_update_d) ;
+          qassert(mp_len == (blow_ptr(br) - (p_red_tape + BGP_UPM_ATTR + 3))) ;
+          qassert(p_red_tape[BGP_UPM_ATTR + 0] == BGP_ATF_OPTIONAL) ;
+          qassert(p_red_tape[BGP_UPM_ATTR + 1] == BGP_ATT_MP_UNREACH_NLRI) ;
+
+          if (mp_len <= 255)
+            {
+              /* We do not need to extend the MP_UNREACH_NLRI attribute.
+               */
+              p_red_tape[BGP_UPM_ATTR + 2] = mp_len ;
+            }
+          else
+            {
+              /* We do need to extend the MP_UNREACH_NLRI attribute.
+               */
+              type = bgp_rbm_out_update_a ;
+
+              p_red_tape -= 1 ;             /* use up the spare byte        */
+
+              store_b( &p_red_tape[BGP_UPM_ATTR + 0],
+                                          BGP_ATF_OPTIONAL | BGP_ATF_EXTENDED) ;
+              store_b( &p_red_tape[BGP_UPM_ATTR + 1], BGP_ATT_MP_UNREACH_NLRI) ;
+              store_ns(&p_red_tape[BGP_UPM_ATTR + 2], mp_len) ;
+            } ;
+
+          store_ns(&p_red_tape[0], 0) ;         /* no withdraws         */
+          store_ns(&p_red_tape[2], body_len - BGP_UPM_ATTR) ;
+                                                /* total attributes     */
+        } ;
+
+      rb_len = blow_ptr(br) - p_seg ;
+      qassert(rb_len == (body_len + (type == bgp_rbm_out_update_d ? 1 : 0))) ;
+
+      /* Complete the ring-buffer message.
+       */
+      p_put = rb_put_close(rb, rb_len, type) ;
+
+      qassert((p_put + rbrt_off_body) == p_seg) ;
+
+      /* For qdebug... quick check on the validity of what we just created.
+       */
+      if (qdebug)
+        {
+          qassert(load_s(&p_put[rbrt_off_len])  == rb_len) ;
+          qassert(load_b(&p_put[rbrt_off_type]) == type) ;
+
+          // XXX XXX XXX XXX XXX
+
+        } ;
+    }
+  else
+    {
+      /* We have not a single prefix in the UPDATE we have constructed.
+       *
+       * This should be impossible !  Discard the rb-segment.
+       */
+      rb_put_drop(rb) ;
     } ;
 
-  /* Kept within maximum message length, above.
+  /* Log stuff as required.
    */
-  bgp_packet_set_size (s);
-  return s ;
-}
+  if (qs_withdraws != NULL)
+    {
+      zlog (prib->peer->log, LOG_DEBUG, "%s send %u WITHDRAW(S) %s/%s:%s",
+                prib->peer->host, count,
+                map_direct(bgp_afi_name_map, get_iAFI(prib->qafx)).str,
+                map_direct(bgp_safi_name_map, get_iSAFI(prib->qafx)).str,
+                                                      qs_string(qs_withdraws)) ;
+      qs_free(qs_withdraws) ;
+    } ;
+
+  return false ;                /* not full     */
+} ;
 
 /*------------------------------------------------------------------------------
- * Construct an End-of-RIB update message for given AFI/SAFI.
+ * Construct an EoR.
  *
- * Generates complete BGP message in the peer->work stream structure.
+ * Generates a BGP UPDATE message in peer->session->rb_write ring buffer.
  *
- * Returns: peer->work -- if have something to be written.
- *          NULL       -- otherwise
+ * Returns: true <=> ring-buffer is full     -- wait for prompt from BE
+ *          false -> ring-buffer is not full -- can keep going !
  */
-static stream
-bgp_update_packet_eor (peer_rib prib, route_out_parcel parcel)
+static bool
+bgp_packet_write_eor(peer_rib prib, ring_buffer rb, route_out_parcel parcel)
 {
-  stream s ;
+  ulen        eor_msg_len ;
+  ptr_t       p_seg, p_put ;
 
-  bgp_adj_out_done_announce(prib, parcel) ;
+  qassert(parcel->action == ra_out_eor) ;
+  qassert(parcel->qafx   == prib->qafx) ;
+  qassert(parcel->attr   == NULL) ;
 
-  if (DISABLE_BGP_ANNOUNCE)
-    return NULL;
+  /* For IPv4/Unicast we are sending an UPDATE with no Withdrawn Routes and no
+   * Attributes.
+   *
+   * For all other afi/safi we are sending an UPDATE with no Withdrawn Routes
+   * and an empty MP_UNREACH_NLRI.
+   */
+  enum
+    {
+      empty_mp_unreach_nlri = 1 + 1 + 1 + 2 + 1,
+
+      min_eor_msg_len       = 2 + 2,
+      max_eor_msg_len       = 2 + 2 + empty_mp_unreach_nlri,
+    } ;
+
+  /* BGP_UPM_W_LEN      == offset of withdrawn routes length
+   * BGP_UPM_A_LEN      == offset of attributes length, if no Withdrawn Routes
+   * BGP_UPM_ATTR       == offset of attributes, if no Withdrawn Routes
+   * BGP_ATTR_MIN_L     == length of minimum size (empty) attribute
+   * BGP_ATT_MPU_MIN_L  == length of body of minimum size MP_UNREACH_NLRI
+   */
+  confirm(empty_mp_unreach_nlri == (BGP_ATTR_MIN_L + BGP_ATT_MPU_MIN_L)) ;
+  confirm(min_eor_msg_len       == (uint)BGP_UPM_ATTR) ;
+  confirm(max_eor_msg_len       == (BGP_UPM_ATTR   + empty_mp_unreach_nlri)) ;
+
+  eor_msg_len = (prib->qafx == qafx_ipv4_unicast) ? min_eor_msg_len
+                                                  : max_eor_msg_len ;
+
+  /* Allocate what we need for this.
+   */
+  p_seg = rb_put_open(rb, eor_msg_len, true /* set_waiting */) ;
+  if (p_seg == NULL)
+    return true ;                       /* full !               */
+
+  /* Set the UPDATE message red-tape.
+   */
+  store_ns(&p_seg[BGP_UPM_W_LEN], 0) ;
+  store_ns(&p_seg[BGP_UPM_A_LEN], eor_msg_len - BGP_UPM_ATTR) ;
+
+  confirm((BGP_UPM_W_LEN    == 0) && (sizeof(BGP_UPM_W_LEN_T)    == 2)) ;
+  confirm((BGP_UPM_A_LEN    == 2) && (sizeof(BGP_UPM_A_LEN_T)    == 2)) ;
+  confirm((BGP_UPM_ATTR     == 4)) ;
+
+  if (prib->qafx != qafx_ipv4_unicast)
+    {
+      store_b( &p_seg[BGP_UPM_ATTR + 0],     BGP_ATF_OPTIONAL) ;
+      store_b( &p_seg[BGP_UPM_ATTR + 1],     BGP_ATT_MP_UNREACH_NLRI) ;
+      store_b( &p_seg[BGP_UPM_ATTR + 2],     2 + 1);
+      store_ns(&p_seg[BGP_UPM_ATTR + 3 + 0], prib->i_afi) ;
+      store_b( &p_seg[BGP_UPM_ATTR + 3 + 2], prib->i_safi) ;
+
+      confirm((BGP_ATTR_FLAGS   == 0) && (sizeof(BGP_ATTR_FLAGS_T)   == 1)) ;
+      confirm((BGP_ATTR_TYPE    == 1) && (sizeof(BGP_ATTR_TYPE_T)    == 1)) ;
+      confirm((BGP_ATTR_LEN     == 2) && (sizeof(BGP_ATTR_LEN_T)     == 1)) ;
+      confirm((BGP_ATT_MPU_AFI  == 0) && (sizeof(BGP_ATT_MPU_AFI_T)  == 2)) ;
+      confirm((BGP_ATT_MPU_SAFI == 2) && (sizeof(BGP_ATT_MPU_SAFI_T) == 1)) ;
+    } ;
+
+  p_put = rb_put_close(rb, eor_msg_len, bgp_rbm_out_eor) ;
+
+  qassert((p_put + rbrt_off_body) == p_seg) ;
+
+  bgp_adj_out_done_eor(prib) ;
 
   if (BGP_DEBUG (normal, NORMAL))
     zlog_debug ("send End-of-RIB for %s to %s", get_qafx_name(prib->qafx),
                                                              prib->peer->host) ;
 
-  s = prib->peer->work;
-  stream_reset (s);
-
-  /* Make BGP update packet.
-   */
-  bgp_packet_set_marker (s, BGP_MT_UPDATE);
-
-  /* Unfeasible Routes Length
-   */
-  stream_putw (s, 0);
-
-  if (prib->qafx == qafx_ipv4_unicast)
-    {
-      /* Total Path Attribute Length
-       */
-      stream_putw (s, 0);
-    }
-  else
-    {
-      /* Total Path Attribute Length
-       */
-      stream_putw (s, 6);
-      stream_putc (s, BGP_ATF_OPTIONAL);
-      stream_putc (s, BGP_ATT_MP_UNREACH_NLRI);
-      stream_putc (s, 3);
-      stream_putw (s, get_iAFI(prib->qafx));
-      stream_putc (s, get_iSAFI(prib->qafx));
-    }
-
-  /* Cannot exceed maximum message size !
-   */
-  bgp_packet_set_size (s);
-  return s ;
-}
+  return false ;                /* not full     */
+} ;
 
 /*------------------------------------------------------------------------------
- * Construct an update for the default route, place it in the obuf queue
- * and kick write.
+ * Construct a Route Refresh Message, eating as many ORF as possible.
  *
- * Note that this jumps all queues -- because the default route generated is
- * special.  Also, this is called (a) when a table is about to be announced, so
- * this will be the first route sent and (b) when the configuration option
- * is set, so the ordering wrt other routes and routeadv timer is moot.
+ * Generates a BGP ROUTE_REFRESH message in peer->session->rb_write ring buffer.
  *
- * Note that this may also trigger the output of pending withdraws and updates.
- * Tant pis.
- *
- * Note also that it is assumed that (a) the attributes are essentially
- * trivial, and (b) that they are 99.9% likely to be unique.
- *
- * Uses peer->work stream structure, but copies result to new stream, which is
- * pushed onto the obuf queue.
+ * Returns: true <=> ring-buffer is full     -- wait for prompt from BE
+ *          false -> ring-buffer is not full -- can keep going !
  */
-extern void
-bgp_default_update_send (bgp_peer peer, prefix p, attr_set attr, qafx_t qafx,
-                                                                  bgp_peer from)
+static bool
+bgp_packet_write_rr(bgp_peer peer, ring_buffer rb)
 {
-  stream  s;
-  uint    pos;
-  bgp_size_t total_attr_len;
+  bgp_route_refresh rr ;
+  ulen        msg_size ;
+  ptr_t       p_seg, p, p_put ;
+  bgp_orf_cap_bits_t orf_cap_bits ;
+  blower_t br[1] ;
+  bgp_form_t form ;
+  bool      done ;
 
-  if (DISABLE_BGP_ANNOUNCE)
-    return;
-
-  /* Logging the attribute.
+  /* Pick up the first pending Route-Refresh, if any.
    */
-  if (BGP_DEBUG (update, UPDATE_OUT))
+  rr = ddl_head(peer->rr_pending) ;
+  if (rr == NULL)
+    return false ;                      /* not full             */
+
+  /* We prefer the RFC ORF Prefix type, if we allowed to send any at all.
+   */
+  orf_cap_bits = peer->session->args->can_orf_pfx[rr->qafx] ;
+
+  if      (orf_cap_bits & ORF_SM)
+    form = bgp_form_rfc ;
+  else if (orf_cap_bits & ORF_SM_pre)
+    form = bgp_form_pre ;
+  else
+    form = bgp_form_none ;
+
+  /* If we have ORF, then we want a full size BGP message otherwise a small
+   * one.
+   */
+  if ((form != bgp_form_none) && (vector_length(rr->entries) > rr->next_index))
+    msg_size = BGP_MSG_BODY_MAX_L ;
+  else
+    msg_size = BGP_RRM_BODY_MIN_L ;
+
+  /* Allocate what we need for this.
+   *
+   * Note that if we cannot get a buffer big enough, we have left the rr object
+   * where it was, for later consideration.
+   */
+  p_seg = rb_put_open(rb, msg_size, true /* set_waiting */) ;
+  if (p_seg == NULL)
+    return true ;                       /* full !               */
+
+  rb_set_blower(br, rb) ;
+  qassert(blow_ptr(br)   == p_seg) ;
+  qassert(blow_total(br) == BGP_MSG_BODY_MAX_L) ;
+
+  /* Encode leading/minimum/simple Route Refresh message.
+   */
+  p = blow_step(br, BGP_RRM_MIN_L) ;
+
+  confirm((BGP_RRM_AFI   == 0) && (sizeof(BGP_RRM_AFI_T)  == 2)) ;
+  confirm((BGP_RRM_RES   == 2) && (sizeof(BGP_RRM_RES_T)  == 1)) ;
+  confirm((BGP_RRM_SAFI  == 3) && (sizeof(BGP_RRM_SAFI_T) == 1)) ;
+  confirm(BGP_RRM_BODY_MIN_L  == 4) ;
+
+  store_ns(&p[BGP_RRM_AFI], rr->i_afi) ;
+  store_b (&p[BGP_RRM_RES], 0);
+  store_b (&p[BGP_RRM_RES], rr->i_safi);
+
+  /* Append as many (remaining) ORF entries as can into message
+   */
+  if (form != bgp_form_none)
+    done = bgp_packet_write_rr_orf_part(br, rr, form, peer) ;
+  else
+    done = true ;
+
+  /* Close and dispatch the message
+   */
+  p_put = rb_put_close(rb, blow_length(br), bgp_rbm_out_rr) ;
+
+  qassert((p_put + rbrt_off_body) == p_seg) ;
+
+  /* If we are 'done', we can release the current bgp_route_refresh object.
+   */
+  if (done)
     {
-      qstring qs ;
-      attr_next_hop_t* next_hop, * mp_next_hop ;
+      dsl_del_head(peer->rr_pending, next) ;
+      bgp_route_refresh_free(rr) ;
+    } ;
 
-      next_hop = mp_next_hop = NULL ;
-      if (qafx == qafx_ipv4_unicast)
-        next_hop    = &attr->next_hop ;
-      else
-        mp_next_hop = &attr->next_hop ;
+  return false ;                /* not full     */
+} ;
 
-      qs = bgp_dump_attr(peer, attr, next_hop, mp_next_hop) ;
+/*------------------------------------------------------------------------------
+ * Set the length of the current collection, if any.
+ *
+ * NB: if the collection is zero length, crashes the blow pointer back to the
+ *     before the collection.
+ */
+inline static ptr_t
+bgp_packet_write_rr_orf_part_length(ptr_t p_collection, ptr_t p_end)
+{
+  confirm(BGP_ORF_MIN_L == 3) ;         /* collection header    */
 
-      if (qs != NULL)
+  if ((p_collection + BGP_ORF_MIN_L) < p_end)
+    store_ns(&p_collection[BGP_ORF_LEN], p_end - (p_collection + BGP_ORF_MIN_L)) ;
+  else
+    p_end = p_collection ;
+
+  return p_end ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Put ORF entries to the given blower until run out of entries or run out
+ * of room.
+ *
+ * There MUST BE at least one ORF entry to go.
+ *
+ * Returns true <=> done all available entries.
+ */
+static bool
+bgp_packet_write_rr_orf_part(blower br, bgp_route_refresh rr, bgp_form_t form,
+                                                                  bgp_peer peer)
+{
+  bgp_orf_entry entry ;
+  uint  next_index ;
+
+  uint8_t orf_type ;
+
+  ptr_t p_when ;                /* where the "when" byte is             */
+  ptr_t p_collection ;          /* start of the latest collection       */
+  ptr_t p_end ;                 /* where we got to successfully         */
+
+  bool  done ;
+
+  /* Heading for Prefix-Address ORF type section -- pro tem, set defer.
+   */
+  p_when = blow_ptr(br) ;        /* position of "when"           */
+  blow_b(br, BGP_ORF_WTR_DEFER) ;
+
+  /* Process ORF entries until run out of entries or space
+   */
+  p_collection = blow_ptr(br) ; /* no collection, yet           */
+  orf_type   = 0 ;              /* no ORF type, yet             */
+
+  next_index = rr->next_index ; /* where we started             */
+  while (1)
+    {
+      p_end = blow_ptr(br) ;    /* so far, so good              */
+
+      entry = bgp_orf_get_entry(rr, next_index) ;
+      done = (entry == NULL) ;
+
+      if (done)
+        break ;
+
+      if ((p_end == p_collection) || (orf_type != entry->orf_type))
         {
-          zlog (peer->log, LOG_DEBUG, "%s send UPDATE %s %s",
-                                   peer->host, spfxtoa(p).str, qs_string(qs)) ;
-          qs_free(qs) ;
+          /* Finish any previous collection and start a new one..
+           */
+          uint8_t orf_type_send ;
+
+          /* fill in length of previous ORF entries, if any
+           */
+          bgp_packet_write_rr_orf_part_length(p_collection, p_end) ;
+
+          /* set type and dummy entries length.
+           */
+          orf_type      = entry->orf_type ;
+          orf_type_send = entry->orf_type ;
+
+          if ((orf_type == BGP_ORF_T_PFX) && (form == bgp_form_pre))
+            orf_type_send = BGP_ORF_T_PFX_pre ;
+
+          /* Start a new collection.
+           *
+           * Sets p_collection -> type byte
+           *                      length word
+           *
+           * Leaves p_end == p_collection, so if do not actually have room for
+           * the first entry of the collection, the collection is discarded.
+           */
+          p_collection = blow_step(br, BGP_ORF_MIN_L) ; /* type & length */
+
+          store_b(&p_collection[BGP_ORF_TYPE], orf_type_send) ;
         } ;
-    }
 
-  s = peer->work ;
-  stream_reset (s);
+      /* Insert the entry, if will fit.
+       *
+       * sets done <=> fitted
+       */
+      if (entry->unknown)
+        {
+          if (blow_left(br) < entry->body.orf_unknown.length)
+            break ;                     /* entry does not fit   */
 
-  /* Make BGP update packet and set empty withdrawn NLRI
+            blow_n(br, entry->body.orf_unknown.data,
+                       entry->body.orf_unknown.length) ;
+        }
+      else
+        {
+          if (entry->remove_all)
+            {
+              /* Put remove all ORF entry to stream -- if possible.
+               */
+              if (blow_left(br) < 1)    /* just the one byte    */
+                break ;
+
+              blow_b(br, BGP_ORF_EA_RM_ALL) ;
+            }
+          else
+            {
+              uint8_t   action ;
+              orf_prefix_value orfpv ;
+              uint      blen ;
+              ptr_t     p ;
+
+              qassert(entry->orf_type == BGP_ORF_T_PFX) ;
+              qassert(entry->deny == (entry->body.orfpv.type == PREFIX_DENY)) ;
+
+              orfpv = &entry->body.orfpv ;
+
+              blen = PSIZE(orfpv->pfx.prefixlen) ;
+
+              if (blow_left(br) < (int)(BGP_ORF_E_P_MIN_L + blen))
+                break ;
+
+              action = (entry->remove ? BGP_ORF_EA_REMOVE
+                                      : BGP_ORF_EA_ADD)
+                     | (entry->deny   ? BGP_ORF_EA_DENY
+                                      : BGP_ORF_EA_PERMIT) ;
+
+              p = blow_step(br, BGP_ORF_E_P_MIN_L) ;
+
+              store_b( &p[0], action) ;
+              store_nl(&p[1], orfpv->seq) ;
+              store_b( &p[5], orfpv->ge) ;        /* aka min      */
+              store_b( &p[6], orfpv->le) ;        /* aka max      */
+              store_b( &p[7], orfpv->pfx.prefixlen) ;
+
+              confirm(BGP_ORF_E_P_MIN_L == (1 + 4 + 1 + 1 + 1)) ;
+
+              blow_n(br, &orfpv->pfx.u.prefix, blen) ;
+            } ;
+        } ;
+
+      /* Done ORF entry.  Step to the next.  NB: done == true
+       */
+      next_index += 1 ;
+    } ;
+
+  /* Set the length of what we have collected.
+   *
+   * If we haven't collected anything, then that's because there wasn't
+   * enough room, so will have collapsed back to the start of the collection.
    */
-  bgp_packet_set_marker (s, BGP_MT_UPDATE);
-  stream_putw (s, 0);
+  blow_set_ptr(br, bgp_packet_write_rr_orf_part_length(p_collection, p_end)) ;
 
-  /* Construct attribute -- including NLRI for not AFI_IP/SAFI_UNICAST
+  /* If we are done, then we set the true defer/
+   *
    */
-  pos = stream_get_endp (s);
-  stream_putw (s, 0);
-
-  total_attr_len = bgp_packet_attribute (s, peer->prib[qafx], attr, p, 0);
-  stream_putw_at (s, pos, total_attr_len);
-
-  /* NLRI for AFI_IP/SAFI_UNICAST.
-   */
-  if (qafx == qafx_ipv4_unicast)
-    stream_put_prefix (s, p);
-
-  /* Set size -- note that it is essentially impossible that the message has
-   *             overflowed, but if it has there is nothing we can do about it
-   *             other than suppress and treat as error (the default action).
-   */
-  bgp_packet_set_size (s);
-
-  /* Add packet to the peer.
-   */
-  bgp_write(peer, s);
-}
-
-/*------------------------------------------------------------------------------
- * Construct a withdraw update for the default route, place it in the obuf
- * queue and kick write.
- *
- * Note that this jumps even the withdraw queue.  This is called when the
- * configuration option is unset, so the ordering wrt other routes and
- * routeadv timer is moot.  If there were other withdraws pending, they could
- * be merged in -- but that seems like a lot of work for little benefit.
- *
- * Note that this may also trigger the output of pending withdraws and updates.
- * Tant pis.
- *
- * Uses peer->work stream structure, but copies result to new stream, which is
- * pushed onto the obuf queue.
- */
-extern void
-bgp_default_withdraw_send (bgp_peer peer, prefix p, qafx_t qafx)
-{
-  stream s;
-  uint   pos;
-  uint   cp;
-  bgp_size_t unfeasible_len;
-  bgp_size_t total_attr_len;
-
-  if (DISABLE_BGP_ANNOUNCE)
-    return;
-
-  total_attr_len = 0;
-  pos = 0;
-
-  if (BGP_DEBUG (update, UPDATE_OUT))
-    zlog (peer->log, LOG_DEBUG, "%s send UPDATE %s -- unreachable",
-                                                   peer->host, spfxtoa(p).str);
-
-  s = peer->work ;
-  stream_reset (s);
-
-  /* Make BGP update packet. */
-  bgp_packet_set_marker (s, BGP_MT_UPDATE);
-
-  /* Unfeasible Routes Length. */;
-  cp = stream_get_endp (s);
-  stream_putw (s, 0);
-
-  /* Withdrawn Routes. */
-  if (qafx == qafx_ipv4_unicast)
+  if (done)
     {
-      stream_put_prefix (s, p);
-
-      unfeasible_len = stream_get_endp (s) - cp - 2;
-
-      /* Set unfeasible len.  */
-      stream_putw_at (s, cp, unfeasible_len);
-
-      /* Set total path attribute length. */
-      stream_putw (s, 0);
+      if (!rr->defer)
+        store_b(p_when, BGP_ORF_WTR_IMMEDIATE) ;
     }
   else
     {
-      pos = stream_get_endp (s);
-      stream_putw (s, 0);
-      total_attr_len = bgp_unreach_attribute (s, p, qafx);
+      if (next_index == rr->next_index)
+        {
+          /* Something has gone wrong if nothing has been processed:
+           *
+           *   a) have been called again after having reported "done" (so there
+           *      are no more entries to deal with.
+           *
+           *   b) have been asked to output an "unknown" ORF entry which is too
+           *      long for a BGP message !!
+           */
+          if (entry == NULL)
+            zlog_err("%s called %s() after said was done",
+                                                         peer->host, __func__) ;
+          else if (entry->unknown)
+            zlog_err("%s sending REFRESH_REQ with impossible length (%d) ORF",
+                                   peer->host, entry->body.orf_unknown.length) ;
+          else
+            zlog_err("%s failed to put even one ORF entry", peer->host) ;
 
-      /* Set total path attribute length. */
-      stream_putw_at (s, pos, total_attr_len);
-    }
+          done = true ;
+        } ;
+    } ;
 
-  /* Impossible to overflow the BGP Message !
-   */
-  bgp_packet_set_size (s);
+  rr->next_index = next_index ;
+  return done ;
+} ;
 
-  /* Add packet to the peer.
-   */
-  bgp_write(peer, s);
-}
+/*==============================================================================
+ *
+ */
+
 
 /*------------------------------------------------------------------------------
  * Send route refresh message to the peer.
  *
  * Although the ORF stuff will handle arbitrary AFI/SAFI, we only send stuff
  * from known ones.
+ *
+ * This prepares a new bgp_route_refresh object, queues it for the peer and
+ * then prods the I/O stuff.
  */
 extern void
 bgp_route_refresh_send (peer_rib prib, byte orf_type,
@@ -783,7 +1246,8 @@ bgp_route_refresh_send (peer_rib prib, byte orf_type,
   if (prib == NULL)
     return ;
 
-  rr = bgp_route_refresh_new(get_iAFI(prib->qafx), get_iSAFI(prib->qafx), 1) ;
+  rr = bgp_route_refresh_new(prib->i_afi, prib->i_safi,
+                                        (orf_type == BGP_ORF_T_PFX) ? 100 : 0) ;
   rr->defer = (when_to_refresh == BGP_ORF_WTR_DEFER);
 
   orf_refresh = false  ;
@@ -806,7 +1270,7 @@ bgp_route_refresh_send (peer_rib prib, byte orf_type,
                 zlog_debug ("%s sending REFRESH_REQ to remove ORF (%s)"
                             " for afi/safi: %u/%u", prib->peer->host,
                                            rr->defer ? "defer" : "immediate",
-                                                            rr->afi, rr->safi) ;
+                                                        rr->i_afi, rr->i_safi) ;
             }
           else
             {
@@ -828,92 +1292,90 @@ bgp_route_refresh_send (peer_rib prib, byte orf_type,
                 zlog_debug ("%s sending REFRESH_REQ with pfxlist ORF "
                             "(%s) for afi/safi: %u/%u", prib->peer->host,
                                             rr->defer ? "defer" : "immediate",
-                                                            rr->afi, rr->safi);
+                                                        rr->i_afi, rr->i_safi);
             } ;
         } ;
     } ;
 
   if (BGP_DEBUG (normal, NORMAL))
     {
-      if (! orf_refresh)
-        zlog_debug ("%s sending REFRESH_REQ for afi/safi: %u/%u",
-                                           prib->peer->host, rr->afi, rr->safi);
+      if (!orf_refresh)
+        zlog_debug("%s sending REFRESH_REQ for afi/safi: %u/%u",
+                                      prib->peer->host, rr->i_afi, rr->i_safi) ;
     } ;
 
-  bgp_session_route_refresh_send(prib->peer->session, rr);
+  /* Append to queue for the peer and prompt the I/O side of things.
+   */
+  dsl_append(prib->peer->rr_pending, rr, next) ;
+
+  bgp_session_kick_write(prib->peer) ;
 } ;
 
-/* Send capability message to the peer. */
-
-/* TODO: require BGP Engine support for Dynamic Capability messages.    */
-
-extern void
-bgp_capability_send (struct peer *peer, qafx_t qafx, int capability_code,
-                                                                     int action)
-{
-  struct stream *s;
-  uint   length;
-
-  s = peer->work;
-  stream_reset (s);
-
-  /* Make BGP update packet. */
-  bgp_packet_set_marker (s, BGP_MT_CAPABILITY);
-
-  /* Encode MP_EXT capability. */
-  if (capability_code == BGP_CAN_MP_EXT)
-    {
-      stream_putc (s, action);
-      stream_putc (s, BGP_CAN_MP_EXT);
-      stream_putc (s, BGP_CAP_MPE_L);
-      stream_putw (s, get_iAFI(qafx));
-      stream_putc (s, 0);
-      stream_putc (s, get_iSAFI(qafx));
-
-      if (BGP_DEBUG (normal, NORMAL))
-        zlog_debug ("%s sending CAPABILITY has %s MP_EXT CAP for afi/safi: %d/%d",
-                   peer->host, action == CAPABILITY_ACTION_SET ?
-                   "Advertising" : "Removing", get_iAFI(qafx), get_iSAFI(qafx));
-    }
-
-  /* Set packet size.
-   *
-   * Impossible to overflow the BGP Message buffer
-   */
-  length = bgp_packet_set_size (s);
-
-  if (BGP_DEBUG (normal, NORMAL))
-    zlog_debug ("%s send message type %d, length (incl. header) %d",
-                                         peer->host, BGP_MT_CAPABILITY, length);
-
-  /* Add packet to the peer.
-   */
-  bgp_write(peer, s);
-}
-
-
-
-
-
-
-
-
-
-
-
 /*==============================================================================
- * Incoming UPDATE message handling
+ * Incoming message handling -- processing the session->rn_read ring-buffer.
+ *
+ * The ring-buffer contains the bodies of messages:
+ *
+ *   * BGP_MT_UPDATE
+ *
+ *   * BGP_MT_ROUTE_REFRESH
+ *   * BGP_MT_ROUTE_REFRESH_pre
  */
-static void bpd_update_receive_nlri (bgp_peer peer, route_in_action_t action,
+static void bgp_packet_read_update(bgp_peer peer, sucker sr) ;
+static void bgp_packet_read_rr(bgp_peer peer, sucker sr) ;
+
+static void bpd_packet_update_nlri (bgp_peer peer, route_in_action_t action,
                                                  attr_set attr, bgp_nlri nlri) ;
+static bgp_route_refresh bgp_packet_parse_rr(bgp_peer peer, sucker sr) ;
+
+/*------------------------------------------------------------------------------
+ * Process the ring buffer until it is empty.
+ *
+ * This is driven by prompt messages in the Routing Engine message queue.
+ *
+ * Each time this is called will attempt to empty the read_rb ring-buffer.
+ */
+extern void
+bgp_packet_read_stuff(bgp_peer peer, ring_buffer rb)
+{
+  ptr_t       p_seg ;
+
+  p_seg = rb_get_first(rb, true /* set_waiting */) ;
+  while (p_seg != NULL)
+    {
+      sucker_t  sr[1] ;
+
+      switch (rb_set_sucker(sr, rb))
+        {
+          case bgp_rbm_in_update:
+            bgp_packet_read_update(peer, sr) ;
+            break ;
+
+          case bgp_rbm_in_rr:
+          case bgp_rbm_in_rr_pre:
+            bgp_packet_read_rr(peer, sr) ;
+            break ;
+
+          default:
+            qassert(false) ;
+        } ;
+
+      p_seg = rb_get_step_first(rb, true /* set_waiting */) ;
+    } ;
+
+  if (rb_put_prompt(rb, 10000))
+    bgp_session_kick_be_write(peer) ;
+} ;
 
 /*------------------------------------------------------------------------------
  * Parse BGP Update packet and make attribute object.
  */
-extern void
-bgp_update_receive(bgp_peer peer, bgp_size_t size)
+static void
+bgp_packet_read_update(bgp_peer peer, sucker sr)
 {
   bgp_size_t attribute_len;
+
+
   byte* attr_p ;
   bgp_attr_parsing_t args[1] ;
   route_in_action_t action ;
@@ -990,11 +1452,10 @@ bgp_update_receive(bgp_peer peer, bgp_size_t size)
    *
    * Get (Update) NLRI part, and step past.
    */
-  args->withdraw.length = stream_getw (peer->ibuf);
-  args->withdraw.pnt    = stream_get_pnt (peer->ibuf) ;
+  args->withdraw.length = suck_w(sr);
+  args->withdraw.pnt    = suck_step(sr, args->withdraw.length) ;
 
-  stream_forward_getp(peer->ibuf, args->withdraw.length) ;
-  if (stream_has_overrun(peer->ibuf))
+  if (!suck_overrun_check(sr))
     {
       zlog_err ("%s [Error] Update packet error"
                 " (packet unfeasible length overflow %u)",
@@ -1008,11 +1469,10 @@ bgp_update_receive(bgp_peer peer, bgp_size_t size)
       goto exit_bgp_update_critical ;
     }
 
-  attribute_len = stream_getw (peer->ibuf);
-  attr_p        = stream_get_pnt(peer->ibuf) ;
+  attribute_len = suck_w(sr) ;
+  attr_p        = suck_step(sr, attribute_len) ;
 
-  stream_forward_getp(peer->ibuf, attribute_len) ;
-  if (stream_has_overrun(peer->ibuf))
+  if (!suck_overrun_check(sr))
     {
       zlog_warn ("%s [Error] Packet Error"
                    " (update packet attribute length overflow %u)",
@@ -1026,18 +1486,16 @@ bgp_update_receive(bgp_peer peer, bgp_size_t size)
       goto exit_bgp_update_critical ;
     } ;
 
-  args->update.length = stream_get_read_left(peer->ibuf);
-  args->update.pnt    = stream_get_pnt (peer->ibuf) ;
-
-  stream_forward_getp(peer->ibuf, args->update.length) ;
+  args->update.length = suck_left(sr);
+  args->update.pnt    = suck_ptr(sr) ;
 
   /* Check that any Withdraw stuff is well formed.
    */
   if (args->withdraw.length > 0)
     {
-      args->withdraw.qafx    = qafx_ipv4_unicast ;
-      args->withdraw.in.afi  = iAFI_IP ;
-      args->withdraw.in.safi = iSAFI_Unicast ;
+      args->withdraw.qafx      = qafx_ipv4_unicast ;
+      args->withdraw.in.i_afi  = iAFI_IP ;
+      args->withdraw.in.i_safi = iSAFI_Unicast ;
 
       if (!bgp_nlri_sanity_check (peer, &args->withdraw))
         {
@@ -1059,9 +1517,9 @@ bgp_update_receive(bgp_peer peer, bgp_size_t size)
    */
   if (args->update.length != 0)
     {
-      args->update.qafx    = qafx_ipv4_unicast ;
-      args->update.in.afi  = iAFI_IP;
-      args->update.in.safi = iSAFI_Unicast ;
+      args->update.qafx      = qafx_ipv4_unicast ;
+      args->update.in.i_afi  = iAFI_IP;
+      args->update.in.i_safi = iSAFI_Unicast ;
 
       if (!bgp_nlri_sanity_check (peer, &args->update))
         {
@@ -1219,7 +1677,7 @@ bgp_update_receive(bgp_peer peer, bgp_size_t size)
   if (prib != NULL)
     {
       if (args->withdraw.length != 0)
-        bpd_update_receive_nlri(peer, ra_in_withdraw, NULL, &args->withdraw) ;
+        bpd_packet_update_nlri(peer, ra_in_withdraw, NULL, &args->withdraw) ;
 
       if (args->update.length != 0)
         {
@@ -1246,7 +1704,7 @@ bgp_update_receive(bgp_peer peer, bgp_size_t size)
                                                      &args->update.next_hop.ip) ;
           set = bgp_attr_pair_store(args->attrs) ;
 
-          bpd_update_receive_nlri(peer, action, set, &args->update) ;
+          bpd_packet_update_nlri(peer, action, set, &args->update) ;
         }
       else if ((args->withdraw.length == 0) && (attribute_len == 0))
         {
@@ -1269,7 +1727,7 @@ bgp_update_receive(bgp_peer peer, bgp_size_t size)
     {
       prib = peer_family_prib(peer, args->mp_withdraw.qafx) ;
       if (prib != NULL)
-        bpd_update_receive_nlri(peer, ra_in_withdraw, NULL, &args->mp_withdraw);
+        bpd_packet_update_nlri(peer, ra_in_withdraw, NULL, &args->mp_withdraw);
     } ;
 
   if (args->mp_update.length != 0)
@@ -1300,7 +1758,7 @@ bgp_update_receive(bgp_peer peer, bgp_size_t size)
             } ;
 
           set = bgp_attr_pair_store(args->attrs) ;
-          bpd_update_receive_nlri (peer, action, set, &args->mp_update) ;
+          bpd_packet_update_nlri (peer, action, set, &args->mp_update) ;
         } ;
     } ;
 
@@ -1370,7 +1828,7 @@ bgp_update_receive(bgp_peer peer, bgp_size_t size)
  *     (small) duplication of effort here.
  */
 static void
-bpd_update_receive_nlri(bgp_peer peer, route_in_action_t action, attr_set attr,
+bpd_packet_update_nlri(bgp_peer peer, route_in_action_t action, attr_set attr,
                                                                   bgp_nlri nlri)
 {
   const byte*  pnt ;
@@ -1624,27 +2082,40 @@ bpd_update_receive_nlri(bgp_peer peer, route_in_action_t action, attr_set attr,
 
 /*------------------------------------------------------------------------------
  * Process incoming route refresh
+ *
+ * Note that at this stage we have no interest in whether was RFC or not !
  */
-void
-bgp_route_refresh_recv(bgp_peer peer, bgp_route_refresh rr)
+static void
+bgp_packet_read_rr(bgp_peer peer, sucker sr)
 {
+  bgp_route_refresh rr ;
   qafx_t qafx ;
-  vector_index_t i, e;
-  bgp_orf_name name ;
   peer_rib     prib ;
-  int ret;
 
-  qafx = qafx_from_i(rr->afi, rr->safi) ;
+  /* Parse the message into a new bgp_route_refresh object -- if can.
+   *
+   * Establish which address family is affected, if any.
+   */
+  rr = bgp_packet_parse_rr(peer, sr) ;
+  if (rr == NULL)
+    return ;
+
+  qafx = qafx_from_i(rr->i_afi, rr->i_safi) ;
   prib = peer_family_prib(peer, qafx) ;
 
   if (prib == NULL)
     return ;
 
-  prefix_bgp_orf_name_set(name, peer->su_name, qafx) ;
-
-  if ((e = bgp_orf_get_count(rr)) > 0)
+  /* Deal with the ORF, if any.
+   */
+  if (bgp_orf_get_count(rr) > 0)
     {
-      for (i = 0; i < e; ++i)
+      vector_index_t i ;
+      bgp_orf_name name ;
+
+      prefix_bgp_orf_name_set(name, peer->su_name, qafx) ;
+
+      for (i = 0; i < bgp_orf_get_count(rr) ; ++i)
         {
           bgp_orf_entry orfe ;
 
@@ -1655,11 +2126,13 @@ bgp_route_refresh_recv(bgp_peer peer, bgp_route_refresh rr)
 
           if (orfe->orf_type == BGP_ORF_T_PFX)
             {
+              cmd_ret_t ret ;
+
               if (orfe->remove_all)
                 {
                   if (BGP_DEBUG (normal, NORMAL))
                     zlog_debug ("%s rcvd Remove-All pfxlist ORF request",
-                        peer->host);
+                                                                   peer->host) ;
                   prefix_bgp_orf_remove_all (name);
                   break;
                 }
@@ -1673,18 +2146,18 @@ bgp_route_refresh_recv(bgp_peer peer, bgp_route_refresh rr)
                 {
                   if (BGP_DEBUG (normal, NORMAL))
                     zlog_debug ("%s Received misformatted prefixlist ORF."
-                        "Remove All pfxlist", peer->host);
+                                             "Remove All pfxlist", peer->host) ;
                   prefix_bgp_orf_remove_all (name);
                   break;
                 }
 
               prib->orf_plist = prefix_list_lookup (qAFI_ORF_PREFIX, name);
-            }
-        }
+            } ;
+        } ;
 
       if (BGP_DEBUG (normal, NORMAL))
         zlog_debug ("%s rcvd Refresh %s ORF request", peer->host,
-                    rr->defer ? "Defer" : "Immediate");
+                                            rr->defer ? "Defer" : "Immediate") ;
       if (rr->defer)
         return;
     }
@@ -1696,10 +2169,370 @@ bgp_route_refresh_recv(bgp_peer peer, bgp_route_refresh rr)
 
   /* Perform route refreshment to the peer
    */
-  bgp_announce_family (peer, qafx);
+  bgp_announce_family(peer, qafx);
+} ;
+
+/*==============================================================================
+ * BGP ROUTE-REFRESH message parsing
+ */
+static bool bgp_packet_orf_recv(bgp_route_refresh rr,
+                                    sa_family_t paf, sucker sr, bgp_peer peer) ;
+
+/*------------------------------------------------------------------------------
+ * Parse BGP ROUTE-REFRESH message
+ *
+ * This may contain ORF stuff !
+ *
+ * Returns:  NULL <=> OK  -- *p_rr set to the bgp_route_refresh object
+ *           otherwise = bgp_notify for suitable error message
+ *                        -- *p_rr set to NULL
+ *
+ * NB: if the connection is not fsEstablished, then will not parse
+ */
+static bgp_route_refresh
+bgp_packet_parse_rr(bgp_peer peer, sucker sr)
+{
+  bgp_route_refresh rr ;
+  ptr_t        p ;
+  int          left ;
+  iAFI_SAFI_t  mp[1] ;
+  qafx_bit_t   qb ;
+  bool         ok ;
+
+  /* Start with AFI, reserved, SAFI
+   */
+  p = suck_step(sr, BGP_RRM_BODY_MIN_L) ;
+
+  left = suck_left(sr) ;
+  if (left < 0)
+    {
+      /* This should not happen -- because is checked for in the BGP Engine.
+       *
+       * But we don't want to proceed with rubbish !
+       */
+      zlog_err ("%s Route Refresh message body too short at %u bytes",
+                                        peer->host, BGP_RRM_BODY_MIN_L + left) ;
+
+      bgp_peer_down_error (peer, BGP_NOMC_CEASE, BGP_NOMS_UNSPECIFIC) ;
+      return NULL ;
+    } ;
+
+  confirm(BGP_RRM_BODY_MIN_L == 4) ;
+  confirm((BGP_RRM_AFI       == 0) && (sizeof(BGP_RRM_AFI_T)  == 2)) ;
+  confirm((BGP_RRM_RES       == 2) && (sizeof(BGP_RRM_RES_T)  == 1)) ;
+  confirm((BGP_RRM_SAFI      == 3) && (sizeof(BGP_RRM_SAFI_T) == 1)) ;
+
+  mp->i_afi  = load_ns(&p[BGP_RRM_AFI]) ;
+  mp->i_safi = load_b( &p[BGP_RRM_SAFI]) ;
+
+  qb = qafx_bit_from_i(mp->i_afi, mp->i_safi) ;
+
+  if ((qb & peer->af_running) == qafx_set_empty)
+    {
+      /* This should not happen -- because is checked for in the BGP Engine.
+       *
+       * But we don't want to proceed with rubbish !
+       */
+      zlog_err ("%s Route Refresh message with unexpected afi/safi %u/%u",
+                                            peer->host, mp->i_afi, mp->i_safi) ;
+
+      bgp_peer_down_error (peer, BGP_NOMC_CEASE, BGP_NOMS_UNSPECIFIC) ;
+      return NULL ;
+    } ;
+
+  rr = bgp_route_refresh_new(mp->i_afi, mp->i_safi, (left == 0) ? 0 : 100) ;
+
+  /* If there are any ORF entries, time to suck them up now.
+   */
+  ok = true ;
+
+  if ((left > 0) && ok)
+    {
+      uint8_t when_to_refresh ;
+      bool    defer ;
+
+      when_to_refresh = suck_b(sr) ;
+
+      switch (when_to_refresh)
+        {
+          case BGP_ORF_WTR_IMMEDIATE:
+            defer = false ;
+            break ;
+
+          case BGP_ORF_WTR_DEFER:
+            defer = true ;
+            break ;
+
+          default:
+            plog_warn(peer->log,
+               "%s ORF route refresh invalid 'when' value %d (AFI/SAFI %u/%u)",
+                           peer->host, when_to_refresh, rr->i_afi, rr->i_safi) ;
+            defer = false ;
+            ok    = false ;
+            break ;
+        } ;
+
+      if (ok)
+        {
+          sa_family_t paf ;
+
+          paf = get_qafx_sa_family(qafx_from_i(mp->i_afi, mp->i_safi)) ;
+
+          bgp_route_refresh_set_orf_defer(rr, defer) ;
+
+          /* After the when to refresh, expect 1 or more ORFs           */
+          do
+            {
+              ok = bgp_packet_orf_recv(rr, paf, sr, peer) ;
+              left = suck_left(sr) ;
+            } while ((left > 0) && ok) ;
+        } ;
+    } ;
+
+  if ((left < 0) && !ok)
+    {
+      rr = bgp_route_refresh_free(rr) ;
+      bgp_peer_down_error (peer, BGP_NOMC_CEASE, BGP_NOMS_UNSPECIFIC) ;
+    } ;
+
+  return rr ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Process ORF Type and following ORF Entries.
+ *
+ * Expects there to be at least one ORF entry -- that is, the length of the
+ * ORF Entries may not be 0.
+ *
+ * Returns:  true  <=> OK
+ *           false  => invalid or malformed
+ */
+static bool
+bgp_packet_orf_recv(bgp_route_refresh rr,
+                                      sa_family_t paf, sucker sr, bgp_peer peer)
+{
+  bgp_session_args_c args ;
+  sucker_t   ssr[1] ;
+  int        left ;
+  uint8_t    orf_type ;
+  bgp_size_t orf_len ;
+  bool       can ;
+
+  /* Suck up the ORF type and the length of the entries that follow
+   */
+  left = suck_left(sr) - BGP_ORF_MIN_L ;
+  if (left >= 0)
+    {
+      orf_type  = suck_b(sr) ;
+      orf_len   = suck_w(sr) ;
+    }
+  else
+    {
+      orf_type  = 0 ;   /* ensure initialised   */
+      orf_len   = 0 ;
+    } ;
+
+  /* The length may not be zero and may not exceed what there is left
+   */
+  if ((orf_len == 0) || (left < orf_len))
+    {
+      plog_warn(peer->log,
+                  "%s ORF route refresh length error: %d when %d left"
+                                       " (AFI/SAFI %d/%d, type %d length %d)",
+          peer->host, orf_len, left, rr->i_afi, rr->i_safi, orf_type, orf_len) ;
+      return false ;
+    } ;
+
+  if (BGP_DEBUG (normal, NORMAL))
+    plog_debug (peer->log, "%s rcvd ORF type %d length %d",
+                                                peer->host, orf_type, orf_len) ;
+
+  /* Sex the ORF type -- accept only if negotiated it
+   *
+   * We assume that if both are negotiated, that we need only process the
+   * RFC Type.
+   *
+   * Note that for the negotiated can_orf_pfx, ORF_RM is set if we have
+   * received *either* Type, but ORF_RM_pre is set only if we only received
+   * the pre-RFC type.
+   */
+  args = peer->session->args ;
+  switch (orf_type)
+    {
+      case BGP_ORF_T_PFX:
+        can = (args->can_orf_pfx[rr->qafx] & (ORF_RM | ORF_RM_pre))
+                                          ==  ORF_RM ;
+        break ;
+
+      case BGP_ORF_T_PFX_pre:
+        can = (args->can_orf_pfx[rr->qafx] & (ORF_RM | ORF_RM_pre))
+                                          == (ORF_RM | ORF_RM_pre);
+        break ;
+
+      default:
+        can = false ;
+        break ;
+    } ;
+
+  /* Suck up the ORF entries.  NB: orf_len != 0
+   */
+  suck_sub_init(ssr, sr, orf_len) ;
+
+  if (!can)
+    bgp_orf_add_unknown(rr, orf_type, orf_len, suck_step(ssr, orf_len)) ;
+  else
+    {
+      /* We only actually know about BGP_ORF_T_PFX and BGP_ORF_T_PFX_pre
+       *
+       * We store the ORF as BGP_ORF_T_PFX (the RFC version), and somewhere
+       * deep in the output code we look after outputting stuff in pre-RFC
+       * form, if that is required.
+       */
+      while (suck_left(ssr) > 0)
+        {
+          bool remove_all, remove ;
+          uint8_t common ;
+
+          remove_all = false ;
+          remove     = false ;
+          common = suck_b(ssr) ;
+          switch (common & BGP_ORF_EA_MASK)
+            {
+              case BGP_ORF_EA_ADD:
+                break ;
+
+              case BGP_ORF_EA_REMOVE:
+                remove = true ;
+                break ;
+
+              case BGP_ORF_EA_RM_ALL:
+                remove_all = true ;
+                break ;
+
+              default:
+                plog_warn(peer->log,
+                            "%s ORF route refresh invalid common byte: %u"
+                                        " (AFI/SAFI %d/%d, type %d length %d)",
+                peer->host, common, rr->i_afi, rr->i_safi, orf_type, orf_len) ;
+                return false ;
+            } ;
+
+          if (remove_all)
+            bgp_orf_add_remove_all(rr, BGP_ORF_T_PFX) ;
+          else
+            {
+              bgp_orf_entry    orfe ;
+              orf_prefix_value orfpv ;
+              bool    deny ;
+              int left ;
+
+              deny = (common & BGP_ORF_EA_DENY) ;
+
+              orfe = bgp_orf_add(rr, BGP_ORF_T_PFX, remove, deny) ;
+              orfpv = &orfe->body.orfpv ;
+
+              /* Need the minimum Prefix ORF entry, less the common byte.
+               */
+              left = suck_left(sr) - (BGP_ORF_E_P_MIN_L - BGP_ORF_E_COM_L) ;
+              if (left >= 0)
+                {
+                  uint8_t plen ;
+                  uint8_t blen ;
+
+                  memset(orfpv, 0, sizeof(orf_prefix_value_t)) ;
+
+                  orfpv->seq   = suck_l(sr) ;
+                  orfpv->type  = deny ? PREFIX_DENY : PREFIX_PERMIT ;
+                  orfpv->ge    = suck_b(sr) ;       /* aka min      */
+                  orfpv->le    = suck_b(sr) ;       /* aka max      */
+                  plen         = suck_b(sr) ;
+
+                  blen = (plen + 7) / 8 ;
+                  if ((left -= blen) >= 0)
+                    {
+                      orfpv->pfx.family    = paf ;
+                      orfpv->pfx.prefixlen = plen ;
+                      if (blen != 0)
+                        {
+                          if (blen <= prefix_byte_len(&orfpv->pfx))
+                            memcpy(&orfpv->pfx.u.prefix, suck_step(sr, blen),
+                                                                         blen) ;
+                          else
+                            left = -1 ;
+                        } ;
+                    } ;
+                } ;
+
+              if (left < 0)
+                {
+                  plog_info (peer->log,
+                              "%s ORF route refresh invalid Prefix ORF entry"
+                                       " (AFI/SAFI %d/%d, type %d length %d)",
+                         peer->host, rr->i_afi, rr->i_safi, orf_type, orf_len) ;
+                  return false ;
+                } ;
+            } ;
+
+        } ;
+    } ;
+
+  return suck_check_complete(ssr) ;
+} ;
+
+/*==============================================================================
+ * Dynamic capabilities seems to have died a death... was not fully
+ * supported in any case.
+ */
+#if 0
+/* Send capability message to the peer. */
+
+/* xTODO: require BGP Engine support for Dynamic Capability messages.    */
+
+extern void
+bgp_capability_send (struct peer *peer, qafx_t qafx, int capability_code,
+                                                                     int action)
+{
+  struct stream *s;
+  uint   length;
+
+  s = peer->work;
+  stream_reset (s);
+
+  /* Make BGP update packet. */
+  bgp_packet_set_marker (s, BGP_MT_CAPABILITY);
+
+  /* Encode MP_EXT capability. */
+  if (capability_code == BGP_CAN_MP_EXT)
+    {
+      stream_putc (s, action);
+      stream_putc (s, BGP_CAN_MP_EXT);
+      stream_putc (s, BGP_CAP_MPE_L);
+      stream_putw (s, get_iAFI(qafx));
+      stream_putc (s, 0);
+      stream_putc (s, get_iSAFI(qafx));
+
+      if (BGP_DEBUG (normal, NORMAL))
+        zlog_debug ("%s sending CAPABILITY has %s MP_EXT CAP for afi/safi: %d/%d",
+                   peer->host, action == CAPABILITY_ACTION_SET ?
+                   "Advertising" : "Removing", get_iAFI(qafx), get_iSAFI(qafx));
+    }
+
+  /* Set packet size.
+   *
+   * Impossible to overflow the BGP Message buffer
+   */
+  length = bgp_packet_set_size (s);
+
+  if (BGP_DEBUG (normal, NORMAL))
+    zlog_debug ("%s send message type %d, length (incl. header) %d",
+                                         peer->host, BGP_MT_CAPABILITY, length);
+
+  /* Add packet to the peer.
+   */
+  bgp_write(peer, s);
 }
 
-/* TODO there is a lot of recent activity eg commit 1212dc1961... to do with
+/* xTODO there is a lot of recent activity eg commit 1212dc1961... to do with
  * AFI/SAFI stuff...  Need to fully catch up !!
  *
  * This version -- modified to return a qafx_t...
@@ -1713,7 +2546,7 @@ bgp_route_refresh_recv(bgp_peer peer, bgp_route_refresh rr)
 static qafx_t
 bgp_afi_safi_valid_indices (iAFI_t i_afi, iSAFI_t i_safi)
 {
-#if 0           /* TODO BGP_SAFI_VPNV4 and BGP_SAFI_VPNV6 ????  */
+#if 0           /* xTODO BGP_SAFI_VPNV4 and BGP_SAFI_VPNV6 ????  */
   /* VPNvX are AFI specific */
   if ((afi == AFI_IP6 && *safi == BGP_SAFI_VPNV4)
       || (afi == AFI_IP && *safi == BGP_SAFI_VPNV6))
@@ -1739,7 +2572,6 @@ bgp_afi_safi_valid_indices (iAFI_t i_afi, iSAFI_t i_safi)
   return qafx ;
 } ;
 
-#if 0
 /*==============================================================================
  * Dynamic Capability Message handling.
  */
@@ -1760,7 +2592,7 @@ bgp_capability_msg_parse (struct peer *peer, u_char *pnt, bgp_size_t length)
       if (pnt + 3 > end)
         {
           zlog_info ("%s Capability length error", peer->host);
-          /* TODO: Is this the right notification ??           */
+          /* xTODO: Is this the right notification ??           */
           bgp_peer_down_error (peer, BGP_NOMC_CEASE, 0);
           return -1;
         }
@@ -1774,7 +2606,7 @@ bgp_capability_msg_parse (struct peer *peer, u_char *pnt, bgp_size_t length)
         {
           zlog_info ("%s Capability Action Value error %d",
                      peer->host, action);
-          /* TODO: Is this the right notification ??           */
+          /* xTODO: Is this the right notification ??           */
           bgp_peer_down_error (peer, BGP_NOMC_CEASE, 0);
           return -1;
         }
@@ -1787,7 +2619,7 @@ bgp_capability_msg_parse (struct peer *peer, u_char *pnt, bgp_size_t length)
       if ((pnt + hdr->length + 3) > end)
         {
           zlog_info ("%s Capability length error", peer->host);
-          /* TODO: Is this the right notification ??           */
+          /* xTODO: Is this the right notification ??           */
           bgp_peer_down_error (peer, BGP_NOMC_CEASE, 0);
           return -1;
         }
@@ -1805,10 +2637,10 @@ bgp_capability_msg_parse (struct peer *peer, u_char *pnt, bgp_size_t length)
           iSAFI_t i_safi;
           qafx_t qafx ;
 
-          i_afi  = ntohs (mpc.afi);
-          i_safi = mpc.safi;
+          i_afi  = ntohs (mpc.i_afi);
+          i_safi = mpc.i_safi;
 
-          qafx = bgp_afi_safi_valid_indices (mpc.afi, mpc.safi) ;
+          qafx = bgp_afi_safi_valid_indices (mpc.i_afi, mpc.i_safi) ;
 
           if (qafx == qafx_other)
             {
@@ -1849,7 +2681,7 @@ bgp_capability_msg_parse (struct peer *peer, u_char *pnt, bgp_size_t length)
                 bgp_clear_routes (peer, qafx, false);
               else
                 {
-                  /* TODO: only used for unit tests.  Test will need fixing
+                  /* xTODO: only used for unit tests.  Test will need fixing
                    */
 #if 0
                 BGP_EVENT_ADD (peer, BGP_Stop);

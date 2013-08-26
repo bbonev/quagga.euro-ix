@@ -40,6 +40,7 @@ Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
 #include "qfstring.h"
 
 #include "bgpd/bgpd.h"
+#include "bgpd/bgp_peer_index.h"
 #include "bgpd/bgp_attr_store.h"
 #include "bgpd/bgp_mplsvpn.h"
 #include "bgpd/bgp_aspath.h"
@@ -57,7 +58,7 @@ Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
 
 /* Configuration file and directory.
  */
-char config_default[] = SYSCONFDIR BGP_DEFAULT_CONFIG;
+char config_default[] = SYSCONFDIR BGP_DEFAULT_CONFIG ;
 
 /* Route retain mode flag.
  */
@@ -540,13 +541,13 @@ main (int argc, char **argv)
                (bm->addresses ? bm->addresses : "<all>"),
                bm->port_str);
 
-  /* If we are debugging the FSM, set the name of the bgp_nexus timer pile.
+  /* If we are debugging the FSM, set the name of the be_nexus timer pile.
    *
    * If was compiled with qtimers debugging enabled at a suitable level, this
    * enables a lot of logging of timers !
    */
   if (BGP_DEBUG(fsm, FSM))
-    qtimer_pile_set_name(bgp_nexus->pile, bgp_nexus->name) ;
+    qtimer_pile_set_name(be_nexus->pile, be_nexus->name) ;
 
   /* Launch finite state machine(s)
    */
@@ -556,14 +557,14 @@ main (int argc, char **argv)
     {
       qpn_wd_start() ;          /* if set up                            */
 
-      qpn_exec(routing_nexus);
-      qpn_exec(bgp_nexus);
+      qpn_exec(re_nexus);
+      qpn_exec(be_nexus);
       qpn_exec(cli_nexus);      /* must be last to start - on main thread */
 
       /* terminating, wait for all pthreads to finish
        */
-      qpt_thread_join(routing_nexus->qpth);
-      qpt_thread_join(bgp_nexus->qpth);
+      qpt_thread_join(re_nexus->qpth);
+      qpt_thread_join(be_nexus->qpth);
 
       qpn_wd_finish() ;         /* if started                           */
     }
@@ -648,58 +649,62 @@ bgp_init_second_stage(bool pthreads)
 
   bgp_peer_index_init_r();
 
-  /* Make nexus for main thread, always needed */
+  /* Make nexus for main thread, always needed
+   */
   cli_nexus = qpn_init_new(cli_nexus, 1,                /* main thread  */
                          qpthreads_enabled ? "CLI"
                                            : "soliton");
 
-  /* if using pthreads create additional nexus */
+  /* if using pthreads create additional nexus
+   */
   if (qpthreads_enabled)
     {
-      bgp_nexus     = qpn_init_new(bgp_nexus, 0, "BGP Engine");
-      routing_nexus = qpn_init_new(routing_nexus, 0, "Routing Engine");
+      be_nexus = qpn_init_new(be_nexus, 0, "BGP Engine");
+      re_nexus = qpn_init_new(re_nexus, 0, "Routing Engine");
     }
   else
     {
-      /* we all share the single nexus and single thread */
-      bgp_nexus     = cli_nexus;
-      routing_nexus = cli_nexus;
+      /* we all share the single nexus and single thread
+       */
+      be_nexus = cli_nexus;
+      re_nexus = cli_nexus;
     }
 
-  /* Tell thread stuff to use this qtimer pile                          */
-  thread_set_qtimer_pile(routing_nexus->pile) ;
+  /* Tell thread stuff to use this qtimer pile
+   */
+  thread_set_qtimer_pile(re_nexus->pile) ;
 
   /* Nexus hooks.
    *
    * Beware: if !qpthreads_enabled then there is only 1 nexus object
    * with all nexus pointers being aliases for it.
    */
-  qpn_add_hook_function(&routing_nexus->in_thread_init, routing_start) ;
-  qpn_add_hook_function(&bgp_nexus->in_thread_init,  bgp_in_thread_init) ;
+  qpn_add_hook_function(&re_nexus->in_thread_init, routing_start) ;
+  qpn_add_hook_function(&be_nexus->in_thread_init,  bgp_in_thread_init) ;
 
-  qpn_add_hook_function(&routing_nexus->in_thread_final, routing_finish) ;
-  qpn_add_hook_function(&bgp_nexus->in_thread_final, bgp_listeners_finish) ;
+  qpn_add_hook_function(&re_nexus->in_thread_final, routing_finish) ;
+  qpn_add_hook_function(&be_nexus->in_thread_final, bgp_listeners_finish) ;
 
-  qpn_add_hook_function(&routing_nexus->foreground, routing_foreground) ;
-  qpn_add_hook_function(&bgp_nexus->foreground, bgp_connection_queue_process) ;
+  qpn_add_hook_function(&re_nexus->foreground, routing_foreground) ;
+  qpn_add_hook_function(&be_nexus->foreground, bgp_connection_queue_process) ;
 
-  qpn_add_hook_function(&routing_nexus->background, routing_background) ;
+  qpn_add_hook_function(&re_nexus->background, routing_background) ;
 
   confirm(qpn_hooks_max >= 2) ;
 
   /* vty and zclient can use either nexus or threads.
    * For bgp client we always want nexus, regardless of pthreads.
    */
-  vty_init_r(cli_nexus, routing_nexus);
-  zclient_init_r(routing_nexus);
+  vty_init_r(cli_nexus, re_nexus);
+  zclient_init_r(re_nexus);
 
-  /* Now we have our nexus we can init BGP. */
-  /* BGP related initialization.  */
+  /* Now we have our nexus we can init BGP.
+   */
   bgp_init ();
 } ;
 
 /*------------------------------------------------------------------------------
- * bgp_nexus in-thread initialization
+ * be_nexus in-thread initialization
  *
  * This is invoked when the BGP Engine nexus is started.
  */
@@ -858,8 +863,8 @@ bgp_exit (int status)
 
   if (qpthreads_enabled)
     {
-      qpn_reset(routing_nexus, free_it);
-      qpn_reset(bgp_nexus, free_it);
+      qpn_reset(re_nexus, free_it);
+      qpn_reset(be_nexus, free_it);
     } ;
   cli_nexus = qpn_reset(cli_nexus, free_it);
 
@@ -1015,11 +1020,11 @@ program_terminate_if_all_peers_deleted(void)
        * Note that qpn_terminate does nothing if it has been called once
        * already.
        */
-      if (qpthreads_enabled && routing_nexus != NULL)
-        qpn_terminate(routing_nexus);
+      if (qpthreads_enabled && re_nexus != NULL)
+        qpn_terminate(re_nexus);
 
-      if (qpthreads_enabled && bgp_nexus != NULL)
-        qpn_terminate(bgp_nexus);
+      if (qpthreads_enabled && be_nexus != NULL)
+        qpn_terminate(be_nexus);
 
       if (cli_nexus != NULL)
         qpn_terminate(cli_nexus) ;
@@ -1045,7 +1050,7 @@ sigterm_action(void)
 
       bgp_terminate(true, retain_mode);
 
-      qpn_add_hook_function(&routing_nexus->foreground,
+      qpn_add_hook_function(&re_nexus->foreground,
                                        program_terminate_if_all_peers_deleted) ;
     }
 } ;
@@ -1068,8 +1073,8 @@ DEFUN_CALL(bgp_show_nexus,
   if ((*(argv[0]) == 'a') && qpthreads_enabled)
     {
       bgp_do_show_nexus(vty, cli_nexus) ;
-      bgp_do_show_nexus(vty, bgp_nexus) ;
-      bgp_do_show_nexus(vty, routing_nexus) ;
+      bgp_do_show_nexus(vty, be_nexus) ;
+      bgp_do_show_nexus(vty, re_nexus) ;
     }
   else
     {
@@ -1078,9 +1083,9 @@ DEFUN_CALL(bgp_show_nexus,
       if (qpthreads_enabled)
         {
           if (*(argv[0]) == 'r')
-            qpn = routing_nexus ;
+            qpn = re_nexus ;
           else if (*(argv[0]) == 'b')
-            qpn = bgp_nexus ;
+            qpn = be_nexus ;
         } ;
 
       bgp_do_show_nexus(vty, qpn) ;

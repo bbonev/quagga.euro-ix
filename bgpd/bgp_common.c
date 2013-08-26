@@ -68,12 +68,12 @@ qafx_num(qafx_bit_t bit)
 
 const qAFI_t  qAFI_map[qafx_count] =
   {
-    [qafx_ipv4_unicast]     = qAFI_ipv4,
-    [qafx_ipv4_multicast]   = qAFI_ipv4,
-    [qafx_ipv4_mpls_vpn]    = qAFI_ipv4,
-    [qafx_ipv6_unicast]     = qAFI_ipv6,
-    [qafx_ipv6_multicast]   = qAFI_ipv6,
-    [qafx_ipv6_mpls_vpn]    = qAFI_ipv6,
+    [qafx_ipv4_unicast]     = qAFI_IPv4,
+    [qafx_ipv4_multicast]   = qAFI_IPv4,
+    [qafx_ipv4_mpls_vpn]    = qAFI_IPv4,
+    [qafx_ipv6_unicast]     = qAFI_IPv6,
+    [qafx_ipv6_multicast]   = qAFI_IPv6,
+    [qafx_ipv6_mpls_vpn]    = qAFI_IPv6,
     [qafx_other]            = qAFI_undef
   } ;
 CONFIRM(qAFI_undef == 0) ;      /* not known -> qAFI_undef      */
@@ -92,12 +92,12 @@ CONFIRM(qSAFI_undef == 0) ;     /* not known -> qSAFI_undef     */
 
 const iAFI_t  iAFI_map[qafx_count] =
   {
-    [qafx_ipv4_unicast]     = iAFI_IPV4,
-    [qafx_ipv4_multicast]   = iAFI_IPV4,
-    [qafx_ipv4_mpls_vpn]    = iAFI_IPV4,
-    [qafx_ipv6_unicast]     = iAFI_IPV6,
-    [qafx_ipv6_multicast]   = iAFI_IPV6,
-    [qafx_ipv6_mpls_vpn]    = iAFI_IPV6,
+    [qafx_ipv4_unicast]     = iAFI_IPv4,
+    [qafx_ipv4_multicast]   = iAFI_IPv4,
+    [qafx_ipv4_mpls_vpn]    = iAFI_IPv4,
+    [qafx_ipv6_unicast]     = iAFI_IPv6,
+    [qafx_ipv6_multicast]   = iAFI_IPv6,
+    [qafx_ipv6_mpls_vpn]    = iAFI_IPv6,
     [qafx_other]            = iAFI_Reserved
   } ;
 CONFIRM(iAFI_Reserved == 0) ;   /* not known -> iAFI_Reserved   */
@@ -151,15 +151,15 @@ CONFIRM(qAFI_undef == 0) ;      /* not known -> qAFI_undef      */
  *                        reserved => qafx_undef
  */
 extern qafx_t
-qafx_from_i(iAFI_t afi, iSAFI_t safi)
+qafx_from_i(iAFI_t i_afi, iSAFI_t i_safi)
 {
-  switch (afi)
+  switch (i_afi)
   {
     case iAFI_Reserved:
       return qafx_undef ;               /* no matter what the iSAFI is  */
 
     case iAFI_IP:
-      switch(safi)
+      switch(i_safi)
         {
           case iSAFI_Reserved:
             return qafx_undef ;         /* no matter what the iAFI is   */
@@ -175,7 +175,7 @@ qafx_from_i(iAFI_t afi, iSAFI_t safi)
         break ;
 
     case iAFI_IP6:
-      switch(safi)
+      switch(i_safi)
         {
           case iSAFI_Reserved:
             return qafx_undef ;         /* no matter what the iAFI is   */
@@ -191,7 +191,7 @@ qafx_from_i(iAFI_t afi, iSAFI_t safi)
         break ;
 
     default:
-      switch(safi)
+      switch(i_safi)
         {
           case iSAFI_Reserved:
             return qafx_undef ;         /* no matter what the iAFI is   */
@@ -214,17 +214,17 @@ qafx_from_i(iAFI_t afi, iSAFI_t safi)
  *     any unrecognised qAFI/qSAFI combinations => qafx_other
  */
 extern qafx_t
-qafx_from_q(qAFI_t afi, qSAFI_t safi)
+qafx_from_q(qAFI_t q_afi, qSAFI_t q_safi)
 {
-  switch (afi)
+  switch (q_afi)
     {
       case qAFI_undef:
-        if ((safi >= qSAFI_min) && (safi <= qSAFI_max))
+        if ((q_safi >= qSAFI_min) && (q_safi <= qSAFI_max))
           return qafx_undef ;           /* for all valid qSAFI  */
       break ;
 
     case qAFI_IP:
-      switch(safi)
+      switch(q_safi)
         {
           case qSAFI_undef:
             return qafx_undef ;
@@ -240,7 +240,7 @@ qafx_from_q(qAFI_t afi, qSAFI_t safi)
         break ;
 
     case qAFI_IP6:
-      switch(safi)
+      switch(q_safi)
         {
           case qSAFI_undef:
             return qafx_undef ;
@@ -272,9 +272,11 @@ qafx_from_q(qAFI_t afi, qSAFI_t safi)
  *                            reserved => 0
  */
 extern qafx_bit_t
-qafx_bit_from_i(iAFI_t afi, iSAFI_t safi)
+qafx_bit_from_i(iAFI_t i_afi, iSAFI_t i_safi)
 {
-  qafx_t  qn = qafx_from_i(afi, safi) ;
+  qafx_t  qn ;
+
+  qn = qafx_from_i(i_afi, i_safi) ;
 
   if ((qn != qafx_undef) && (qn != qafx_other))
     return qafx_bit(qn) ;
@@ -292,9 +294,11 @@ qafx_bit_from_i(iAFI_t afi, iSAFI_t safi)
  * NB: any unrecognised qAFI/qSAFI combinations => FATAL error
  */
 extern qafx_bit_t
-qafx_bit_from_q(qAFI_t afi, qSAFI_t safi)
+qafx_bit_from_q(qAFI_t q_afi, qSAFI_t q_safi)
 {
-  qafx_t  qn = qafx_from_q(afi, safi) ;
+  qafx_t  qn ;
+
+  qn = qafx_from_q(q_afi, q_safi) ;
 
   if ((qn != qafx_undef) && (qn != qafx_other))
     return qafx_bit(qn) ;

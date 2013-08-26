@@ -24,7 +24,6 @@ Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
 #include "linklist.h"
 #include "memory.h"
 #include "command.h"
-#include "stream.h"
 #include "filter.h"
 #include "str.h"
 #include "log.h"
@@ -35,6 +34,7 @@ Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
 #include "thread.h"
 #include "workqueue.h"
 #include "ihash.h"
+#include "qtimers.h"
 
 #include "bgpd/bgp_common.h"
 #include "bgpd/bgp_route.h"
@@ -340,7 +340,7 @@ bgp_update_from_peer(bgp_peer peer, route_in_parcel parcel, bool rs_reprocess)
           /* The sender has announced a replacement route
            *
            *
-           * MED-AS change id this is amongst the select !!!!  XXX .........
+           * MED-AS change if this is amongst the select !!!!  XXX .........
            */
           as_t med_as ;
 
@@ -461,7 +461,8 @@ bgp_update_from_peer(bgp_peer peer, route_in_parcel parcel, bool rs_reprocess)
   rn = ri->rn ;
 
   if (attr_main != NULL)
-    merit = bgp_route_merit(peer->bgp, attr_main, ri->sub_type) ;
+    merit = bgp_route_merit(peer->bgp, attr_main,
+                                            bgp_route_subtype(ri->route_type)) ;
   else
     merit = route_merit_none ;
 
@@ -481,7 +482,7 @@ bgp_update_from_peer(bgp_peer peer, route_in_parcel parcel, bool rs_reprocess)
           qassert(!(rn->flags & rnf_processed)) ;
           qassert(rn->candidates == NULL) ;
 
-          ddl_push(rib->queue, &rn->it, queue) ;
+          ddl_push(rib->queue_base, &rn->it, queue) ;
 
           ddl_push(rn->routes, ri, route_list) ;
         } ;
@@ -814,7 +815,7 @@ bgp_update_rs_from_peer(peer_rib prib, route_info ri_main,
 
           qassert(!(rn->flags & rnf_processed)) ;
 
-          ddl_push(rib->queue, &rn->it, queue) ;
+          ddl_push(rib->queue_base, &rn->it, queue) ;
 
           ddl_push(rn->routes, ri, route_list) ;
 
@@ -961,7 +962,7 @@ bgp_update (bgp_peer peer, prefix p, attr_set attr, qafx_t qafx,
       /* Process the update for each RS-client.
        */
       for (ALL_LIST_ELEMENTS (bgp->rsclient, node, nnode, rsclient))
-        if (rsclient->af_flags[rt->qafx] & PEER_AFF_RSERVER_CLIENT)
+        if (rsclient->x_af_flags_x[rt->qafx] & PEER_AFF_RSERVER_CLIENT)
           bgp_update_rsclient (rsclient, rt) ;
 
       /* Release our lock on any stored attributes and discard any new stuff
@@ -990,7 +991,7 @@ bgp_withdraw (bgp_peer peer, prefix p, qafx_t qafx, int type, int sub_type)
    */
   for (ALL_LIST_ELEMENTS (peer->bgp->rsclient, node, nnode, rsclient))
     {
-      if (rsclient->af_flags[qafx] & PEER_AFF_RSERVER_CLIENT)
+      if (rsclient->x_af_flags_x[qafx] & PEER_AFF_RSERVER_CLIENT)
         bgp_withdraw_rsclient (rsclient, peer, p, qafx, type, sub_type) ;
     } ;
 
@@ -1052,7 +1053,7 @@ bgp_update_main (bgp_peer peer, bgp_node rn, attr_set attr, qafx_t qafx,
   /* When peer's soft reconfiguration enabled.  Record input packet in
    * Adj-RIBs-In.
    */
-  if ((peer->af_flags[qafx] & PEER_AFF_SOFT_RECONFIG)
+  if ((peer->x_af_flags_x[qafx] & PEER_AFF_SOFT_RECONFIG)
                                  && (peer != bgp->peer_self) && ! soft_reconfig)
     bgp_adj_in_set (rn, peer, working);
 
@@ -1158,7 +1159,7 @@ bgp_update_main (bgp_peer peer, bgp_node rn, attr_set attr, qafx_t qafx,
        */
       if ( (sort == BGP_PEER_EBGP)
               && (peer->ttl == 1)
-              && ! bgp_nexthop_onlink (qAFI_ipv4, &working->next_hop)
+              && ! bgp_nexthop_onlink (qAFI_IPv4, &working->next_hop)
               && ! (peer->flags & PEER_FLAG_DISABLE_CONNECTED_CHECK) )
         {
           reason = "non-connected next-hop;";
@@ -1192,7 +1193,7 @@ bgp_update_main (bgp_peer peer, bgp_node rn, attr_set attr, qafx_t qafx,
       bool  damping ;
       bool  removed ;
 
-      damping = (bgp->af_flags[qafx] & BGP_CONFIG_DAMPING)
+      damping = (bgp->x_af_flags_x[qafx] & BGP_CONFIG_DAMPING)
                                                     && (sort == BGP_PEER_EBGP) ;
 
       removed = (ri->flags & BGP_INFO_REMOVED) ;
@@ -1404,7 +1405,7 @@ bgp_withdraw_main(bgp_peer peer, prefix p, qafx_t qafx, int type, int sub_type)
        */
       int status ;
 
-      if ((peer->bgp->af_flags[qafx] & BGP_CONFIG_DAMPING)
+      if ((peer->bgp->x_af_flags_x[qafx] & BGP_CONFIG_DAMPING)
                                          && (peer->sort == BGP_PEER_EBGP))
         status = bgp_damp_withdraw (ri, rn, qafx, false /* not changed */) ;
       else
@@ -1517,7 +1518,7 @@ bgp_update_rsclient (bgp_peer rsclient, rs_route rt)
    * stands in for the 'out' filter which would (absent the route-server) be
    * the source peer's 'out' route-map facing the destination peer.
    */
-  if (rt->peer->af_flags[rt->qafx] & PEER_AFF_RSERVER_CLIENT)
+  if (rt->peer->x_af_flags_x[rt->qafx] & PEER_AFF_RSERVER_CLIENT)
     {
       if (bgp_export_modifier (rsclient, rt, attrs))
         working = attrs->working ;
@@ -1914,7 +1915,7 @@ bgp_update_filter_main(peer_rib prib, attr_set attr, prefix_c pfx)
        * TODO nexthop check for IPv6 ????..............................................
        */
       if ( (peer->cops.ttl == 1)
-              && ! bgp_nexthop_onlink (qAFI_ipv4, &attr->next_hop)
+              && ! bgp_nexthop_onlink (qAFI_IPv4, &attr->next_hop)
               && ! (peer->disable_connected_check) )
         {
           reason = "non-connected next-hop;";
@@ -2366,7 +2367,8 @@ bgp_update_filter_rs_use(route_info ri, peer_rib crib, prefix_c pfx)
 
   ri->attr = attr ;
 
-  return ri->merit = bgp_route_merit(crib->peer->bgp, attr, ri->sub_type) ;
+  return ri->merit = bgp_route_merit(crib->peer->bgp, attr,
+                                            bgp_route_subtype(ri->route_type)) ;
 } ;
 
 #undef FILTER_EXIST_WARN
@@ -2466,8 +2468,8 @@ bgp_process_schedule(bgp_rib rib, bgp_rib_node rn)
     {
       rn->flags ^= rnf_processed ;
 
-      ddl_del(rib->queue, &rn->it, queue) ;
-      ddl_append(rib->queue, &rn->it, queue) ;
+      ddl_del(rib->queue_base, &rn->it, queue) ;
+      ddl_append(rib->queue_base, &rn->it, queue) ;
     } ;
 
   /* In any case, if the walker does not have an active work queue item,
@@ -2500,7 +2502,7 @@ bgp_process_walker(void* data, qtime_mono_t yield_time)
   rib = rw->it.rib ;
 
   item = rw->it.queue.next ;
-  ddl_del(rib->queue, &rw->it, queue) ;
+  ddl_del(rib->queue_base, &rw->it, queue) ;
   rw->it.flags &= ~rib_itf_rib_queue ;
 
   /* If there is something ahead of the walker, and that is not a rib node,
@@ -2601,7 +2603,7 @@ bgp_process_walker(void* data, qtime_mono_t yield_time)
        */
       if (item->queue.next != NULL)
         {
-          ddl_in_after(item, rib->queue, &rw->it, queue) ;
+          ddl_in_after(item, rib->queue_base, &rw->it, queue) ;
           rw->it.flags |= rib_itf_rib_queue ;
 
           if (ddl_head(rw->peers[prib_initial]) != NULL)
@@ -2654,7 +2656,7 @@ bgp_process_walker(void* data, qtime_mono_t yield_time)
        * We return wqrc_remove, signalling the work queue stuff to remove the
        * work queue item from the work queue.
        */
-      ddl_append(rib->queue, &rw->it, queue) ;
+      ddl_append(rib->queue_base, &rw->it, queue) ;
       rw->it.flags = (rw->it.flags & ~rib_itf_wq_queue) | rib_itf_rib_queue ;
 
       return wqrc_something | wqrc_remove ;
@@ -2970,22 +2972,15 @@ bgp_route_merit(bgp_inst bgp, attr_set attr, byte sub_type)
 
 #define ROUTE_MERIT_MASK(n) (((route_merit_t)1 << n) - 1)
 
-  /* 1. ~attr->weight   -- RFC4271 9.1.1, "preconfigured policy".
+  /* 1. attr->weight   -- RFC4271 9.1.1, "preconfigured policy".
    *
    *    By the time we get to here, the weight has either been set to some
    *    default (depending on Local Route-ness) or explicitly by route-map.
    *
    *    We mask this as a matter of form, the compiler should eliminate it.
    */
-  temp  = ~attr->weight & ROUTE_MERIT_MASK(route_merit_weight_bits) ;
+  temp  = attr->weight & ROUTE_MERIT_MASK(route_merit_weight_bits) ;
   merit = temp << route_merit_weight_shift ;
-
-#if 0
-  route_merit_weight_shift      = 2 + 13 + 1 + 32,
-  route_merit_local_pref_shift  = 2 + 13 + 1,
-  route_merit_local_shift       = 2 + 13,
-  route_merit_as_path_shift     = 2,
-#endif
 
   /* 2. Local Preference -- RFC4271 9.1.1.
    *
@@ -3014,7 +3009,7 @@ bgp_route_merit(bgp_inst bgp, attr_set attr, byte sub_type)
    *    Definitely "preconfigured policy".
    */
   if (sub_type != BGP_ROUTE_NORMAL)
-    return merit | ((route_merit_t)1 << route_merit_local_shift) ;
+    return merit | (route_merit_as_path_max << route_merit_as_path_shift) ;
 
   /* 4. ~AS-PATH Length   -- RFC4271 9.1.2.2 (a) -- Breaking Ties (Phase 2).
    *
@@ -3028,21 +3023,21 @@ bgp_route_merit(bgp_inst bgp, attr_set attr, byte sub_type)
        else
          temp = as_path_simple_path_length (attr->asp) ;
 
-       if (temp < ROUTE_MERIT_MASK(route_merit_as_path_bits))
-         merit |= (temp ^ ROUTE_MERIT_MASK(route_merit_as_path_bits))
-                                              << route_merit_local_pref_shift ;
+       if (temp < route_merit_as_path_max)
+         merit |= (route_merit_as_path_max - 1 - temp)
+                                                 << route_merit_as_path_shift ;
      } ;
 
-   /* 5. ~Origin   -- RFC4271 9.1.2.2 (b) -- Breaking Ties (Phase 2).
-    *
-    *   The origin will fit, unless there is an invalid value -- which is
-    *   treated as no merit !
-    */
+  /* 5. ~Origin   -- RFC4271 9.1.2.2 (b) -- Breaking Ties (Phase 2).
+   *
+   *   The origin will fit, unless there is an invalid value -- which is
+   *   treated as no merit !
+   */
   confirm(BGP_ATT_ORG_MAX < ROUTE_MERIT_MASK(route_merit_origin_bits)) ;
-  confirm(route_merit_origin_shift == 0) ;
 
   if (attr->origin < ROUTE_MERIT_MASK(route_merit_origin_bits))
-    merit |= (attr->origin ^ ROUTE_MERIT_MASK(route_merit_origin_bits)) ;
+    merit |= (attr->origin ^ ROUTE_MERIT_MASK(route_merit_origin_bits))
+                                                   << route_merit_origin_shift ;
 
   return merit ;
 
@@ -3242,8 +3237,8 @@ bgp_tie_break (bgp_rib_node rn, route_info best, route_info cand)
    *
    *     NB: the addresses cannot be equal !
    */
-  ret = sockunion_cmp (best->prib->peer->session->cops->su_remote,
-                       cand->prib->peer->session->cops->su_remote);
+  ret = sockunion_cmp (&best->prib->peer->session->cops->su_remote,
+                       &cand->prib->peer->session->cops->su_remote);
 
   return (ret <= 0) ? best : cand ;
 } ;
@@ -3765,7 +3760,7 @@ bgp_announce_selected (peer_rib prib, prefix_id_entry pie, route_info ris)
           tag = ris->tag ;          /* ignored if attr == NULL      */
         } ;
 
-      bgp_adj_out_update (prib, pie, attr, tag) ;
+      bgp_adj_out_update(prib, pie, attr, tag) ;
 
       if (attr != NULL)
         bgp_attr_unlock(attr) ;
@@ -3824,7 +3819,7 @@ bgp_announce_check_main (peer_rib prib, prefix_id_entry pie, route_info ris)
   bool reflecting, set_next_hop ;
   qafx_t    qafx ;
 
-  qassert(!(prib->af_flags & PEER_AFF_RSERVER_CLIENT)) ;
+  qassert(!prib->route_server_client) ;
 
   qafx = ris->qafx ;
 
@@ -3884,7 +3879,7 @@ bgp_announce_check_main (peer_rib prib, prefix_id_entry pie, route_info ris)
 
   /* Default route check -- if we have sent a default, do not send another.
    */
-  if (prib->af_status & PEER_AFS_DEFAULT_ORIGINATE)
+  if (!(prib->af_status & PEER_AFS_DEFAULT_SENT))
     {
       switch (pie->pfx->family)
         {
@@ -4020,7 +4015,7 @@ bgp_announce_check_main (peer_rib prib, prefix_id_entry pie, route_info ris)
              * If we are not reflecting between these peers, we do not
              * announce the route.
              */
-            if (from_peer->prib[qafx]->af_flags & PEER_AFF_REFLECTOR_CLIENT)
+            if (from_peer->prib[qafx]->route_reflector_client)
               {
                 /* A route from a Route-Reflector Client.
                  *
@@ -4031,14 +4026,14 @@ bgp_announce_check_main (peer_rib prib, prefix_id_entry pie, route_info ris)
                  * ...except for the "no bgp client-to-client" option.
                  */
                 if ( (bgp->flags & BGP_FLAG_NO_CLIENT_TO_CLIENT) &&
-                     (prib->af_flags & PEER_AFF_REFLECTOR_CLIENT) )
+                                                  prib->route_reflector_client)
                   return bgp_attr_pair_unload(pair) ;
               }
             else
               {
                 /* A route from a Non-client.  Reflect only to clients.
                  */
-                if (!(prib->af_flags & PEER_AFF_REFLECTOR_CLIENT))
+                if (!prib->route_reflector_client)
                   return bgp_attr_pair_unload(pair) ;
               } ;
 
@@ -4064,7 +4059,7 @@ bgp_announce_check_main (peer_rib prib, prefix_id_entry pie, route_info ris)
       /* For eBGP destination:
        *
        *   * clear the MED, unless required to keep it, or unless the source is
-       *     ourselves -- may be overwritten by route-maps
+       *     ourselves -- may be overridden by route-maps
        *
        *   * remove private ASN, if required
        *
@@ -4089,12 +4084,11 @@ bgp_announce_check_main (peer_rib prib, prefix_id_entry pie, route_info ris)
       case BGP_PEER_EBGP:
         if (attr->have & atb_med)
           {
-            if ((from_peer != bgp->peer_self)
-                        && ! (prib->af_flags & PEER_AFF_MED_UNCHANGED))
+            if ((from_peer != bgp->peer_self) && ! prib->med_unchanged)
               attr = bgp_attr_pair_clear_med(pair) ;
           } ;
 
-        if (prib->af_flags & PEER_AFF_REMOVE_PRIVATE_AS)
+        if (prib->remove_private_as)
           {
             if (as_path_private_as_check (attr->asp))
               attr = bgp_attr_pair_set_as_path(pair, as_path_empty_asp) ;
@@ -4145,9 +4139,9 @@ bgp_announce_check_main (peer_rib prib, prefix_id_entry pie, route_info ris)
             break ;
         } ;
 
-      if (prib->af_flags & PEER_AFF_NEXTHOP_UNCHANGED)
+      if (prib->next_hop_unchanged)
         set_next_hop = !have_next_hop ;
-      else if (prib->af_flags & PEER_AFF_NEXTHOP_SELF)
+      else if (prib->next_hop_self)
         set_next_hop = true ;
       else if (!have_next_hop)
         set_next_hop = true ;
@@ -4219,7 +4213,7 @@ bgp_announce_check_main (peer_rib prib, prefix_id_entry pie, route_info ris)
           keep_link_local = false ;
         } ;
 
-      if (!(prib->af_flags & PEER_AFF_NEXTHOP_LOCAL_UNCHANGED))
+      if (!prib->next_hop_local_unchanged)
         {
           /* We are not required to preserve the existing link-local address.
            *
@@ -4323,7 +4317,7 @@ bgp_announce_check_rs (peer_rib crib, prefix_id_entry pie, route_info ris)
    */
   qafx = ris->qafx ;
 
-  if (crib->af_status & PEER_AFS_DEFAULT_ORIGINATE)
+  if (!(crib->af_status & PEER_AFS_DEFAULT_SENT))
     {
       switch (pie->pfx->family)
         {
@@ -4494,7 +4488,7 @@ bgp_announce_check_rs (peer_rib crib, prefix_id_entry pie, route_info ris)
           keep_link_local = false ;
         } ;
 
-      if (!(crib->af_flags & PEER_AFF_NEXTHOP_LOCAL_UNCHANGED))
+      if (!crib->next_hop_local_unchanged)
         {
           /* We are not required to preserve the existing link-local address.
            *
@@ -4555,8 +4549,7 @@ bgp_announce_check_rs (peer_rib crib, prefix_id_entry pie, route_info ris)
    *     be dropped in any case.  Plus, it is likely that the confed stuff is
    *     all private ASN, anyway.
    */
-  if ((crib->af_flags & PEER_AFF_REMOVE_PRIVATE_AS)
-                                          && (client->sort == BGP_PEER_EBGP))
+  if (crib->remove_private_as && (client->sort == BGP_PEER_EBGP))
     {
       if (as_path_private_as_check (attr->asp))
         attr = bgp_attr_pair_set_as_path(pair, as_path_empty_asp) ;
@@ -4719,49 +4712,6 @@ bgp_output_filter (peer_rib prib, prefix pfx, attr_set attr)
 
 /*============================================================================*/
 
-/*------------------------------------------------------------------------------
- * Max Prefix Overflow timer expired -- turn off overflow status and enable.
- */
-static int
-bgp_maximum_prefix_restart_timer (struct thread *thread)
-{
-  struct peer *peer;
-
-  peer = THREAD_ARG (thread);
-  peer->t_pmax_restart = NULL;
-
-  assert(CHECK_FLAG (peer->sflags, PEER_STATUS_PREFIX_OVERFLOW)) ;
-
-  if (BGP_DEBUG (events, EVENTS))
-    zlog_debug ("%s Maximum-prefix restart timer expired, restore peering",
-                peer->host);
-
-  UNSET_FLAG (peer->sflags, PEER_STATUS_PREFIX_OVERFLOW);
-
-  bgp_peer_enable(peer);
-
-  return 0;
-}
-
-/*------------------------------------------------------------------------------
- * If there is an active max prefix restart timer, cancel it now.
- *
- * NB: clears PEER_STATUS_PREFIX_OVERFLOW, but does NOT enable the peer.
- */
-void
-bgp_maximum_prefix_cancel_timer (struct peer *peer)
-{
-  if (peer->t_pmax_restart)
-    {
-      assert(CHECK_FLAG (peer->sflags, PEER_STATUS_PREFIX_OVERFLOW)) ;
-
-      BGP_TIMER_OFF (peer->t_pmax_restart);
-      if (BGP_DEBUG (events, EVENTS))
-        zlog_debug ("%s Maximum-prefix restart timer cancelled", peer->host) ;
-    } ;
-
-  UNSET_FLAG (peer->sflags, PEER_STATUS_PREFIX_OVERFLOW) ;
-} ;
 
 /*------------------------------------------------------------------------------
  * See if number of prefixes has overflowed.
@@ -4777,7 +4727,8 @@ bgp_maximum_prefix_overflow (peer_rib prib, bool always)
 
   if (prib->pcount > prib->pmax.limit)
     {
-      u_int8_t ndata[7] ;
+      bgp_note note ;
+      ptr_t p ;
 
       if ((prib->af_status & PEER_AFS_PREFIX_LIMIT) && !always)
         return false ;          /* reported already     */
@@ -4792,33 +4743,16 @@ bgp_maximum_prefix_overflow (peer_rib prib, bool always)
       if (prib->pmax.warning)
         return false ;
 
-      /* Disable the peer, the timer routine will reenable.
+      /* Signal max-prefix overflow to peer
        */
-      store_ns(&ndata[0], get_iAFI(prib->qafx)) ;
-      ndata[2] = get_iSAFI(prib->qafx) ;
-      store_nl(&ndata[3], prib->pmax.limit) ;
+      note = bgp_note_new(BGP_NOMC_CEASE, BGP_NOMS_C_MAX_PREF) ;
+      p = bgp_note_prep_data(note, 2 + 1 + 4) ;
 
-      bgp_peer_down_error_with_data(prib->peer, BGP_NOMC_CEASE,
-                                                BGP_NOMS_C_MAX_PREF, ndata, 7) ;
+      store_ns(&p[0], get_iAFI(prib->qafx)) ;
+      store_b (&p[2], get_iSAFI(prib->qafx)) ;
+      store_nl(&p[3], prib->pmax.limit) ;
 
-      /* restart timer start
-       */
-      if (prib->pmax.restart)
-        {
-          bgp_peer peer = prib->peer ;
-
-          peer->v_pmax_restart = prib->pmax.restart * 60;
-
-          if (BGP_DEBUG (events, EVENTS))
-            zlog_debug ("%s Maximum-prefix restart timer started for %d secs",
-                                             peer->host, peer->v_pmax_restart);
-
-          BGP_TIMER_ON (peer->t_pmax_restart, bgp_maximum_prefix_restart_timer,
-                        peer->v_pmax_restart);
-        }
-
-      prib->peer->sflags |= PEER_STATUS_PREFIX_OVERFLOW ;
-
+      bgp_peer_pmax_overflow(prib->peer, prib->pmax.restart * 60, note) ;
       return true ;
     }
   else
@@ -5346,9 +5280,10 @@ bgp_clear_stale_route (bgp_peer peer, qafx_t qafx)
 extern void
 bgp_default_originate (bgp_peer peer, qafx_t qafx, bool withdraw)
 {
-  peer_rib     prib ;
-  attr_pair_t  attrs[1] ;
-  prefix_t     p[1] ;
+  peer_rib        prib ;
+  attr_pair_t     attrs[1] ;
+  prefix_t        pfx[1] ;
+  prefix_id_entry pie ;
 
   prib = peer_family_prib(peer, qafx) ;
   qassert(prib != NULL) ;
@@ -5359,13 +5294,13 @@ bgp_default_originate (bgp_peer peer, qafx_t qafx, bool withdraw)
     {
       case qafx_ipv4_unicast:
       case qafx_ipv4_multicast:
-        prefix_default(p, AF_INET) ;
+        prefix_default(pfx, AF_INET) ;
         break ;
 
 #ifdef HAVE_IPV6
       case qafx_ipv6_unicast:
       case qafx_ipv6_multicast:
-        prefix_default(p, AF_INET6) ;
+        prefix_default(pfx, AF_INET6) ;
         break ;
 #endif
 
@@ -5375,9 +5310,11 @@ bgp_default_originate (bgp_peer peer, qafx_t qafx, bool withdraw)
         return ;
     } ;
 
+  pie = prefix_id_find_entry(pfx, NULL) ;
+
   if (!withdraw)
     {
-      struct bgp *bgp;
+      bgp_inst   bgp;
       route_map  default_rmap ;
 
       bgp_attr_pair_load_default(attrs, BGP_ATT_ORG_IGP);
@@ -5437,10 +5374,10 @@ bgp_default_originate (bgp_peer peer, qafx_t qafx, bool withdraw)
 
   if (withdraw)
     {
-      if (prib->af_status & PEER_AFS_DEFAULT_ORIGINATE)
+      if (prib->af_status & PEER_AFS_DEFAULT_SENT)
         {
-          bgp_default_withdraw_send (peer, p, qafx) ;
-          prib->af_status &= ~PEER_AFS_DEFAULT_ORIGINATE ;
+          bgp_adj_out_update(prib, pie, NULL, mpls_tags_null) ;
+          prib->af_status &= ~PEER_AFS_DEFAULT_SENT ;
         } ;
     }
   else
@@ -5449,40 +5386,15 @@ bgp_default_originate (bgp_peer peer, qafx_t qafx, bool withdraw)
 
       stored = bgp_attr_pair_store(attrs) ;
 
-      prib->af_status |= PEER_AFS_DEFAULT_ORIGINATE ;
-      bgp_default_update_send (peer, p, stored, qafx, peer->bgp->peer_self);
+      prib->af_status |= PEER_AFS_DEFAULT_SENT ;
+      bgp_adj_out_update(prib, pie, stored, mpls_tags_null) ;
     } ;
 
+  /* Tidy up reference counts etc.
+   */
+  prefix_id_entry_dec_ref(pie) ;
   bgp_attr_pair_unload(attrs) ;
 } ;
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 /*==============================================================================
  *
@@ -6280,7 +6192,7 @@ bgp_static_update (bgp_inst bgp, prefix p,
 
       prib = peer_family_prib(peer, qafx) ;
 
-      if ((prib == NULL) || !(prib->af_flags & PEER_AFF_RSERVER_CLIENT))
+      if ((prib == NULL) || !prib->route_server_client)
         continue ;
 
       bgp_static_update_rsclient (bgp, peer, p, bgp_static, qafx);
@@ -6310,7 +6222,7 @@ bgp_static_withdraw (bgp_inst bgp, prefix p, qafx_t qafx)
 
       prib = peer_family_prib(peer, qafx) ;
 
-      if ((prib == NULL) || !(prib->af_flags & PEER_AFF_RSERVER_CLIENT))
+      if ((prib == NULL) || !prib->route_server_client)
         continue ;
 
       bgp_static_withdraw_rsclient (bgp, peer, p, qafx);
@@ -7079,7 +6991,7 @@ DEFUN (ipv6_bgp_network,
        "IPv6 prefix <network>/<length>\n")
 {
   return bgp_static_set (vty, vty->index, argv[0],
-                          qafx_from_q(qAFI_ipv6, bgp_node_safi(vty)), NULL, 0);
+                          qafx_from_q(qAFI_IPv6, bgp_node_safi(vty)), NULL, 0);
 }
 
 DEFUN (ipv6_bgp_network_route_map,
@@ -7091,7 +7003,7 @@ DEFUN (ipv6_bgp_network_route_map,
        "Name of the route map\n")
 {
   return bgp_static_set (vty, vty->index, argv[0],
-                       qafx_from_q(qAFI_ipv6, bgp_node_safi(vty)), argv[1], 0);
+                       qafx_from_q(qAFI_IPv6, bgp_node_safi(vty)), argv[1], 0);
 }
 
 DEFUN (no_ipv6_bgp_network,
@@ -7102,7 +7014,7 @@ DEFUN (no_ipv6_bgp_network,
        "IPv6 prefix <network>/<length>\n")
 {
   return bgp_static_unset (vty, vty->index, argv[0],
-                                   qafx_from_q(qAFI_ipv6, bgp_node_safi(vty)));
+                                   qafx_from_q(qAFI_IPv6, bgp_node_safi(vty)));
 }
 
 ALIAS (no_ipv6_bgp_network,
@@ -9326,15 +9238,13 @@ DEFUN (show_ip_bgp_view_rsclient,
   prib = peer_family_prib(peer, qafx_ipv4_unicast) ;
   if (prib == NULL)
     {
-      vty_out (vty, "%% Activate the neighbor for the address family first%s",
-            VTY_NEWLINE);
+      vty_out (vty, "%% Activate the neighbor for the address family first\n") ;
       return CMD_WARNING;
     }
 
-  if ( ! (prib->af_flags & PEER_AFF_RSERVER_CLIENT))
+  if ( !prib->route_server_client)
     {
-      vty_out (vty, "%% Neighbor is not a Route-Server client%s",
-            VTY_NEWLINE);
+      vty_out (vty, "%% Neighbor is not a Route-Server client\n");
       return CMD_WARNING;
     }
 
@@ -9397,10 +9307,9 @@ DEFUN (show_bgp_view_ipv4_safi_rsclient,
       return CMD_WARNING;
     }
 
-  if ( ! (prib->af_flags & PEER_AFF_RSERVER_CLIENT))
+  if ( ! prib->route_server_client)
     {
-      vty_out (vty, "%% Neighbor is not a Route-Server client%s",
-            VTY_NEWLINE);
+      vty_out (vty, "%% Neighbor is not a Route-Server client\n") ;
       return CMD_WARNING;
     }
 
@@ -11940,7 +11849,8 @@ bgp_show_route (vty vty, const char* view_name, const char* client_str,
       if (client == NULL)
         return CMD_WARNING;
 
-      if ( ! (client->prib[qafx]->af_flags & PEER_AFF_RSERVER_CLIENT))
+      if ((client->prib[qafx] == NULL)
+                                    || !client->prib[qafx]->route_server_client)
         {
           vty_out (vty, "%% Neighbor is not a Route-Server client\n") ;
           return CMD_WARNING;
@@ -12256,10 +12166,10 @@ bgp_show_route_detail (vty vty, bgp_rib rib,
     vty_out (vty, ", (aggregated by %u %s)", attr->aggregator_as,
                                 siptoa(AF_INET, &attr->aggregator_ip).str);
 
-  if (ri->prib->af_flags & PEER_AFF_REFLECTOR_CLIENT)
+  if (ri->prib->route_reflector_client)
     vty_out (vty, ", (Received from a RR-client)");
 
-  if (ri->prib->af_flags & PEER_AFF_RSERVER_CLIENT)
+  if (ri->prib->route_server_client)
     vty_out (vty, ", (Received from a RS-client)");
 
   if (ri->flags & RINFO_HISTORY)
@@ -13259,13 +13169,12 @@ show_adj_route (struct vty *vty, struct peer *peer, qafx_t qafx, bool in)
   peer_rib    prib ;
   bgp_node    rn;
   urlong      output_count;
-  int header1 = 1;
+  bool header1, header2 ;
   struct bgp *bgp;
-  int header2 = 1;
 
   bgp = peer->bgp;
 
-  if (! bgp)
+  if (bgp == NULL)
     return;
 
   prib = peer_family_prib(peer, qafx) ;
@@ -13274,18 +13183,18 @@ show_adj_route (struct vty *vty, struct peer *peer, qafx_t qafx, bool in)
 
   table = bgp->rib[qafx][rib_main];
 
+  header1 = header2 = true ;
   output_count = 0;
 
-  if (! in && prib->af_status & PEER_AFS_DEFAULT_ORIGINATE)
+  if (!in && prib->default_originate)
     {
       vty_out (vty, "BGP table version is 0, local router ID is %s%s",
                              siptoa(AF_INET, &bgp->router_id).str, VTY_NEWLINE);
       vty_out (vty, BGP_SHOW_SCODE_HEADER);
       vty_out (vty, BGP_SHOW_OCODE_HEADER "\n");
 
-      vty_out (vty, "Originating default network 0.0.0.0%s%s",
-               VTY_NEWLINE, VTY_NEWLINE);
-      header1 = 0;
+      vty_out (vty, "Originating default network 0.0.0.0\n\n");
+      header1 = false ;
     }
 
   for (rn = bgp_table_top (table); rn; rn = bgp_route_next (rn))
@@ -13302,12 +13211,12 @@ show_adj_route (struct vty *vty, struct peer *peer, qafx_t qafx, bool in)
                             siptoa(AF_INET, &bgp->router_id).str, VTY_NEWLINE);
                   vty_out (vty, BGP_SHOW_SCODE_HEADER);
                   vty_out (vty, BGP_SHOW_OCODE_HEADER "\n");
-                  header1 = 0;
+                  header1 = false;
                 }
               if (header2)
                 {
                   vty_out (vty, BGP_SHOW_HEADER);
-                  header2 = 0;
+                  header2 = false ;
                 }
               if (ai->attr)
                 {
@@ -13329,12 +13238,12 @@ show_adj_route (struct vty *vty, struct peer *peer, qafx_t qafx, bool in)
                             siptoa(AF_INET, &bgp->router_id).str, VTY_NEWLINE);
                   vty_out (vty, BGP_SHOW_SCODE_HEADER);
                   vty_out (vty, BGP_SHOW_OCODE_HEADER "\n");
-                  header1 = 0;
+                  header1 = false;
                 }
               if (header2)
                 {
                   vty_out (vty, BGP_SHOW_HEADER);
-                  header2 = 0;
+                  header2 = false;
                 }
               if (ao->attr_sent)
                 {
@@ -13364,7 +13273,7 @@ peer_adj_routes (struct vty *vty, struct peer *peer, qafx_t qafx, int in)
       return CMD_WARNING;
     }
 
-  if (in && ! (prib->af_flags & PEER_AFF_SOFT_RECONFIG))
+  if (in && !prib->soft_reconfig)
     {
       vty_out (vty, "%% Inbound soft reconfiguration not enabled\n");
       return CMD_WARNING;
@@ -14330,10 +14239,9 @@ DEFUN (show_bgp_view_rsclient,
       return CMD_WARNING;
     }
 
-  if ( ! (prib->af_flags & PEER_AFF_RSERVER_CLIENT))
+  if (!prib->route_server_client)
     {
-      vty_out (vty, "%% Neighbor is not a Route-Server client%s",
-            VTY_NEWLINE);
+      vty_out (vty, "%% Neighbor is not a Route-Server client\n") ;
       return CMD_WARNING;
     }
 
@@ -14390,12 +14298,11 @@ DEFUN (show_bgp_view_ipv6_safi_rsclient,
   prib = peer_family_prib(peer, qafx) ;
   if (prib == NULL)
     {
-      vty_out (vty, "%% Activate the neighbor for the address family first%s",
-            VTY_NEWLINE);
+      vty_out (vty, "%% Activate the neighbor for the address family first\n") ;
       return CMD_WARNING;
     }
 
-  if ( ! (prib->af_flags & PEER_AFF_RSERVER_CLIENT))
+  if (!prib->route_server_client)
     {
       vty_out (vty, "%% Neighbor is not a Route-Server client\n");
       return CMD_WARNING;

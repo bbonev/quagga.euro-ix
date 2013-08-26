@@ -34,7 +34,6 @@
 #include "bgpd/bgp_names.h"
 #include "bgpd/bgp_debug.h"
 
-#include "stream.h"
 #include "prefix.h"
 #include "log.h"
 #include "iovec.h"
@@ -55,23 +54,6 @@ CONFIRM(sizeof(marker) == BGP_MH_MARKER_L) ;
  *
  * PRO TEM -- this is passed a raw BGP message in a stream buffer
  */
-
-/*------------------------------------------------------------------------------
- * Make UPDATE message and dispatch.
- *
- * Returns: 1 => written to wbuff -- qpselect will write from there
- *          0 => nothing written  -- insufficient space in wbuff
- *
- * NB: actual I/O occurs in the qpselect action function -- so this cannot
- *     fail !
- *
- * NB: requires the session LOCKED -- connection-wise
- */
-extern int
-bgp_msg_send_update(bgp_connection connection, stream s)
-{
-  qa_add_to_uint(&connection->session->stats.update_out, 1) ;
-} ;
 
 #if 0
 /*==============================================================================
@@ -186,11 +168,11 @@ static uint bgp_msg_write_msg_stomp(bgp_msg_writer writer) ;
 static uint bgp_msg_write_transfer(bgp_msg_writer writer, uint msg_iv) ;
 
 static uint bgp_msg_write_update(bgp_msg_writer writer, ptr_t rb_body,
-                                                               uint rb_length) ;
+                                   uint rb_length, bgp_rb_msg_out_type_t type) ;
 static uint bgp_msg_write_eor(bgp_msg_writer writer, ptr_t rb_body,
                                                                uint rb_length) ;
 static uint bgp_msg_write_rr(bgp_msg_writer writer, ptr_t rb_body,
-                            uint rb_length, bgp_session session, bool* p_done) ;
+                                          uint rb_length, bgp_session session) ;
 
 /*------------------------------------------------------------------------------
  * Initialise writer -- allocates, if required.
@@ -380,7 +362,6 @@ bgp_msg_write_stuff(bgp_connection connection, ring_buffer rb)
     {
       uint   body_length, msg_length ;
       uint   type ;
-      bool   done ;
 
       qassert(writer->msg_iv_count == 0) ;
 
@@ -408,8 +389,14 @@ bgp_msg_write_stuff(bgp_connection connection, ring_buffer rb)
             qassert(false) ;
             continue ;                  /* <<< loop back                */
 
-          case bgp_rbm_out_update:
-            msg_length = bgp_msg_write_update(writer, msg_body, body_length) ;
+          case bgp_rbm_out_update_a:
+          case bgp_rbm_out_update_b:
+          case bgp_rbm_out_update_c:
+          case bgp_rbm_out_update_d:
+            msg_length = bgp_msg_write_update(writer, msg_body, body_length,
+                                                                         type) ;
+            qa_add_to_uint(&connection->session->stats.update_out, 1) ;
+
             break ;
 
           case bgp_rbm_out_eor:
@@ -418,9 +405,7 @@ bgp_msg_write_stuff(bgp_connection connection, ring_buffer rb)
 
           case bgp_rbm_out_rr:
             msg_length = bgp_msg_write_rr(writer, msg_body, body_length,
-                                                   connection->session, &done) ;
-            if (!done)
-              rb_get_drop(rb) ;         /* keep ring-buffer message     */
+                                                          connection->session) ;
             break ;
         } ;
 
@@ -586,11 +571,11 @@ bgp_msg_write_move_to_temp(bgp_msg_writer writer, uint more_required)
  * Returns:  true <=> the writer has nothing more to do or can do.
  */
 extern bool
-bgp_msg_write_complete(bgp_connection connection, bgp_notify notification)
+bgp_msg_write_complete(bgp_connection connection, bgp_note note)
 {
   bgp_msg_writer writer ;
-  ptr_t notify_msg ;
-  uint  fragment_length, notify_msg_length ;
+  ptr_t note_msg ;
+  uint  fragment_length, note_msg_length ;
 
   /* If is bws_ok, will complete whatever is currently buffered, plus the
    * given notification (if any), and go bws_clearing.
@@ -602,13 +587,13 @@ bgp_msg_write_complete(bgp_connection connection, bgp_notify notification)
    */
   writer = connection->writer ;
 
-  notify_msg_length = 0 ;        /* assume none         */
-  notify_msg        = NULL ;
+  note_msg_length = 0 ;        /* assume none         */
+  note_msg        = NULL ;
 
   switch(writer->state)
     {
       case bws_ok:
-        notify_msg = bgp_notify_message(notification, &notify_msg_length) ;
+        note_msg = bgp_note_message(note, &note_msg_length) ;
 
         writer->state = bws_clearing ;  /* after (any) notification     */
         break ;
@@ -632,7 +617,7 @@ bgp_msg_write_complete(bgp_connection connection, bgp_notify notification)
    * Whether or not there are any fragments, ensures that the temp_buff has
    * space for the entire NOTIFICATION message (if any).
    */
-  fragment_length = bgp_msg_write_move_to_temp(writer, notify_msg_length) ;
+  fragment_length = bgp_msg_write_move_to_temp(writer, note_msg_length) ;
 
   /* Now, if we have a notification, append it to the temp_buffer -- keeps
    * things simple -- then transfer whatever can be transferred to the write
@@ -645,17 +630,17 @@ bgp_msg_write_complete(bgp_connection connection, bgp_notify notification)
    *  well have copied it to the temp_buff and then again into the main buffer.
    *  Notifications are also, short, 99.99...% of the time !]
    */
-  if (notify_msg_length != 0)
+  if (note_msg_length != 0)
     {
       uint iv ;
 
-      memcpy(writer->temp_buff + fragment_length, notify_msg,
-                                                            notify_msg_length) ;
+      memcpy(writer->temp_buff + fragment_length, note_msg,
+                                                            note_msg_length) ;
       iv = writer->msg_iv_count ;
       qassert(iv == ((fragment_length == 0) ? 0 : 1)) ;
 
       writer->msg_vec[iv].base = writer->temp_buff + fragment_length ;
-      writer->msg_vec[iv].len  = notify_msg_length ;
+      writer->msg_vec[iv].len  = note_msg_length ;
 
       bgp_msg_write_transfer(writer, 0) ;
     } ;
@@ -1496,7 +1481,7 @@ bgp_msg_write_open(bgp_connection connection)
   blow_w(br, args_sent->holdtime_secs) ;
   blow_ipv4(br, args_sent->local_id) ;
 
-  qassert(blow_has_not_overrun(br)) ;
+  qassert(blow_overrun_check(br)) ;     /* returns NOT overrun  */
 
   /* Set OPEN message options
    */
@@ -1760,11 +1745,6 @@ bgp_msg_write_keepalive(bgp_connection connection, bool must)
 /*==============================================================================
  * Writing of messages from the ring-buffer
  */
-static bool bgp_msg_orf_part(blower br, bgp_msg_writer writer,
-                                        bgp_route_refresh rr, bgp_form_t form) ;
-static bool bgp_msg_orf_prefix(blower br, uint8_t common,
-                                                       orf_prefix_value orfpv) ;
-
 
 /*------------------------------------------------------------------------------
  * Write a bgp_rbm_out_update message from the ring-buffer to the write
@@ -1773,53 +1753,142 @@ static bool bgp_msg_orf_prefix(blower br, uint8_t common,
  * bgp_rbm_out_update messages can have two parts (where have MP_REACH_NLRI).
  */
 static uint
-bgp_msg_write_update(bgp_msg_writer writer, ptr_t rb_body, uint rb_length)
+bgp_msg_write_update(bgp_msg_writer writer, ptr_t rb_body, uint rb_length,
+                                                     bgp_rb_msg_out_type_t type)
 {
-  uint  body_length, msg_length, part1_length, part2_length ;
-  ptr_t msg_body, part2 ;
+  uint  min_rb_length, body_length, msg_length, part1_length, part2_length ;
+  ptr_t part1, part2 ;
   uint wl, al ;
 
   qassert(writer->msg_iv_count == 0) ;
 
-  /* For bgp_rbm_out_update we have an extra word of red-tape, which gives
-   * the offset of "out-of-order" part 1.
+  /* bgp_rbm_out_update_a:
    *
-   * For update messages which contain MP_REACH_NLRI, the attributes are
-   * generated before the MP_REACH_NLRI, so in the ring-buffer segment we
-   * see:
-   *          +-----------+
-   *          | Part2 Len |  2 bytes of in local machine order
-   *  Part 2->|-----------|
-   *          .           .
-   *          | Attrib    |  ie all the attributes other than the MP_REACH
-   *          .           .     attribute
-   *  Part 1->|-----------|
-   *          | 0         |  "Withdrawn Routes Length (2 octets)"
-   *          | Attr Len  |  "Total Path Attributes Length (2 octets)"
-   *          |-----------|
-   *          .           .
-   *          | MP_REACH  |  ie the MP_REACH_NLRI
-   *          .           .
-   *          +-----------+
+   *   Used for IPv4/Unicast and Extended Length MP_UNREACH_NLRI
+   *
+   *     Part 1->+-----------+    +-----------+    +-----------+
+   *             | 0x0000    |    | Withd Len |    | 0x0000    |
+   *             | Attr Len  |    |-----------|    | Attr len  |
+   *             |-----------|    .           .    +-----------+
+   *             .           .    | NLRI      |    | MP        |
+   *             | Attr      |    .           .    . Unreach   .
+   *             .           .    |-----------|    | Attr      |
+   *             |-----------|    | 0x0000    |    +-----------+
+   *             .           .    +-----------+
+   *             | NLRI      |
+   *             .           .
+   *             +-----------+
+   *
+   * bgp_rbm_out_update_b:
+   *
+   *   Used for small MP_REACH_NLRI (not Extended Length)
+   *
+   *             +-----------+
+   *             | Part2 Len |  2 bytes of in local machine order
+   *     Part 2->|-----------|
+   *             .           .
+   *             | Attrib    |  ie all the attributes other than the MP_REACH
+   *             .           .     attribute
+   *             +-----------+
+   *             | x         |  one byte of gap.
+   *     Part 1->|-----------|
+   *             | 0         |  "Withdrawn Routes Length (2 octets)"
+   *             | Attr Len  |  "Total Path Attributes Length (2 octets)"
+   *             |-----------|
+   *             .           .
+   *             | MP_REACH  |  ie the MP_REACH_NLRI
+   *             .           .
+   *             +-----------+
+   *
+   * bgp_rbm_out_update_c:
+   *
+   *   Used for Extended Length MP_REACH_NLRI
+   *
+   *             +-----------+
+   *             | Part2 Len |  2 bytes of in local machine order
+   *     Part 2->|-----------|
+   *             .           .
+   *             | Attrib    |  ie all the attributes other than the MP_REACH
+   *             .           .     attribute
+   *     Part 1->|-----------|
+   *             | 0         |  "Withdrawn Routes Length (2 octets)"
+   *             | Attr Len  |  "Total Path Attributes Length (2 octets)"
+   *             |-----------|
+   *             .           .
+   *             | MP_REACH  |  ie the MP_REACH_NLRI
+   *             .           .
+   *             +-----------+
+   *
+   * bgp_rbm_out_update_d:
+   *
+   *   Used for small MP_UNREACH_NLRI (not Extended Length)
+   *
+   *             +-----------+
+   *             | x         |  one byte of gap.
+   *     Part 1->|-----------|
+   *             | 0         |  "Withdrawn Routes Length (2 octets)"
+   *             | Attr Len  |  "Total Path Attributes Length (2 octets)"
+   *             |-----------|
+   *             .           .
+   *             | MP_REACH  |  ie the MP_REACH_NLRI
+   *             .           .
+   *             +-----------+
    *
    * This allows the creator of the message to generate all attributes first,
    * and then as many MP NLRI as will fit into the message.  Here we collect
    * the result in the write buffer, in the required order.
-   *
-   * All other UPDATEs do not need this, so the 'offset' is zero... ie there
-   * is no part 2.
    */
-  if (rb_length < 2)
+  switch (type)
     {
-      zlog_err("BUG in %s() for %s: ring-buffer message length %u",
-                                      __func__, writer->plox->host, rb_length) ;
+      case bgp_rbm_out_update_a:
+        min_rb_length = 4 ;
+
+        part2_length  = 0 ;
+        part2         = NULL ;
+        part1         = rb_body ;
+        part1_length  = rb_length ;
+        break ;
+
+      case bgp_rbm_out_update_b:
+        min_rb_length = 6 ;
+
+        part2         = rb_body + 2 ;
+        part2_length  = load_s(rb_body) ;
+        part1         = part2 + part2_length ;
+        part1_length  = rb_length - (2 + part2_length) ;
+        break ;
+
+      case bgp_rbm_out_update_c:
+        min_rb_length = 7 ;
+
+        part2         = rb_body + 2 ;
+        part2_length  = load_s(rb_body) ;
+        part1         = part2 + part2_length + 1 ;
+        part1_length  = rb_length - (2 + part2_length + 1) ;
+        break ;
+
+      case bgp_rbm_out_update_d:
+        min_rb_length = 5 ;
+
+        part2_length  = 0 ;
+        part2         = NULL ;
+        part1         = rb_body + 1 ;
+        part1_length  = rb_length - 1 ;
+        break ;
+
+      default:
+        min_rb_length = UINT_MAX ;
+        break ;
+    } ;
+
+  if (rb_length < min_rb_length)
+    {
+      zlog_err("BUG in %s() for %s: ring-buffer message length %u type %u",
+                                __func__, writer->plox->host, rb_length, type) ;
       return bgp_msg_write_msg_stomp(writer) ;
     } ;
 
-  part2_length = load_s(rb_body) ;
-  part2        = rb_body   + 2 ;
-  body_length  = rb_length - 2 ;
-  part1_length = body_length - part2_length ;
+  body_length = rb_length - min_rb_length ;
 
   if (part2_length > body_length)
     {
@@ -1839,15 +1908,13 @@ bgp_msg_write_update(bgp_msg_writer writer, ptr_t rb_body, uint rb_length)
    */
   msg_length = bgp_msg_write_header(writer, body_length, BGP_MT_UPDATE) ;
 
-  msg_body = part2 + part2_length ;
-
-  bgp_msg_write_body_part(writer, msg_body, part1_length) ;
+  bgp_msg_write_body_part(writer, part1, part1_length) ;
   if (part2_length != 0)
     bgp_msg_write_body_part(writer, part2, part2_length) ;
 
   /* Check the framing.
    */
-  wl = load_ns(msg_body + 0) ;
+  wl = load_ns(part1 + 0) ;
   if (wl > (part1_length - BGP_UPM_BODY_MIN_L))
     {
       if (wl > (body_length - BGP_UPM_BODY_MIN_L))
@@ -1860,7 +1927,7 @@ bgp_msg_write_update(bgp_msg_writer writer, ptr_t rb_body, uint rb_length)
       return bgp_msg_write_msg_stomp(writer) ;
     } ;
 
-  al = load_ns(msg_body + 2 + wl) ;
+  al = load_ns(part1 + 2 + wl) ;
   if (al > (body_length - BGP_UPM_BODY_MIN_L - wl))
     {
       zlog_err("BUG in %s() for %s: attribute length %u > "
@@ -1887,44 +1954,73 @@ bgp_msg_write_update(bgp_msg_writer writer, ptr_t rb_body, uint rb_length)
 } ;
 
 /*------------------------------------------------------------------------------
+ * One Route-Refresh message
+ *
+ * The ring-buffer entry contains the body of the Route Refresh Message.
+ *
+ * Returns:  length of the Route-Refresh message generated
+ */
+static uint
+bgp_msg_write_rr(bgp_msg_writer writer, ptr_t rb_body, uint rb_length,
+                                                            bgp_session session)
+{
+  uint    msg_length ;
+  uint8_t msg_type ;
+
+  qassert(writer->msg_iv_count == 0) ;
+
+  /* Transfer contents of ring buffer as body of required RR message.
+   */
+  if (rb_length < 4)
+    {
+      zlog_err("BUG in %s() for %s: unexpected Route-Refresh message length %u",
+                                      __func__, writer->plox->host, rb_length) ;
+      return bgp_msg_write_msg_stomp(writer) ;
+    } ;
+
+  msg_type = (session->args->can_rr == bgp_form_pre) ? BGP_MT_ROUTE_REFRESH_pre
+                                                     : BGP_MT_ROUTE_REFRESH ;
+
+  msg_length = bgp_msg_write_header(writer, rb_length, msg_type) ;
+
+  bgp_msg_write_body_part(writer, rb_body, rb_length) ;
+
+  /* Count and log as required.
+   */
+  qa_add_to_uint(&session->stats.refresh_out, 1) ;
+
+  if (BGP_DEBUG (normal, NORMAL) || BGP_DEBUG (io, IO_OUT))
+    zlog_debug ("%s sending REFRESH_REQ (%u) for afi/safi: %u/%u length %u",
+                                          writer->plox->host, msg_type,
+                                          load_ns(&rb_body[0]),
+                                           load_b(&rb_body[3]), msg_length) ;
+  return msg_length ;
+} ;
+
+/*------------------------------------------------------------------------------
  * Write a bgp_rbm_out_eor message from the ring-buffer to the write
  * buffer.
  *
- * bgp_rbm_out_eor messages comprise the qafx for the EoR.
+ * bgp_rbm_out_eor messages comprise the body of the EoR.
  */
 static uint
 bgp_msg_write_eor(bgp_msg_writer writer, ptr_t rb_body, uint rb_length)
 {
-  uint   body_length, msg_length ;
-  qafx_t qafx ;
-  ptr_t  msg_buff ;
+  uint   msg_length ;
 
   qassert(writer->msg_iv_count == 0) ;
 
-  /* For bgp_rbm_out_eor we have:
+  /* For IPv4/Unicast we are sending an UPDATE with no Withdrawn Routes and no
+   * Attributes.
    *
-   *   0: qafx   -- 1 byte
-   *
-   * we create the body of the message in the writer->temp_buff.  Note that
-   * this is not reused until the ring buffer entry can be freed, by which
-   * time we know the message has cleared into the write buffer.
-   */
-  qassert(rb_length == 1) ;
-
-  qafx = load_b(rb_body) ;
-
-  /* The the qafx is qafx_ipv4_unicast, we need to send an UPDATE with
-   * no Withdrawn Routes and no Attributes.
-   *
-   * For all other qafx we need send an an UPDATE with no Withdrawn Routes
-   * and an otherwise empty MP_UNREACH_NLRI.
-   *
-   * Start with a buffer long enough for the general case, and go from there.
+   * For all other afi/safi we are sending an UPDATE with no Withdrawn Routes
+   * and an empty MP_UNREACH_NLRI.
    */
   enum
     {
       empty_mp_unreach_nlri = 1 + 1 + 1 + 2 + 1,
 
+      min_eor_msg_len       = 2 + 2,
       max_eor_msg_len       = 2 + 2 + empty_mp_unreach_nlri,
     } ;
 
@@ -1934,405 +2030,43 @@ bgp_msg_write_eor(bgp_msg_writer writer, ptr_t rb_body, uint rb_length)
    * BGP_ATT_MPU_MIN_L  == length of body of minimum size MP_UNREACH_NLRI
    */
   confirm(empty_mp_unreach_nlri == (BGP_ATTR_MIN_L + BGP_ATT_MPU_MIN_L)) ;
+  confirm(min_eor_msg_len       == (uint)BGP_UPM_ATTR) ;
   confirm(max_eor_msg_len       == (BGP_UPM_ATTR   + empty_mp_unreach_nlri)) ;
 
-  msg_buff = bgp_msg_write_get_temp(writer, max_eor_msg_len) ;
-  memset(msg_buff, 0, max_eor_msg_len) ;
-
-  if (qafx == qafx_ipv4_unicast)
-    {
-      body_length = BGP_UPM_ATTR ;
-    }
-  else
-    {
-      body_length = max_eor_msg_len ;
-
-      confirm((BGP_UPM_A_LEN    == 2) && (sizeof(BGP_UPM_W_LEN_T)    == 2)) ;
-      confirm((BGP_UPM_ATTR     == 4)) ;
-      confirm((BGP_ATTR_FLAGS   == 0) && (sizeof(BGP_ATTR_FLAGS_T)   == 1)) ;
-      confirm((BGP_ATTR_TYPE    == 1) && (sizeof(BGP_ATTR_TYPE_T)    == 1)) ;
-      confirm((BGP_ATTR_LEN     == 2) && (sizeof(BGP_ATTR_LEN_T)     == 1)) ;
-      confirm((BGP_ATT_MPU_AFI  == 0) && (sizeof(BGP_ATT_MPU_AFI_T)  == 2)) ;
-      confirm((BGP_ATT_MPU_SAFI == 2) && (sizeof(BGP_ATT_MPU_SAFI_T) == 1)) ;
-
-      store_ns(&msg_buff[2], empty_mp_unreach_nlri) ;
-
-      store_b( &msg_buff[4 + 0],     BGP_ATF_OPTIONAL) ;
-      store_b( &msg_buff[4 + 1],     BGP_ATT_MP_UNREACH_NLRI) ;
-      store_b( &msg_buff[4 + 2],     2 + 1);
-      store_ns(&msg_buff[4 + 3 + 0], get_iAFI(qafx)) ;
-      store_b( &msg_buff[4 + 3 + 2], get_iSAFI(qafx)) ;
-    } ;
-
-  /* Set up the header of the message, followed by part 1 and any part 2.
+  /* Transfer contents of ring buffer as body of UPDATE message.
    */
-  msg_length = bgp_msg_write_header(writer, body_length, BGP_MT_UPDATE) ;
-
-  bgp_msg_write_body_part(writer, msg_buff, body_length) ;
-
-  /* Log as required.
-   */
-  if (BGP_DEBUG (normal, NORMAL) || BGP_DEBUG (io, IO_OUT))
-    zlog_debug ("send End-of-RIB for %s to %s", get_qafx_name(qafx),
-                                                           writer->plox->host) ;
-
-  return msg_length ;
-} ;
-
-/*------------------------------------------------------------------------------
- * Make one Route-Refresh message(s)
- *
- * The ring-buffer entry contains:
- *
- *   0: iAFI     -- 2 bytes, host order
- *   2: iSAFI    -- 1 byte,
- *   3: bool     -- has ORF.
- *
- * May return before all required messages have been sent, if the write
- * buffer is or becomes full.  The 'next_index' entry in the bgp_route_refresh
- * allows the process to be continued, later.
- *
- * If has to send more than one message, then all but the last will be set
- * "defer".  The last will be set as per the defer flag.
- *
- * Supports the status quo, only Address-Prefix ORF.
- *
- * Returns:  length of the Route-Refresh message generated
- *
- * NB: sends any ORF stuff using the Internet AFI/SAFI in the route refresh
- *     object.  Those may, or may not be known to quagga, so may or may not be
- *     the same as the qafx.
- */
-static uint
-bgp_msg_write_rr(bgp_msg_writer writer, ptr_t rb_body, uint rb_length,
-                                              bgp_session session, bool* p_done)
-{
-  iAFI_t  afi ;
-  iSAFI_t safi ;
-  bool    has_orf ;
-
-  blower_t br[1] ;
-
-  bgp_session_args_c args ;
-  uint8_t    msg_type ;
-  bgp_form_t form ;
-
-  bool      done ;
-  ptr_t     msg_buff ;
-  uint      msg_size ;
-  uint      msg_length ;
-
-  bgp_route_refresh rr ;
-
-  qassert(writer->msg_iv_count == 0) ;
-
-  /* Get and check contents of the ring buffer.
-   */
-  if (rb_length != 4)
+  if ((rb_length != min_eor_msg_len) && (rb_length != max_eor_msg_len))
     {
-      zlog_err("BUG in %s() for %s: unexpected ring-buffer message length %u",
+      zlog_err("BUG in %s() for %s: unexpected EoR message length %u",
                                       __func__, writer->plox->host, rb_length) ;
       return bgp_msg_write_msg_stomp(writer) ;
     } ;
 
-  afi     = load_s(&rb_body[0]) ;
-  safi    = load_b(&rb_body[2]) ;
-  has_orf = load_b(&rb_body[3]) ;
+  msg_length = bgp_msg_write_header(writer, rb_length, BGP_MT_UPDATE) ;
 
-  /* If we have ORF, then we want the temp buffer to be big enough for a
-   * maximum size message, and some.
-   *
-   * Also, if we have ORF, fetch the first rr object from the session list.
-   *
-   * NB: at this stage we do not remove it form the list.
+  bgp_msg_write_body_part(writer, rb_body, rb_length) ;
+
+  /* Log as required.
    */
-  if (has_orf)
-    {
-      msg_size = BGP_MSG_MAX_L ;
-      rr = session->rr_out ;
-
-      qassert(rr->afi  == afi) ;
-      qassert(rr->safi == safi) ;
-    }
-  else
-    {
-      msg_size = BGP_RRM_MIN_L ;
-      rr = NULL ;
-    } ;
-
-  msg_buff = bgp_msg_write_get_temp(writer, msg_size) ;
-
-  /* We prefer to use the RFC ROUTE-REFRESH message, and the RFC ORF Prefix
-   * type.
-   */
-  args = session->args ;
-
-  msg_type = (args->can_rr == bgp_form_pre) ? BGP_MT_ROUTE_REFRESH_pre
-                                            : BGP_MT_ROUTE_REFRESH ;
-
-  if      (args->can_orf_pfx[rr->qafx] & ORF_SM)
-    form = bgp_form_rfc ;
-  else if (args->can_orf_pfx[rr->qafx] & ORF_SM_pre)
-    form = bgp_form_pre ;
-  else
-    form = bgp_form_none ;
-
-  /* Encode Route Refresh message.
-   */
-  blow_init(br, msg_buff, msg_size) ;
-
-  blow_w(br, afi) ;
-  blow_b(br, 0);
-  blow_b(br, safi);
-
-  /* Process as many (remaining) ORF entries as can into message
-   */
-  if ((rr != NULL) && (form != bgp_form_none))
-    done = bgp_msg_orf_part(br, writer, rr, form) ;
-  else
-    done = true ;
-
-  /* Construct message in the msg_iv
-   */
-  msg_length = bgp_msg_write_header(writer, blow_length(br), msg_type) ;
-
-  bgp_msg_write_body_part(writer, blow_start(br), blow_length(br)) ;
-
-  /* Set BGP message length & dispatch -- noting that orf entry
-   * construction ensures that the length does not exceed the maximum.
-   */
-  qa_add_to_uint(&session->stats.refresh_out, 1) ;
-
   if (BGP_DEBUG (normal, NORMAL) || BGP_DEBUG (io, IO_OUT))
-    zlog_debug ("%s sending REFRESH_REQ for afi/safi: %u/%u length %u",
-                                    writer->plox->host, afi, safi, msg_length) ;
-
-  /* If we have a route refresh object and we are done with it, release it.
-   */
-  if (done && (rr != NULL))
     {
-      .... !!! ;
+      uint i_afi, i_safi ;
+
+      if (rb_length == min_eor_msg_len)
+        {
+          i_afi  = iAFI_IP ;
+          i_safi = iSAFI_Unicast ;
+        }
+      else
+        {
+          i_afi  = load_ns(&rb_body[BGP_UPM_ATTR + BGP_ATTR_MIN_L + 0]) ;
+          i_safi = load_b (&rb_body[BGP_UPM_ATTR + BGP_ATTR_MIN_L + 2]) ;
+        }
+
+      zlog_debug ("send End-of-RIB for afi/safi %u/%u to %s",
+                                            i_afi, i_safi, writer->plox->host) ;
     } ;
 
-  /* Return result.
-   */
-  *p_done = done ;
   return msg_length ;
-} ;
-
-/*------------------------------------------------------------------------------
- * Set the length of the current collection, if any.
- *
- * NB: if the collection is zero length, crashes the blow pointer back to the
- *     before the collection.
- */
-inline static void
-bgp_msg_orf_part_set_length(blower br, ptr_t collp)
-{
-  if (collp != NULL)
-    {
-      uint length ;
-
-      length = blow_ptr(br) - &collp[BGP_ORF_ENTRIES] ;
-
-      if (length != 0)
-        store_ns(&collp[BGP_ORF_LEN], length) ;
-      else
-        br->ptr = collp ;
-    } ;
-} ;
-
-/*------------------------------------------------------------------------------
- * Put ORF entries to the given blower until run out of entries or run out
- * of room.
- *
- * There MUST BE at least one ORF entry to go.
- *
- * Returns true <=> done all available entries.
- */
-static bool
-bgp_msg_orf_part(blower br, bgp_msg_writer writer,
-                                          bgp_route_refresh rr, bgp_form_t form)
-{
-  bgp_orf_entry entry ;
-  uint  next_index ;
-
-  uint8_t orf_type ;
-
-  ptr_t whenp ;                 /* where the "when" byte is             */
-  ptr_t collp ;                 /* start of the latest collection       */
-
-  bool  done ;
-
-  /* Heading for Prefix-Address ORF type section -- pro tem, set defer.
-   */
-  whenp = blow_ptr(br) ;        /* position of "when"           */
-  blow_b(br, BGP_ORF_WTR_DEFER) ;
-
-  /* Process ORF entries until run out of entries or space
-   */
-  collp      = NULL ;           /* no collection, yet   */
-  orf_type   = 0 ;              /* no ORF type, yet     */
-
-  next_index = rr->next_index ; /* where we started     */
-  while (1)
-    {
-      entry = bgp_orf_get_entry(rr, next_index) ;
-      done = (entry == NULL) ;
-
-      if (done)
-        break ;
-
-      /* How much space is there left -- give up if very little
-       *
-       * What is "very little" is arbitrary, BUT MUST cover the ORF Type
-       * byte and the Length of ORF entries word, AT LEAST.
-       * */
-      if (blow_left(br) < 16)
-        break ;                         /* NB: done == false    */
-
-      confirm(16 > BGP_ORF_MIN_L) ;     /* Type & Length        */
-
-      /* Start new collection of ORF entries, if required.
-       */
-      if ((collp == NULL) || (orf_type != entry->orf_type))
-        {
-          uint8_t orf_type_sent ;
-
-          /* fill in length of previous ORF entries, if any
-           */
-          bgp_msg_orf_part_set_length(br, collp) ;
-
-          /* set type and dummy entries length.
-           */
-          orf_type      = entry->orf_type ;
-          orf_type_sent = entry->orf_type ;
-
-          if ((orf_type == BGP_ORF_T_PFX) && (form == bgp_form_pre))
-            orf_type_sent = BGP_ORF_T_PFX_pre ;
-
-          collp = blow_step(br, BGP_ORF_MIN_L) ;        /* type & length */
-
-          store_b(&collp[BGP_ORF_TYPE], orf_type_sent) ;
-        } ;
-
-      /* Insert the entry, if will fit.
-       *
-       * sets done <=> fitted
-       */
-      if (entry->unknown)
-        {
-          done = (blow_left(br) <= entry->body.orf_unknown.length) ;
-          if (done)
-            blow_n(br, entry->body.orf_unknown.data,
-                       entry->body.orf_unknown.length) ;
-        }
-      else
-        {
-          if (entry->remove_all)
-            {
-              /* Put remove all ORF entry to stream -- if possible.
-               */
-              done = (blow_left(br) >= 1) ;     /* just the one byte    */
-              if (done)
-                blow_b(br, BGP_ORF_EA_RM_ALL) ;
-            }
-          else
-            {
-              uint8_t common =   (entry->remove ? BGP_ORF_EA_REMOVE
-                                                : BGP_ORF_EA_ADD)
-                               | (entry->deny   ? BGP_ORF_EA_DENY
-                                                : BGP_ORF_EA_PERMIT) ;
-              switch (entry->orf_type)
-                {
-                  case BGP_ORF_T_PFX:
-                    qassert(entry->deny ==
-                                      (entry->body.orfpv.type == PREFIX_DENY)) ;
-
-                    done = bgp_msg_orf_prefix(br, common, &entry->body.orfpv) ;
-                    break ;
-
-                  default:
-                    zabort("unknown ORF type") ;
-                    break ;
-                } ;
-            } ;
-        } ;
-
-      /* exit loop now if not enough room for current ORF entry
-       */
-      if (!done)
-        break ;
-
-      /* Done ORF entry.  Step to the next.  NB: done == true
-       */
-      next_index += 1 ;
-    } ;
-
-  /* Set the length of what we have collected.
-   *
-   * If we haven't collected anything, then that's because there wasn't
-   * enough room, so will have collapsed back to the start of the collection.
-   */
-  bgp_msg_orf_part_set_length(br, collp) ;
-
-  /* If we are done, then we set the true defer/
-   *
-   */
-  if (done)
-    {
-      if (!rr->defer)
-        store_b(whenp, BGP_ORF_WTR_IMMEDIATE) ;
-    }
-  else
-    {
-      if (next_index == rr->next_index)
-        {
-          /* Something has gone wrong if nothing has been processed:
-           *
-           *   a) have been called again after having reported "done" (so there
-           *      are no more entries to deal with.
-           *
-           *   b) have been asked to output an "unknown" ORF entry which is too
-           *      long for a BGP message !!
-           */
-          if (entry == NULL)
-            zabort("called bgp_msg_send_route_refresh() after said was done") ;
-
-          if (entry->unknown)
-            zlog_err("%s sending REFRESH_REQ with impossible length (%d) ORF",
-                          writer->plox->host, entry->body.orf_unknown.length) ;
-          else
-            zabort("failed to put even one ORF entry") ;
-
-          done = true ;
-        }
-    }
-
-  rr->next_index = next_index ;
-  return done ;
-} ;
-
-/*------------------------------------------------------------------------------
- * Put given Address-Prefix ORF entry to stream -- if possible.
- */
-static bool
-bgp_msg_orf_prefix(blower br, uint8_t common, orf_prefix_value orfpv)
-{
-  int blen ;
-
-  blen = PSIZE(orfpv->pfx.prefixlen) ;
-
-  if (blow_left(br) < (BGP_ORF_E_P_MIN_L + blen))
-    return false ;
-
-  blow_b(br, common) ;
-  blow_l(br, orfpv->seq) ;
-  blow_b(br, orfpv->ge) ;       /* aka min      */
-  blow_b(br, orfpv->le) ;       /* aka max      */
-  blow_b(br, orfpv->pfx.prefixlen) ;
-  blow_n(br, &orfpv->pfx.u.prefix, blen) ;
-
-  return true ;
 } ;
 

@@ -25,6 +25,9 @@
 /* "zconfig.h" is included at the start of this "misc.h", and at the start
  * of "zebra.h".  This ensures that we get <features.h> defined early, so
  * that all other #includes get the same set of features.
+ *
+ * NB: either misc.h or zebra.h SHOULD be the FIRST #include in all .c and in
+ *     any .h that require them.
  */
 #include "zconfig.h"
 

@@ -22,6 +22,7 @@
 #include <misc.h>
 
 #include "bgpd/bgp_attr_store.h"
+#include "lib/prefix.h"
 
 /*==============================================================================
  * Management of sets of attributes.

@@ -234,7 +234,6 @@ extern void bgp_info_set_flag (struct bgp_node *, struct bgp_info *, u_int32_t);
 extern void bgp_info_unset_flag (struct bgp_node *, struct bgp_info *, u_int32_t);
 
 extern bool bgp_maximum_prefix_overflow (peer_rib prib, bool always) ;
-extern void bgp_maximum_prefix_cancel_timer (struct peer *peer) ;
 
 extern void bgp_redistribute_add (prefix, ip_union, uint32_t, uchar);
 extern void bgp_redistribute_delete (struct prefix *, u_char);

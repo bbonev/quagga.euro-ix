@@ -24,8 +24,6 @@
 #include "vhash.h"
 #include "miyagi.h"
 
-#include "stream.h"
-
 #include "bgpd/bgp.h"
 #include "bgpd/bgp_unknown.h"
 

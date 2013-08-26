@@ -267,6 +267,8 @@ sockunion_clear(sockunion su)
   if (su != NULL)
     memset(su, 0, sizeof(*su)) ;
 
+  confirm(AF_UNSPEC == 0) ;
+
   return su ;
 } ;
 
@@ -1166,21 +1168,20 @@ sockunion_cmp (sockunion_c su1, sockunion_c su2)
 extern sockunion
 sockunion_dup (sockunion_c su)
 {
-  sockunion dup ;
-
-  dup = XMALLOC (MTYPE_SOCKUNION, sizeof(sockunion_t)) ;
-  memcpy (dup, su, sizeof(sockunion_t)) ;
-
-  return dup;
-}
+  return sockunion_copy(NULL, su) ;
+} ;
 
 /*------------------------------------------------------------------------------
- * Copy one sockunion to another
+ * Copy one sockunion to another -- create dst if required.
  */
-extern void
+extern sockunion
 sockunion_copy (sockunion dst, sockunion_c src)
 {
-  memcpy (dst, src, sizeof(sockunion_t)) ;
+  if (dst == NULL)
+    dst = XMALLOC (MTYPE_SOCKUNION, sizeof(sockunion_t)) ;
+
+  *dst = *src ;
+  return dst ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -1207,11 +1208,11 @@ sockunion_free (sockunion su)
  * For unknown family, returns an empty sockunion of that family.
  */
 extern sockunion
-sockunion_new_prefix(sockunion su, struct prefix* p)
+sockunion_new_prefix(sockunion su, prefix_c pfx)
 {
   sa_family_t family ;
 
-  family = (p != NULL) ? p->family : 0 ;
+  family = (pfx != NULL) ? pfx->family : 0 ;
 
   su = sockunion_init_new(su, family) ;
 
@@ -1221,12 +1222,12 @@ sockunion_new_prefix(sockunion su, struct prefix* p)
       break ;
 
     case AF_INET:
-      su->sin.sin_addr   = p->u.prefix4 ;
+      su->sin.sin_addr   = pfx->u.prefix4 ;
       break ;
 
 #ifdef HAVE_IPV6
     case AF_INET6:
-      su->sin6.sin6_addr = p->u.prefix6 ;
+      su->sin6.sin6_addr = pfx->u.prefix6 ;
       break ;
 #endif
 

@@ -88,20 +88,20 @@ enum bgp_fsm_meta
  *
  * The idle state is:
  *
- *     1. isExtended  -- fsIdle only -- qfDown
+ *     1. fisExtended   -- fsIdle only -- qfDown
  *
  *        When the extension timer goes off, will leave fsIdle.
  *
  *        If goes to stopping, can exit immediately.
  *
- *     2. isIdle      -- fsIdle only -- qfDown
+ *     2. fisHold       -- fsIdle only -- qfDown
  *
  *        When the timer goes off the fsIdle is done, unless we extend it.
  *
  *        When fsIdle is done, if there is a sibling in fsOpenSent or
  *        fsOpenConfirm, then the IdleHoldTime is extended by a little, once.
  *
- *     3. isIO        -- fsIdle or fsStop
+ *     3. fisIO         -- fsIdle or fsStop
  *
  *        in fsIdle:
  *
@@ -110,7 +110,7 @@ enum bgp_fsm_meta
  *
  *          * when the timer goes off, the connection can be closed.
  *
- *            Proceeds to isIdle, to run the balance of the full IdleHoldTime
+ *            Proceeds to fisHold, to run the balance of the full IdleHoldTime
  *            (the balance is arranged to not be zero).
  *
  *        in fsStop:
@@ -120,24 +120,26 @@ enum bgp_fsm_meta
  *
  *          * when the timer goes off, the connection is stopped.
  */
-typedef enum bgp_idle_state bgp_idle_state_t ;
-enum bgp_idle_state
+typedef enum bgp_fsm_idle_state bgp_fsm_idle_state_t ;
+enum bgp_fsm_idle_state
 {
-  bgp_isNULL          = 0,
-  bgp_isExtended,
-  bgp_isHold,
-  bgp_isIO,
+  bgp_fisNULL   = 0,
+  bgp_fisExtended,
+  bgp_fisHold,
+  bgp_fisIO,
 } ;
 
 /*------------------------------------------------------------------------------
  * A parcel for an event in the FSM, which may be copied to the session and
  * back to the peer.
  */
-typedef struct bgp_fsm_eqb bgp_fsm_eqb_t ;
+typedef struct bgp_fsm_eqb* bgp_fsm_eqb ;
+typedef struct bgp_fsm_eqb  bgp_fsm_eqb_t ;
+
 struct bgp_fsm_eqb
 {
   bgp_fsm_event_t  fsm_event ;
-  bgp_notify       notification ;
+  bgp_note         note ;
   int              err ;
 } ;
 
@@ -174,15 +176,14 @@ struct bgp_fsm_timer
 /*==============================================================================
  * Prototypes.
  */
-extern void bgp_fsm_enable_session(bgp_session session) ;
-extern void bgp_fsm_disable_session(bgp_session session,
-                                                      bgp_notify notification) ;
-extern void bgp_fsm_enable_connection(bgp_session session,
-                                                     bgp_conn_ord_t ord) ;
+extern void bgp_fsm_start_session(bgp_session session) ;
+extern bgp_note bgp_fsm_stop_session(bgp_session session, bgp_note note) ;
+extern void bgp_fsm_start_connection(bgp_session session,
+                                                          bgp_conn_ord_t ord) ;
 extern void bgp_fsm_restart_connection(bgp_connection connection,
-                                                      bgp_notify notification) ;
-extern void bgp_fsm_disable_connection(bgp_connection connection,
-                                                      bgp_notify notification) ;
+                                                                bgp_note note) ;
+extern void bgp_fsm_stop_connection(bgp_connection connection,
+                                                                bgp_note note) ;
 
 extern void bgp_fsms_init(void) ;
 extern void bgp_fsms_stop(void) ;

@@ -318,137 +318,34 @@
  * appears slim to vanishing.  However, the Routeing Engine and the operator
  * are responsible for the decision to start and to stop trying to connect.
  *
- *------------------------------------------------------------------------------
- * Exception handling.
- *
- * The basic mechanism is:
- *
- *   * exceptions may the "thrown" -- which posts a given exception in the
- *     connection then kicks the FSM with a given fsm_eXxxxx event.
- *
- *     Information posted is:
- *
- *       sesssion_eXxxxx    -- what the exception is
- *       notification       -- any NOTIFICATION message
- *       err                -- any I/O or other error
- *
- *     on exit from the FSM this information is passed to the Routing Engine.
- *
- *     Can throw exceptions within the FSM, as discussed above.
- *
- *   * within the FSM exceptions are "caught".
- *
- *     Which deals with the exception as thrown, depending on the next state.
- *
- * See the various exception functions below for what exceptions are posted and
- * what fsm_eXxxx events are generated.
- *
- * The following fsm events require an exception:
- *
- *   bgp_fsm_eStop              -- bgp_fsm_exception()
- *   bgp_fsm_eTCP_closed        -- bgp_fsm_io_failure()
- *   bgp_fsm_eTCP_open_failed   -- bgp_fsm_connect_completed()
- *   bgp_fsm_eTCP_error         -- bgp_fsm_io_error()
- *   bgp_fsm_eNOTIFICATION_in   -- bgp_fsm_notification_exception()
- *
- *------------------------------------------------------------------------------
- * FSM errors
- *
- * Invalid events: if the FSM receives an event that cannot be raised in the
- * current state, it will terminate the session, sending an FSM Error
- * NOTIFICATION (if a TCP connection is up).  See bgp_fsm_invalid_event().
- *
- * If the FSM receives a message type that is not expected in the current,
- * state, it will close the connection (if sOpenSent or sOpenConfirm) or stop
- * the session (if sEstablished), also sending an FSM Error NOTIFICATION.
- * See bgp_fsm_error().
- *
- *------------------------------------------------------------------------------
- * Sending NOTIFICATION message
- *
- * In sOpenSent, sOpenConfirm and sEstablished states may send a NOTIFICATION
- * message.
- *
- * The procedure for sending a NOTIFICATION is:
- *
- *   -- close the connection for reading and clear read buffers.
- *
- *      This ensures that no further read I/O can occur and no related events.
- *
- *      Note that anything sent from the other end is acknowledged, but
- *      quietly discarded.
- *
- *   -- purge the write buffer of all output except any partly sent message.
- *
- *      This ensures there is room in the write buffer at the very least.
- *
- *      For sOpenSent and sOpenConfirm states there should be zero chance of
- *      there being anything to purge.
- *
- *   -- purge any pending write messages for the connection (for sEstablished).
- *
- *   -- set notification_pending = 1 (write pending)
- *
- *   -- write the NOTIFICATION message.
- *
- *      For sEstablished, the message will at the very least be written to the
- *      write buffer.  For sOpenSent and sOpenConfirm expect it to go directly
- *      to the TCP buffer.
- *
- *   -- stop the KeepaliveTimer
- *
- *   -- set HoldTimer to a waiting to clear buffer time -- say 20 secs.
- *
- *      Don't expect to need to wait at all in sOpenSent/sOpenConfirm states.
- *
- *   -- when the NOTIFICATION message clears the write buffer, that will
- *      generate a Sent_NOTIFICATION_message event.
- *
- * After sending the NOTIFICATION, sOpenSent & sOpenConfirm stay in their
- * respective states.  sEstablished goes to sStopping State.
- *
- * When the Sent_NOTIFICATION_message event occurs, set the HoldTimer to
- * a "courtesy" time of 5 seconds.  Remain in the current state.
- *
- * During the "courtesy" time the socket will continue to acknowledge, but
- * discard input.  In the case of Collision Resolution this gives a little time
- * for the other end to send its NOTIFICATION message.
- *
- * When the HoldTimer expires close the connection completely (whether or not
- * the NOTIFICATION has cleared the write buffer).
- *
- *------------------------------------------------------------------------------
- * Communication with the Routeing Engine
- *
- * The FSM sends bgp_session_event messages to the Routeing Engine which keep
- * it up to date with the progress and state of the FSM.
- *
- * In particular, these event messages tell the Routeing Engine when the
- * session enters and leaves sEstablished, when the session stops for any
- * reason and when the session has been disabled -- which are what really
- * matters to it !
  */
 
 /*==============================================================================
  * Starting up and closing down sessions and connections.
  */
-static bgp_notify bgp_fsm_admin_event(bgp_connection connection,
-                           bgp_fsm_event_t fsm_event, bgp_notify notification) ;
+static void bgp_fsm_admin_event(bgp_connection connection,
+                                     bgp_fsm_event_t fsm_event, bgp_note note) ;
 static void bgp_fsm_raise_meta_event(bgp_connection connection,
                                                       bgp_fsm_meta_t fsm_meta) ;
 
 /*------------------------------------------------------------------------------
- * Enable the given session -- must be sInitial or sStopped.
+ * Start the given session, if csRun etc -- must be sReset.
  *
- * This is the first step in the FSM, and the connections advance to fsIdle.
+ * If !csRun or have neither csMayConnect nor csMayAccept, do nothing (stays
+ * sReset).
  *
- * Returns in something of a hurry if not enabled for connect() or for accept().
+ * Otherwise, this is the first step in the FSM:
+ *
+ *   * session changes to sAcquiring
+ *
+ *   * connections start in bgp_fsNULL, with an feManualStart event.
  */
 extern void
-bgp_fsm_enable_session(bgp_session session)
+bgp_fsm_start_session(bgp_session session)
 {
-  qassert( (session->state == bgp_sInitial) ||
-           (session->state == bgp_sStopped)) ;
+  bgp_conn_state_t conn_state ;
+
+  qassert(session->state == bgp_sReset) ;
 
   qassert(session->connections[bc_connect] == NULL) ;
   qassert(session->connections[bc_accept]  == NULL) ;
@@ -456,30 +353,26 @@ bgp_fsm_enable_session(bgp_session session)
 
   memset(session->connections, 0, sizeof(session->connections)) ;
 
+  /* Should we go ahead and start one or two connections ?
+   */
+  conn_state = session->cops_config->conn_state ;
+
+  if ((conn_state & (bgp_csRun | bgp_csMayConnect | bgp_csMayAccept))
+                                                                  <= bgp_csRun)
+    return ;
+
+  confirm(bgp_csMayConnect < bgp_csRun) ;
+  confirm(bgp_csMayAccept  < bgp_csRun) ;
+
   /* Accept and/or Connect connections enabled now
    */
-  if (session->cops_config->conn_state == bc_is_enabled)
-    {
-      if (session->cops_config->conn_let & bc_can_connect)
-        bgp_fsm_enable_connection(session, bc_connect) ;
+  if (conn_state & bgp_csMayConnect)
+    bgp_fsm_start_connection(session, bc_connect) ;
 
-      if (session->cops_config->conn_let & bc_can_accept)
-        bgp_fsm_enable_connection(session, bc_accept) ;
-    } ;
+  if (conn_state & bgp_csMayAccept)
+    bgp_fsm_start_connection(session, bc_accept) ;
 
-  if ( (session->connections[bc_connect] != NULL) ||
-       (session->connections[bc_accept] != NULL))
-    {
-      /* One or both connections enabled.
-       */
-      session->state = bgp_sAcquiring ;
-    }
-  else
-    {
-      /* Proceed instantly to a dead stop if neither accept nor connect !
-       */
-      bgp_session_event(session, bgp_session_eInvalid, NULL, 0, 0, 1) ;
-    } ;
+  session->state = bgp_sAcquiring ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -495,32 +388,35 @@ bgp_fsm_enable_session(bgp_session session)
  * In all cases, returns a bgp_session_eDisabled event.
  *
  * NB: takes responsibility for the given notification.
+ *
+ * Returns:  NULL
  */
-extern bgp_notify
-bgp_fsm_disable_session(bgp_session session, bgp_notify notification)
+extern bgp_note
+bgp_fsm_stop_session(bgp_session session, bgp_note note)
 {
   bgp_connection connection ;
 
   if ((connection = session->connections[bc_connect]) != NULL)
-    bgp_fsm_disable_connection(connection, bgp_notify_dup(notification)) ;
+    bgp_fsm_stop_connection(connection, bgp_note_dup(note)) ;
 
   if ((connection = session->connections[bc_accept]) != NULL)
-    bgp_fsm_disable_connection(connection, bgp_notify_dup(notification)) ;
+    bgp_fsm_stop_connection(connection, bgp_note_dup(note)) ;
 
-  return bgp_notify_free(notification) ;
+  return bgp_note_free(note) ;
 } ;
 
 /*------------------------------------------------------------------------------
  * Enable connection for session, trying to connect() or accept()
  */
 extern void
-bgp_fsm_enable_connection(bgp_session session, bgp_conn_ord_t ord)
+bgp_fsm_start_connection(bgp_session session, bgp_conn_ord_t ord)
 {
   bgp_connection connection ;
 
   qassert(session->connections[ord] == NULL) ;
 
   connection = bgp_connection_init_new(NULL, session, ord) ;
+  qassert(connection->fsm_state == bgp_fsNULL) ;
 
   /* Set an fmRun meta-event so is set running and is added to the ring.
    *
@@ -537,20 +433,20 @@ bgp_fsm_enable_connection(bgp_session session, bgp_conn_ord_t ord)
  * NB: takes responsibility for the given notification.
  */
 extern void
-bgp_fsm_restart_connection(bgp_connection connection, bgp_notify notification)
+bgp_fsm_restart_connection(bgp_connection connection, bgp_note note)
 {
-  return bgp_fsm_admin_event(connection, bgp_feRestart, notification) ;
+  bgp_fsm_admin_event(connection, bgp_feRestart, note) ;
 } ;
 
 /*------------------------------------------------------------------------------
- * Disable (stop) the given connection.
+ * Stop the given connection.
  *
  * NB: takes responsibility for the given notification.
  */
 extern void
-bgp_fsm_disable_connection(bgp_connection connection, bgp_notify notification)
+bgp_fsm_stop_connection(bgp_connection connection, bgp_note note)
 {
-  return bgp_fsm_admin_event(connection, bgp_feManualStop, notification) ;
+  bgp_fsm_admin_event(connection, bgp_feManualStop, note) ;
 } ;
 
 /*==============================================================================
@@ -651,8 +547,8 @@ bgp_fsm_events_run(void)
 
       count += 1 ;
 
-      qassert(eqb->notification  == NULL) ;
-      qassert(eqb->err           == 0) ;
+      qassert(eqb->note  == NULL) ;
+      qassert(eqb->err   == 0) ;
 
       meta = connection->meta_events & (bgp_fmAdmin | bgp_fmSocket | bgp_fmIO) ;
 
@@ -670,7 +566,7 @@ bgp_fsm_events_run(void)
            */
           bgp_fsm_event_handle(connection, fsm_event, eqb) ;
 
-          bgp_notify_free(eqb->notification) ;
+          bgp_note_free(eqb->note) ;
           eqb->err = 0 ;
         } ;
 
@@ -739,10 +635,10 @@ bgp_fsm_meta_event(bgp_connection connection, bgp_fsm_eqb eqb)
                    (fsm_event == bgp_feManualStart)       ||
                    (fsm_event == bgp_feRestart)           ||
                    (fsm_event == bgp_feBGPOpenMsgErr) ) ;
-          eqb->notification = connection->admin_notif ;
+          eqb->note = connection->admin_note ;
 
           connection->admin_event = bgp_feNULL ;
-          connection->admin_notif = NULL ;
+          connection->admin_note  = NULL ;
 
           meta ^= bgp_fmAdmin ;
         }
@@ -802,6 +698,7 @@ bgp_fsm_meta_event(bgp_connection connection, bgp_fsm_eqb eqb)
 
       ft->state = bfts_stopped ;
       meta     &= ~ft->fsm_meta ;
+      fsm_event = ft->fsm_event ;
     }
   else if (meta == bgp_fmRun)
     {
@@ -847,9 +744,9 @@ bgp_fsm_meta_event(bgp_connection connection, bgp_fsm_eqb eqb)
  *
  * NB: takes responsibility for the given notification.
  */
-static bgp_notify
+static void
 bgp_fsm_admin_event(bgp_connection connection, bgp_fsm_event_t fsm_event,
-                                                        bgp_notify notification)
+                                                                  bgp_note note)
 {
   static const byte admin_event_priority[bgp_fe_count] =
     {
@@ -882,17 +779,17 @@ bgp_fsm_admin_event(bgp_connection connection, bgp_fsm_event_t fsm_event,
 
   if ((new_priority >= current_priority) && (new_priority != 0))
     {
-      bgp_notify_free(connection->admin_notif) ;
+      bgp_note_free(connection->admin_note) ;
 
-      connection->admin_event  = fsm_event ;
-      connection->admin_notif  = notification ;
+      connection->admin_event = fsm_event ;
+      connection->admin_note  = note ;
 
       bgp_fsm_raise_meta_event(connection, bgp_fmAdmin) ;
 
-      notification = NULL ;
+      note = NULL ;
     } ;
 
-  return bgp_notify_free(notification) ;
+  bgp_note_free(note) ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -1115,7 +1012,7 @@ bgp_fsm_accept_event(bgp_session session, bgp_fsm_event_t fsm_event)
             /* We do not have an accept connection, in sAcquiring state,
              * so... we must not be prepared to accept !
              */
-            qassert(session->cops_config->conn_let & bc_no_accept) ;
+            qassert(!(session->cops_config->conn_state & bgp_csMayAccept)) ;
             fsm_event = bgp_feNULL ;            /* ignore       */
           }
         else
@@ -1610,7 +1507,7 @@ bgp_fsm_event_handle(bgp_connection connection, bgp_fsm_event_t fsm_event,
             case bgp_feDown:
             case bgp_feShut_RD:
             case bgp_feShut_WR:
-              qassert(connection->idling_state == bgp_isIO) ;
+              qassert(connection->idling_state == bgp_fisIO) ;
 
               if (connection->io_state == qfDown)
                 {
@@ -1929,7 +1826,7 @@ bgp_fsm_event_handle(bgp_connection connection, bgp_fsm_event_t fsm_event,
             case bgp_feHoldTimer_Expires:
               bgp_fsm_timer_stop(connection->hold_timer) ;      /* tidy */
 
-              eqb->notification = bgp_notify_reset(eqb->notification,
+              eqb->note = bgp_note_set(eqb->note,
                                        BGP_NOMC_HOLD_EXP, BGP_NOMS_UNSPECIFIC) ;
               bgp_fsm_fall_idle(connection, eqb, true /* damp */) ;
               break ;
@@ -1947,11 +1844,25 @@ bgp_fsm_event_handle(bgp_connection connection, bgp_fsm_event_t fsm_event,
 
             /* If we get a NOTIFICATION, we fall back, too.
              *
-             * If we get an I/O error or the connection is closed, fall back.
+             * But if is BGP_NOMC_OPEN/BGP_NOMS_O_OPTION, set cap_suppress, so
+             * that next time we try without.
              */
             case bgp_feNotifyMsgVerErr:
             case bgp_feNotifyMsg:
+              qassert(eqb->note != NULL) ;
 
+              if (eqb->note != NULL)
+                {
+                  if ( (eqb->note->code    == BGP_NOMC_OPEN) &&
+                       (eqb->note->subcode == BGP_NOMS_O_OPTION) )
+                    connection->cap_suppress = true ;
+                } ;
+              fall_through ;
+
+            /* If we get a NOTIFICATION, we fall back, too.
+             *
+             * If we get an I/O error or the connection is closed, fall back.
+             */
             case bgp_feError:
             case bgp_feDown:
             case bgp_feRestart:
@@ -1967,7 +1878,7 @@ bgp_fsm_event_handle(bgp_connection connection, bgp_fsm_event_t fsm_event,
             case bgp_feKeepAliveMsg:
             case bgp_feUpdateMsg:
             case bgp_feRRMsg:
-              eqb->notification = bgp_notify_default(eqb->notification,
+              eqb->note = bgp_note_default(eqb->note,
                                         BGP_NOMC_FSM, BGP_NOMS_F_IN_OPEN_SENT) ;
               bgp_fsm_fall_idle(connection, eqb, true /* damp */) ;
               break ;
@@ -1978,7 +1889,7 @@ bgp_fsm_event_handle(bgp_connection connection, bgp_fsm_event_t fsm_event,
             case bgp_feBGPHeaderErr:
             case bgp_feUpdateMsgErr:
             case bgp_feRRMsgErr:
-              eqb->notification = bgp_notify_default(eqb->notification,
+              eqb->note = bgp_note_default(eqb->note,
                                           BGP_NOMC_CEASE, BGP_NOMS_UNSPECIFIC) ;
               bgp_fsm_fall_idle(connection, eqb, true /* damp */) ;
               break ;
@@ -2104,7 +2015,7 @@ bgp_fsm_event_handle(bgp_connection connection, bgp_fsm_event_t fsm_event,
             case bgp_feHoldTimer_Expires:
               bgp_fsm_timer_stop(connection->hold_timer) ;      /* tidy */
 
-              eqb->notification = bgp_notify_reset(eqb->notification,
+              eqb->note = bgp_note_set(eqb->note,
                                        BGP_NOMC_HOLD_EXP, BGP_NOMS_UNSPECIFIC) ;
               bgp_fsm_fall_idle(connection, eqb, true /* damp */) ;
               break ;
@@ -2131,7 +2042,7 @@ bgp_fsm_event_handle(bgp_connection connection, bgp_fsm_event_t fsm_event,
             case bgp_feBGPOpen_with_DelayOpenTimer:
             case bgp_feUpdateMsg:
             case bgp_feRRMsg:
-             eqb->notification = bgp_notify_default(eqb->notification,
+              eqb->note = bgp_note_default(eqb->note,
                                         BGP_NOMC_FSM, BGP_NOMS_F_IN_OPEN_SENT) ;
               bgp_fsm_fall_idle(connection, eqb, true /* damp */) ;
               break ;
@@ -2142,7 +2053,7 @@ bgp_fsm_event_handle(bgp_connection connection, bgp_fsm_event_t fsm_event,
             case bgp_feBGPHeaderErr:
             case bgp_feUpdateMsgErr:
             case bgp_feRRMsgErr:
-              eqb->notification = bgp_notify_default(eqb->notification,
+              eqb->note = bgp_note_default(eqb->note,
                                           BGP_NOMC_CEASE, BGP_NOMS_UNSPECIFIC) ;
               bgp_fsm_fall_idle(connection, eqb, true /* damp */) ;
               break ;
@@ -2268,7 +2179,7 @@ bgp_fsm_event_handle(bgp_connection connection, bgp_fsm_event_t fsm_event,
             case bgp_feHoldTimer_Expires:
               bgp_fsm_timer_stop(connection->hold_timer) ;      /* tidy */
 
-              eqb->notification = bgp_notify_reset(eqb->notification,
+              eqb->note = bgp_note_set(eqb->note,
                                        BGP_NOMC_HOLD_EXP, BGP_NOMS_UNSPECIFIC) ;
               bgp_fsm_stop(connection, eqb) ;
               break ;
@@ -2293,7 +2204,7 @@ bgp_fsm_event_handle(bgp_connection connection, bgp_fsm_event_t fsm_event,
             case bgp_feBGPOpen:
             case bgp_feBGPOpen_with_DelayOpenTimer:
             case bgp_feBGPOpenMsgErr:
-              eqb->notification = bgp_notify_default(eqb->notification,
+              eqb->note = bgp_note_default(eqb->note,
                                       BGP_NOMC_FSM, BGP_NOMS_F_IN_ESTABLISHED) ;
               bgp_fsm_stop(connection, eqb) ;
               break ;
@@ -2304,7 +2215,7 @@ bgp_fsm_event_handle(bgp_connection connection, bgp_fsm_event_t fsm_event,
             case bgp_feBGPHeaderErr:
             case bgp_feUpdateMsgErr:
             case bgp_feRRMsgErr:
-              eqb->notification = bgp_notify_default(eqb->notification,
+              eqb->note = bgp_note_default(eqb->note,
                                           BGP_NOMC_CEASE, BGP_NOMS_UNSPECIFIC) ;
               bgp_fsm_stop(connection, eqb) ;
               break ;
@@ -2407,7 +2318,7 @@ bgp_fsm_event_handle(bgp_connection connection, bgp_fsm_event_t fsm_event,
         qassert( (connection->session == session)
               && (session->connections[connection->ord] == connection) ) ;
 
-      bgp_session_event(session, eqb, connection->ord) ;
+      bgp_session_send_event(session, connection->ord, eqb) ;
 
       if (bgp_dump_state_flag)
         bgp_dump_state (session, connection->fsm_state, fsm_state_was) ;
@@ -2572,14 +2483,15 @@ static void bgp_fsm_keepalive_timer_set(bgp_connection connection) ;
  *
  * If is fsEstablished, then tidies up the ring-buffer stuff and ... XXX XXX
  *
- * Severs connection with session, and pushes connection into fsIdle (if
- * not already fsIdle).  Stops timers (except for hold_timer, if already
- * fsIdle).
+ * Severs connection with session, and pushes connection into fsStop.  The
+ * connection may already have been cut loose... which happens to the sibling
+ * of the connection which achieves sEstablished.
  *
- * NB: if is already fsIdle, then there may be a notification already in
- *     progress.
+ * Stops timers (except for hold_timer, if currently fsIdle).
  *
- * NB: can go from fsNULL to fsIdle and stopping !
+ * NB: if is fsIdle, then there may be a notification already in progress.
+ *
+ * NB: can go from fsNULL to fsStop and stopping !
  */
 static void
 bgp_fsm_stop(bgp_connection connection, bgp_fsm_eqb eqb)
@@ -2630,6 +2542,9 @@ bgp_fsm_stop(bgp_connection connection, bgp_fsm_eqb eqb)
     } ;
 
   /* Detach from the session, which may stop the session, and set fsStop.
+   *
+   * This allows for the case of the sibling which lost the race to
+   * sEstablished, which has already been detached from the session !
    */
   bgp_fsm_enter_stop(connection) ;
 
@@ -2651,13 +2566,13 @@ bgp_fsm_stop(bgp_connection connection, bgp_fsm_eqb eqb)
     {
       if (was_idle)
         {
-          qassert(connection->idling_state == bgp_isIO) ;
+          qassert(connection->idling_state == bgp_fisIO) ;
           qassert( (connection->hold_timer->state == bfts_running) ||
                    (connection->hold_timer->state == bfts_expired) ) ;
         }
       else
         {
-          connection->idling_state = bgp_isIO ;
+          connection->idling_state = bgp_fisIO ;
           bgp_fsm_idle_hold_timer_set_interval(connection, QTIME(IO_Hold_Time));
         } ;
 
@@ -2674,26 +2589,20 @@ bgp_fsm_stop(bgp_connection connection, bgp_fsm_eqb eqb)
 /*------------------------------------------------------------------------------
  * Detach connection from session and set fsStop.
  *
- * If not already detached from the session, must detach and:
+ * If not already detached from the session, must detach and if we are the only
+ * connection, set the session sStopped.  Note that if we are fsEstablished we
+ * are the only connection.
  *
- *   If we are fsEstablished, then need to change the state of the session
- *   from sEstablished to sStopped (or sStopping).
+ * If is already detached, then that is most likely because is the victim of
+ * fratricide... the sibling won the race to sEstablished.
  *
- *   Otherwise, if we are the only connection, set the session sStopped.
+ * NB: if there is a sibling, then:
  *
- * NB: if there is a sibling, then it is:
+ *       * we cannot be fsEstablished and the session cannot be sEstablished...
  *
- *       * waiting to process some Stop event.
+ *         ...because the winner detaches the loser.
  *
- *         This must be the case if we are fsEstablished.
- *
- *         We will set the session sStopping -- to signal immediately that
- *         is NOT s Established.  The sibling will set sStopped when it wakes
- *         up to its condition.
- *
- *       * expected to continue.
- *
- *         Which can be the case if we are fsEstablished.
+ *       * session must be expected to continue.
  *
  *         This can happen if the accept or the connect connection is
  *         turned off while in sAcquiring state.
@@ -2710,15 +2619,7 @@ bgp_fsm_enter_stop(bgp_connection connection)
 
   session = connection->session ;
 
-  if (session == NULL)
-    {
-      /* There is nothing more to do if is already detached.
-       *
-       * We really should be in one of these states.
-       */
-      qassert(connection->fsm_state == bgp_fsStop) ;
-    }
-  else
+  if (session != NULL)
     {
       /* Detaching from the session may change its state -- which we worry
        * about now.
@@ -2728,88 +2629,56 @@ bgp_fsm_enter_stop(bgp_connection connection)
       qassert(connection->fsm_state != bgp_fsStop) ;
       qassert(connection == session->connections[connection->ord]) ;
 
-      /* Get any sibling
-       *
-       * If there is a sibling, it cannot (yet) be fsStop, but it may be on
-       * its way.
-       */
-      sibling = bgp_connection_get_sibling(connection) ;
-
-      if (sibling != NULL)
-        qassert(sibling->session == session) ;
-
       /* The usual reasons for stopping a connection are:
        *
        *   a) it is the fsEstabished session, and the session is being brought
        *      down, for some reason.
        *
        *   b) it is the loser in a Collision, and the sibling session has
-       *      established itself.
+       *      established itself -- but that cuts loser away from the session
+       *      immediately -- so we don't get to here.
        *
        * The unusual reasons are:
        *
        *   c) a Stop event -- when neither connection is established.
        */
-      if (connection == session->connections[bc_estd])
-        {
-          /* We are the established connection, so we are in charge:
-           *
-           * Session must be sEstablished.
-           *
-           * So... we clear the established connection, and we can drop the
-           * session down to sStopped (the connection proceeds to fsStop all
-           * on its own) or, in the unlikely event that the sibling is still
-           * there, drop the session to sStopping until it notices that we
-           * sent it an feAutomaticStop.
-           *
-           * Note: bgp_sStopping has a very limited meaning -- it means that
-           *       the previously established connection has been stopped, for
-           *       whatever reason... but the sibling is yet to stop.
-           */
-          qassert(session->state        == bgp_sEstablished) ;
-          qassert(connection->fsm_state == bgp_fsEstablished) ;
-          qassert((sibling == NULL) ||
-                    (sibling->fsm_state != bgp_fsEstablished)) ;
+      sibling = bgp_connection_get_sibling(connection) ;
 
-          session->connections[bc_estd] = NULL ;
-          session->state = (sibling == NULL) ? bgp_sStopped : bgp_sStopping ;
-        }
-      else if (sibling != NULL)
+      if (sibling != NULL)
         {
-          /* We were not established and there is a sibling
+          /* There is a sibling -- so neither is fsEstablished
+           *
+           * So this is likely to be the result of a Stop event, so either
+           * the sibling will have been sent the same Stop, or it is
+           * intended to continue !  Either way, there is no more to be
+           * done.
            */
-          if (sibling == session->connections[bc_estd])
-            {
-              /* The sibling is fsEstablished -- so we have no further part to
-               * play.
-               */
-              qassert(session->state     == bgp_sEstablished) ;
-              qassert(sibling->fsm_state == bgp_fsEstablished) ;
+          qassert(sibling->session == session) ;
 
-              qassert(connection->fsm_state != bgp_fsEstablished) ;
-            }
-          else
-            {
-              /* Neither connection is established.
-               *
-               * So this is likely to be the result of a Stop event, so either
-               * the sibling will have been sent the same Stop, or it is
-               * intended to continue !  Either way, there is no more to be
-               * done.
-               */
-              qassert(session->connections[bc_estd] == NULL) ;
-              qassert(session->state        != bgp_sEstablished) ;
-              qassert(sibling->fsm_state    != bgp_fsEstablished) ;
-              qassert(connection->fsm_state != bgp_fsEstablished) ;
-            } ;
+          qassert(session->connections[bc_estd] == NULL) ;
+          qassert(session->state        != bgp_sEstablished) ;
+          qassert(sibling->fsm_state    != bgp_fsEstablished) ;
+          qassert(connection->fsm_state != bgp_fsEstablished) ;
         }
       else
         {
-          /* We were not established and there is no sibling.
+          /* No sibling... if we are established, clear that state.
            *
-           * The session is sStopped -- the connection may go on for a while
-           * on its own, but the session is sStopped.
+           * In any case, we are now sStopped.
            */
+          if (connection == session->connections[bc_estd])
+            {
+              /* We are the established connection, so we are in charge:
+               *
+               * Session must be sEstablished and there can be no sibling.
+               */
+              qassert(session->state        == bgp_sEstablished) ;
+              qassert(connection->fsm_state == bgp_fsEstablished) ;
+              qassert(sibling == NULL) ;
+
+              session->connections[bc_estd] = NULL ;
+            } ;
+
           session->state = bgp_sStopped ;
         } ;
 
@@ -2838,7 +2707,7 @@ bgp_fsm_enter_stop(bgp_connection connection)
 static void
 bgp_fsm_invalid_event(bgp_connection connection, bgp_fsm_eqb eqb)
 {
-  if (eqb->notification == NULL)
+  if (eqb->note == NULL)
     plog_err(connection->lox.log, "%s [FSM] invalid event %s in state %s",
              connection->lox.host,
              map_direct(bgp_fsm_event_map, eqb->fsm_event).str,
@@ -2849,12 +2718,11 @@ bgp_fsm_invalid_event(bgp_connection connection, bgp_fsm_eqb eqb)
              connection->lox.host,
              map_direct(bgp_fsm_event_map, eqb->fsm_event).str,
              map_direct(bgp_fsm_state_map, connection->fsm_state).str,
-             bgp_notify_string(eqb->notification).str) ;
+             bgp_note_string(eqb->note).str) ;
 
   /* So STOP !
    */
-  eqb->notification = bgp_notify_default(eqb->notification,
-                                          BGP_NOMC_CEASE, BGP_NOMS_UNSPECIFIC) ;
+  eqb->note = bgp_note_default(eqb->note, BGP_NOMC_CEASE, BGP_NOMS_UNSPECIFIC) ;
   bgp_fsm_stop(connection, eqb) ;
 } ;
 
@@ -2946,7 +2814,7 @@ bgp_fsm_fall_idle(bgp_connection connection, bgp_fsm_eqb eqb, bool damp)
        *     a stark difference between an IdleHoldTime exactly the same as the
        *     IO_Hold_Time, and one a smidge bigger !
        */
-      connection->idling_state = bgp_isIO ;
+      connection->idling_state = bgp_fisIO ;
 
       interval = QTIME(IO_Hold_Time) ;
       if (idle_hold_time > interval)
@@ -2963,7 +2831,7 @@ bgp_fsm_fall_idle(bgp_connection connection, bgp_fsm_eqb eqb, bool damp)
 
       interval = idle_hold_time ;
 
-      connection->idling_state = bgp_isHold ;
+      connection->idling_state = bgp_fisHold ;
       connection->idle_time_pending = 0 ;       /* tidy         */
     } ;
 
@@ -2988,15 +2856,15 @@ bgp_fsm_complete(bgp_connection connection, bgp_fsm_eqb eqb)
 {
   if (connection->io_state & qfUp_WR)
     {
-      bgp_notify notification ;
+      bgp_note note ;
       bool complete ;
 
-      notification = eqb->notification ;
+      note = eqb->note ;
 
-      if ((notification != NULL) && notification->received)
-        notification = NULL ;
+      if ((note != NULL) && note->received)
+        note = NULL ;
 
-      complete = bgp_msg_write_complete(connection, notification) ;
+      complete = bgp_msg_write_complete(connection, note) ;
 
       if (complete)
         bgp_connection_shut_wr(connection) ;
@@ -3031,16 +2899,16 @@ bgp_fsm_idle_hold_expired(bgp_connection connection)
 
       /* The timer is for an extended IdleHoldTime
        */
-      case bgp_isExtended:
-        connection->idling_state = bgp_isNULL ; /* no more fsIdle       */
-        continuation = 0 ;                      /* done                 */
+      case bgp_fisExtended:
+        connection->idling_state = bgp_fisNULL ;        /* not fsIdle   */
+        continuation = 0 ;                              /* done         */
         break ;
 
       /* The timer is for ordinary IdleHoldTime
        *
        * We assume we are done here, but worry about sibling if not stopping.
        */
-      case bgp_isHold:
+      case bgp_fisHold:
         sibling = bgp_connection_get_sibling(connection) ;
 
         if ((sibling != NULL) && ( (sibling->fsm_state == bgp_fsOpenSent) ||
@@ -3049,16 +2917,16 @@ bgp_fsm_idle_hold_expired(bgp_connection connection)
             /* This is a wrinkle.  If have a sibling which is very nearly
              * fsEstablished, we chose to extend the Idle time by a smidge.
              *
-             * Changes state to bgp_isExtended, to avoid doing this
+             * Changes state to bgp_fisExtended, to avoid doing this
              * more than once.
              */
-            connection->idling_state = bgp_isExtended ;
+            connection->idling_state = bgp_fisExtended ;
             continuation = Extension_Hold_Time ;
           }
         else
           {
-            connection->idling_state = bgp_isNULL ; /* no more fsIdle       */
-            continuation = 0 ;                      /* done                 */
+            connection->idling_state = bgp_fisNULL ;    /* not fsIdle   */
+            continuation = 0 ;                          /* done         */
           } ;
         break ;
 
@@ -3066,10 +2934,10 @@ bgp_fsm_idle_hold_expired(bgp_connection connection)
        *
        * The continuation is the idle_pending, as set earlier.
        */
-      case bgp_isIO:
+      case bgp_fisIO:
         qassert(connection->idle_time_pending != 0) ;
 
-        connection->idling_state = bgp_isHold ;
+        connection->idling_state = bgp_fisHold ;
         continuation = connection->idle_time_pending | 1 ;
 
         break ;
@@ -3081,14 +2949,14 @@ bgp_fsm_idle_hold_expired(bgp_connection connection)
    */
   if (continuation != 0)
     {
-      qassert( (connection->idling_state == bgp_isHold) ||
-               (connection->idling_state == bgp_isExtended) ) ;
+      qassert( (connection->idling_state == bgp_fisHold) ||
+               (connection->idling_state == bgp_fisExtended) ) ;
 
       bgp_fsm_idle_hold_timer_set_interval(connection, continuation) ;
     }
   else
     {
-      qassert(connection->idling_state == bgp_isNULL) ;
+      qassert(connection->idling_state == bgp_fisNULL) ;
 
       switch (connection->ord)
         {
@@ -3291,7 +3159,7 @@ bgp_fsm_enter_open_confirm(bgp_connection connection)
        * If the loser is us, we are done.
        */
       bgp_fsm_admin_event(loser, bgp_feOpenCollisionDump,
-                         bgp_notify_new(BGP_NOMC_CEASE, BGP_NOMS_C_COLLISION)) ;
+                         bgp_note_new(BGP_NOMC_CEASE, BGP_NOMS_C_COLLISION)) ;
 
       if (loser == connection)
         return ;
@@ -3320,26 +3188,34 @@ bgp_fsm_enter_open_confirm(bgp_connection connection)
 static void
 bgp_fsm_enter_established(bgp_connection connection)
 {
-  bgp_notify     notification ;
+  bgp_note       note ;
   bgp_connection sibling ;
 
   qassert(connection->fsm_state == bgp_fsOpenConfirm) ;
 
   /* Establish the session using this connection, if we can.
    */
-  notification = bgp_connection_establish(connection) ;
+  note = bgp_connection_establish(connection) ;
 
-  if (notification != NULL)
+  if (note != NULL)
     {
+      /* We were not able to accept the negotiated Capabilities.
+       *
+       * Ever hopeful, this will drop to idle and then come out again to see
+       * if we get a better result !
+       */
+      bgp_fsm_admin_event(connection, bgp_feBGPOpenMsgErr, note) ;
+
       connection->cap_suppress = false ;
-      bgp_fsm_admin_event(connection, bgp_feBGPOpenMsgErr,
-                         bgp_notify_new(BGP_NOMC_CEASE, BGP_NOMS_C_REJECTED)) ;
+      return ;
     } ;
 
+  /* Hurrah !  We have reached our goal... connection and session Established
+   *
+   * Now snuff out any sibling, and squelch any acceptor, if that is relevant.
+   */
   bgp_fsm_new_state(connection, bgp_fsEstablished) ;
 
-  /* Now snuff out any sibling, and squelch any acceptor, if that is relevant.
-   */
   sibling = bgp_connection_get_sibling(connection) ;
 
   if (sibling != NULL)
@@ -3347,12 +3223,14 @@ bgp_fsm_enter_established(bgp_connection connection)
       qassert(sibling->session == connection->session) ;
 
       bgp_fsm_admin_event(sibling, bgp_feAutomaticStop,
-                         bgp_notify_new(BGP_NOMC_CEASE, BGP_NOMS_C_COLLISION)) ;
+                          bgp_note_new(BGP_NOMC_CEASE, BGP_NOMS_C_COLLISION)) ;
+
+      connection->session->connections[sibling->ord] = NULL ;
+      sibling->session = NULL ;
     } ;
 
   if (connection->ord == bc_connect)
     bgp_acceptor_squelch(connection->session->acceptor) ;
-
 } ;
 
 /*------------------------------------------------------------------------------
@@ -3383,7 +3261,7 @@ bgp_fsm_leave_established(bgp_connection connection, bgp_fsm_eqb eqb)
   connection->read_rb  = NULL ;
 
   bgp_msg_write_move_to_temp(connection->writer,
-                                     bgp_notify_msg_length(eqb->notification)) ;
+                                               bgp_note_msg_length(eqb->note)) ;
   connection->write_rb = NULL ;
 } ;
 
@@ -3425,7 +3303,7 @@ bgp_fsm_leave_established(bgp_connection connection, bgp_fsm_eqb eqb)
  *     The ConnectRetryTimer recharges itself (with new jitter each time).  It
  *     generates a bgp_fsm_eConnectRetry event.
  *
- *  * OpenHoldTimer  -- uses session->args.open_hold_secs *without* jitter
+ *  * OpenHoldTimer  -- uses connection->cops->open_hold_secs *without* jitter
  *                   -- uses connection->hold fsm_timer
  *
  *    This timer is used in sOpenSent state, and limits the time will wait for
@@ -3467,12 +3345,12 @@ static void bgp_fsm_timer_suspend(bgp_fsm_timer ft) ;
 static void bgp_fsm_timer_recharge(bgp_fsm_timer ft) ;
 
 /*------------------------------------------------------------------------------
- * Set new IdleHoldTimer going -- with the current idle_hold_timer_interval.
+ * Set new IdleHoldTimer going -- with the current idle_hold_time
  *
- * The IdleHoldTime can be suppressed by setting it to zero... which prevents
- * it from growing if connections keep falling back to fsIdle.
+ * The growth in IdleHoldTime can be suppressed by setting
+ * cops->idle_hold_max_secs to zero...
  *
- * However,  we depend on there being a non-zero idle timer to kick the FSM
+ * ...however,  we depend on there being a non-zero idle timer to kick the FSM
  * out of sIdle.  Also, we'd like some randomizing of starts, between
  * connections for the same session and when many connections are being started
  * at the same time.  Hence, we set a minimum IdleHoldTime of 1, which is then
@@ -3483,7 +3361,7 @@ bgp_fsm_idle_hold_timer_set(bgp_connection connection)
 {
   qtime_t interval ;
 
-  interval = connection->idle_hold_timer_interval ;
+  interval = connection->idle_hold_time ;
 
   if (interval < QTIME(1))
     interval = QTIME(1) ;
@@ -3525,31 +3403,33 @@ bgp_fsm_idle_hold_timer_set_interval(bgp_connection connection,
 } ;
 
 /*------------------------------------------------------------------------------
- * Calculate and set the next idle_hold_timer_interval.
+ * Calculate and set the next idle_hold_time.
  *
- * Note: if the connection->idle_hold_timer_interval is zero, it remains zero,
- *       so the DampPeerOscillations can be suppressed.
+ * Note: if the cops->idle_hold_max_secs may be zero or small, which has the
+ *       effect of suppressing DampPeerOscillations.
  *
- * Returns:  the (updated) IdleHoldTime -- 1..120 seconds
+ * Note: each time we try to increase the damping, we check against the now
+ *       current cops->idle_hold_max_secs.
+ *
+ * Returns:  the (updated) IdleHoldTime -- 1..cops->idle_hold_max_secs
  */
 static qtime_t
 bgp_fsm_idle_hold_time_update(bgp_connection connection, bool damp)
 {
-  qtime_t interval ;
+  qtime_t interval, max_interval ;
 
-  interval = connection->idle_hold_timer_interval ;
+  interval = connection->idle_hold_time ;
   if (damp)
     interval *= 2 ;
 
-  if (interval == 0)
-    return QTIME(1) ;                   /* DampPeerOscillations         */
+  max_interval = QTIME(connection->cops->idle_hold_max_secs) ;
+  if (interval > max_interval)
+    interval = max_interval ;   /* clamp to required maximum            */
 
-  if      (interval < QTIME(1))
-    interval = QTIME(1) ;               /* clamp to this                */
-  else if (interval > QTIME(120))
-    interval = QTIME(120) ;             /* clamp to this                */
+  if (interval < QTIME(1))
+    interval = QTIME(1) ;       /* but *never* less than 1 second       */
 
-  return connection->idle_hold_timer_interval = interval ;
+  return connection->idle_hold_time = interval ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -3714,7 +3594,7 @@ bgp_fsm_timer_init(bgp_fsm_timer ft, bgp_connection connection)
   confirm(bfts_stopped == 0) ;
 
   ft->connection = connection ;
-  ft->qtr = qtimer_init_new(NULL, bgp_nexus->pile, NULL, ft) ;
+  ft->qtr = qtimer_init_new(NULL, be_nexus->pile, NULL, ft) ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -4035,10 +3915,6 @@ bgp_fsm_timer_action(qtimer qtr, void* timer_info, qtime_mono_t when)
 
 /*------------------------------------------------------------------------------
  * Signal an feIO "event" -- unless one is already in flight.
- *
- * Note that we queue an feIO event iff do not have an fmIO meta_event.  AND
- * we set the meta_event... this means that the feIO event is ordered wrt to
- * any other queued event.
  */
 extern void
 bgp_fsm_io_event(bgp_connection connection)
@@ -4106,12 +3982,13 @@ bgp_fsm_do_io(bgp_connection connection, bgp_fsm_eqb eqb)
   qfile_state_t   io_state ;
   bgp_fsm_event_t fsm_event ;
   bgp_msg_reader  reader ;
-  bool kick, established ;
+  bool established ;
 
-  qassert(eqb->notification == NULL) ;
-  qassert(eqb->err          == 0) ;
+  qassert(eqb->note == NULL) ;
+  qassert(eqb->err  == 0) ;
 
   io_state  = connection->io_state ;
+  fsm_event = bgp_feNULL ;      /* nothing, yet         */
 
   /* If we have an active writer, deal with that first.
    *
@@ -4147,6 +4024,12 @@ bgp_fsm_do_io(bgp_connection connection, bgp_fsm_eqb eqb)
           /* All is well, or we are still waiting to empty out the buffer(s).
            */
           case bws_ok:
+            if (rb_put_prompt(connection->write_rb, 10000))
+              bgp_session_kick_re_write(connection->session) ;
+            break ;
+
+          /* OK, but waiting to empty out the buffer(s).
+           */
           case bws_clearing:
             break ;
 
@@ -4185,8 +4068,7 @@ bgp_fsm_do_io(bgp_connection connection, bgp_fsm_eqb eqb)
 
           default:
             qassert(false) ;
-            eqb->notification = bgp_notify_new(BGP_NOMC_CEASE,
-                                                          BGP_NOMS_UNSPECIFIC) ;
+            eqb->note = bgp_note_new(BGP_NOMC_CEASE, BGP_NOMS_UNSPECIFIC) ;
             bgp_connection_down(connection) ;
 
             return bgp_feInvalid ;
@@ -4198,7 +4080,7 @@ bgp_fsm_do_io(bgp_connection connection, bgp_fsm_eqb eqb)
   if (!(io_state & qfUp_RD))
     {
       connection->meta_events &= ~bgp_fmIO ;
-      return bgp_feNULL ;
+      return fsm_event ;
     } ;
 
   /* Deal with reader.
@@ -4218,9 +4100,6 @@ bgp_fsm_do_io(bgp_connection connection, bgp_fsm_eqb eqb)
   reader = connection->reader ;
 
   established = (connection->fsm_state == bgp_fsEstablished) ;
-  kick  = false ;
-
-  fsm_event = bgp_feNULL ;      /* nothing, yet         */
 
   /* The while(1) allows us to use "continue" to loop round to consider a
    * new msg_state.  This is used when established and is processing
@@ -4228,7 +4107,6 @@ bgp_fsm_do_io(bgp_connection connection, bgp_fsm_eqb eqb)
    */
   while (1)
     {
-      bgp_route_refresh rr ;
       bool version_error ;
 
       qassert(fsm_event == bgp_feNULL) ;
@@ -4273,6 +4151,11 @@ bgp_fsm_do_io(bgp_connection connection, bgp_fsm_eqb eqb)
               {
                 if (established && (reader->msg_qtype == qBGP_MSG_UPDATE))
                   {
+                    /* Special case.  UPDATE and fsEstablished.
+                     *
+                     * We will want the message in the ring-buffer, so start
+                     * as we mean to go on.
+                     */
                     ptr_t msg_buff ;
 
                     msg_buff = rb_put_open(connection->read_rb,
@@ -4280,17 +4163,16 @@ bgp_fsm_do_io(bgp_connection connection, bgp_fsm_eqb eqb)
                                                        true /* set waiting */) ;
                     if (msg_buff != NULL)
                       bgp_msg_read_take(msg_buff, reader) ;
-                    else
-                      kick = true ;     /* ring buffer full :-( */
                   }
                 else
                   {
-                    /* Everything other than UPDATE in fsEstablished.
+                    /* Everything else goes into the temp, even if we
+                     * eventually transfer to the ring-buffer... keeping
+                     * things as simple as possible.
                      */
                     bgp_msg_read_take_to_temp(reader) ;
                   } ;
               } ;
-
             break  ;
 
           /* For a complete message -- known or unknown
@@ -4333,10 +4215,7 @@ bgp_fsm_do_io(bgp_connection connection, bgp_fsm_eqb eqb)
                         if (msg_buff != NULL)
                           bgp_msg_read_take(msg_buff, reader) ;
                         else
-                          {
-                            kick = true ;       /* ring buffer full :-( */
-                            break ;
-                          } ;
+                          break ;               /* ring buffer full :-( */
                       } ;
 
                     qassert(reader->msg_in_state == bms_in_other) ;
@@ -4375,7 +4254,7 @@ bgp_fsm_do_io(bgp_connection connection, bgp_fsm_eqb eqb)
                                        (reader->msg_qtype == qBGP_MSG_UPDATE)) ;
 
                   rb_put_close(connection->read_rb,
-                                reader->msg_body_length, reader->msg_bgp_type) ;
+                                   reader->msg_body_length, bgp_rbm_in_update) ;
                   break ;
               } ;
 
@@ -4398,7 +4277,7 @@ bgp_fsm_do_io(bgp_connection connection, bgp_fsm_eqb eqb)
                 case qBGP_MSG_unknown:
                 case qBGP_MSG_CAPABILITY:
                 default:
-                  eqb->notification = bgp_msg_read_bad_type(reader) ;
+                  eqb->note = bgp_msg_read_bad_type(reader) ;
 
                   bgp_connection_shut_rd(connection) ;
                   fsm_event = bgp_feBGPHeaderErr ;
@@ -4410,10 +4289,13 @@ bgp_fsm_do_io(bgp_connection connection, bgp_fsm_eqb eqb)
                  * is in the reader->temp_buff etc.
                  */
                 case qBGP_MSG_OPEN:
-                  eqb->notification = bgp_msg_open_parse(connection, reader) ;
+                  eqb->note = bgp_msg_open_parse(connection, reader) ;
 
-                  if (eqb->notification == NULL)
-                    fsm_event = bgp_feBGPOpen ;
+                  if (eqb->note == NULL)
+                    {
+                      bgp_msg_read_done(reader) ;
+                      fsm_event = bgp_feBGPOpen ;
+                    }
                   else
                     {
                       bgp_connection_shut_rd(connection) ;
@@ -4428,11 +4310,10 @@ bgp_fsm_do_io(bgp_connection connection, bgp_fsm_eqb eqb)
                  * is in the reader->temp_buff etc.
                  */
                 case qBGP_MSG_NOTIFICATION:
-                  eqb->notification = bgp_msg_notify_parse(connection, reader) ;
+                  eqb->note = bgp_msg_notify_parse(connection, reader) ;
 
-                  version_error =
-                            (eqb->notification->code    == BGP_NOMC_OPEN) &&
-                            (eqb->notification->subcode == BGP_NOMS_O_VERSION) ;
+                  version_error = (eqb->note->code    == BGP_NOMC_OPEN) &&
+                                  (eqb->note->subcode == BGP_NOMS_O_VERSION) ;
 
                   bgp_connection_shut_rd(connection) ;
                   fsm_event = version_error ? bgp_feNotifyMsgVerErr
@@ -4451,12 +4332,10 @@ bgp_fsm_do_io(bgp_connection connection, bgp_fsm_eqb eqb)
                   if (BGP_DEBUG (keepalive, KEEPALIVE) && !BGP_DEBUG(io, IO_IN))
                     plog_debug(reader->plox->log, "%s KEEPALIVE rcvd",
                                                            reader->plox->host) ;
+                  bgp_msg_read_done(reader) ;
 
                   if (established)
-                    {
-                      bgp_msg_read_done(reader) ;
-                      continue ;                /* all the way back     */ ;
-                    } ;
+                    continue ;                  /* all the way back     */ ;
 
                   fsm_event = bgp_feKeepAliveMsg ;
                   break ;
@@ -4469,18 +4348,15 @@ bgp_fsm_do_io(bgp_connection connection, bgp_fsm_eqb eqb)
                  * is in the reader->temp_buff etc.
                  */
                 case qBGP_MSG_UPDATE:
-                  if (established)
-                    {
-                      kick = true ;     /* have a complete message      */
+                  bgp_msg_read_done(reader) ;
 
-                      bgp_msg_read_done(reader) ;
-                      continue ;                /* all the way back     */ ;
-                    } ;
+                  if (established)
+                    continue ;                  /* all the way back     */ ;
 
                   fsm_event = bgp_feUpdateMsg ;
                   break ;
 
-                /* We parse the ROUTE_REFRESH message straight out of the
+                /* We read ROUTE_REFRESH message straight out of the
                  * temp buffer.
                  *
                  * Should logging or other stuff require it, the raw message
@@ -4488,11 +4364,36 @@ bgp_fsm_do_io(bgp_connection connection, bgp_fsm_eqb eqb)
                  */
                 case qBGP_MSG_ROUTE_REFRESH:
                 case qBGP_MSG_ROUTE_REFRESH_pre:
-                  eqb->notification = bgp_msg_route_refresh_parse(&rr,
-                                                           connection, reader) ;
-                  if (eqb->notification == NULL)
+                  eqb->note = bgp_msg_route_refresh_parse(connection, reader) ;
+                  if (eqb->note == NULL)
                     {
-                      eqb->data = rr ;
+                      /* The Route Refresh message is of an acceptable type
+                       * and for negotiated AFI/SAFI.
+                       *
+                       * If established, we move the message to the ring buffer
+                       */
+                      if (established)
+                        {
+                          bgp_rb_msg_in_type_t rb_msg_type ;
+                          ptr_t msg_buff ;
+
+                          rb_msg_type =
+                                (reader->msg_qtype == qBGP_MSG_ROUTE_REFRESH)
+                                  ? bgp_rbm_in_rr : bgp_rbm_in_rr_pre ;
+
+                          msg_buff = rb_put_open(connection->read_rb,
+                                                 reader->msg_body_length,
+                                                     true /* set waiting */) ;
+                          if (msg_buff == NULL)
+                            break ;             /* ring-buffer full :-( */
+
+                          bgp_msg_read_take(msg_buff, reader) ;
+
+                          rb_put_close(connection->read_rb,
+                                         reader->msg_body_length, rb_msg_type) ;
+                        } ;
+
+                      bgp_msg_read_done(reader) ;
                       fsm_event = bgp_feRRMsg ;
                     }
                   else
@@ -4503,9 +4404,6 @@ bgp_fsm_do_io(bgp_connection connection, bgp_fsm_eqb eqb)
                   break ;
               } ;
 
-            qassert(fsm_event != bgp_feNULL) ;
-
-            bgp_msg_read_done(reader) ;
             break ;
 
           /* Now we are dealing with errors detected by the reader.
@@ -4549,15 +4447,15 @@ bgp_fsm_do_io(bgp_connection connection, bgp_fsm_eqb eqb)
 
             bgp_connection_shut_rd(connection) ;
 
-            eqb->notification = bgp_msg_read_bad(reader, connection->qf) ;
-            fsm_event    = bgp_feBGPHeaderErr ;
+            eqb->note = bgp_msg_read_bad(reader, connection->qf) ;
+            fsm_event = bgp_feBGPHeaderErr ;
             break ;
 
           case bms_fail_bad_length:
           case bms_fail_bad_marker:
             bgp_connection_shut_rd(connection) ;
 
-            eqb->notification = bgp_msg_read_bad(reader, connection->qf) ;
+            eqb->note = bgp_msg_read_bad(reader, connection->qf) ;
             fsm_event = bgp_feBGPHeaderErr ;
             break ;
 
@@ -4591,8 +4489,7 @@ bgp_fsm_do_io(bgp_connection connection, bgp_fsm_eqb eqb)
 
             bgp_connection_down(connection) ;
 
-            eqb->notification = bgp_notify_new(BGP_NOMC_CEASE,
-                                                          BGP_NOMS_UNSPECIFIC) ;
+            eqb->note = bgp_note_new(BGP_NOMC_CEASE, BGP_NOMS_UNSPECIFIC) ;
             fsm_event = bgp_feInvalid ;
             break ;
         } ;
@@ -4600,11 +4497,10 @@ bgp_fsm_do_io(bgp_connection connection, bgp_fsm_eqb eqb)
       break ;
     } ;
 
-  /* If we got at least one complete UPDATE or ring-buffer full, try to
-   * kick.
+  /* If the Routeing Engine is waiting, and the buffer is not empty, kick.
    */
-  if (kick && rb_get_prompt(connection->read_rb))
-    bgp_session_read_kick(connection->session) ;
+  if (rb_get_prompt(connection->read_rb, false /* not if empty */))
+    bgp_session_kick_re_read(connection->session) ;
 
   /* If the reader is still brs_ok, make sure will continue reading if there
    * is space in the buffer.

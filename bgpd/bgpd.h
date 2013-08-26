@@ -229,6 +229,9 @@ struct bgp
   uint32_t default_cbgp_mrai ;          /* usually same as eBGP */
   uint32_t default_ebgp_mrai ;
 
+  uint32_t default_idle_hold_min_secs ;
+  uint32_t default_idle_hold_max_secs ;
+
   /* BGP graceful restart
    */
   uint32_t restart_time;
@@ -268,6 +271,18 @@ enum { BGP_PORT_DEFAULT    = 179 } ;
  */
 enum bgp_timer_defaults
 {
+#ifndef BGP_IDLE_HOLD_MAX
+  BGP_DEFAULT_IDLE_HOLD_MAX_SECS   = 120,
+#else
+  BGP_DEFAULT_IDLE_HOLD_MAX_SECS   = BGP_IDLE_HOLD_MAX + 0,
+#endif
+
+#ifndef BGP_IDLE_HOLD_MIN
+  BGP_DEFAULT_IDLE_HOLD_MIN_SECS   =   5,
+#else
+  BGP_DEFAULT_IDLE_HOLD_MIN_SECS   = BGP_IDLE_HOLD_MIN + 0,
+#endif
+
   BGP_INIT_START_TIMER             =   5,
   BGP_ERROR_START_TIMER            =  30,
   BGP_DEFAULT_HOLDTIME             = 180,
@@ -369,41 +384,42 @@ typedef enum
 enum BGP_RET_CODE
 {
   BGP_SUCCESS                            =   0,
-  BGP_ERR_INVALID_VALUE                  =  -1,
-  BGP_ERR_INVALID_FLAG                   =  -2,
-  BGP_ERR_INVALID_AS                     =  -3,
-  BGP_ERR_INVALID_BGP                    =  -4,
-  BGP_ERR_PEER_GROUP_MEMBER              =  -5,
-  BGP_ERR_MULTIPLE_INSTANCE_USED         =  -6,
-  BGP_ERR_PEER_GROUP_MEMBER_EXISTS       =  -7,
-  BGP_ERR_PEER_BELONGS_TO_GROUP          =  -8,
-  BGP_ERR_PEER_GROUP_AF_UNCONFIGURED     =  -9,
-  BGP_ERR_PEER_GROUP_NO_REMOTE_AS        = -10,
-  BGP_ERR_PEER_GROUP_CANT_CHANGE         = -11,
-  BGP_ERR_PEER_GROUP_MISMATCH            = -12,
-  BGP_ERR_PEER_GROUP_PEER_TYPE_DIFFERENT = -13,
-  BGP_ERR_MULTIPLE_INSTANCE_NOT_SET      = -14,
-  BGP_ERR_AS_MISMATCH                    = -15,
-  BGP_ERR_PEER_INACTIVE                  = -16,
-  BGP_ERR_INVALID_FOR_PEER_GROUP_MEMBER  = -17,
-  BGP_ERR_PEER_GROUP_HAS_THE_FLAG        = -18,
-  BGP_ERR_PEER_FLAG_CONFLICT_1           = -19,
-  BGP_ERR_PEER_FLAG_CONFLICT_2           = -20,
-  BGP_ERR_PEER_FLAG_CONFLICT_3           = -21,
-  BGP_ERR_PEER_GROUP_SHUTDOWN            = -22,
-  BGP_ERR_PEER_FILTER_CONFLICT           = -23,
-  BGP_ERR_NOT_INTERNAL_PEER              = -24,
-  BGP_ERR_REMOVE_PRIVATE_AS              = -25,
-  BGP_ERR_AF_UNCONFIGURED                = -26,
-  BGP_ERR_SOFT_RECONFIG_UNCONFIGURED     = -27,
-  BGP_ERR_INSTANCE_MISMATCH              = -28,
-  BGP_ERR_LOCAL_AS_ALLOWED_ONLY_FOR_EBGP = -29,
-  BGP_ERR_CANNOT_HAVE_LOCAL_AS_SAME_AS   = -30,
-  BGP_ERR_TCPSIG_FAILED                  = -31,
-  BGP_ERR_PEER_EXISTS                    = -32,
-  BGP_ERR_NO_EBGP_MULTIHOP_WITH_GTSM     = -33,
-  BGP_ERR_NO_IBGP_WITH_TTLHACK           = -34,
-  BGP_ERR_MAX                            = -35,
+  BGP_ERR_BUG                            =  -1,
+  BGP_ERR_INVALID_VALUE                  =  -2,
+  BGP_ERR_INVALID_FLAG                   =  -3,
+  BGP_ERR_INVALID_AS                     =  -4,
+  BGP_ERR_INVALID_BGP                    =  -5,
+  BGP_ERR_PEER_GROUP_MEMBER              =  -6,
+  BGP_ERR_MULTIPLE_INSTANCE_USED         =  -7,
+  BGP_ERR_PEER_GROUP_MEMBER_EXISTS       =  -8,
+  BGP_ERR_PEER_BELONGS_TO_GROUP          =  -9,
+  BGP_ERR_PEER_GROUP_AF_UNCONFIGURED     = -10,
+  BGP_ERR_PEER_GROUP_NO_REMOTE_AS        = -11,
+  BGP_ERR_PEER_GROUP_CANT_CHANGE         = -12,
+  BGP_ERR_PEER_GROUP_MISMATCH            = -13,
+  BGP_ERR_PEER_GROUP_PEER_TYPE_DIFFERENT = -14,
+  BGP_ERR_MULTIPLE_INSTANCE_NOT_SET      = -15,
+  BGP_ERR_AS_MISMATCH                    = -16,
+  BGP_ERR_PEER_INACTIVE                  = -17,
+  BGP_ERR_INVALID_FOR_PEER_GROUP_MEMBER  = -18,
+  BGP_ERR_PEER_GROUP_HAS_THE_FLAG        = -19,
+  BGP_ERR_PEER_FLAG_CONFLICT_1           = -20,
+  BGP_ERR_PEER_FLAG_CONFLICT_2           = -21,
+  BGP_ERR_PEER_FLAG_CONFLICT_3           = -22,
+  BGP_ERR_PEER_GROUP_SHUTDOWN            = -23,
+  BGP_ERR_PEER_FILTER_CONFLICT           = -24,
+  BGP_ERR_NOT_INTERNAL_PEER              = -25,
+  BGP_ERR_REMOVE_PRIVATE_AS              = -26,
+  BGP_ERR_AF_UNCONFIGURED                = -27,
+  BGP_ERR_SOFT_RECONFIG_UNCONFIGURED     = -28,
+  BGP_ERR_INSTANCE_MISMATCH              = -29,
+  BGP_ERR_LOCAL_AS_ALLOWED_ONLY_FOR_EBGP = -30,
+  BGP_ERR_CANNOT_HAVE_LOCAL_AS_SAME_AS   = -31,
+  BGP_ERR_TCPSIG_FAILED                  = -32,
+  BGP_ERR_PEER_EXISTS                    = -33,
+  BGP_ERR_NO_EBGP_MULTIHOP_WITH_GTSM     = -34,
+  BGP_ERR_NO_IBGP_WITH_TTLHACK           = -35,
+  BGP_ERR_MAX                            = -36,
 } ;
 typedef enum BGP_RET_CODE bgp_ret_t ;
 
@@ -413,8 +429,8 @@ typedef enum BGP_RET_CODE bgp_ret_t ;
 extern struct bgp_master *bm ;
 
 extern qpn_nexus cli_nexus;
-extern qpn_nexus bgp_nexus;
-extern qpn_nexus routing_nexus;
+extern qpn_nexus be_nexus;
+extern qpn_nexus re_nexus;
 
 extern struct zebra_privs_t bgpd_privs ;
 

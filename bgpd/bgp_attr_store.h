@@ -84,7 +84,7 @@ struct attr_next_hop
 {
   nh_type_t       type ;
 
-  union ip_union
+  union
     {
       in_addr_t         v4 ;
       struct in_addr    in_addr ;

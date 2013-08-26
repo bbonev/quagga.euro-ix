@@ -292,6 +292,18 @@ bgp_session_args_copy(bgp_session_args dst, bgp_session_args_c src)
 } ;
 
 /*------------------------------------------------------------------------------
+ * Duplicate a set of session args -- creating a new set
+ *
+ * Currently pretty trivial.  But if session args grows pointers to other
+ * structures, then this will take care of things.
+ */
+extern bgp_session_args
+bgp_session_args_dup(bgp_session_args_c src)
+{
+  return bgp_session_args_copy(NULL, src) ;
+} ;
+
+/*------------------------------------------------------------------------------
  * Free a set of session arguments -- if any
  *
  * Returns:  NULL
@@ -396,9 +408,9 @@ bgp_open_state_afi_safi_find(bgp_open_state state, iAFI_SAFI mp)
     {
       cap = XCALLOC(MTYPE_BGP_OPEN_STATE, sizeof(bgp_cap_afi_safi_t)) ;
 
-      cap->qafx    = qafx_from_i(mp->afi, mp->safi) ;
-      cap->mp.afi  = mp->afi ;
-      cap->mp.safi = mp->safi ;
+      cap->qafx      = qafx_from_i(mp->i_afi, mp->i_safi) ;
+      cap->mp.i_afi  = mp->i_afi ;
+      cap->mp.i_safi = mp->i_safi ;
 
       vector_insert_item_here(state->afi_safi, i, r, cap) ;
     } ;
@@ -461,11 +473,11 @@ bgp_open_state_afi_safi_cmp(const cvp* pp_val, const cvp* item)
   mp  = *pp_val ;
   cap = *item ;
 
-  if (mp->afi != cap->mp.afi)
-    return (mp->afi < cap->mp.afi) ? -1 : +1 ;
+  if (mp->i_afi != cap->mp.i_afi)
+    return (mp->i_afi < cap->mp.i_afi) ? -1 : +1 ;
 
-  if (mp->safi != cap->mp.safi)
-    return (mp->safi < cap->mp.safi) ? -1 : +1 ;
+  if (mp->i_safi != cap->mp.i_safi)
+    return (mp->i_safi < cap->mp.i_safi) ? -1 : +1 ;
 
   return 0 ;
 } ;
@@ -525,7 +537,7 @@ bgp_open_make_cap_end(blower br, blower sbr, bool one_option)
 extern void
 bgp_open_make_cap_as4(blower br, as_t my_as, bool wrap)
 {
-  blow_has_not_overrun(br) ;
+  blow_overrun_check(br) ;
   confirm(((1 + 1) + 1 + 1 + 4) < blow_buffer_safe)
 
   if (wrap)
@@ -538,7 +550,7 @@ bgp_open_make_cap_as4(blower br, as_t my_as, bool wrap)
   blow_b(br, BGP_CAP_AS4_L);
   blow_l(br, my_as) ;
 
-  blow_has_not_overrun(br) ;
+  blow_overrun_check(br) ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -561,7 +573,7 @@ bgp_open_make_cap_mp_ext(blower br, const qafx_set_t mp, bool wrap)
           if (!have_ipv6 && (afi == iAFI_IP6))
             continue ;
 
-          blow_has_not_overrun(br) ;
+          blow_overrun_check(br) ;
           confirm(((1 + 1) + 1 + 1 + 2 + 1 + 1) < blow_buffer_safe)
 
           if (wrap)
@@ -578,7 +590,7 @@ bgp_open_make_cap_mp_ext(blower br, const qafx_set_t mp, bool wrap)
         } ;
     } ;
 
-  blow_has_not_overrun(br) ;
+  blow_overrun_check(br) ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -589,7 +601,7 @@ bgp_open_make_cap_r_refresh(blower br, bgp_form_t form, bool wrap)
 {
   if (form & bgp_form_pre)
     {
-      blow_has_not_overrun(br) ;
+      blow_overrun_check(br) ;
       confirm(((1 + 1) + 1 + 1 ) < blow_buffer_safe)
 
       if (wrap)
@@ -604,7 +616,7 @@ bgp_open_make_cap_r_refresh(blower br, bgp_form_t form, bool wrap)
 
   if (form & bgp_form_pre)
     {
-      blow_has_not_overrun(br) ;
+      blow_overrun_check(br) ;
       confirm(((1 + 1) + 1 + 1 ) < blow_buffer_safe)
 
       if (wrap)
@@ -617,7 +629,7 @@ bgp_open_make_cap_r_refresh(blower br, bgp_form_t form, bool wrap)
       blow_b(br, BGP_CAP_RRF_L) ;
     } ;
 
-  blow_has_not_overrun(br) ;
+  blow_overrun_check(br) ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -706,7 +718,7 @@ bgp_open_make_cap_orf(blower br, uint8_t cap_code, uint count,
 
   /* The leading part of the capability
    */
-  blow_has_not_overrun(br) ;
+  blow_overrun_check(br) ;
   confirm(((1 + 1) + 1 + 1 ) < blow_buffer_safe)
 
   if (wrap)
@@ -729,7 +741,7 @@ bgp_open_make_cap_orf(blower br, uint8_t cap_code, uint count,
       if (!(set & qb))
         continue ;
 
-      blow_has_not_overrun(cbr) ;
+      blow_overrun_check(cbr) ;
       confirm((2 + 1 + 1 + 1) < blow_buffer_safe)
 
       blow_w(cbr, get_iAFI(qafx));
@@ -757,7 +769,7 @@ bgp_open_make_cap_orf(blower br, uint8_t cap_code, uint count,
           if (mode == 0)
             continue ;
 
-          blow_has_not_overrun(cbr) ;
+          blow_overrun_check(cbr) ;
           confirm((1 + 1) < blow_buffer_safe)
 
           blow_b(cbr, types[i].type) ;
@@ -790,7 +802,7 @@ bgp_open_make_cap_gr(blower br, bgp_session_args_gr cap_gr, qafx_set_t can_af,
 
   /* The leading part of the capability
    */
-  blow_has_not_overrun(br) ;
+  blow_overrun_check(br) ;
   confirm(((1 + 1) + 1 + 1 + 2) < blow_buffer_safe)
 
   if (wrap)
@@ -823,7 +835,7 @@ bgp_open_make_cap_gr(blower br, bgp_session_args_gr cap_gr, qafx_set_t can_af,
       if (!(cap_gr->can_preserve & qb & can_af))
         continue ;
 
-      blow_has_not_overrun(cbr) ;
+      blow_overrun_check(cbr) ;
       confirm((2 + 1 + 1) < blow_buffer_safe)
 
       blow_w(cbr, get_iAFI(qafx));

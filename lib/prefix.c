@@ -30,6 +30,7 @@
 #include "tstring.h"
 #include "string.h"
 #include "miyagi.h"
+#include "ring_buffer.h"
 
 /* Some advantages with __GNUC__ !
  *
@@ -41,15 +42,10 @@
 #define __GNUC__LOCAL 0
 #endif
 
-/* Maskbit -- mask for last significant byte of a prefix: maskbit[len % 8]
- */
-static const uint8_t maskbit[] = { 0x00, 0x80, 0xc0, 0xe0, 0xf0,
-                                         0xf8, 0xfc, 0xfe, 0xff };
-
 /*==============================================================================
  * "Macros" for banging 32 and 64 bits of masks
  */
-              /* 0123456701234567 */
+                        /* 0123456701234567 */
 #define U32_1s (uint32_t)0xFFFFFFFF
 #define U64_1s (uint64_t)0xFFFFFFFFFFFFFFFF
 
@@ -1448,24 +1444,26 @@ apply_classful_mask_ipv4 (prefix_ipv4 p)
 
   destination = ntohl (p->prefix.s_addr);
 
-  if (p->prefixlen == IPV4_MAX_PREFIXLEN);
-  /* do nothing for host routes */
+  if (p->prefixlen == IPV4_MAX_PREFIXLEN)
+    {
+      /* do nothing for host routes     */
+    }
   else if (IN_CLASSC (destination))
     {
-      p->prefixlen=24;
+      p->prefixlen = 24;
       apply_mask_ipv4(p);
     }
   else if (IN_CLASSB(destination))
     {
-      p->prefixlen=16;
+      p->prefixlen = 16;
       apply_mask_ipv4(p);
     }
   else
     {
-      p->prefixlen=8;
+      p->prefixlen = 8;
       apply_mask_ipv4(p);
-    }
-}
+    } ;
+} ;
 
 /*------------------------------------------------------------------------------
  * Return IPv4 address after application of the mask specified by masklen.
@@ -1564,7 +1562,7 @@ static const byte prefix_last_byte_mask[8] = { 0xFF, 0x80, 0xC0, 0xE0,
                                                0xF0, 0xF8, 0xFC, 0xFE } ;
 inline static void prefix_body_set(prefix p, uint plen, const byte* pb,
                                                            sa_family_t family) ;
-inline static void prefix_body_copy(byte* dst, const byte* src, uint plen) ;
+inline static ulen prefix_body_copy(byte* dst, const byte* src, uint plen) ;
 
 /*------------------------------------------------------------------------------
  * Make raw form of prefix_len + prefix, and return total length.
@@ -1574,9 +1572,7 @@ inline static void prefix_body_copy(byte* dst, const byte* src, uint plen) ;
  *
  * Zeroises the prefix beyond the (clamped) prefix length (bits).
  *
- *
- *
- * Returns:  effective length of the raw form -- prefix length + prefix body
+ * Returns:  byte length of the prefix -- prefix length + prefix body
  */
 extern ulen
 prefix_to_raw(prefix_raw raw, prefix_c p)
@@ -1603,9 +1599,45 @@ prefix_to_raw(prefix_raw raw, prefix_c p)
         plen = 0 ;
     } ;
 
-  prefix_body_copy(raw->prefix, p->u.b, plen) ;
+  return prefix_body_copy(raw->prefix, p->u.b, plen) ;
+} ;
 
-  return (plen + 8 + 7) / 8 ;
+/*------------------------------------------------------------------------------
+ * Make raw form of prefix_len + prefix, and return total length.
+ *
+ * Silently enforces maximum prefix length for known families.  Forces zero
+ * prefix length for unknown families.
+ *
+ * Zeroises the prefix beyond the (clamped) prefix length (bits).
+ *
+ * Returns:  byte length of the prefix -- prefix length + prefix body
+ */
+extern ulen
+prefix_blow(blower br, prefix_c pfx)
+{
+  ulen  plen ;
+
+  plen = pfx->prefixlen ;
+
+  switch (pfx->family)
+    {
+      case AF_INET:
+        if (plen > IPV4_MAX_PREFIXLEN)
+          plen = IPV4_MAX_PREFIXLEN ;
+        break ;
+
+#if HAVE_IPV6
+      case AF_INET6:
+        if (plen > IPV6_MAX_PREFIXLEN)
+          plen = IPV6_MAX_PREFIXLEN ;
+        break ;
+#endif
+
+      default:
+        plen = 0 ;
+    } ;
+
+  return prefix_body_copy(blow_ptr(br), pfx->u.b, plen) ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -1689,20 +1721,24 @@ prefix_body_set(prefix p, uint plen, const byte* pb, sa_family_t family)
 
 /*------------------------------------------------------------------------------
  * Copy body of prefix -- zeroising bits in the last byte as required.
+ *
+ * Returns:  byte length of the result -- *including* the prefix length byte.
  */
-inline static void
+inline static ulen
 prefix_body_copy(byte* dst, const byte* src, uint plen)
 {
-  if (plen != 0)
-    {
-      ulen len ;
+  ulen len ;
 
-      len = (plen - 1) / 8 ;
-      if (len != 0)
-        memcpy(dst, src, len) ;
+  if (plen == 0)
+    return 1 ;
 
-      dst[len] = src[len] & prefix_last_byte_mask[plen & 0x7] ;
-    } ;
+  len = (plen - 1) / 8 ;
+  if (len != 0)
+    memcpy(dst, src, len) ;
+
+  dst[len] = src[len] & prefix_last_byte_mask[plen & 0x7] ;
+
+  return len + 2 ;
 } ;
 
 /*------------------------------------------------------------------------------

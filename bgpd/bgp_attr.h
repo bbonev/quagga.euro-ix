@@ -29,7 +29,7 @@ Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
 #include "bgpd/bgp_attr_store.h"
 #include "bgpd/bgp_attr_store.h"
 
-#include "stream.h"
+#include "ring_buffer.h"
 
 enum
 {
@@ -169,13 +169,13 @@ extern void bgp_attr_parse (bgp_attr_parsing restrict prs,
                                            const byte* start_p, uint attr_len) ;
 extern void bgp_attr_check (bgp_attr_parsing restrict prs) ;
 
-extern bgp_size_t bgp_packet_attribute(stream s, peer_rib prib,
-                                    attr_set attr, prefix p, mpls_tags_t tags) ;
-extern bgp_size_t bgp_unreach_attribute (stream s, prefix p, qafx_t qafx);
+extern ulen bgp_packet_write_attribute(blower br, peer_rib prib, attr_set attr) ;
+extern ulen bgp_reach_attribute(blower br, peer_rib prib, attr_set attr) ;
+extern ulen bgp_blow_prefix(blower br, peer_rib prib, prefix_id_t pfx_id,
+                                                             mpls_tags_t tags) ;
+extern ulen bgp_unreach_attribute(blower br, peer_rib prib) ;
 
-extern void bgp_packet_withdraw_prefix(stream s, prefix_c p, qafx_t qafx) ;
-
-extern void bgp_dump_routes_attr (struct stream* s, attr_set attr, prefix p) ;
+extern ulen bgp_dump_routes_attr(blower br, attr_set attr, prefix p) ;
 
 /*------------------------------------------------------------------------------
  * Unit test interfaces

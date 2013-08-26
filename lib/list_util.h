@@ -104,15 +104,22 @@
  *
  *   struct foo_base dl_base_pair(struct foo*) ;
  */
-
-#define dl_list_pair(ptr_t)  { ptr_t next ; ptr_t prev ; }
-
 #define dl_base_pair(ptr_t)  { ptr_t head ; ptr_t tail ; }
+#define dl_list_pair(ptr_t)  { ptr_t next ; ptr_t prev ; }
 
 #define INIT_DL_BASE_PAIR    { NULL, NULL }
 
-struct dl_void_list_pair dl_list_pair(void*) ;
-struct dl_void_base_pair dl_base_pair(void*) ;
+typedef struct dl_base_pair(void*) dl_base_pair_vt ;
+typedef struct dl_list_pair(void*) dl_list_pair_vt ;
+
+typedef dl_base_pair_vt* dl_base_pair_v ;
+typedef dl_list_pair_vt* dl_list_pair_v ;
+
+#define dl_list_ptr_make(item, offset) \
+  ((dl_list_pair_v)((void*)((char*)item + offset)))
+
+#define sl_list_ptr_make(item, offset) \
+  ((void*)((char*)item + (offset)))
 
 #define _lu_off(obj, field) ((char*)&((obj)->field) - (char*)(obj))
 
@@ -253,11 +260,10 @@ struct dl_void_base_pair dl_base_pair(void*) ;
        (base) = item ;                                          \
   } while (0)
 
-Private void ssl_append_func(void** p_this, void* item, size_t link_offset)
-                                                    __attribute__((noinline)) ;
+Private void ssl_append_func(void** prev_p, void* item, void** item_p) ;
 
 #define ssl_append(base, item, next)                            \
-  ssl_append_func((void**)(&(base)), item, _lu_off(item, next))
+  ssl_append_func((void**)(&(base)), item, (void**)&(item)->next)
 
 #define ssl_insert(base, after, item, next)                     \
   do { if ((after) == NULL)                                     \
@@ -267,11 +273,10 @@ Private void ssl_append_func(void** p_this, void* item, size_t link_offset)
            (after->next) = item ;  } ;                          \
   } while (0)
 
-Private bool ssl_del_func(void** p_prev, void* item, size_t link_offset)
-                                                    __attribute__((noinline)) ;
+Private bool ssl_del_func(void** prev_p, void* item, void** item_p) ;
 
 #define ssl_del(base, item, next)                               \
-  ssl_del_func((void**)(&(base)), item, _lu_off(item, next))
+  ssl_del_func((void**)(&(base)), item, (void**)&(item)->next)
 
 #define ssl_del_head(base, next)                                \
   do { if ((base) != NULL)                                      \
@@ -518,7 +523,9 @@ Private bool ssl_del_func(void** p_prev, void* item, size_t link_offset)
  *
  *     Treat as void function.  The item may *not* be NULL.
  *
- *     If after == NULL, insert item at the end of the current list.
+ *     If after == NULL, insert item at the head of the current list.  So, can
+ *     insert in order by searching backwards for first "smaller" item or start
+ *     of list !  This works equally for empty lists.
  *
  *     Undefined if item is already on any list (including this one), or if
  *     after is not on the list.
@@ -527,7 +534,9 @@ Private bool ssl_del_func(void** p_prev, void* item, size_t link_offset)
  *
  *     Treat as void function.  The item may *not* be NULL.
  *
- *     If before == NULL, insert item at the start of the current list.
+ *     If before == NULL, insert item at the tail of the current list.  So, can
+ *     insert in order by searching forwards for first "larger" item or end
+ *     of list !  This works equally for empty lists.
  *
  *     Undefined if item is already on any list (including this one), or if
  *     before is not on the list.
@@ -553,6 +562,12 @@ Private bool ssl_del_func(void** p_prev, void* item, size_t link_offset)
  *     Treat as void function.  The item may *not* be NULL.
  *
  *     Undefined if item is not on the list.
+ *
+ *   ddl_replace(base, item, list, new) -- replace item by new one
+ *
+ *     Treat as void function.  The item and the new one may *not* be NULL.
+ *
+ *     Undefined if item is not on the list (or if new already is !).
  *
  *   ddl_del_head(base, next)       -- delete head of list
  *
@@ -717,7 +732,6 @@ Private bool ssl_del_func(void** p_prev, void* item, size_t link_offset)
  *     ....
  *   }
  */
-
 #define ddl_init(base)                                                  \
   ((base).head = (base).tail = NULL)
 
@@ -758,7 +772,7 @@ Private bool ssl_del_func(void** p_prev, void* item, size_t link_offset)
            (after)->list.next = (item) ;                                \
          }                                                              \
        else                                                             \
-         ddl_append(base, item, list) ;                                 \
+         ddl_prepend(base, item, list) ;                                \
   } while (0)
 
 #define ddl_in_before(before, base, item, list)                         \
@@ -773,7 +787,7 @@ Private bool ssl_del_func(void** p_prev, void* item, size_t link_offset)
            (before)->list.prev = (item) ;                               \
          }                                                              \
        else                                                             \
-         ddl_push(base, item, list) ;                                   \
+         ddl_append(base, item, list) ;                                 \
   } while (0)
 
 #define ddl_del(base, item, list)                                       \
@@ -785,6 +799,19 @@ Private bool ssl_del_func(void** p_prev, void* item, size_t link_offset)
          (item)->list.prev->list.next = (item)->list.next ;             \
        else                                                             \
          (base).head = (item)->list.next ;                              \
+  } while (0)
+
+#define ddl_replace(base, item, list, new)                              \
+  do { (new)->list.next = (item)->list.next ;                           \
+       if ((new)->list.next != NULL)                                    \
+         (new)->list.next->list.prev = (new) ;                          \
+       else                                                             \
+         (base).tail = (new) ;                                          \
+       (new)->list.prev = (item)->list.prev ;                           \
+       if ((new)->list.prev != NULL)                                    \
+         (new)->list.prev->list.next = (new) ;                          \
+       else                                                             \
+         (base).head = (new) ;                                          \
   } while (0)
 
 #define ddl_del_head(base, list)                                        \
@@ -1096,12 +1123,9 @@ Private bool ssl_del_func(void** p_prev, void* item, size_t link_offset)
          (base).tail = (item) ;                                         \
   } while (0)
 
-Private bool dsl_del_func(struct dl_void_base_pair* p_base,
-                                                 void* obj, size_t link_offset)
-                                                     __attribute__((noinline)) ;
+Private bool dsl_del_func(dl_base_pair_v p_base, void* item, void** item_p) ;
 #define dsl_del(base, item, next)                                       \
-  dsl_del_func((struct dl_void_base_pair*)(&base), item,                \
-                                                   _lu_off(item, next))
+  dsl_del_func((dl_base_pair_v)&(base), item, (void**)&(item)->next)
 
 #define dsl_del_head(base, next)                                        \
   do { if ((base).head != NULL)                                         \
@@ -1126,7 +1150,80 @@ Private bool dsl_del_func(struct dl_void_base_pair* p_base,
 #define dsl_next(item, next)                                            \
   ((item) != NULL ? (item)->next : NULL)
 
+/*------------------------------------------------------------------------------
+ * Append given item to dsl.
+ *
+ * Call as:  p = _dsl_pop(base, item, (void**)&base->head->list)
+ */
+Inline void*
+_dsl_append(dl_base_pair_v base, void* item, void** item_p)
+{
+  void* next ;
 
+  next = base->head ;
+
+  if (next == NULL)
+    base->head = item ;
+  else
+    {
+      void** next_p ;
+
+      next_p  = sl_list_ptr_make(next, (char*)item_p - (char*)item) ;
+      *next_p = item ;
+    } ;
+
+  base->tail = item ;
+  *item_p = NULL ;
+
+  return item ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Pop item from head of dsl.
+ *
+ * Call as:  p = _dsl_pop(base, (void**)&base->head->list)
+ */
+Inline void*
+_dsl_pop(dl_base_pair_v base, void** item_p)
+{
+  void* head ;
+
+  head = base->head ;
+
+  if (head != NULL)
+    {
+      void* next ;
+
+      next = *item_p ;
+
+      base->head = next ;
+      if (next == NULL)
+        base->tail = NULL ;
+    } ;
+
+  return head ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Push item onto head of dsl.
+ *
+ * Call as:  p = _dsl_push(base, item, (void**)&base->head->list)
+ */
+Inline void*
+_dsl_push(dl_base_pair_v base, void* item, void** item_p)
+{
+  void* next ;
+
+  next = base->head ;
+
+  base->head = item ;
+  if (next == NULL)
+    base->tail = item ;
+
+  *item_p = next ;
+
+  return item ;
+} ;
 
 /*==============================================================================
  * Ring, Double Link
@@ -1215,51 +1312,45 @@ Private bool dsl_del_func(struct dl_void_base_pair* p_base,
   ((base) = NULL)
 
 #define rdl_clear(item, ring) \
-  _rdl_clear((dl_pair)&((item)->ring))
+  _rdl_clear((dl_list_pair_v)&((item)->ring))
 
 #define rdl_is_on(item, ring) \
-  _rdl_is_on((dl_pair)&((item)->ring))
+  _rdl_is_on((dl_list_pair_v)&((item)->ring))
 
 #define rdl_is_off(item, ring) \
-  (!_rdl_is_on((dl_pair)&((item)->ring)))
+  (!_rdl_is_on((dl_list_pair_v)&((item)->ring)))
 
 #define rdl_head(base) \
   _rdl_head((void**)&(base))
 
 #define rdl_tail(base, ring) \
-  _rdl_tail((void**)&(base), (dl_pair)&((base)->ring))
+  _rdl_tail((void**)&(base), (dl_list_pair_v)&((base)->ring))
 
 #define rdl_next(item, ring) \
-  _rdl_next(item, (dl_pair)&((item)->ring))
+  _rdl_next(item, (dl_list_pair_v)&((item)->ring))
 
 #define rdl_prev(item, ring) \
-  _rdl_prev(item, (dl_pair)&((item)->ring))
+  _rdl_prev(item, (dl_list_pair_v)&((item)->ring))
 
 #define rdl_append(base, item, ring) \
-  _rdl_append((void**)&base, item, (dl_pair)&((item)->ring))
+  _rdl_append((void**)&base, item, (dl_list_pair_v)&((item)->ring))
 
 #define rdl_prepend(base, item, ring) \
-  _rdl_prepend((void**)&base, item, (dl_pair)&((item)->ring))
+  _rdl_prepend((void**)&base, item, (dl_list_pair_v)&((item)->ring))
 
 #define rdl_del(base, item, ring) \
-  _rdl_del((void**)&base, item, (dl_pair)&((item)->ring))
+  _rdl_del((void**)&base, item, (dl_list_pair_v)&((item)->ring))
 
 #define rdl_del_head(base, ring) \
-  _rdl_del_head((void**)&base, (dl_pair)&((base)->ring))
-
-typedef struct dl_list_pair(void*) dl_pair_t ;
-typedef dl_pair_t* dl_pair ;
-
-#define dl_pair_make(item, offset) ((dl_pair)((void*)((char*)item + offset)))
-
+  _rdl_del_head((void**)&base, (dl_list_pair_v)&((base)->ring))
 
 /*------------------------------------------------------------------------------
  * Clear rdl pair.
  */
 Inline void
-_rdl_clear(dl_pair item_pair)
+_rdl_clear(dl_list_pair_v item_p)
 {
-  item_pair->next = item_pair->prev = NULL ;
+  item_p->next = item_p->prev = NULL ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -1268,18 +1359,11 @@ _rdl_clear(dl_pair item_pair)
  * Returns:  true <=> next != NULL
  */
 Inline bool
-_rdl_is_on(dl_pair item_pair)
+_rdl_is_on(dl_list_pair_v item_p)
 {
-  if (item_pair->next != NULL)
-    {
-      qassert(item_pair->prev != NULL) ;
-      return true ;
-    }
-  else
-    {
-      qassert(item_pair->prev == NULL) ;
-      return false ;
-    }
+  qassert((item_p->next != NULL) == (item_p->prev != NULL)) ;
+
+  return (item_p->next != NULL) ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -1288,10 +1372,10 @@ _rdl_is_on(dl_pair item_pair)
  * NB: next may be the same item -- caller must check is cares.
  */
 Inline void*
-_rdl_next(void* item , dl_pair item_pair)
+_rdl_next(void* item, dl_list_pair_v item_p)
 {
   if (item != NULL)
-    item = item_pair->next ;
+    item = item_p->next ;
 
   return item ;
 } ;
@@ -1302,10 +1386,10 @@ _rdl_next(void* item , dl_pair item_pair)
  * NB: next may be the same item -- caller must check is cares.
  */
 Inline void*
-_rdl_prev(void* item, dl_pair item_pair)
+_rdl_prev(void* item, dl_list_pair_v item_p)
 {
   if (item != NULL)
-    item = item_pair->prev ;
+    item = item_p->prev ;
 
   return item ;
 } ;
@@ -1325,48 +1409,48 @@ _rdl_head(void** base)
  * We are passed: base_pair = &((*base)->ring.
  */
 Inline void*
-_rdl_tail(void** base, dl_pair item_pair)
+_rdl_tail(void** base, dl_list_pair_v item_p)
 {
   void* item ;
 
   item = *base ;
-  return _rdl_prev(item, item_pair) ;
+  return _rdl_prev(item, item_p) ;
 } ;
 
 /*------------------------------------------------------------------------------
  * Append given item to rdl.
  */
 Inline void
-_rdl_append(void** base, void* item, dl_pair item_pair)
+_rdl_append(void** base, void* item, dl_list_pair_v item_p)
 {
-  void*   next ;
+  void* next ;
 
-  next   = *base ;
+  next = *base ;
 
   if (next == NULL)
     {
-      *base = item_pair->next = item_pair->prev = item ;
+      *base = item_p->next = item_p->prev = item ;
     }
   else
     {
-      uint    offset ;
-      dl_pair next_pair ;
-      void*   prev ;
-      dl_pair prev_pair ;
+      size_t         offset ;
+      dl_list_pair_v next_p ;
+      dl_list_pair_v prev_p ;
+      void*          prev ;
 
-      offset = (char*)item_pair - (char*)item ;
+      offset = (char*)item_p - (char*)item ;
 
-      next_pair = dl_pair_make(next, offset) ;
-      prev      = next_pair->prev ;
-      prev_pair = dl_pair_make(prev, offset) ;
+      next_p = dl_list_ptr_make(next, offset) ;
+      prev   = next_p->prev ;
+      prev_p = dl_list_ptr_make(prev, offset) ;
 
-      qassert(prev_pair->next == next_pair->prev) ;
+      qassert(prev_p->next == next_p->prev) ;
 
-      item_pair->next = next ;
-      item_pair->prev = prev ;
+      item_p->next = next ;
+      item_p->prev = prev ;
 
-      next_pair->prev = item ;
-      prev_pair->next = item ;
+      next_p->prev = item ;
+      prev_p->next = item ;
     } ;
 } ;
 
@@ -1374,9 +1458,9 @@ _rdl_append(void** base, void* item, dl_pair item_pair)
  * Prepend given item to rdl.
  */
 Inline void
-_rdl_prepend(void** base, void* item, dl_pair item_pair)
+_rdl_prepend(void** base, void* item, dl_list_pair_v item_p)
 {
-  _rdl_append(base, item, item_pair) ;
+  _rdl_append(base, item, item_p) ;
   *base = item ;
 } ;
 
@@ -1386,15 +1470,15 @@ _rdl_prepend(void** base, void* item, dl_pair item_pair)
  * NB: item MUST be on the rdl !!
  */
 Inline void
-_rdl_del(void** base, void* item, dl_pair item_pair)
+_rdl_del(void** base, void* item, dl_list_pair_v item_p)
 {
   void* next ;
   void* prev ;
 
   qassert(*base != NULL) ;
 
-  next = item_pair->next ;
-  prev = item_pair->prev ;
+  next = item_p->next ;
+  prev = item_p->prev ;
 
   if (next == item)
     {
@@ -1405,36 +1489,36 @@ _rdl_del(void** base, void* item, dl_pair item_pair)
     }
   else
     {
-      uint    offset ;
-      dl_pair next_pair ;
-      dl_pair prev_pair ;
+      dl_list_pair_v next_p ;
+      dl_list_pair_v prev_p ;
+      size_t         offset ;
 
-      offset = (char*)item_pair - (char*)item ;
+      offset = (char*)item_p - (char*)item ;
 
-      next_pair = dl_pair_make(next, offset) ;
-      prev_pair = dl_pair_make(prev, offset) ;
+      next_p = dl_list_ptr_make(next, offset) ;
+      prev_p = dl_list_ptr_make(prev, offset) ;
 
-      next_pair->prev = prev ;
-      prev_pair->next = next ;
+      next_p->prev = prev ;
+      prev_p->next = next ;
 
       if (*base == item)
         *base = next ;
     } ;
 
-  item_pair->next = item_pair->prev = NULL ;
+  item_p->next = item_p->prev = NULL ;
 } ;
 
 /*------------------------------------------------------------------------------
  * Delete head of rdl (if any) and return address of same.
  */
 Inline void*
-_rdl_del_head(void** base, dl_pair item_pair)
+_rdl_del_head(void** base, dl_list_pair_v item_p)
 {
   void* item ;
 
   item = *base ;
   if (item != NULL)
-    _rdl_del(base, item, item_pair) ;
+    _rdl_del(base, item, item_p) ;
 
   return item ;
 } ;

@@ -498,6 +498,24 @@ qtimer_set(qtimer qtr, qtime_mono_t when, qtimer_action* action)
 } ;
 
 /*------------------------------------------------------------------------------
+ * If timer is active, return how long it will be before it goes off.
+ *
+ * NB: always returns value >= 0.
+ */
+extern qtime_t
+qtimer_has_left(qtimer qtr)
+{
+  qtime_t left ;
+
+  if (!qtimer_is_active(qtr))
+    return 0 ;
+
+  left = qtr->time - qt_get_monotonic() ;
+
+  return (left >= 0) ? left : 0 ;
+} ;
+
+/*------------------------------------------------------------------------------
  * Unset given timer
  *
  * If the timer is active, removes from pile and sets inactive.

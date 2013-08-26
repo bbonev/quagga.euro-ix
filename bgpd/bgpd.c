@@ -59,9 +59,9 @@ struct bgp_master *bm;
 
 /* BGP process wide nexus.
  */
-qpn_nexus cli_nexus     = NULL;
-qpn_nexus bgp_nexus     = NULL;
-qpn_nexus routing_nexus = NULL;
+qpn_nexus cli_nexus = NULL;
+qpn_nexus be_nexus  = NULL;
+qpn_nexus re_nexus  = NULL;
 
 /* BGP community-list.
  */
@@ -1251,6 +1251,9 @@ bgp_create (as_t as, const char *name)
   bgp_accept_retry_time_unset(bgp) ;
   bgp_open_hold_time_unset(bgp) ;
   bgp_mrai_unset(bgp) ;
+
+  bgp->default_idle_hold_min_secs = BGP_DEFAULT_IDLE_HOLD_MIN_SECS ;
+  bgp->default_idle_hold_max_secs = BGP_DEFAULT_IDLE_HOLD_MAX_SECS ;
 
   bgp->restart_time       = BGP_DEFAULT_RESTART_TIME ;
   bgp->stalepath_time     = BGP_DEFAULT_STALEPATH_TIME ;

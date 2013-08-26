@@ -73,6 +73,9 @@ bgp_rib_new(bgp_inst bgp, qafx_t qafx, rib_type_t rib_type)
    *   * qafx           -- X          -- set below
    *   * rib_type       -- X          -- set below
    *
+   *   * peer_count     -- 0          -- none, yet
+   *   * context_count  -- 0          -- none, yet
+   *
    *   * lock           -- 0          -- initial value
    *
    *   * nodes_table    -- NULL       -- none, yet
@@ -88,7 +91,7 @@ bgp_rib_new(bgp_inst bgp, qafx_t qafx, rib_type_t rib_type)
   rib->nodes_table = ihash_table_init(rib->nodes_table, 0, 60) ;
 
   rib->walker      = bgp_rib_walker_new(rib) ;
-  ddl_append(rib->queue, &rib->walker->it, queue) ;
+  ddl_append(rib->queue_base, &rib->walker->it, queue) ;
 
   return bgp->rib[qafx][rib_type] = rib ;
 } ;
@@ -115,6 +118,12 @@ bgp_rib_destroy(bgp_rib rib)
   return NULL ;
 } ;
 
+/*==============================================================================
+ * Creation/Destruction etc. of Rib-Nodes
+ */
+static bgp_rib_node bgp_rib_node_new(bgp_rib rib, prefix_id_t pfx_id) ;
+inline static uint bgp_rib_node_size(bgp_rib rib, uint context_count) ;
+
 /*------------------------------------------------------------------------------
  * Get RIB Node for the given prefix, of the given type in the given RIB.
  *
@@ -133,40 +142,192 @@ bgp_rib_node_get(bgp_rib rib, prefix_id_entry pie)
   rn = ihash_get_item(rib->nodes_table, pie->id, NULL) ;
 
   if (rn == NULL)
+    return rn ;
+
+  prefix_id_entry_inc_ref(pie) ;
+  return bgp_rib_node_new(rib, pie->id) ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Extend the number of route-contexts supported by the given rib-node, if
+ *                                                                     required.
+ *
+ * If a rib-node has to be extended, has to allocate a new one, update all
+ * pointers to the current one, and discard the current one.  Happily, this
+ * should happen once in a blue moon.
+ *
+ * NB: this does not change any property of the rib-node, so does not change
+ *     its place in the rib-queue.
+ */
+extern bgp_rib_node
+bgp_rib_node_extend(bgp_rib_node rn)
+{
+  bgp_rib_node rn_new ;
+  uint         context_count_new ;
+  route_info   ri ;
+
+  /* Hope for a quick get-away.
+   */
+  if (rn->it.rib->context_count <= rn->context_count)
+    return rn ;
+
+  /* We need a new rib-node, which will replace the one we have.
+   *
+   * The new rib-node will inherit all the properties of the existing one,
+   * including any locks it owns.
+   */
+  rn_new = bgp_rib_node_new(rn->it.rib, rn->pfx_id) ;
+  context_count_new = rn_new->context_count ;
+
+  memcpy(rn_new, rn, bgp_rib_node_size(rn->it.rib, rn->context_count)) ;
+
+  /* Copying has moved across:
+   *
+   *   * it.rib
+   *   * it.queue               -- see below
+   *   * it.type
+   *   * it.flags
+   *
+   *   * pfx_id                 -- with the previous lock
+   *   * flags
+   *
+   *   * avail                  -- see below
+   *
+   *   * context_count          -- restored, below
+   *
+   *   * nroutes[]              -- copied up to old context_count
+   */
+  rn_new->context_count = context_count_new ;
+
+  /* The it.queue is based at it.rib->queue, and the new item must now
+   * replace the old item in that queue.
+   */
+  ddl_replace(rn->it.rib->queue_base, (bgp_rib_item)rn, queue,
+                                                         (bgp_rib_item)rn_new) ;
+  confirm(offsetof(bgp_rib_node_t, it) == 0) ;
+
+  /* All the route-infos which refer to the old rib-node must now refer to the
+   * new one...  at the same time, all the route-infos may, themselves, have
+   * to be extended !
+   */
+  ri = svl_head(rn->avail.base, rn->avail) ;
+  while (ri != NULL)
     {
-      /* Need to create a new RIB Node.
-       */
-      rn = XCALLOC(MTYPE_BGP_RIB_NODE, sizeof(bgp_rib_node_t)) ;
+      ri->rn = rn_new ;
 
-      /* Zeroising has set:
-       *
-       *   * it.rib                 -- X        -- set below
-       *   * it.queue               -- NULLs    -- not on any queue, yet
-       *   * it.type                -- rib_it_node
-       *   * it.flags               -- 0
-       *
-       *   * list                   -- NULLs    -- not on any list, yet
-       *
-       *   * available              -- NULLs    -- no available routes, yet
-       *   * candidates             -- NULL     -- no candidates, yet
-       *   * selected               -- NULL     -- no selected route, yet
-       *
-       *   * zebra                  -- NULL     -- no route in FIB, yet
-       *
-       *   * pfx_id                 -- X        -- set below
-       *
-       *   * flags                  -- 0        -- nothing, yet
-       */
-      confirm(rib_it_node == 0) ;
+      if (ri->context_count < context_count_new)
+        ri = bgp_route_info_extend(ri) ;
 
-      rn->it.rib  = rib ;
-      rn->pfx_id  = pie->id ;
-
-      prefix_id_entry_inc_ref(pie) ;
-      ihash_set_item(rib->nodes_table, pie->id, rn) ;
+      ri = svl_next(ri->rlist, rn->avail) ;
     } ;
 
+  /* Finally, release the old rib-node.
+   *
+   * We have copied the 'avail' svec to the new rib-node, so we need
+   */
+  bgp_rib_node_free(rn, false /* not clear_avail */) ;
+
+  return rn_new ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Create a new, empty rib-node and place it in the RIB.
+ *
+ * NB: the pfx_id MUST be locked by the caller, for a brand new rib-node
+ *
+ * NB: if a rib-node already exists, it is replaced -- it is the caller's
+ *     responsibility to deal with that.
+ */
+static bgp_rib_node
+bgp_rib_node_new(bgp_rib rib, prefix_id_t pfx_id)
+{
+  bgp_rib_node rn ;
+  uint    context_count ;
+
+  context_count = (rib->context_count | 3) + 1 ;
+  rn = XCALLOC(MTYPE_BGP_RIB_NODE, bgp_rib_node_size(rib, context_count)) ;
+
+  /* Zeroising has set:
+   *
+   *   * it.rib                 -- X        -- set below
+   *   * it.queue               -- NULLs    -- not on any queue, yet
+   *   * it.type                -- rib_it_node
+   *   * it.flags               -- 0
+   *
+   *   * pfx_id                 -- X        -- set below
+   *   * flags                  -- 0        -- nothing, yet
+   *
+   *   * avail                  -- SVEC_NULLs -- nothing available, yet
+   *
+   *   * context_count          -- X        -- set below
+   *   * nroutes[]              -- all zeros
+   *             .ilist         -- SVEC_NULLs -- nothing for the context
+   *             .aroute        -- NULL       -- no aroute (if 'main')
+   */
+  confirm(SVEC_NULL   == 0)
+  confirm(rib_it_node == 0) ;
+
+  rn->it.rib        = rib ;
+  rn->pfx_id        = pfx_id ;
+  rn->context_count = context_count ;
+
+  ihash_set_item(rib->nodes_table, pfx_id, rn) ;
+
   return rn ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Free the given, empty, rib-node -- very low level free.
+ *
+ * The caller must have dealt with:
+ *
+ *   * the rn->it.queue
+ *
+ *   * the lock on the pfx_id.
+ *
+ *   * emptying the rn->avail svec.
+ *
+ *   * emptying the rn->routes   -- the .ilist for each route-context
+ *                                      .aroute ditto (if 'main')
+ *
+ * Will now clear the rn->avail svec, if required.  (When extending a rib-node
+ * all the above are copied to the new node, including the avail svec, which
+ * we *really* do not wish now to clear !)
+ */
+static bgp_rib_node
+bgp_rib_node_free(bgp_rib_node rn, bool clear_avail)
+{
+  if (rn != NULL)
+    {
+      if (clear_avail)
+        svec_clear(rn->avail) ;
+
+      XFREE(MTYPE_BGP_RIB_NODE, rn) ;
+    } ;
+
+  return NULL ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Size of a rib-node for a given number of contexts and the given tyoe of rib.
+ */
+inline static uint
+bgp_rib_node_size(bgp_rib rib, uint context_count)
+{
+  switch (rib->rib_type)
+    {
+      default:
+        qassert(false) ;
+        fall_through ;
+
+      case rib_main:
+        return offsetof(bgp_rib_node_t, nroutes)
+                                          + (context_count * nroute_main_size) ;
+
+      case rib_rs:
+        return offsetof(bgp_rib_node_t, nroutes)
+                                          + (context_count * nroute_rs_size) ;
+    } ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -244,7 +405,7 @@ bgp_rib_walker_discard(bgp_rib_walker rw)
 
       if (rw->it.flags & rib_itf_rib_queue)
         {
-          ddl_del(rw->it.rib->queue, &rw->it, queue) ;
+          ddl_del(rw->it.rib->queue_base, &rw->it, queue) ;
           rw->it.flags ^= rib_itf_rib_queue ;
         } ;
 
@@ -366,7 +527,7 @@ bgp_rib_walker_start_initial(peer_rib prib, wq_function func)
   rib = prib->rib ;     /* the bgp_rib for prib's address family, and for
                          * rib_main/rib_rs depending on the peer type.  */
 
-  item = ddl_head(rib->queue) ;
+  item = ddl_head(rib->queue_base) ;
 
   if ((item != NULL) && (item->type == rib_it_walker))
     {
@@ -566,6 +727,8 @@ peer_rib_new(bgp_peer peer, qafx_t qafx)
    *   * walk_list            -- NULLs    -- not on any walker's list, yet
 
    *   * qafx                 -- X        -- set below
+   *   * i_afi                -- X        -- set below
+   *   * i_safi               -- X        -- set below
    *   * rib_type             -- rib_main -- default
    *
    *   * update_state         -- prib_initial   -- starting state
@@ -632,6 +795,8 @@ peer_rib_new(bgp_peer peer, qafx_t qafx)
 
   prib->peer    = peer ;
   prib->qafx    = qafx ;
+  prib->i_afi   = get_iAFI(qafx) ;
+  prib->i_safi  = get_iSAFI(qafx) ;
 
   prib->is_mpls = qafx_is_mpls_vpn(qafx) ;
 

@@ -18,7 +18,7 @@ libzebra_la_SOURCES = \
   qfstring.c  qiovec.c  qlib_init.c  qlump.c  qpath.c  qpnexus.c  \
   qpselect.c  qpthreads.c  qrand.c  qstring.c  qs_pcsub.c  \
   qtime.c  qtimers.c  ring_buffer.c  routemap.c  sigevent.c  \
-  smux.c  sockopt.c  sockunion.c  str.c  stream.c  table.c  \
+  smux.c  sockopt.c  sockunion.c  str.c  stream.c  svector.c  table.c  \
   thread.c  vector.c  vhash.c  vio_fifo.c  vio_lines.c  vty.c  \
   vty_cli.c  vty_command.c  vty_io.c  vty_io_basic.c  \
   vty_io_file.c  vty_io_std.c  vty_io_term.c  vty_io_vtysh.c  \
@@ -46,7 +46,7 @@ pkginclude_HEADERS = \
   qlump.h  qpath.h  qpnexus.h  qpselect.h  qpthreads.h  \
   qrand.h  qstring.h  qs_pcsub.h  qtime.h  qtimers.h  \
   ring_buffer.h  route_types.h  routemap.h  sigevent.h  \
-  smux.h  sockopt.h  sockunion.h  str.h  stream.h  \
+  smux.h  sockopt.h  sockunion.h  str.h  stream.h  svector.h  \
   table.h  thread.h  tstring.h  vargs.h  vector.h  \
   version.h  vhash.h  vio_fifo.h  vio_lines.h  vty.h  \
   vty_cli.h  vty_command.h  vty_common.h  vty_io.h  \

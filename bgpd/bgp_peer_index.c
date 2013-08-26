@@ -44,46 +44,8 @@
  * name (IP address) or by peer_id.
  *
  * The BGP Engine needs to know what to do when a listening socket accepts a
- * connection, which can happen whether there is a peer or a session active for
- * the incoming address.  To handle incoming stuff "between sessions" each
- * configured peer has an "acceptor" object.  When a session is running, the
- * acceptor and the session interact.  When a session is not running, the
- * acceptor runs autonomously.
- *
- * The BGP Engine needs to:
- *
- *   * know whether a peer is configured for a given address.
- *
- *     When a peer is configured it is immediately entered into the index, and
- *     an acceptor object is created for it.
- *
- *     When a peer is dismantled, it is removed from the index.  However,
- *     the index entry may live on (pointing at moribund peer) if:
- *
- *       a) there is a session running for the peer -- the session will
- *          be in the process of being closed down.
- *
- *       b) the acceptor for this instance of the peer is yet to be
- *          destroyed.
- *
- *     because the BGP Engine is responsible for closing the session and/or
- *     shutting down the acceptor.
- *
- *   * know whether a peer is enabled for accept(), for when a connection
- *     arrives.
- *
- *   * be able to "track" an inbound connection while a session is not "up".
- *
- *   * manage connection options (eg password) for accept() and connect()
- *     sockets.
- *
- * The Routeing Engine needs:
- *
- *   * a Peer Index entry for each configured peer -- so needs to create and
- *     destroy those entries.
- *
- *   * a means to manage connection options, and signal changes to the BGP
- *     Engine.
+ * connection, so the Peer Index is used by the BGP Engine to lookup the
+ * session by its name.
  */
 struct bgp_peer_index_entry
 {
@@ -97,38 +59,17 @@ struct bgp_peer_index_entry
 
   /* The "name" of the peer is set when the index entry is created, and
    * not cleared until the entry is destroyed.  When the entry is registered,
-   * the "name" is what it is registered as.  (Note that it is possible for
-   * more than one entry to have the same "name", but not possible for more
-   * than one entry with the same name to be registered.  After an entry
-   * is de-registered it continues in existence while the BGP Engine needs
-   * it.)
+   * the "name" is what it is registered as.
    *
    * The "id" is intrinsic to the entry.
-   *
-   * These are read-only.
    */
-  sockunion     su_name ;       /* the "name".                          */
-  bgp_peer_id_t id ;            /* the id                               */
+  sockunion     su_name ;
+  bgp_peer_id_t id ;
 
   /* Pointers to peer and session to which this applies.
    *
-   * These are set when the index entry is created, which is at the same time
-   * as the peer and its session are created.
-   *
-   * These are cleared, under the peer index mutex when the peer is deleted (by
-   * the Routeing Engine), and when the session is deleted (by the BGP Engine).
-   *
-   * The peer will be deleted first, and at that moment the entry is removed
-   * from the "name" hash... so the name can be re-registered, but the
-   * peer-id and session pointer live on.  The session will be deleted later,
-   * and at that moment the entry and the peer-id can be released.
-   *
-   * [In fact, the way this is done is that the first of RE/BE to delete
-   *  peer/session removes the entry from the "name" hash, and the second
-   *  frees the index entry all together and releases the peer-id.
-   *
-   *  When the index entry is created, it is "set" as belonging to the peer,
-   *  but with a reference count, belonging to the session.]
+   * These are set when the index entry is created, which is just after the
+   * peer and its session are created.
    */
   bgp_peer      peer ;
   bgp_session   session ;
@@ -259,11 +200,7 @@ bgp_peer_index_finish(void)
   /* Ream out the peer id vector -- checking that all entries are empty
    */
   while ((peer_ie = vector_ream(bgp_peer_id_index, keep_it)) != NULL)
-    {
-      qassert(peer_ie->peer == NULL) ;
-
-
-    } ;
+    qassert(peer_ie->peer == NULL) ;
 
   /* Discard the empty chunks of entries
    */
@@ -303,7 +240,6 @@ bgp_peer_index_register(bgp_peer peer, bgp_session session)
   qassert((peer != NULL) && (session != NULL)) ;
   qassert((peer == session->peer) && (session == peer->session)) ;
   qassert(peer->peer_ie    == NULL) ;
-  qassert(session->peer_ie == NULL) ;
 
   BGP_PEER_INDEX_LOCK() ;    /*<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<*/
 
@@ -313,15 +249,12 @@ bgp_peer_index_register(bgp_peer peer, bgp_session session)
 
   assert(added) ;               /* really do not know what to do if not */
 
-  /* Point entry at peer and session and vice versa and fix "set" and ref_count
+  /* Point entry at peer and session and vice versa
    */
-  peer->peer_ie    = peer_ie ;
   peer_ie->peer    = peer ;
-  vhash_set(peer_ie) ;
-
-  session->peer_ie = peer_ie ;
   peer_ie->session = session ;
-  vhash_inc_ref(peer_ie) ;
+
+  peer->peer_ie    = peer_ie ;
 
   BGP_PEER_INDEX_UNLOCK() ;  /*->->->->->->->->->->->->->->->->->->->->->->-->*/
 } ;
@@ -363,7 +296,7 @@ bgp_peer_index_seek_session(sockunion su)
  * NB: it is a FATAL error to deregister a peer which is not registered.
  */
 extern void
-bgp_peer_index_deregister_peer(bgp_peer peer)
+bgp_peer_index_deregister(bgp_peer peer)
 {
   bgp_peer_index_entry peer_ie ;
 
@@ -378,36 +311,7 @@ bgp_peer_index_deregister_peer(bgp_peer peer)
       peer->peer_ie = NULL ;
       peer_ie->peer = NULL ;
 
-      vhash_unset_delete(peer_ie, bgp_peer_su_index) ;
-    } ;
-
-  BGP_PEER_INDEX_UNLOCK() ;  /*->->->->->->->->->->->->->->->->->->->->->->->*/
-} ;
-
-/*------------------------------------------------------------------------------
- * Deregister a session from the peer index -- for use by the BGP Engine.
- *
- * NB: the peer index entry peer_id is still in use (anywhere at all)
- *
- * NB: it is a FATAL error to deregister a peer which is not registered.
- */
-extern void
-bgp_peer_index_deregister_session(bgp_session session)
-{
-  bgp_peer_index_entry peer_ie ;
-
-  BGP_PEER_INDEX_LOCK() ;    /*<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-*/
-
-  peer_ie = session->peer_ie ;
-  if (peer_ie != NULL)
-    {
-      qassert(peer_ie->session == session) ;
-      qassert(vhash_has_references(peer_ie)) ;
-
-      session->peer_ie = NULL ;
-      peer_ie->session = NULL ;
-
-      vhash_dec_ref(peer_ie, bgp_peer_su_index) ;
+      vhash_delete(peer_ie, bgp_peer_su_index) ;
     } ;
 
   BGP_PEER_INDEX_UNLOCK() ;  /*->->->->->->->->->->->->->->->->->->->->->->->*/

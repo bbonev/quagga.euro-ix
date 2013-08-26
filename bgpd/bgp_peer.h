@@ -24,7 +24,7 @@
 
 #include "bgpd/bgp_common.h"
 #include "bgpd/bgpd.h"
-#include "bgpd/bgp_connection.h"
+#include "bgpd/bgp_session.h"
 #include "bgpd/bgp_rib.h"
 #include "bgpd/bgp_peer_index.h"
 #include "bgpd/bgp_notification.h"
@@ -85,8 +85,8 @@ enum PEER_DOWN
   PEER_DOWN_PASSIVE_CHANGE,        /* 'neighbor passive'                   */
   PEER_DOWN_MULTIHOP_CHANGE,       /* 'neighbor multihop'                  */
   PEER_DOWN_AF_DEACTIVATE,         /* 'no neighbor activate'               */
-  PEER_DOWN_PASSWORD_CHANGE,       /* password changed                     */
-  PEER_DOWN_ALLOWAS_IN_CHANGE,     /* allowas-in change                    */
+  PEER_DOWN_PASSWORD_CHANGE,       /* 'neighbor password'                  */
+  PEER_DOWN_ALLOWAS_IN_CHANGE,     /* 'neighbor allowas-in'                */
 
   /* Other actions that cause a session to be reset
    */
@@ -119,69 +119,18 @@ enum PEER_DOWN
   PEER_DOWN_last        = PEER_DOWN_count - 1,
 } ;
 
-typedef enum peer_flag peer_flag_t ;
-enum peer_flag
-{
-//  PEER_FLAG_SHUTDOWN                 = BIT( 0),
-  PEER_FLAG_PASSIVE,
-  PEER_FLAG_DONT_CAPABILITY,
-  PEER_FLAG_OVERRIDE_CAPABILITY,
-  PEER_FLAG_STRICT_CAP_MATCH,
-  PEER_FLAG_DYNAMIC_CAPABILITY,
-  PEER_FLAG_DISABLE_CONNECTED_CHECK,
-  PEER_FLAG_LOCAL_AS_NO_PREPEND,
-};
-
 enum peer_status_bits
 {
   /* These are states of a peer.
    */
+#if 0
   PEER_STATUS_PREFIX_OVERFLOW   = BIT(0), /* prefix-overflow             */
+#endif
 
   PEER_STATUS_NSF_MODE          = BIT(1), /* NSF aware peer              */
   PEER_STATUS_NSF_WAIT          = BIT(2), /* wait comeback peer          */
 } ;
 typedef uint16_t peer_status_bits_t ;   /* NB: <= 16 flags      */
-
-enum peer_config_bits
-{
-  /* These record that certain configuration settings have been made.
-   */
-  PEER_CONFIG_WEIGHT            = BIT(0), /* Default weight.            */
-  PEER_CONFIG_TIMER             = BIT(1), /* HoldTime and KeepaliveTime */
-  PEER_CONFIG_MRAI              = BIT(2), /* MRAI                       */
-  PEER_CONFIG_CONNECT_RETRY     = BIT(3), /* cops->connect_retry_secs   */
-
-  PEER_CONFIG_INTERFACE         = BIT(8), /* neighbor xx interface      */
-
-  /* These are all overridden by group configuration.
-   */
-  PEER_CONFIG_GROUP_OVERRIDE    = PEER_CONFIG_WEIGHT
-                                | PEER_CONFIG_TIMER
-                                | PEER_CONFIG_MRAI
-                                | PEER_CONFIG_CONNECT_RETRY,
-} ;
-typedef uint16_t peer_config_bits_t ;   /* NB: <= 16 flags      */
-
-enum peer_af_flag_bits
-{
-  /* These are configuration flags, for per afi/safi configuration stuff.
-   */
-  PEER_AFF_SEND_COMMUNITY           = BIT( 0),
-  PEER_AFF_SEND_EXT_COMMUNITY       = BIT( 1),
-  PEER_AFF_NEXTHOP_SELF             = BIT( 2),
-  PEER_AFF_REFLECTOR_CLIENT         = BIT( 3), /* Route Reflector           */
-  PEER_AFF_RSERVER_CLIENT           = BIT( 4), /* Route Server              */
-  PEER_AFF_SOFT_RECONFIG            = BIT( 5),
-  PEER_AFF_AS_PATH_UNCHANGED        = BIT( 6), /* transparent-as            */
-  PEER_AFF_NEXTHOP_UNCHANGED        = BIT( 7), /* transparent-next-hop      */
-  PEER_AFF_MED_UNCHANGED            = BIT( 8), /* transparent-med           */
-  PEER_AFF_DEFAULT_ORIGINATE        = BIT( 9),
-  PEER_AFF_REMOVE_PRIVATE_AS        = BIT(10),
-  PEER_AFF_ALLOWAS_IN               = BIT(11),
-  PEER_AFF_NEXTHOP_LOCAL_UNCHANGED  = BIT(12),
-} ;
-typedef uint32_t peer_af_flag_bits_t ;  /* NB: <= 32 flags      */
 
 enum peer_af_status_bits
 {
@@ -189,7 +138,7 @@ enum peer_af_status_bits
    */
   PEER_AFS_DISABLED             = BIT( 0), /* configured, but disabled  */
   PEER_AFS_RUNNING              = BIT( 1), /* session is up             */
-  PEER_AFS_DEFAULT_ORIGINATE    = BIT( 2), /* default-originate peer    */
+  PEER_AFS_DEFAULT_SENT         = BIT( 2), /* default-originate peer    */
   PEER_AFS_EOR_SENT             = BIT( 3), /* end-of-rib send to peer   */
   PEER_AFS_EOR_RECEIVED         = BIT( 4), /* end-of-rib received from peer */
   PEER_AFS_PREFIX_THRESHOLD     = BIT( 5), /* exceed prefix-threshold   */
@@ -217,6 +166,134 @@ enum peer_af_status_bits
 typedef uint16_t peer_af_status_bits_t ;   /* NB: <= 16 flags           */
 
 /*------------------------------------------------------------------------------
+ * Each peer has a configuration.
+ */
+typedef struct bgp_peer_config  bgp_peer_config_t ;
+
+typedef enum peer_config_set peer_config_set_t ;
+enum peer_config_set
+{
+  /* These record that certain configuration settings have been made.
+   */
+  PEER_CONFIG_WEIGHT            = BIT(0), /* Default weight.            */
+  PEER_CONFIG_TIMER             = BIT(1), /* HoldTime and KeepaliveTime */
+  PEER_CONFIG_MRAI              = BIT(2), /* MRAI                       */
+  PEER_CONFIG_CONNECT_RETRY     = BIT(3), /* cops->connect_retry_secs   */
+
+  PEER_CONFIG_INTERFACE         = BIT(8), /* neighbor xx interface      */
+
+  /* These are all overridden by group configuration.
+   */
+  PEER_CONFIG_GROUP_OVERRIDE    = PEER_CONFIG_WEIGHT
+                                | PEER_CONFIG_TIMER
+                                | PEER_CONFIG_MRAI
+                                | PEER_CONFIG_CONNECT_RETRY,
+} ;
+
+/* The peer_flag_t are configuration flags for the entire peer.
+ */
+typedef enum peer_flag peer_flag_t ;
+enum peer_flag
+{
+  PEER_FLAG_SHUTDOWN                 = BIT( 0),
+  PEER_FLAG_PASSIVE                  = BIT( 1),
+  PEER_FLAG_ACTIVE                   = BIT( 2),
+  PEER_FLAG_DONT_CAPABILITY          = BIT( 3),
+  PEER_FLAG_OVERRIDE_CAPABILITY      = BIT( 4),
+  PEER_FLAG_STRICT_CAP_MATCH         = BIT( 5),
+  PEER_FLAG_DYNAMIC_CAPABILITY       = BIT( 6),
+  PEER_FLAG_DYNAMIC_CAPABILITY_DEP   = BIT( 7),
+  PEER_FLAG_DISABLE_CONNECTED_CHECK  = BIT( 8),
+  PEER_FLAG_LOCAL_AS_NO_PREPEND      = BIT( 9),
+
+  /* When binding a peer to a group, the peer loses all its previous settings
+   * for these flags.
+   *
+   * PEER_FLAG_GROUP_SET: when a peer a member of a group, these bits:
+   *
+   *   * will be set in member if are set in group -- group is "master"
+   *
+   *   * may be set in member if they are clear in group.
+   *
+   * So... if the group is detached from the peer, all flags are cleared,
+   * except for the PEER_FLAG_GROUP_SET *where* the group is clear.
+   *
+   * PEER_FLAG_GROUP_CLEAR: when a peer a member of a group, these bits:
+   *
+   *   * will be clear in member if they are clear in group -- group is master
+   *
+   *   * may be clear in member if they are set in group.
+   *
+   * PEER_FLAG_GROUP_CLEAR has no effect when group is detached from peer.
+   *
+   * Bits which are in both PEER_FLAG_GROUP_SET and PEER_FLAG_GROUP_CLEAR must
+   * follow the group setting -- they may not be changed in a group member.
+   */
+  PEER_FLAG_GROUP_SET   = PEER_FLAG_SHUTDOWN
+                        | PEER_FLAG_PASSIVE
+                        | PEER_FLAG_ACTIVE
+                        | PEER_FLAG_DONT_CAPABILITY
+                        | PEER_FLAG_OVERRIDE_CAPABILITY
+                        | PEER_FLAG_STRICT_CAP_MATCH
+                        | PEER_FLAG_DYNAMIC_CAPABILITY
+                        | PEER_FLAG_DYNAMIC_CAPABILITY_DEP
+                        | PEER_FLAG_DISABLE_CONNECTED_CHECK
+                        | PEER_FLAG_LOCAL_AS_NO_PREPEND,
+
+  PEER_FLAG_GROUP_CLEAR = 0,
+} ;
+
+typedef enum peer_af_flag_bits peer_af_flag_bits_t ;
+enum peer_af_flag_bits
+{
+  /* These are configuration flags, for per afi/safi configuration stuff.
+   */
+  PEER_AFF_SEND_COMMUNITY           = BIT( 0),
+  PEER_AFF_SEND_EXT_COMMUNITY       = BIT( 1),
+  PEER_AFF_NEXTHOP_SELF             = BIT( 2),
+  PEER_AFF_REFLECTOR_CLIENT         = BIT( 3), /* Route Reflector           */
+  PEER_AFF_RSERVER_CLIENT           = BIT( 4), /* Route Server              */
+  PEER_AFF_SOFT_RECONFIG            = BIT( 5),
+  PEER_AFF_AS_PATH_UNCHANGED        = BIT( 6), /* transparent-as            */
+  PEER_AFF_NEXTHOP_UNCHANGED        = BIT( 7), /* transparent-next-hop      */
+  PEER_AFF_MED_UNCHANGED            = BIT( 8), /* transparent-med           */
+  PEER_AFF_DEFAULT_ORIGINATE        = BIT( 9),
+  PEER_AFF_REMOVE_PRIVATE_AS        = BIT(10),
+  PEER_AFF_ALLOWAS_IN               = BIT(11),
+  PEER_AFF_NEXTHOP_LOCAL_UNCHANGED  = BIT(12),
+} ;
+
+
+
+struct bgp_peer_config
+{
+  /* The PEER_FLAG_XXX and was_shutdown latch.
+   *
+   * See bgp_peer_flag_modify() for the interaction between the flags, and
+   * the interaction between group and group members.
+   *
+   * The "was_shutdown" latch is set if PEER_FLAG_SHUTDOWN has been set at some
+   * time since the latch was last cleared.
+   */
+  peer_flag_t        flags ;
+
+  bool               was_shutdown ;     /* latch        */
+
+
+
+  peer_config_set_t  set;
+
+  uint16_t      weight ;        /* valid at all times                   */
+
+  uint          config_mrai ;   /* default unless PEER_CONFIG_MRAI      */
+
+  /* The PEER_AFF_XXX
+   *
+   */
+  peer_af_flag_bits_t   af_flags[qafx_count] ;
+} ;
+
+/*------------------------------------------------------------------------------
  * Each peer has a peer rib for each AFI/SAFI it is configured for.
  *
  * This refers to the bgp instance's RIB, and contains the adj_in and adj_out
@@ -238,6 +315,8 @@ enum bgp_route_map_types
 
   RMAP_COUNT    = 5,
 } ;
+
+enum { MAXIMUM_PREFIX_THRESHOLD_DEFAULT = 75 } ;
 
 typedef struct prefix_max  prefix_max_t ;
 typedef struct prefix_max* prefix_max ;
@@ -286,9 +365,14 @@ struct peer_rib
   /* General stuff for the peer re this qafx.
    */
   qafx_t      qafx ;
+  iAFI_t      i_afi ;
+  iSAFI_t     i_safi ;
+
   rib_type_t  rib_type ;                /* Main or RS                   */
 
   prib_state_t update_state ;           /* initial or update            */
+
+  uint        lock;
 
   bool        is_mpls ;
 
@@ -296,11 +380,25 @@ struct peer_rib
 
   bool        eor_required ;
 
-  uint        lock;
-
-  /* Per AF configuration flags and status bits.
+  /* Running flags
    */
-  peer_af_flag_bits_t   af_flags ;
+  bool        route_server_client ;
+  bool        route_reflector_client ;
+  bool        as_path_unchanged ;
+  bool        remove_private_as ;
+  bool        med_unchanged ;
+  bool        send_community ;
+  bool        send_ecommunity ;
+  bool        next_hop_unchanged ;
+  bool        next_hop_local_unchanged ;
+  bool        next_hop_self ;
+  bool        default_originate ;
+  bool        soft_reconfig ;
+
+  uint8_t     allowas_in ;
+
+  /* Per AF status bits.
+   */
   peer_af_status_bits_t af_status ;
 
   /* Where a peer is a member of a peer-group in a given AFI/SAFI, the
@@ -316,10 +414,6 @@ struct peer_rib
    */
   bool        af_group_member ;
   bool        af_session_up ;
-
-  /* allowas-in.
-   */
-  uint8_t     allowas_in ;
 
   /* NSF mode (graceful restart)
    */
@@ -460,13 +554,18 @@ struct peer
   peer_type_t   type ;
   qafx_set_t    group_membership ;
 
-  /* State of the peer
+  /* State and configuration of the peer
    */
   bgp_peer_state_t  state ;
 
-  bool          clearing ;
+  bgp_peer_config_t config ;
 
-  bool          down_pending ;
+  /* The index entry, session and state thereof
+   */
+  bgp_peer_index_entry  peer_ie ;
+  bgp_session           session ;
+
+  bgp_peer_session_state_t session_state ;
 
   /* reference count, primarily to allow bgp_process'ing of route_node's
    * to be done after a struct peer is deleted.
@@ -517,11 +616,6 @@ struct peer
   char*     host ;              /* Printable address of the peer.       */
   char*     desc ;              /* Description of the peer.             */
 
-  bgp_peer_index_entry  peer_ie ;
-  bgp_session  session ;        /* Current session                      */
-
-  bgp_peer_session_state_t session_state ;
-
   time_t uptime;                /* Last Up/Down time                    */
   time_t readtime;              /* Last read time                       */
   time_t resettime;             /* Last reset time                      */
@@ -533,9 +627,9 @@ struct peer
 
   /* peer reset cause
    */
-  peer_down_t last_reset;
+  peer_down_t   last_reset;
 
-  bgp_notify notification ;
+  bgp_note      note ;
 
   /* Peer address family state and negotiation.
    *
@@ -643,8 +737,7 @@ struct peer
    *     recalculated, if it changes, then the session (if any) needs to be
    *     started, restarted or stopped.
    *
-   * The following are valid for a real peer while it is pEnabled or
-   * pEstablished:
+   * The following are valid for a real peer while it is pUp or pEstablished:
    *
    *   * af_running    -- the set of afi/safi for which a session is currently
    *                      running.
@@ -663,7 +756,14 @@ struct peer
 
   /* Peer RIBS -- contain adj_in and adj_out.
    */
-  peer_rib  prib[qafx_count];
+  peer_rib      prib[qafx_count] ;
+
+  uint          af_running_count ;
+  peer_rib      prib_running[qafx_count] ;
+
+  /* List of pending Route_Refresh requests.
+   */
+  struct dl_base_pair(bgp_route_refresh) rr_pending ;
 
   /* Peer's configured session arguments
    *
@@ -785,34 +885,19 @@ struct peer
   as_t          change_local_as ;
   bool          change_local_as_prepend ;
 
-  /* Other flags
+  /* Other flags and running configuration
    */
   bool          disable_connected_check ;
-
-  /* Peer status flags.
-   */
-  peer_status_bits_t sflags;
-
-  /* Values for which we need to know whether an explicit value is set,
-   * or the (current) default applies.
-   *
-   *   * weight is special, and is valid at all times.
-   *
-   *     - if PEER_CONFIG_WEIGHT is set, the weight has been explicity set
-   *       for this peer or group.
-   *
-   *       If a group does not have an explicit weight, then it inherits from
-   *       the bgp instance.
-   *
-   *       Note that where a peer does not have an explicit weight, then if
-   *       it is a member of a group, it inherits the group's weight (which
-   *       may be inherited from the bgp instance).
-   */
-  peer_config_bits_t config;
 
   uint16_t      weight ;        /* valid at all times                   */
 
   uint          config_mrai ;   /* default unless PEER_CONFIG_MRAI      */
+
+  /* Peer status flags.
+   */
+  peer_status_bits_t    sflags;
+
+  bgp_peer_idle_state_t idle ;
 
   /* The connection options include:
    *
@@ -825,7 +910,14 @@ struct peer
    *
    *   * port                   -- for connect() and listen()
    *
-   *   * conn_let               -- generally true, once enabled XXX XXX XXX
+   *   * conn_state             -- is current configuration and reflects
+   *                               down/reset state....
+   *
+   *       bgp_csMayAccept   ) the actual "passive" etc configuration
+   *       bgp_csMayConnect  )
+   *
+   *       bgp_csTrack       ) reflect the down/reset state of the peer
+   *       bgp_csRun         )
    *
    *   * connect_retry_secs     -- per default, or otherwise
    *   * accept_retry_secs      -- per default, or otherwise
@@ -838,22 +930,26 @@ struct peer
    *
    *   * ifname                 -- "neighbor xx update-source <name>"
    *                               "neighbor xx interface <name>"
-   *
-   * The cops_set are the configuration options last passed to the session.
    */
   bgp_cops_t    cops ;
 
+  /* Timers.
+   *
+   *   * qt_restart     -- used for general restart (or initial start) and for
+   *                       max-prefix delayed restart.
+   */
+  qtimer        qt_restart ;
+
   /* Timer values.
    */
-  uint32_t      v_start;
+  uint          idle_hold_time_secs ;
+  qtime_t       idle_hold_time ;        /* lots of resolution   */
 
-  uint32_t      v_asorig;
-  uint32_t      v_pmax_restart;
-  uint32_t      v_gr_restart;
+  uint          v_asorig;
+  uint          v_gr_restart;
 
   /* Threads
    */
-  struct thread *t_pmax_restart;
   struct thread *t_gr_restart;
   struct thread *t_gr_stale;
 
@@ -861,29 +957,6 @@ struct peer
    */
   uint32_t established;
   uint32_t dropped;
-
-#if 0
-  /* Update/Withdraw lists, Attribute Hash and synctime
-   */
-  bgp_adv_base_t  adv_fifo[bgp_adv_count][qafx_count] ;
-
-  vhash_table     adv_attr_hash[qafx_count] ;
-#endif
-  time_t synctime;
-
-  bool   do_updates ;
-
-#define MAXIMUM_PREFIX_THRESHOLD_DEFAULT 75
-
-
-
-
-  /* Packet receive and send buffers -- for PEER_TYPE_REAL.
-   */
-  stream      ibuf;
-
-  stream_fifo obuf_fifo;
-  stream      work;
 
   /* Peer index, used for dumping TABLE_DUMP_V2 format -- for PEER_TYPE_REAL
    */
@@ -968,8 +1041,16 @@ extern bgp_ret_t peer_group_remote_as (bgp_inst bgp, const char* name,
                                                                    as_t* p_as) ;
 extern bgp_ret_t peer_group_remote_as_delete (peer_group);
 
-extern bgp_ret_t peer_flag_set (bgp_peer peer, peer_flag_bits_t flag) ;
-extern bgp_ret_t peer_flag_unset (bgp_peer peer, peer_flag_bits_t flag) ;
+
+
+
+
+
+
+extern bgp_ret_t bgp_peer_flag_modify(bgp_peer peer, peer_flag_t flag,
+                                                                     bool set) ;
+
+
 
 extern bgp_ret_t peer_af_flag_set(bgp_peer peer, qafx_t qafx,
                                                      peer_af_flag_bits_t flag) ;
@@ -982,7 +1063,6 @@ extern bgp_ret_t peer_group_bind (bgp_inst, sockunion, peer_group,
                                                                 qafx_t, as_t*) ;
 extern bgp_ret_t peer_group_unbind (bgp_peer, peer_group, qafx_t) ;
 
-extern void bgp_session_do_event(mqueue_block mqb, mqb_flag_t flag);
 extern void bgp_peer_enable(bgp_peer peer);
 extern void bgp_peer_down(bgp_peer peer, peer_down_t why_down) ;
 extern void bgp_peer_down_error(bgp_peer peer,
@@ -990,6 +1070,15 @@ extern void bgp_peer_down_error(bgp_peer peer,
 extern void bgp_peer_down_error_with_data (bgp_peer peer,
                               bgp_nom_code_t code, bgp_nom_subcode_t subcode,
                                              const byte* data, size_t datalen) ;
+
+
+
+extern void bgp_peer_set_down(bgp_peer peer, bgp_peer_idle_state_t new_idle,
+                                          bgp_note note, peer_down_t why_down) ;
+extern void bgp_peer_pmax_overflow(bgp_peer peer, uint pmax_restart,
+                                                                bgp_note note) ;
+
+
 
 extern uint peer_get_accept_retry_time(bgp_peer peer) ;
 extern uint peer_get_open_hold_time(bgp_peer peer) ;

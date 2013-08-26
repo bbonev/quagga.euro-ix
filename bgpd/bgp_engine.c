@@ -47,25 +47,23 @@ struct bgp_engine_queue_stats
   uint     max ;
   uint     recent ;
 
-  uint     xon ;
-  uint     event ;
-  uint     update ;
+  uint     type[bgp_engine_log_type_count] ;
 } ;
 
-static bgp_engine_queue_stats_t queue_stats[bgp_engine_debug_count]
+static bgp_engine_queue_stats_t queue_stats[bgp_engine_log_count]
                       = { {0}, {0} } ;
 
 static const char* queue_name[] =
   {
-    [bgp_engine_debug_to_bgp]      = "BGP Engine",
-    [bgp_engine_debug_to_routeing] = "Routeing Engine",
+    [bgp_engine_log_to_bgp]      = "BGP Engine",
+    [bgp_engine_log_to_routeing] = "Routeing Engine",
   } ;
 
 /*------------------------------------------------------------------------------
  *
  */
 extern void
-bgp_queue_logging(mqueue_queue mq, uint which)
+bgp_queue_logging(mqueue_queue mq, uint which, uint what)
 {
   bgp_engine_queue_stats stats ;
   urlong average ;
@@ -76,6 +74,7 @@ bgp_queue_logging(mqueue_queue mq, uint which)
 
   stats = &queue_stats[which] ;
   ++stats->count ;
+  ++stats->type[what] ;
 
   MQUEUE_LOCK(mq) ;
 
@@ -110,17 +109,17 @@ bgp_queue_logging(mqueue_queue mq, uint which)
   av_i = average / 1000 ;
   av_f = (average % 1000) / 10 ;
 
-  zlog_debug("%s queue: max=%u  recent: max=%u av=%d.%.2d (%u) [x=%u e=%u u=%u]",
+  zlog_debug("%s queue: max=%u  recent: max=%u av=%d.%.2d (%u) [e=%u x=%u]",
                  queue_name[which],
                          stats->max, stats->recent, av_i, av_f, stats->count,
-                                      stats->xon, stats->event, stats->update) ;
+                                             stats->type[bgp_engine_log_event],
+                                             stats->type[bgp_engine_log_xon]) ;
 
   stats->recent = 0 ;
   stats->count  = 0 ;
   stats->total  = 0 ;
 
-  stats->event  = 0 ;
-  stats->update = 0 ;
-  stats->xon    = 0 ;
+  stats->type[bgp_engine_log_event] = 0 ;
+  stats->type[bgp_engine_log_xon]   = 0 ;
 } ;
 

@@ -21,7 +21,6 @@ Boston, MA 02111-1307, USA.  */
 #include <zebra.h>
 
 #include "command.h"
-#include "stream.h"
 #include "network.h"
 #include "prefix.h"
 #include "log.h"
@@ -49,23 +48,6 @@ Boston, MA 02111-1307, USA.  */
  */
 struct zclient *zclient = NULL;
 struct in_addr router_id_zebra;
-
-/*------------------------------------------------------------------------------
- * When a route is announced to zebra -- see bgp_zebra_announce() -- some
- * information is stored, so that it can be withdrawn as, and when required.
- */
-typedef struct route_zebra  route_zebra_t ;
-
-struct route_zebra
-{
-  safi_t      safi ;            /* iSAFI value  */
-  byte        flags ;
-
-  uint32_t    med ;
-
-  ip_union_t  next_hop ;
-  uint        ifindex;
-} ;
 
 /*------------------------------------------------------------------------------
  * Router-id update message from zebra.

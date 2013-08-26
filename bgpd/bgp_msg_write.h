@@ -133,8 +133,7 @@ extern void bgp_msg_write_keepalive(bgp_connection connection, bool must) ;
 
 extern uint bgp_msg_write_move_to_temp(bgp_msg_writer writer,
                                                            uint more_required) ;
-extern bool bgp_msg_write_complete(bgp_connection connection,
-                                                      bgp_notify notification) ;
+extern bool bgp_msg_write_complete(bgp_connection connection, bgp_note note) ;
 extern void bgp_msg_write_stop(bgp_msg_writer writer) ;
 extern bool bgp_msg_write_raw(bgp_msg_writer writer, qfile qf) ;
 

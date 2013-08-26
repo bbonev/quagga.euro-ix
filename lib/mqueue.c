@@ -156,14 +156,11 @@ mqueue_finish(void)
 /*------------------------------------------------------------------------------
  * Initialise new Message Queue, if required (mq == NULL) allocating it.
  *
- * For mqt_cond_xxx type queues, sets the default timeout interval and the
- * initial timeout time to now + that interval.
- *
  * NB: once any message queue has been initialised, it is TOO LATE to enable
  *     qpthreads.
  */
 extern mqueue_queue
-mqueue_init_new(mqueue_queue mq, mqueue_queue_type_t type, const char* name)
+mqueue_init_new(mqueue_queue mq, void* parent, const char* name)
 {
   if (mq == NULL)
     mq = XCALLOC(MTYPE_MQUEUE_QUEUE, sizeof(mqueue_queue_t)) ;
@@ -179,46 +176,31 @@ mqueue_init_new(mqueue_queue mq, mqueue_queue_type_t type, const char* name)
    *    tail            -- NULL
    *    count           -- 0
    *
-   *    type            -- X        -- set below
-   *
    *    revoking        -- false    -- not revoking !
    *
-   *    waiters         -- 0
-   *
-   *    kick.cond       -- X        -- set below, if required
-   *    kick.signal     -- all zero -- see below
+   *    do_signal       -- NULL     -- none
    */
-
   if (qpthreads_freeze())
     mq->mutex = qpt_mutex_new(qpt_mutex_quagga, qfs_gen("%s MQ", name).str) ;
 
-  mq->type = type ;
-  switch (type)
-    {
-      case mqt_cond_unicast:
-      case mqt_cond_broadcast:
-        qpt_cond_init_new(mq->kick.cond.wait_here, qpt_cond_quagga) ;
-
-        if (MQUEUE_DEFAULT_INTERVAL != 0)
-          {
-            mq->kick.cond.interval = MQUEUE_DEFAULT_INTERVAL ;
-            mq->kick.cond.timeout  = qt_get_monotonic()
-                                                     + MQUEUE_DEFAULT_INTERVAL ;
-          } ;
-        break;
-
-      case mqt_signal_unicast:
-      case mqt_signal_broadcast:
-        /* kick.signal.head ) set to NULL already
-         * kick.signal.tail )
-         */
-        break;
-
-      default:
-        zabort("Invalid mqueue queue type") ;
-    } ;
-
   return mq ;
+} ;
+
+
+/*------------------------------------------------------------------------------
+ * Set the signal function and data for the
+ */
+extern void
+mqueue_set_signal(mqueue_queue mq, mqueue_signal_func signal_func)
+{
+  if (mq != NULL)
+    {
+      MQUEUE_LOCK(mq) ;
+
+      mq->do_signal = signal_func ;
+
+      MQUEUE_UNLOCK(mq) ;
+    } ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -254,25 +236,7 @@ mqueue_reset(mqueue_queue mq, free_keep_b free_structure)
 
   mqueue_empty(mq) ;
 
-  passert(mq->waiters == 0) ;
-
   mq->mutex = qpt_mutex_destroy(mq->mutex) ;
-
-  switch (mq->type)
-    {
-      case mqt_cond_unicast:
-      case mqt_cond_broadcast:
-        qpt_cond_destroy(mq->kick.cond.wait_here, keep_it) ;
-        break;
-
-      case mqt_signal_unicast:
-      case mqt_signal_broadcast:
-        passert(mq->kick.signal.head == NULL) ;
-        break;
-
-      default:
-        zabort("Invalid mqueue queue type") ;
-    } ;
 
   if (free_structure)
     XFREE(MTYPE_MQUEUE_QUEUE, mq) ;     /* sets mq == NULL      */
@@ -328,28 +292,6 @@ mqueue_local_reset(mqueue_local_queue lmq, free_keep_b free_structure)
     memset(lmq, 0, sizeof(mqueue_local_queue_t)) ;
 
   return lmq ;
-} ;
-
-/*------------------------------------------------------------------------------
- * Set new timeout interval (or unset by setting <= 0)
- *
- * Sets the next timeout to be the time now + new interval (or never).
- *
- * This is a waste of time if !qpthreads_enabled, but does no harm.  The
- * timeout is ignored.
- */
-extern void
-mqueue_set_timeout_interval(mqueue_queue mq, qtime_t interval)
-{
-  MQUEUE_LOCK(mq) ;
-
-  qassert( (mq->type == mqt_cond_unicast) ||
-           (mq->type == mqt_cond_broadcast) ) ;
-
-  mq->kick.cond.interval = interval ;
-  mq->kick.cond.timeout  = (interval > 0) ? qt_add_monotonic(interval)
-                                          : 0 ;
-  MQUEUE_UNLOCK(mq) ;
 } ;
 
 /*==============================================================================
@@ -417,39 +359,20 @@ mqb_free(mqueue_block mqb)
  * Enqueue and dequeue messages.
  */
 
-static void mqueue_kick_signal(mqueue_queue mq, uint n) ;
-static void mqueue_dequeue_signal(mqueue_queue mq, mqueue_thread_signal mtsig) ;
 static mqueue_block mqb_revoke_this(mqueue_block this, mqueue_queue mq,
                                                             mqueue_block prev) ;
 
 /*------------------------------------------------------------------------------
  * Enqueue message.
  *
- * If priority, will enqueue after any previously enqueued priority
- * messages.  (See enum: mqb_priority and mqb_ordinary.)
- *
- * If there are any waiters, then we kick one or all of them.
- *
- * Note that we decrement or zero the waiters count here -- because if the
- * waiter did it, they might not run before something else is enqueued.
- * Similarly, if the kick uses a signal, the signal block is dequeued here.
- *
- * The waiter count is only incremented when a dequeue is attempted and the
- * queue is empty, then:
- *
- *   for a broadcast type message queue, the first message that arrives will
- *   kick all the waiters into action.
- *
- *   for a signal type message queue, each message that arrives will kick one
- *   waiter.
+ * If priority, will enqueue after any previously enqueued priority messages.
  *
  * When queues message, sets mqb->state == mqb_s_queued.
  *
- * If mq is NULL, the message is not queued but is immediately destroyed.  The
+ * If mq is NULL, the message is not queued but is immediately destroyed.
  *
- *
- * NB: this works perfectly well if !qpthreads enabled.  Of course, there can
- *     never be any waiters... so no kicking is ever done.
+ * If the queue is empty when adding a new item, will invoke the 'do_signal',
+ * if any -- while HOLDING the message queue lock.
  */
 extern void
 mqueue_enqueue(mqueue_queue mq, mqueue_block mqb, mqb_rank_b priority)
@@ -467,80 +390,64 @@ mqueue_enqueue(mqueue_queue mq, mqueue_block mqb, mqb_rank_b priority)
       return mqb_dispatch_destroy(mqb) ;
     } ;
 
-  MQUEUE_LOCK(mq) ;
-
-  if (mq->head == NULL)
-    {
-      assert(mq->count == 0) ;
-      mqb->next = NULL ;
-      mq->head  = mqb ;
-      mq->tail_priority = priority ? mqb : NULL ;
-      mq->tail  = mqb ;
-    }
-  else
-    {
-      assert(mq->count > 0) ;
-      if (priority)
-      {
-        mqueue_block after = mq->tail_priority ;
-        if (after == NULL)
-          {
-            mqb->next = mq->head ;
-            mq->head  = mqb ;
-            /* mq non-empty, enchain at head, therefore tail unaffected */
-          }
-        else
-          {
-            mqb->next   = after->next ;
-            after->next = mqb ;
-            /* if only have priority messages then fix tail */
-            if (mq->tail == after)
-              mq->tail = mqb;
-          }
-        mq->tail_priority = mqb ;
-      }
-    else
-      {
-        qassert(mq->tail != NULL) ;
-        mqb->next = NULL ;
-        mq->tail->next = mqb ;
-        mq->tail = mqb ;
-      } ;
-    } ;
-
   mqb->state = mqb_s_queued ;
+
+  MQUEUE_LOCK(mq) ;
 
   ++mq->count ;
 
-  if (mq->waiters != 0)
+  if (mq->head == NULL)
     {
-      qassert(qpthreads_enabled) ;  /* waiters == 0 if !qpthreads_enabled */
+      qassert(mq->count == 1) ;
 
-      switch (mq->type)
-      {
-        case mqt_cond_unicast:
-          qpt_cond_signal(mq->kick.cond.wait_here) ;
-          mq->waiters -= 1 ;
-          break ;
+      mqb->next         = NULL ;
+      mq->head          = mqb ;
+      mq->tail_priority = priority ? mqb : NULL ;
+      mq->tail          = mqb ;
 
-        case mqt_cond_broadcast:
-          qpt_cond_broadcast(mq->kick.cond.wait_here) ;
-          mq->waiters = 0 ;
-          break ;
+      if (mq->do_signal != NULL)
+        mq->do_signal(mq) ;
+    }
+  else
+    {
+      qassert(mq->count > 1) ;
 
-        case mqt_signal_unicast:
-          mqueue_kick_signal(mq, 1) ; /* pick off first and kick it (MUST be  */
-                                      /* one) and decrement the waiters count */
-          break ;
+      if (priority)
+        {
+          /* Adding as a priority item, after any other priority items.
+           */
+          mqueue_block after ;
 
-        case mqt_signal_broadcast:
-          mqueue_kick_signal(mq, mq->waiters) ;
-          qassert(mq->kick.signal.head == NULL) ;
-          break;
+          after = mq->tail_priority ;
+          if (after == NULL)
+            {
+              /* Is first priority item, and queue is not empty.
+               */
+              mqb->next = mq->head ;
+              mq->head  = mqb ;
+            }
+          else
+            {
+              /* Is second or subsequent priority item.
+               */
+              mqb->next   = after->next ;
+              after->next = mqb ;
 
-        default:
-          zabort("Invalid mqueue queue type") ;
-      } ;
+              if (mq->tail == after)
+                mq->tail = mqb;
+            } ;
+
+          mq->tail_priority = mqb ;
+        }
+      else
+        {
+          /* Adding at the end of the queue.
+           */
+          qassert(mq->tail != NULL) ;
+          mqb->next      = NULL ;
+          mq->tail->next = mqb ;
+          mq->tail       = mqb ;
+        } ;
     } ;
 
   MQUEUE_UNLOCK(mq) ;
@@ -549,27 +456,6 @@ mqueue_enqueue(mqueue_queue mq, mqueue_block mqb, mqb_rank_b priority)
 /*------------------------------------------------------------------------------
  * Dequeue message.
  *
- * If the queue is empty and wait (and qpthreads_enabled), will wait for a
- * message.  In which case for:
- *
- *   * mqt_cond_xxxx type message queues, will wait on the condition variable,
- *     and may timeout.
- *
- *     If p_timeout_time is NULL, uses the already set up timeout, if there
- *     is one.
- *
- *     If p_timeout_time is not NULL, it is a pointer to a qtime_mono_t time,
- *     to be used as the new timeout time.
- *
- *   * mqt_signal_xxxx type message queues, do nothing -- caller must arrange
- *     for mqueue_set_signal() some time later.
- *
- * NB: if !qpthreads_enabled, will not wait on the queue.  No how.
- *
- *     Note this means that waiters == 0 all the time if !qpthreads_enabled !
- *
- * NB: the argument is ignored if !wait or !qpthreads_enabled, so may be NULL.
- *
  * Returns a message block if one is available.  (And not otherwise.)
  *
  * When dequeues message, sets mqb->state == mqb_s_undef.
@@ -577,7 +463,7 @@ mqueue_enqueue(mqueue_queue mq, mqueue_block mqb, mqb_rank_b priority)
  * NB: if mq is NULL, returns NULL -- nothing available
  */
 extern mqueue_block
-mqueue_dequeue(mqueue_queue mq, bool wait, qtime_mono_t* p_timeout_time)
+mqueue_dequeue(mqueue_queue mq)
 {
   mqueue_block mqb ;
 
@@ -586,148 +472,29 @@ mqueue_dequeue(mqueue_queue mq, bool wait, qtime_mono_t* p_timeout_time)
 
   MQUEUE_LOCK(mq) ;
 
-  while (1)
+  mqb = mq->head ;
+  if (mqb != NULL)
     {
-      mqb = mq->head ;
-      if (mqb != NULL)
-        break ;                   /* Easy if queue not empty              */
+      /* Have something to pull off the queue
+       */
+      qassert(mq->count > 0) ;
+      --mq->count ;
 
-      assert(mq->count == 0) ;
+      mq->head   = mqb->next ;
+      mqb->state = mqb_s_undef ;
 
-      if (!wait || !qpthreads_enabled)
-        goto done ;               /* Easy if not waiting !  mqb == NULL   */
-                                  /* Short circuit if !qpthreads_enabled  */
+      /* fix tails if at either or both
+       */
+      if (mqb == mq->tail)
+        mq->tail = NULL ;
 
-      switch (mq->type)
-        {
-          case mqt_cond_unicast:        /* Now wait here                */
-          case mqt_cond_broadcast:
-            mq->waiters += 1 ;          /* Another waiter               */
-
-            if ((p_timeout_time == NULL) && (mq->kick.cond.interval <= 0))
-              qpt_cond_wait(mq->kick.cond.wait_here, mq->mutex) ;
-            else
-              {
-                qtime_mono_t tt ;
-
-                tt = (p_timeout_time != NULL) ? *p_timeout_time
-                                              : mq->kick.cond.timeout ;
-
-                if (!qpt_cond_timedwait(mq->kick.cond.wait_here, mq->mutex, tt))
-                  {
-                    /* Timed out -- update timeout time, if required
-                     */
-                    if (mq->kick.cond.interval > 0)
-                      {
-                        qtime_mono_t now = qt_get_monotonic() ;
-                        tt = mq->kick.cond.timeout + mq->kick.cond.interval ;
-                        if (tt < now)
-                          tt = now + mq->kick.cond.interval ;
-
-                        mq->kick.cond.timeout = tt ;
-                      } ;
-
-                      goto done ;       /* immediate return.  mqb == NULL */
-                  } ;
-              } ;
-            break ;
-
-          case mqt_signal_unicast:      /* do nothing, here             */
-          case mqt_signal_broadcast:
-            goto done ;                 /* mqb == NULL                  */
-
-          default:
-            zabort("Invalid mqueue queue type") ;
-        } ;
+      if (mqb == mq->tail_priority)
+        mq->tail_priority = NULL ;
     } ;
 
-  /* Have something to pull off the queue
-   */
-  assert(mq->count > 0) ;
-  --mq->count ;
-
-  mq->head = mqb->next ;
-
-  mqb->state = mqb_s_undef ;
-
-  /* fix tails if at either or both
-   */
-  if (mqb == mq->tail)
-    mq->tail = NULL ;
-  if (mqb == mq->tail_priority)
-    mq->tail_priority = NULL ;
-
-done:
   MQUEUE_UNLOCK(mq) ;
 
   return mqb ;
-} ;
-
-/*------------------------------------------------------------------------------
- * Prepare for waiting on timer, by setting the required signal trap(s).
- *
- * If the queue is not empty (and qpthreads_enabled), will prepare for signal
- * to wake up the current thread, iff this is an mqt_signal_xxxx type message
- * queue.
- *
- * NB: if !qpthreads_enabled, will not wait on the queue.  No how.
- *
- *     Note this means that waiters == 0 all the time if !qpthreads_enabled !
- *
- * Returns:  true <=> have set the required signal trap.
- *                 => nothing in the queue, is qpthreads_enabled and...
- *                          ...the queue is mqt_signal_unicast/_broadcast.
- */
-extern bool
-mqueue_set_signal(mqueue_queue mq, mqueue_thread_signal mtsig)
-{
-  bool  set ;
-
-  if (mq == NULL)
-    return false ;
-
-  MQUEUE_LOCK(mq) ;
-
-  set = false ;
-
-  if ((mq->head == NULL) && qpthreads_enabled)
-    {
-      switch (mq->type)
-        {
-          case mqt_signal_unicast:      /* Register desire for signal   */
-          case mqt_signal_broadcast:
-            qassert(mtsig != NULL) ;
-
-            mq->waiters += 1 ;          /* Another waiter               */
-
-            if (mq->kick.signal.head == NULL)
-              {
-                mq->kick.signal.head = mtsig ;
-                mtsig->prev = (void*)mq ;
-              }
-            else
-              {
-                mqueue_thread_signal last ;
-
-                last = mq->kick.signal.tail ;
-                last->next  = mtsig ;
-                mtsig->prev = last ;
-              } ;
-
-            mtsig->next = NULL ;
-            mq->kick.signal.tail = mtsig ;
-
-            set = true ;
-            break ;
-
-          default:
-            break ;
-        } ;
-    } ;
-
-  MQUEUE_UNLOCK(mq) ;
-
-  return set ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -765,7 +532,7 @@ mqueue_set_signal(mqueue_queue mq, mqueue_thread_signal mtsig)
  *
  * Returns: number of messages revoked.
  */
-extern int
+extern uint
 mqueue_revoke(mqueue_queue mq, void* arg0, uint num)
 {
   mqueue_block mqb ;
@@ -932,42 +699,6 @@ mqb_revoke_this(mqueue_block this, mqueue_queue mq, mqueue_block prev)
   return next ;
 } ;
 
-/*------------------------------------------------------------------------------
- * No longer waiting for a signal  -- does nothing if !qpthreads_enabled.
- *
- * Returns true <=> signal has been kicked
- *
- * (Signal will never be kicked if !qpthreads_enabled.)
- */
-extern int
-mqueue_done_waiting(mqueue_queue mq, mqueue_thread_signal mtsig)
-{
-  int kicked ;
-
-  if (!qpthreads_enabled)
-    return 0 ;
-
-  MQUEUE_LOCK(mq) ;
-
-  qassert( (mq->type == mqt_signal_unicast) ||
-           (mq->type == mqt_signal_broadcast) ) ;
-  qassert(mtsig != NULL) ;
-
-  /* When the thread is signalled, the prev entry is set NULL and the   */
-  /* waiters count is decremented.                                      */
-  /*                                                                    */
-  /* So, only need to do something here if the prev is not NULL (ie the */
-  /* mqueue_thread_signal is still on the list.                         */
-
-  kicked = (mtsig->prev == NULL) ;
-
-  if (!kicked)
-    mqueue_dequeue_signal(mq, mtsig) ;
-
-  MQUEUE_UNLOCK(mq) ;
-
-  return kicked ;
-} ;
 
 /*------------------------------------------------------------------------------
  * Enqueue message on local queue -- at tail
@@ -1010,120 +741,3 @@ mqueue_local_dequeue(mqueue_local_queue lmq)
   return mqb ;
 } ;
 
-/*==============================================================================
- * Message queue signal handling
- */
-
-/*------------------------------------------------------------------------------
- * Initialise a message queue signal structure (struct mqueue_thread_signal).
- * Allocate one if required.
- *
- * If !pthreads_enabled, then this structure is entirely redundant, but there
- * is no harm in creating it -- but the signal will never be used.
- *
- * Returns address of the structure.
- */
-extern mqueue_thread_signal
-mqueue_thread_signal_init(mqueue_thread_signal mqt, qpt_thread qpth, int signum)
-{
-  if (mqt == NULL)
-    mqt = XCALLOC(MTYPE_MQUEUE_THREAD_SIGNAL,
-                   sizeof(struct mqueue_thread_signal)) ;
-  else
-    memset(mqt, 0, sizeof(struct mqueue_thread_signal)) ;
-
-  /* next and prev fields set to NULL already.  */
-
-  mqt->qpth   = qpth ;
-  mqt->signum = signum ;
-
-  return mqt ;
-} ;
-
-/*------------------------------------------------------------------------------
- * Reset a message queue signal structure and release if required.
- *
- * NB: MUST NOT be queued as a waiter anywhere !!
- *
- * Frees the structure if required, and returns NULL.
- * Otherwise zeroises the structure, and returns address of same.
- */
-extern mqueue_thread_signal
-mqueue_thread_signal_reset(mqueue_thread_signal mqt, free_keep_b free_structure)
-{
-  if (mqt == NULL)
-    return NULL ;
-
-  passert(mqt->prev == NULL) ;
-
-  if (free_structure)
-    XFREE(MTYPE_MQUEUE_THREAD_SIGNAL, mqt) ;    /* sets mqt = NULL      */
-  else
-    memset(mqt, 0, sizeof(struct mqueue_thread_signal)) ;
-
-  return mqt ;
-} ;
-
-/*------------------------------------------------------------------------------
- * Signal the first 'n' threads on the to be signalled list.
- *
- * Removes the threads from the list and reduces the waiters count.
- *
- * NB: must be qpthreads_enabled with at least 'n' waiters.
- *
- * NB: sets the prev entry in the mqueue_thread_signal block to NULL, so that
- *     the thread can tell that its signal has been kicked.
- *
- * NB: *** MUST own the mqueue_queue mutex. ***
- */
-static void
-mqueue_kick_signal(mqueue_queue mq, unsigned n)
-{
-  mqueue_thread_signal mtsig ;
-
-  qassert( (qpthreads_enabled) && (mq->waiters >= n) ) ;
-  while (n--)
-    {
-      mqueue_dequeue_signal(mq, mtsig = mq->kick.signal.head) ;
-      qpt_thread_raise(mtsig->qpth, mtsig->signum) ;
-    } ;
-} ;
-
-/*------------------------------------------------------------------------------
- * Remove given signal from given message queue.
- *
- * NB: sets the prev entry in the mqueue_thread_signal block to NULL, so that
- *     the thread can tell that its signal has been kicked.
- *
- * NB: *** MUST own the mqueue_queue mutex. ***
- */
-static void
-mqueue_dequeue_signal(mqueue_queue mq, mqueue_thread_signal mtsig)
-{
-  mqueue_thread_signal next ;
-  mqueue_thread_signal prev ;
-
-  next = mtsig->next ;
-  prev = mtsig->prev ;
-
-  if (prev == (void*)mq)    /* marker for head of list      */
-    {
-      qassert(mq->kick.signal.head == mtsig) ;
-      mq->kick.signal.head = next ;
-    }
-  else
-    {
-      qassert((prev != NULL) && (prev->next == mtsig)) ;
-      prev->next = next ;
-    } ;
-
-  if (next != NULL)
-    next->prev = prev ;
-
-  mtsig->next = NULL ;
-  mtsig->prev = NULL ;          /* essential to show signal kicked      */
-  mq->waiters -= 1;             /* one fewer waiter                     */
-
-  qassert( ((mq->kick.signal.head == NULL) && (mq->waiters == 0)) ||
-           ((mq->kick.signal.head != NULL) && (mq->waiters != 0)) ) ;
-} ;

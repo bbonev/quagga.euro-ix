@@ -29,7 +29,6 @@
 #include "vector.h"
 
 #include "log.h"
-#include "stream.h"
 
 #include "bgpd/bgp.h"
 #include "bgpd/bgp_aspath.h"
@@ -270,7 +269,9 @@ static const qlump_type_t asn_set_body_qt[1] =
  * Creates and uses this stream structure in as_path_snmp_pathseg().
  * Frees it in as_path_finish().
  */
+#if 0
 struct stream* snmp_stream = NULL ;
+#endif
 
 /*==============================================================================
  * The stored as_path functions.
@@ -318,7 +319,9 @@ as_path_start(void)
 extern void
 as_path_finish(void)
 {
+#if 0
   snmp_stream = stream_free(snmp_stream) ;
+#endif
 
   as_path_empty_asp = vhash_unset_delete(as_path_empty_asp, as_path_vhash) ;
 
@@ -2057,7 +2060,7 @@ extern as_path
 as_path_reconcile_as4 (as_path asp2, as_path asp4)
 {
   as_path  dst ;
-  uint     len ;
+  uint     len = 0 ;                    /* stop compiler whingeing      */
 
   /* If the as2 path has any confed part *after* any simple stuff, fixup up the
    * path so that all confed precedes all simple.
@@ -5183,9 +5186,9 @@ asn_set_from_str(const char* str)
 }
 
 /*==============================================================================
- * Support for snmp.
+ * Support for snmp -- TODO
  */
-
+#if 0
 /*------------------------------------------------------------------------------
  * This is for SNMP BGP4PATHATTRASPATHSEGMENT
  * Creates a new as_path if src is "stored", otherwise operates on the current
@@ -5221,6 +5224,8 @@ as_path_snmp_pathseg (as_path asp, size_t* p_size)
 
   return stream_get_pnt(snmp_stream);
 } ;
+
+#endif
 
 /*==============================================================================
  * Interfaces for test purposes only.

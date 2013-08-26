@@ -25,7 +25,7 @@ Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
 #include "prefix_id.h"
 #include "vty.h"
 #include "qfstring.h"
-#include "stream.h"
+#include "ring_buffer.h"
 
 #include "bgpd/bgp_common.h"
 #include "bgpd/bgp_attr.h"
@@ -76,9 +76,11 @@ struct mpls_rd
 };
 
 
-/* Fixed length string structure for Route Distinguisher in string form.
+/* Fixed length string structure for Route Distinguisher in string form and
+ * for tag stack, ditto.
  */
 QFB_T(40) str_rdtoa_t ;
+QFB_T( 9) str_tgtoa_t ;         /* 1 tag deep ! */
 
 /*------------------------------------------------------------------------------
  *
@@ -87,7 +89,7 @@ extern uint mpls_tags_scan(const byte* pnt, uint len) ;
 extern mpls_tags_t mpls_tags_decode(const byte* pnt, uint len) ;
 extern mpls_tags_t str2tag (const char* str) ;
 extern uint mpls_tags_encode(byte* pnt, uint len, mpls_tags_t tags) ;
-extern uint mpls_tags_to_stream(stream s, mpls_tags_t tags) ;
+extern uint mpls_tags_blow(blower br, mpls_tags_t tags) ;
 extern uint mpls_tags_length(mpls_tags_t tags) ;
 
 extern mpls_label_t mpls_label_decode (const byte* pnt) ;
@@ -105,5 +107,6 @@ extern int bgp_nlri_parse_vpnv4 (bgp_peer peer, attr_set attr, bgp_nlri nlri);
 extern bool str2prefix_rd (prefix_rd prd, const char* str);
 extern bool str2prefix_rd_vty (vty vty, prefix_rd prd, const char* str);
 extern str_rdtoa_t srdtoa(prefix_rd_c prd) ;
+extern str_tgtoa_t stgtoa(mpls_tags_t tags) ;
 
 #endif /* _QUAGGA_BGP_MPLSVPN_H */

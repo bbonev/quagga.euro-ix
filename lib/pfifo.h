@@ -136,6 +136,7 @@ extern pfifo_index_t pfifo_item_move(pfifo pf, pfifo_item item, pfifo_index_t i,
 
 extern pfifo_item pfifo_item_head(pfifo pf) ;
 extern pfifo_item pfifo_item_next(pfifo pf) ;
+extern pfifo_item pfifo_item_next_ex(pfifo pf) ;
 
 extern pfifo_item pfifo_take(pfifo pf, pfifo_period_t p, bool set) ;
 extern pfifo_item pfifo_flush(pfifo pf) ;

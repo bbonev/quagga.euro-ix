@@ -127,6 +127,6 @@ extern uint term_bgp_debug_zebra;
 
 extern qstring bgp_dump_attr (bgp_peer peer, attr_set attr,
                       attr_next_hop_t* next_hop, attr_next_hop_t* mp_next_hop) ;
-extern void bgp_notify_print (bgp_peer peer, bgp_notify notification);
+extern void bgp_notify_print (bgp_peer peer, bgp_note note);
 
 #endif /* _QUAGGA_BGP_DEBUG_H */

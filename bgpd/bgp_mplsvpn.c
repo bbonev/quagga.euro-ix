@@ -23,10 +23,12 @@ Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
 #include "command.h"
 #include "log.h"
 #include "memory.h"
-#include "stream.h"
+#include "ring_buffer.h"
 
 #include "bgpd/bgpd.h"
 #include "bgpd/bgp_peer.h"
+#include "bgpd/bgp_session.h"
+#include "bgpd/bgp_connection.h"
 #include "bgpd/bgp_table.h"
 #include "bgpd/bgp_route.h"
 #include "bgpd/bgp_attr.h"
@@ -62,8 +64,6 @@ mpls_tags_scan(const byte* pnt, uint len)
 
 /*------------------------------------------------------------------------------
  * From tag stack -- in Network Order -- extract opaque mpls_tags_t
- *
- *
  *
  * Only supports a single entry stack.
  *
@@ -144,6 +144,8 @@ mpls_tags_encode(byte* pnt, uint len, mpls_tags_t tags)
   if (len < 3)
     return 0 ;
 
+  qassert(mpls_tags_null == (uint)MPLS_LABEL_NULL_IPV4) ;
+
   pnt[0] = (tags >> 16) & 0xFF ;
   pnt[1] = (tags >>  8) & 0xFF ;
   pnt[2] = (tags | MPLS_LABEL_BOS) & 0xFF ;
@@ -160,18 +162,10 @@ mpls_tags_encode(byte* pnt, uint len, mpls_tags_t tags)
  * Returns:  number of bytes written
  */
 extern uint
-mpls_tags_to_stream(stream s, mpls_tags_t tags)
+mpls_tags_blow(blower br, mpls_tags_t tags)
 {
-  byte  buf[3] ;
-  uint  len ;
-
-  confirm(sizeof(buf) == 3) ;
-  len = mpls_tags_encode(buf, sizeof(buf), tags) ;
-
-  stream_put(s, buf, len) ;
-
-  return len ;
-}
+  return mpls_tags_encode(blow_step(br, 3), 3, tags) ;
+} ;
 
 /*------------------------------------------------------------------------------
  * Number of bytes required to encode the given tag stack.
@@ -363,6 +357,9 @@ str2prefix_rd_vty (vty vty, prefix_rd prd, const char *str)
   return false ;
 } ;
 
+/*------------------------------------------------------------------------------
+ * Construct Route Distinguisher String.
+ */
 extern str_rdtoa_t
 srdtoa(prefix_rd_c prd)
 {
@@ -386,13 +383,36 @@ srdtoa(prefix_rd_c prd)
         break ;
 
       default:
-        qfs_put_str(qfs, "???") ;
+        qfs_put_str(qfs, "0x") ;
+        qfs_put_n_hex(qfs, prd->val, 8, pf_uc) ;
         break ;
     } ;
 
   qfs_term(qfs) ;
   return pfa;
 } ;
+
+/*------------------------------------------------------------------------------
+ * Construct Tag Stack String.
+ *
+ * Only supports a single entry stack -- so whatever the mpls_tags_t value is,
+ * that is it.
+ */
+extern str_tgtoa_t
+stgtoa(mpls_tags_t tags)
+{
+  str_tgtoa_t QFB_QFS(pfa, qfs) ;
+
+  qfs_put_str(qfs, "0x") ;
+  qfs_put_unsigned(qfs, tags, pf_hex_X | pf_zeros, 6, 0) ;
+
+  qfs_term(qfs) ;
+  return pfa;
+} ;
+
+/*==============================================================================
+ * MPLS CLI stuff.
+ */
 
 /* For testing purpose, static route of MPLS-VPN. */
 DEFUN (vpnv4_network,
@@ -613,9 +633,9 @@ bgp_show_mpls_vpn (vty vty, const char* rd_str, enum bgp_show_type type,
             {
               sockunion su ;
 
-              su = ri->prib->peer->session->cops->su_remote ;
+              su = &ri->prib->peer->session->cops->su_remote ;
 
-              if ((su == NULL) || ! sockunion_same(su, (sockunion)output_arg))
+              if (!sockunion_same(su, (sockunion)output_arg))
                 continue;
             } ;
 

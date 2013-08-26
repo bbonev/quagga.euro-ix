@@ -301,10 +301,11 @@ CONFIRM(sizeof(((route_mpls)0)->bits) == sizeof(((adj_out)0)->bits)) ;
  * When a withdraw is pending, the attr pointer is NULL, and the route_flux
  * object will live on the rf_act_withdraw fifo.
  *
- * When the route has been announced, the attr pointer is NULL, or points to
- * the attribute set last announced either directly or via a route_mpls.  The
- * route_flux object will live on the ra_out_cool fifo, until the cooling
- * time expires.
+ * When the route has been announced, 'current' points to the attribute set
+ * announced either directly or via a route_mpls.  When a route has been
+ * withdrawn, 'current' is NULL.  The route_flux object will live on the
+ * ra_out_cool fifo, until the cooling time expires (or something else exciting
+ * happens).
  */
 typedef struct route_flux  route_flux_t ;
 
@@ -340,11 +341,11 @@ CONFIRM(sizeof(((route_flux)0)->bits) == sizeof(((adj_out)0)->bits)) ;
  * To do that, the peer_rib contains a vhash table for attributes.  The hash
  * table points at attr_flux objects.
  *
- * Each attr_flux object has a fifo, on which all related 'route_flux' items are
- * hung.  Where the attr_flux object has a not-empty fifo, it will live on
+ * Each attr_flux object has a fifo, on which all related 'route_flux' items
+ * are hung.  Where the attr_flux object has a not-empty fifo, it will live on
  * the adj_out's fifo[rf_act_announce].
  *
- * NB: the
+ * NB: the attr_flux
  */
 typedef struct attr_flux  attr_flux_t ;
 typedef const struct attr_flux* attr_flux_c ;
@@ -357,14 +358,14 @@ struct attr_flux
 
   /* The attributes in question.
    *
-   * NB: this pointer "owns" a lock on the stored attribute set.
+   * NB: this pointer does *not* own a lock on the stored attribute set.
    *
-   *     Pointers to the bgp_adv_attr own a lock on the vhash node.  They do
-   *     not have their own lock on the attributes.
+   *     Each route_flux which sits on the 'fifo' is the owner of its own lock
+   *     on the attributes.
    *
    * NB: the attributes here are the attributes *after* any 'out' route-map.
    */
-  attr_set attr ;
+  attr_set      attr ;
 
   /* When the 'fifo' is not empty, this sits on the adj_out
    */
@@ -390,39 +391,22 @@ extern void bgp_adj_out_init(peer_rib prib) ;
 extern void bgp_adj_out_discard(peer_rib prib) ;
 extern void bgp_adj_out_set_stale(peer_rib prib, uint delay) ;
 
-extern void bgp_adj_out_update (peer_rib prib, prefix_id_entry pie,
-                                            attr_set attr, mpls_tags_t tag) ;
+extern void bgp_adj_out_update(peer_rib prib, prefix_id_entry pie,
+                                               attr_set attr, mpls_tags_t tag) ;
 extern void bgp_adj_out_eor(peer_rib prib) ;
 
-Inline bool bgp_adj_out_have_withdraw(peer_rib prib) ;
-Inline bool bgp_adj_out_have_announce(peer_rib prib) ;
-
+extern void bgp_adj_out_start_updates(peer_rib prib) ;
 extern route_out_parcel bgp_adj_out_next_withdraw(peer_rib prib,
                                                       route_out_parcel parcel) ;
+extern route_out_parcel bgp_adj_out_next_update(peer_rib prib,
+                                                      route_out_parcel parcel) ;
+
 extern route_out_parcel bgp_adj_out_done_withdraw(peer_rib prib,
                                                       route_out_parcel parcel) ;
-extern route_out_parcel bgp_adj_out_first_announce(peer_rib prib,
+extern route_out_parcel bgp_adj_out_done_announce(peer_rib prib,
                                                       route_out_parcel parcel) ;
-extern route_out_parcel bgp_adj_out_next_announce(peer_rib prib,
+extern route_out_parcel bgp_adj_out_done_eor(peer_rib prib) ;
+extern route_out_parcel bgp_adj_out_done_no_announce(peer_rib prib,
                                                       route_out_parcel parcel) ;
-extern void bgp_adj_out_done_announce(peer_rib prib, route_out_parcel parcel) ;
-
-/*------------------------------------------------------------------------------
- *
- */
-Inline bool
-bgp_adj_out_have_withdraw(peer_rib prib)
-{
-  return (prib->withdraw_queue.head != NULL) ;
-}
-
-/*------------------------------------------------------------------------------
- *
- */
-Inline bool
-bgp_adj_out_have_announce(peer_rib prib)
-{
-  return (prib->withdraw_queue.head != NULL) ;
-}
 
 #endif /* _QUAGGA_BGP_ADJ_OUT_H */

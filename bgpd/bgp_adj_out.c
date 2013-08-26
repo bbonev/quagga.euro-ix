@@ -233,7 +233,7 @@ bgp_adj_out_init(peer_rib prib)
    */
   prib->dispatch_delay = 0 ;
   prib->dispatch_time  = PFIFO_PERIOD_MAX ;
-  prib->dispatch_qtr   = qtimer_init_new(NULL, routing_nexus->pile,
+  prib->dispatch_qtr   = qtimer_init_new(NULL, re_nexus->pile,
                                                    bgp_adj_out_dispatch, prib) ;
 } ;
 
@@ -332,7 +332,6 @@ bgp_adj_out_set_stale(peer_rib prib, uint delay)
   /* Walk the prib->adj_out, discarding any withdrawn entries, and converting
    * everything else to 'stale'.
    */
-
   ihash_walk_start(prib->adj_out, walk) ;
 
   while ((ao = ihash_walk_next(walk, &ao)) != NULL)
@@ -388,29 +387,48 @@ bgp_adj_out_set_now(peer_rib prib)
 /*==============================================================================
  * The adj_out spaghetti.
  *
- *   adj_out                                     attr_set
- *   *-->+->------------>+---+->------------>+-->+---------+
- *       |               ^   |               ^   |         |
- *       |  route_flux   |   |  route_mpls   |   .         .
- *       +->+---------+  |   +->+---------+  |   |         |
- *          | current-|->+   |  | atp-----|->+   +---------+
- *          .         .      |  |         |
- *          | pending-|->+   |  +---------+
- *          .         .  |   |
- *          +---------+  |   *->NULL
- *                       |                                       attr_set
- *                       +->------------>+---+->------------>+-->+---------+
- *                       |               |   |               ^   |         |
- *                       |  route_mpls   |   |  attr_flux    |   .         .
- *                       +->+---------+  |   +->+---------+  |   |         |
- *                       |  | atp-----|->+   |  | attr----|->+   +---------+
- *                       |  |         |      |  |         |
- *                       |  +---------+      |  +---------+
- *                       |                   |
- *                       *->NULL             *->NULL
+ *                       *->NULL
+ *   adj_out             |                       attr_set
+ *   *-->+->------------>+->+->------------>+->+---------+
+ *       |               ^  |               ^  .         .
+ *       |  route_flux   |  |  route_mpls   |  .         .
+ *       +->+---------+  |  +->+---------+  |  +---------+
+ *          | current-|->+     | atp-----|->+
+ *          .         .        .         .
+ *          .         .        +---------+
+ *          .         .
+ *     ...->|--list---|->... list of route_flux when hung from attr_flux
+ *          .         .
+ *          .         .                  *->NULL
+ *          .         .                  |                       attr_set
+ *          | pending-|->+->------------>+->+->------------>+->+---------+
+ *          +---------+  |               |  |               ^  .         .
+ *                       |  route_mpls   |  |  attr_flux    |  .         .
+ *                       +->+---------+  |  +->+---------+  |  +---------+
+ *                          | atp-----|->+     | attr----|->+
+ *                          .         .        .         .
+ *                          +---------+        | fifo----|-> list of route_flux
+ *                                             +---------+
  *
  * Note that adj_out and rf->current are NULL for withdrawn (or never announced)
  * for ordinary and MPLS prefixes.
+ *
+ * In steady-state, the adj_out points at the attr_set, and owns a lock.  Or
+ * points at the route_mpls, which points at the attr_set, and owns a lock.
+ * Note that in steady state the route_mpls atp pointer is never NULL.
+ *
+ * When a route_flux is created, the adj_out attributes or route_mpls pointer
+ * is copied to 'current', retaining the lock, to be replaced by the pointer
+ * to the route_flux.
+ *
+ * When there is a new pending update, the 'pending' pointer points at an
+ * attr_set, and owns a lock.  Or points at a route_mpls, which points at the
+ * attr_set and owns a lock.
+ *
+ * When marshalling updates for the same attributes together, an attr_flux
+ * object is created.  The pointer to the attributes moves from 'pending'
+ * or 'atp', into the route_flux.  NB: 'pending' or 'atp' *retain* their
+ *
  *
  * Note that where we have a pending withdraw we may have:
  *
@@ -1200,8 +1218,6 @@ bgp_adj_out_update_again(peer_rib prib, route_flux rf, attr_set attr,
    *
    *     ie. this update changes the pending state of the prefix
    *
-   * In both cases any currently pending state must be cleared.
-   *
    * Set up: mpls = address of route_mpls, if there is one -- for pending
    *
    *                Note that if is MPLS, but pending is withdraw or nothing,
@@ -1850,6 +1866,11 @@ bgp_adj_out_change_announce(peer_rib prib, route_flux rf, attr_flux af,
   else
     bgp_adj_out_add_announce(prib, rf, st, p_ap) ;
 } ;
+
+
+
+
+
 
 /*==============================================================================
  * MRAI pfifo handling.
@@ -2664,42 +2685,78 @@ bgp_adj_out_dispatch_queue(peer_rib prib, route_flux rf_next, pfifo pf)
  * announce_queue and rescheduling for MRAI.
  *
  */
+static route_out_parcel bgp_adj_out_ret_withdraw(peer_rib prib,
+                                       route_out_parcel parcel, route_flux rf) ;
+static route_out_parcel bgp_adj_out_ret_announce(peer_rib prib,
+                         route_out_parcel parcel, attr_flux af, route_flux rf) ;
+static route_out_parcel bgp_adj_out_ret_eor(peer_rib prib,
+                                                      route_out_parcel parcel) ;
+static route_out_parcel bgp_adj_out_ret_next_announce(peer_rib prib,
+                                        route_out_parcel parcel, attr_flux af) ;
+
+
+static route_out_parcel bgp_adj_out_announce_dequeue(peer_rib prib,
+                                                                 attr_flux af) ;
 
 /*------------------------------------------------------------------------------
- * Get next prefix to withdraw and signal update sent for the previous prefix.
+ * Update the announce_queue scheduling, to collect anything to now announce.
+ *
+ * So, when ready to do an announcement "run", get things ready for that.
  *
  * The expected use is:
  *
- *    parcel = bgp_adj_out_next_withdraw(prib, &parcel_s) ;
- *
- *    while (parcel != NULL)
+ *    bgp_adj_out_start_updates(prib) ;
+ *    while (1)
  *      {
- *        ... output withdraw update.
- *        ... break out of loop if cannot output
+ *        parcel = bgp_adj_out_next_update(prib, &parcel_s) ;
+ *        if (parcel == NULL)
+ *          break ;
  *
- *        parcel = bgp_adj_out_done_withdraw(prib, &parcel_s)
+ *          ... prepare withdraw/announce update or EoR.
+ *          ... break out of loop if cannot output
+ *
+ *        withdraw:
+ *          do
+ *            {
+ *              parcel = bgp_adj_out_done_withdraw(prib, &parcel_s) ;
+ *              if (parcel != NULL)
+ *                ... add prefix to withdraw if can
+ *                ... break out of loop if cannot
+ *            } ;
+ *
+ *        announce:
+ *          do
+ *            {
+ *              parcel = bgp_adj_out_done_announce(prib, &parcel_s) ;
+ *              if (parcel != NULL)
+ *                ... add prefix to update if can
+ *                ... break out of loop if cannot
+ *            } ;
+ *
+ *         EoR:
+ *           bgp_adj_out_done_eor(prib) ;
+ *
+ *         ship the withdraw/announce update or EoR.
  *      } ;
  *
- * Returns:  address of given route_out_parcel -- NULL <=> no withdraws pending
+ * ...where _done_announce returns another parcel iff it has the same
+ * attributes as the first (and is not an EoR !).
+ */
+extern void
+bgp_adj_out_start_updates(peer_rib prib)
+{
+  bgp_adj_out_set_now(prib) ;
+  pfifo_take(prib->fifo_batch, prib->now + 1, true) ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Get next prefix to withdraw -- if any
  *
- * NB: the prefix_id returned in the parcel is *not* locked.
+ * Does not require an bgp_adj_out_start_updates() first.
  *
- *     If the caller wishes to keep the prefix_id beyond the call of
- *     bgp_adj_out_done_withdraw(), then they must obtain their own lock.
+ * Otherwise... see bgp_adj_out_next_update()
  *
- * NB: has NOT removed the returned prefix from the withdraw_queue queue.
- *
- *     So, if the caller is unable to send the required withdraw, can leave it
- *     for later -- though should not keep the route_out_parcel, because the
- *     route could change state.
- *
- * NB: having output the required update, bgp_adj_out_done_withdraw() MUST be
- *     called *immediately*, so that the prefix is taken off the
- *     withdraw_queue queue, and its state updated.
- *
- *     It is the callers responsibility to ensure that no other bgp_adj_out_xxx
- *     functions are called (for this peer_rib) between sending the update and
- *     updating the prib -- otherwise changes to the prefix may be lost !
+ * Returns:  address of parcel (as given) -- NULL <=> no *withdraws* pending
  */
 extern route_out_parcel
 bgp_adj_out_next_withdraw(peer_rib prib, route_out_parcel parcel)
@@ -2708,26 +2765,175 @@ bgp_adj_out_next_withdraw(peer_rib prib, route_out_parcel parcel)
 
   rf = prib->withdraw_queue.head ;
 
-  if (rf == NULL)
-    return NULL ;
+  if (rf != NULL)
+    return bgp_adj_out_ret_withdraw(prib, parcel, rf) ;
 
-  memset(parcel, 0, sizeof(route_out_parcel_t)) ;
+  return NULL ;
+} ;
 
-  /* Zeroising sets:
-   *
-   *   * list           -- NULLs
-   *
-   *   * attr           -- NULL
-   *
-   *   * pfx_id         -- X         -- set below
-   *   * tag            -- 0
-   *
-   *   * qafx           -- X         -- set below
-   *   * action         -- X         -- set below
-   */
+/*------------------------------------------------------------------------------
+ * Get next prefix to withdraw, route to announce or EoR -- if any
+ *
+ * For after a bgp_adj_out_start_updates() up to when this returns NULL.
+ *
+ * The caller need not complete the action, the object remains pending in
+ * the adj_out.  However, if the caller does complete the action it MUST do
+ * so *before* any other change is made to the adj_out, and MUST call the
+ * relevant bgp_adj_out_done_xxx() *before* any other change is made to the
+ * adj_out.
+ *
+ * NB: any prefix_id returned in the parcel is *not* locked by the parcel
+ *
+ *     If the caller wishes to keep the prefix_id beyond the call of
+ *     bgp_adj_out_done_xxx(), then they must obtain their own lock.
+ *
+ * NB: any attributes returned in the parcel are *not* locked by the parcel
+ *
+ *     If the caller wishes to keep the attributes beyond the call of
+ *     bgp_adj_out_done_xxx(), then they must obtain their own lock.
+ *
+ * Returns:  address of parcel (as given) -- NULL <=> nothing pending
+ */
+extern route_out_parcel
+bgp_adj_out_next_update(peer_rib prib, route_out_parcel parcel)
+{
+  route_flux rf ;
+
+  rf = prib->withdraw_queue.head ;
+
+  if (rf != NULL)
+    return bgp_adj_out_ret_withdraw(prib, parcel, rf) ;
+
+  while (1)
+    {
+      attr_flux   af ;
+
+      af = prib->announce_queue->ex.head ;
+
+      if (af == NULL)
+        return NULL ;
+
+      rf = af->fifo.head ;
+      if (rf != NULL)
+        return bgp_adj_out_ret_announce(prib, parcel, af, rf) ;
+
+      if (af == prib->eor)
+        {
+          qassert((af->attr == NULL) &&
+                   (((((adj_out)af)->bits >> aob_type_shift) & aob_type_mask)
+                                                                  == aob_eor)) ;
+          return bgp_adj_out_ret_eor(prib, parcel) ;
+        } ;
+
+      /* The attr_flux fifo is empty, so we can de-queue and discard it.
+       *
+       * Not clear why we would have an empty attr_flux on the queue, but we
+       * get rid of it, anyway.
+       *
+       * Note that the attr_flux does not have a lock on the attr, so no need
+       * to worry about that.
+       */
+      bgp_adj_out_announce_dequeue(prib, af) ;
+    } ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Return the given af/rf as the next route to withdraw.
+ *
+ * Returns parcel:
+ *
+ *   * list                     -- unchanged
+ *
+ *   * attr                     -- NULL
+ *
+ *   * pfx_id                   -- from route_flux
+ *   * tag                      -- mpls_tags_null
+ *
+ *   * qafx                     -- from prib
+ *   * action                   -- ra_out_withdraw
+ */
+static route_out_parcel
+bgp_adj_out_ret_withdraw(peer_rib prib, route_out_parcel parcel, route_flux rf)
+{
+  parcel->attr   = NULL ;
   parcel->pfx_id = rf->pfx_id ;
+  parcel->tag    = mpls_tags_null ;
   parcel->qafx   = prib->qafx ;
   parcel->action = ra_out_withdraw ;
+
+  return parcel ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Return the given af/rf as the next route to announce.
+ *
+ * Returns parcel:
+ *
+ *   * list                     -- unchanged
+ *
+ *   * attr                     -- from attr_flux
+ *
+ *   * pfx_id                   -- from route_flux
+ *   * tag                      -- if prib->mpls: from route_mpls
+ *                                     otherwise: mpls_tags_null
+ *
+ *   * qafx                     -- from prib
+ *   * action                   -- ra_out_initial/ra_out_update
+ */
+static route_out_parcel
+bgp_adj_out_ret_announce(peer_rib prib, route_out_parcel parcel,
+                                                    attr_flux af, route_flux rf)
+{
+  qassert(af->attr != NULL) ;
+
+  parcel->qafx   = prib->qafx ;
+  parcel->attr   = af->attr ;
+  parcel->pfx_id = rf->pfx_id ;
+  parcel->action = (rf->current == NULL) ? ra_out_initial
+                                         : ra_out_update ;
+
+  if (prib->is_mpls)
+    {
+      route_mpls  mpls ;
+
+      mpls = rf->pending ;
+      parcel->tag = mpls->tag ;
+
+      qassert(mpls->atp == af) ;
+    }
+  else
+    {
+      parcel->tag = mpls_tags_null ;
+      qassert(rf->pending == af) ;
+    } ;
+
+  return parcel ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Return an EoR parcel.
+ *
+ * Returns parcel:
+ *
+ *   * list                     -- unchanged
+ *
+ *   * attr                     -- NULL
+ *
+ *   * pfx_id                   -- prefix_id_null
+ *   * tag                      -- mpls_tags_null
+ *
+ *   * qafx                     -- from prib
+ *   * action                   -- ra_out_eor
+ */
+static route_out_parcel
+bgp_adj_out_ret_eor(peer_rib prib, route_out_parcel parcel)
+{
+  parcel->attr   = NULL ;
+  parcel->pfx_id = prefix_id_null ;
+  parcel->tag    = mpls_tags_null ;
+
+  parcel->qafx   = prib->qafx ;
+  parcel->action = ra_out_eor ;
 
   return parcel ;
 } ;
@@ -2736,7 +2942,7 @@ bgp_adj_out_next_withdraw(peer_rib prib, route_out_parcel parcel)
  * Update prib because have just sent update for the current head of the
  * withdraw_queue queue -- return next withdrawn prefix, if any.
  *
- * See bgp_adj_out_next_withdraw().
+ * See bgp_adj_out_ret_withdraw().
  *
  * Returns:  address of given route_out_parcel -- NULL <=> no withdraws pending
  *
@@ -2744,7 +2950,7 @@ bgp_adj_out_next_withdraw(peer_rib prib, route_out_parcel parcel)
  * ignore the returned value.
  *
  * NB: does NOT require the given parcel to be the same as the last one
- *     given to either bgp_adj_out_next_withdraw/_done_withdraw()
+ *     given to either bgp_adj_out_ret_withdraw/_done_withdraw()
  */
 extern route_out_parcel
 bgp_adj_out_done_withdraw(peer_rib prib, route_out_parcel parcel)
@@ -2753,173 +2959,59 @@ bgp_adj_out_done_withdraw(peer_rib prib, route_out_parcel parcel)
 
   rf = prib->withdraw_queue.head ;
 
+  qassert(rf != NULL) ;
   if (rf == NULL)
-    return NULL ;
+    return NULL ;               /* no idea what else to do      */
 
   ddl_del_head(prib->withdraw_queue, list) ;
   bgp_adj_out_set_mrai(prib, rf, false /* withdraw */) ;
 
-  return bgp_adj_out_next_withdraw(prib, parcel) ;
-} ;
+  rf = prib->withdraw_queue.head ;
 
-/*------------------------------------------------------------------------------
- * Update the announce_queue scheduling, and return the first prefix
- * due for output -- if any.
- *
- * The expected use is:
- *
- *    parcel = bgp_adj_out_first_announce(prib, &parcel_s) ;
- *    attr   = NULL ;
- *    while (parcel != NULL)
- *      {
- *        ... output announce update -- with previous or new attributes.
- *        ... break out of loop if cannot output
- *
- *        bgp_adj_out_done_announce(prib, parcel) ;
- *
- *        ... do other stuff
- *
- *        parcel = bgp_adj_out_next_announce(prib, &parcel_s) ;
- *      } ;
- *
- * Returns:  address of given route_out_parcel -- NULL <=> no announce pending
- *
- * NB: the prefix_id and attr_set returned in the parcel are *not* locked.
- *
- *     If the caller wishes to keep the prefix_id and attr_set beyond the call
- *     of bgp_adj_out_done_announce(), then they must obtain their own locks.
- *
- * NB: has NOT removed the returned prefix from the announce_queue.
- *
- *     So, if the caller is unable to send the required update, can leave it
- *     for later -- though should not keep the route_out_parcel, because the
- *     prefix could change state.
- *
- * NB: having output the required update, bgp_adj_out_done_announce() MUST be
- *     called *immediately*, so that the prefix is taken off the
- *     announce_withdraw queue, and its state updated.
- *
- *     It is the callers responsibility to ensure that no other bgp_adj_out_xxx
- *     functions are called (for this peer_rib) between sending the update and
- *     updating the prib -- otherwise changes to the prefix may be lost !
- */
-extern route_out_parcel
-bgp_adj_out_first_announce(peer_rib prib, route_out_parcel parcel)
-{
-  bgp_adj_out_set_now(prib) ;
+  if (rf == NULL)
+    return NULL ;
 
-  pfifo_take(prib->fifo_batch, prib->now + 1, true) ;
-
-  return bgp_adj_out_next_announce(prib, parcel) ;
-} ;
-
-/*------------------------------------------------------------------------------
- * Get next prefix to announce or EoR.
- *
- * See bgp_adj_out_first_announce() above.
- *
- * Returns:  address of parcel -- NULL <=> no announce pending
- */
-extern route_out_parcel
-bgp_adj_out_next_announce(peer_rib prib, route_out_parcel parcel)
-{
-  while (1)
-    {
-      attr_flux   af ;
-      route_flux  rf ;
-
-      af = prib->announce_queue->ex.head ;
-
-      if (af == NULL)
-        return NULL ;
-
-      memset(parcel, 0, sizeof(route_out_parcel_t)) ;
-
-      /* Zeroising sets:
-       *
-       *   * list           -- NULLs
-       *
-       *   * attr           -- NULL      -- set below, unless is EoR
-       *
-       *   * pfx_id         -- X         -- set below, unless is EoR
-       *   * tag            -- 0         -- set below, unless is EOR
-       *
-       *   * qafx           -- X         -- set below
-       *   * action         -- X         -- set below
-       */
-      parcel->qafx   = prib->qafx ;
-
-      rf = af->fifo.head ;
-      if (rf != NULL)
-        {
-          qassert(af->attr != NULL) ;
-
-          parcel->attr   = af->attr ;
-          parcel->pfx_id = rf->pfx_id ;
-
-          if (prib->is_mpls)
-            {
-              route_mpls  mpls ;
-
-              mpls = rf->pending ;
-              qassert(mpls->atp == af) ;
-
-              parcel->tag = mpls->tag ;
-            }
-          else
-            {
-              qassert(rf->pending == af) ;
-            } ;
-
-          parcel->action = (rf->current == NULL) ? ra_out_initial
-                                                 : ra_out_update ;
-          return parcel ;
-        }
-      else if (af == prib->eor)
-        {
-          qassert((af->attr == NULL) &&
-                   (((((adj_out)af)->bits >> aob_type_shift) & aob_type_mask)
-                                                                  == aob_eor)) ;
-          parcel->action = ra_out_eor ;
-
-          prib->af_flags |= PEER_AFS_EOR_SENT ;
-
-          return parcel ;
-        } ;
-
-      /* The attr_flux fifo is empty, so we can de-queue and discard it.
-       *
-       * Note that the attr_flux does not have a lock on the attr, so no need
-       * to worry about that.
-       */
-      ddl_del_head(af->fifo, list) ;
-
-      bgp_attr_flux_free(prib, af) ;
-    } ;
+  return bgp_adj_out_ret_withdraw(prib, parcel, rf) ;
 } ;
 
 /*------------------------------------------------------------------------------
  * Update prib because have just sent update for the current head of the
  * announce_queue queue.
  *
- * NB: does NOT require the given parcel to be the same as the last one
- *     given to bgp_adj_out_first_announce/_next_announce/_done_announce()
+ * Fills in and returns the given parcel iff there is another prefix to
+ * announce with the same attributes as the one just done.
+ *
+ * Returns:  NULL => nothing else to announce with the same attributes.
+ *       or: address of parcel with next thing to announce filled in
+ *
+ * NB: the given parcel may or may not be the same as the last one given to
+ *     bgp_adj_out_next_update/_done_announce()
  */
-extern void
+extern route_out_parcel
 bgp_adj_out_done_announce(peer_rib prib, route_out_parcel parcel)
 {
   attr_flux   af ;
   route_flux  rf ;
 
   af = prib->announce_queue->ex.head ;
-
+  qassert(af != NULL) ;
   if (af == NULL)
-    return NULL ;
+    return NULL ;               /* no idea what else to do.     */
 
   rf = af->fifo.head ;
-
   if (rf != NULL)
     {
+      /* There is at least one route_flux object associated with current head
+       * of the announce_queue.
+       *
+       * So, that's assumed to be what we have just done announcing (!).
+       *
+       * Remove the route_flux object from the list, and stick it into mrai.
+       *
+       * The route_flux or the route_mpls own a lock on the attributes.  The
+       * attr_flux does not.  Having detached from the attr_flux, we restore
+       * the route_flux or route_mpls 'pending'/'atp' by the attr_set pointer.
+       */
       ddl_del_head(af->fifo, list) ;
 
       if (!prib->is_mpls)
@@ -2931,20 +3023,174 @@ bgp_adj_out_done_announce(peer_rib prib, route_out_parcel parcel)
     }
   else
     {
-      ddl_del_head(af->fifo, list) ;
-
-      if (af == prib->eor)
-        {
-          qassert((af->attr == NULL) &&
-                   (((((adj_out)af)->bits >> aob_type_shift) & aob_type_mask)
-                                                                  == aob_eor)) ;
-          XFREE(MTYPE_BGP_ATTR_FLUX, prib->eor) ;       /* prib->eor = NULL */
-        }
-      else
-        bgp_attr_flux_free(prib, af) ;
+      /* Since we claim we have just announced a prefix, really do NOT expect
+       * either the af->fifo to be empty or for this to actually be an EoR !!
+       *
+       * (If it is EoR we are about to lose it !)
+       */
+      qassert(rf != NULL) ;
+      qassert(af != prib->eor) ;
     } ;
 
-  return bgp_adj_out_next_announce(prib, parcel) ;
+  /* Now return the next announcement for this attr_flux or release it.
+   */
+  bgp_adj_out_ret_next_announce(prib, parcel, af) ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Update prib because have just sent EoR which is the current head of the
+ * announce_queue queue.
+ *
+ * Returns:  NULL
+ */
+extern route_out_parcel
+bgp_adj_out_done_eor(peer_rib prib)
+{
+  attr_flux   af ;
+
+  af = prib->announce_queue->ex.head ;
+  qassert(af != NULL) ;
+  if (af == NULL)
+    return NULL ;                       /* no idea what else to do.     */
+
+  qassert(af->fifo.head == NULL) ;
+  qassert(af == prib->eor) ;
+  qassert((af->attr == NULL) &&
+                  (((((adj_out)af)->bits >> aob_type_shift) & aob_type_mask)
+                                                                  == aob_eor)) ;
+
+  pfifo_item_next_ex(prib->announce_queue) ;
+
+  prib->af_status |= PEER_AFS_EOR_SENT ;
+
+  XFREE(MTYPE_BGP_ATTR_FLUX, prib->eor) ;       /* prib->eor = NULL     */
+
+  return NULL ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Will never be able to announce the given route -- does not fit in an UPDATE.
+ *
+ * Treat as withdraw if ra_out_update.
+ *
+ * Fills in and returns the given parcel iff there is another prefix to
+ * announce with the same attributes as the one just done.
+ *
+ * Returns:  NULL => nothing else to announce with the same attributes.
+ *       or: address of parcel with next thing to announce filled in
+ *
+ * NB: the given parcel may or may not be the same as the last one given to
+ *     bgp_adj_out_next_update/_done_announce()
+ */
+extern route_out_parcel
+bgp_adj_out_done_no_announce(peer_rib prib, route_out_parcel parcel)
+{
+  attr_flux   af ;
+  route_flux  rf ;
+
+  af = prib->announce_queue->ex.head ;
+  qassert(af != NULL) ;
+  if (af == NULL)
+    return NULL ;               /* no idea what else to do.     */
+
+  rf = af->fifo.head ;
+  if (rf != NULL)
+    {
+      /* We need to treat the announcement as a withdraw.
+       *
+       * Clear the rf's reference to the af, and since we no longer need the
+       * attributes, undo the lock on those.
+       */
+      route_mpls  mpls_pending ;
+
+      if (!prib->is_mpls)
+        {
+          qassert(rf->pending == af) ;
+          rf->pending  = NULL ;
+          mpls_pending = NULL ;
+        }
+      else
+        {
+          mpls_pending      = rf->pending ;
+          qassert( mpls_pending->atp == af) ;
+          mpls_pending->atp = NULL ;
+        } ;
+
+      bgp_attr_unlock(af->attr) ;
+
+      ddl_del_head(af->fifo, list) ;
+
+      /* Now withdraw or revert to steady (nothing announced) state.
+       */
+      if (rf->current != NULL)
+        {
+          rf->bits = (rf_act_withdraw << aob_action_shift) | aob_flux ;
+          ddl_append(prib->withdraw_queue, rf, list) ;
+        }
+      else
+        {
+          bgp_adj_out_set_steady(prib, rf, mpls_pending) ;
+        } ;
+    }
+  else
+    {
+      /* Since we claim we have just tried to announce a prefix, really do NOT
+       * expect either the af->fifo to be empty or for this to actually be an
+       * EoR !!
+       *
+       * (If it is EoR we are about to lose it !)
+       */
+      qassert(rf != NULL) ;
+      qassert(af != prib->eor) ;
+    } ;
+
+  /* Now return the next announcement for this attr_flux or release it.
+   */
+  return bgp_adj_out_ret_next_announce(prib, parcel, af) ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * If there is anything on the given attr_flux fifo, return it, otherwise
+ *                                                        dequeue the attr_flux.
+ *
+ * NB: this is for attr_flux which is NOT an EoR !
+ */
+static route_out_parcel
+bgp_adj_out_ret_next_announce(peer_rib prib, route_out_parcel parcel,
+                                                                   attr_flux af)
+{
+  route_flux rf ;
+
+  rf = af->fifo.head ;
+  if (rf != NULL)
+    return bgp_adj_out_ret_announce(prib, parcel, af, rf) ;
+
+  qassert(af != prib->eor) ;
+
+  return bgp_adj_out_announce_dequeue(prib, af) ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * The attr_flux fifo is empty, so we can de-queue and discard it.
+ *
+ * Note that the attr_flux does not have a lock on the attr, so no need
+ * to worry about that.
+ *
+ * Returns:  NULL
+ */
+static route_out_parcel
+bgp_adj_out_announce_dequeue(peer_rib prib, attr_flux af)
+{
+  attr_flux afx ;
+
+  qassert(af->fifo.head == NULL) ;
+
+  afx = pfifo_item_next_ex(prib->announce_queue) ;
+  qassert(af == afx) ;
+
+  bgp_attr_flux_free(prib, afx) ;
+
+  return NULL ;
 } ;
 
 /*==============================================================================

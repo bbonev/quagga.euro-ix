@@ -51,4 +51,6 @@ extern const map_direct_t bgp_afi_name_map ;
 extern const map_direct_t bgp_safi_name_map ;
 extern const map_direct_t bgp_capcode_name_map ;
 
+extern const map_direct_t bgp_peer_down_map ;
+
 #endif /* _QUAGGA_BGP_NAMES_H */
