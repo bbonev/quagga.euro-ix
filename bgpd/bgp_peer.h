@@ -316,6 +316,15 @@ enum bgp_route_map_types
   RMAP_COUNT    = 5,
 } ;
 
+typedef enum adj_in_state adj_in_state_t ;
+enum adj_in_state
+{
+  ai_next     = 0,              /* process next 'pending' if any        */
+
+  ai_next_hop_valid,
+  ai_next_hop_reachable,
+} ;
+
 enum { MAXIMUM_PREFIX_THRESHOLD_DEFAULT = 75 } ;
 
 typedef struct prefix_max  prefix_max_t ;
@@ -326,6 +335,8 @@ struct prefix_max
   bool        set ;
   bool        warning ;
 
+  uint        trigger ;
+
   uint        limit ;
   uint        threshold ;
   uint16_t    thresh_pc ;
@@ -334,12 +345,12 @@ struct prefix_max
 
 struct peer_rib
 {
-  bgp_peer    peer ;                    /* parent peer                  */
+  bgp_peer      peer ;                  /* parent peer                  */
 
-  /* Each peer_rib is associated with the respective bgp->rib, for the
-   * AFI/SAFI and rib_main or rib_rs
+  /* Each peer_rib is associated with the respective bgp->rib -- for the
+   * same AFI/SAFI and for that bgp instance.
    */
-  bgp_rib     rib ;
+  bgp_rib       rib ;                   /* parent rib                   */
 
   /* When a peer_rib is enabled (ie the exchange of routes is enabled) the
    * peer_rib is associated with a bgp_rib_walker.
@@ -368,12 +379,9 @@ struct peer_rib
   iAFI_t      i_afi ;
   iSAFI_t     i_safi ;
 
-  rib_type_t  rib_type ;                /* Main or RS                   */
-
   prib_state_t update_state ;           /* initial or update            */
 
-  uint        lock;
-
+  bool        real_rib ;                /* Main or RS                   */
   bool        is_mpls ;
 
   bool        refresh ;
@@ -421,7 +429,8 @@ struct peer_rib
 
   /* Prefix count and sent prefix count.
    */
-  uint        pcount ;
+  uint        pcount_recv ;
+  uint        pcount_accept ;
   uint        scount ;
 
   /* Filters and route-maps.
@@ -452,22 +461,14 @@ struct peer_rib
    * route received from the peer.  Those route_info objects are "owned" by
    * the peer, but are also referred to by the bgp_rib_node for the prefix
    * (where the route is not filtered out).
-   *
-   * Note that Main Peers and RS Clients contribute routes in both the Main
-   * and the RS RIBs.  But only routes from the Main RIB are announced to Main
-   * Peers, and only routes from the RS RIB are announced to RS Clients.
-   *
-   * If there are no RS clients, there is no RS RIB and the RS adj_in is empty.
-   *
-   * The adj_in entries are "route_info" objects.  Note that there are small
-   * differences in what is stored in the route_info for the Main RIB and
-   * what is stored in the route_info for the RS RIB.  In particular:
-   *
-   *
    */
-  ihash_table     adj_in[rib_type_count] ;   /* route_info                   */
+  ihash_table     adj_in ;              /* route_info           */
 
   struct dl_base_pair(route_info) stale_routes ;
+  struct dl_base_pair(route_info) pending_routes ;
+
+  adj_in_state_t  in_state ;
+  attr_set        in_attrs ;
 
   /* The peer's adj_out stuff for this qafx
    *
@@ -1032,6 +1033,7 @@ extern int peer_group_cmp (peer_group g1, peer_group g2) ;
 extern bgp_ret_t peer_set_af(bgp_peer peer, qafx_t qafx, bool enable);
 extern int peer_deactivate(bgp_peer peer, qafx_t qafx) ;
 
+
 extern bgp_peer_sort_t peer_sort (bgp_peer peer);
 extern bool peer_sort_set(bgp_peer peer, bgp_peer_sort_t sort) ;
 
@@ -1075,8 +1077,11 @@ extern void bgp_peer_down_error_with_data (bgp_peer peer,
 
 extern void bgp_peer_set_down(bgp_peer peer, bgp_peer_idle_state_t new_idle,
                                           bgp_note note, peer_down_t why_down) ;
-extern void bgp_peer_pmax_overflow(bgp_peer peer, uint pmax_restart,
-                                                                bgp_note note) ;
+
+extern bool bgp_peer_pmax_check(peer_rib prib) ;
+
+extern prefix_max bgp_peer_pmax_reset(peer_rib prib) ;
+
 
 
 

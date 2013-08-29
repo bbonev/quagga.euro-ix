@@ -457,7 +457,7 @@ bgp_scan (qAFI_t q_afi)
           prib = peer_family_prib(peer, qafx) ;
 
           if ((prib != NULL) && (prib->af_session_up))
-            bgp_maximum_prefix_overflow (prib, true /* always */) ;
+            bgp_peer_pmax_check(prib) ;
         } ;
     } ;
 

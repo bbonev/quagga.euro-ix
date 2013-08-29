@@ -34,6 +34,7 @@ Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
 #include "bgpd/bgp_peer.h"
 #include "bgpd/bgp_rib.h"
 #include "bgpd/bgp_adj_out.h"
+#include "bgpd/bgp_adj_in.h"
 
 #include "bgpd/bgp_dump.h"
 #include "bgpd/bgp_attr.h"
@@ -1324,8 +1325,8 @@ bgp_route_refresh_send (peer_rib prib, byte orf_type,
 static void bgp_packet_read_update(bgp_peer peer, sucker sr) ;
 static void bgp_packet_read_rr(bgp_peer peer, sucker sr) ;
 
-static void bpd_packet_update_nlri (bgp_peer peer, route_in_action_t action,
-                                                 attr_set attr, bgp_nlri nlri) ;
+static void bpd_packet_update_nlri (bgp_peer peer, attr_set attr,
+                                                  bgp_nlri nlri, bool refused) ;
 static bgp_route_refresh bgp_packet_parse_rr(bgp_peer peer, sucker sr) ;
 
 /*------------------------------------------------------------------------------
@@ -1378,7 +1379,7 @@ bgp_packet_read_update(bgp_peer peer, sucker sr)
 
   byte* attr_p ;
   bgp_attr_parsing_t args[1] ;
-  route_in_action_t action ;
+  bool      refused ;
   peer_rib  prib ;
 
   /* Status must be Established.
@@ -1560,7 +1561,7 @@ bgp_packet_read_update(bgp_peer peer, sucker sr)
 
   /* Dealing with any parsing issue and logging the attributes.
    */
-  action = ra_in_update ;       /* assume all is well   */
+  refused = false ;             /* assume all is well   */
 
   if ((args->aret != BGP_ATTR_PARSE_OK) || BGP_DEBUG (update, UPDATE_IN))
     {
@@ -1595,7 +1596,7 @@ bgp_packet_read_update(bgp_peer peer, sucker sr)
                                                   " Withdrawing route(s)",
                                                                peer->host) ;
 
-          action = ra_in_treat_as_withdraw ;    /* not so good  */
+          refused = true ;              /* not so good  */
         }
       else if (args->aret & BGP_ATTR_PARSE_IGNORE)
         {
@@ -1660,8 +1661,8 @@ bgp_packet_read_update(bgp_peer peer, sucker sr)
          goto exit_bgp_update_critical ;
     } ;
 
-  qassert( (args->aret == BGP_ATTR_PARSE_OK) ||
-           (args->aret == BGP_ATTR_PARSE_SERIOUS) ) ;
+  qassert( ((args->aret == BGP_ATTR_PARSE_OK)      && !refused) ||
+           ((args->aret == BGP_ATTR_PARSE_SERIOUS) &&  refused) ) ;
 
   /* Now we process whatever NLRI we have and we are configured for.
    *
@@ -1677,7 +1678,7 @@ bgp_packet_read_update(bgp_peer peer, sucker sr)
   if (prib != NULL)
     {
       if (args->withdraw.length != 0)
-        bpd_packet_update_nlri(peer, ra_in_withdraw, NULL, &args->withdraw) ;
+        bpd_packet_update_nlri(peer, NULL, &args->withdraw, false) ;
 
       if (args->update.length != 0)
         {
@@ -1704,7 +1705,7 @@ bgp_packet_read_update(bgp_peer peer, sucker sr)
                                                      &args->update.next_hop.ip) ;
           set = bgp_attr_pair_store(args->attrs) ;
 
-          bpd_packet_update_nlri(peer, action, set, &args->update) ;
+          bpd_packet_update_nlri(peer, set, &args->update, refused) ;
         }
       else if ((args->withdraw.length == 0) && (attribute_len == 0))
         {
@@ -1727,7 +1728,7 @@ bgp_packet_read_update(bgp_peer peer, sucker sr)
     {
       prib = peer_family_prib(peer, args->mp_withdraw.qafx) ;
       if (prib != NULL)
-        bpd_packet_update_nlri(peer, ra_in_withdraw, NULL, &args->mp_withdraw);
+        bpd_packet_update_nlri(peer, NULL, &args->mp_withdraw, false);
     } ;
 
   if (args->mp_update.length != 0)
@@ -1758,7 +1759,7 @@ bgp_packet_read_update(bgp_peer peer, sucker sr)
             } ;
 
           set = bgp_attr_pair_store(args->attrs) ;
-          bpd_packet_update_nlri (peer, action, set, &args->mp_update) ;
+          bpd_packet_update_nlri (peer, set, &args->mp_update, refused) ;
         } ;
     } ;
 
@@ -1828,35 +1829,20 @@ bgp_packet_read_update(bgp_peer peer, sucker sr)
  *     (small) duplication of effort here.
  */
 static void
-bpd_packet_update_nlri(bgp_peer peer, route_in_action_t action, attr_set attr,
-                                                                  bgp_nlri nlri)
+bpd_packet_update_nlri(bgp_peer peer, attr_set attr, bgp_nlri nlri,
+                                                                  bool refused)
 {
+  peer_rib     prib ;
   const byte*  pnt ;
   const byte*  limit ;
   const byte*  prd ;
   sa_family_t  family ;
-  prefix_t     p ;
+  prefix_t     pfx ;
   bool         mpls ;
   ulen         plen_max ;
-  route_in_parcel_t parcel[1] ;
+  iroute_state_t parcel[1] ;
 
-  if (qdebug)
-    {
-      switch (action)
-        {
-          case ra_in_withdraw:
-            assert(attr == NULL) ;
-            break ;
-
-          case ra_in_update:
-          case ra_in_treat_as_withdraw:
-            assert(attr != NULL) ;
-            break ;
-
-          default:
-            assert(false) ;
-        } ;
-    } ;
+  qassert(!(refused && (attr == NULL))) ;       /* cannot refuse withdraw ! */
 
   /* Check peer status and address family.
    */
@@ -1892,23 +1878,50 @@ bpd_packet_update_nlri(bgp_peer peer, route_in_action_t action, attr_set attr,
         return ;
   } ;
 
-  /* Prepare the route_in_parcel -- things which do not change between prefixes.
-   */
-  memset(parcel, 0, sizeof(route_in_parcel_t)) ;
+  prib = peer->prib[nlri->qafx] ;
+  if (prib == NULL)
+    return ;
 
-  parcel->attr    = attr ;
-  parcel->qafx    = nlri->qafx ;
-  parcel->action  = action ;
+  /* Prepare the iroute_state_t -- apart from tags, does not change between
+   * prefixes.
+   *
+   * Zeroizing sets:
+   *
+   *   * attr                   -- NULL     -- set below, if required
+   *   * tags                   -- mpls_tags_null
+   *
+   *   * flags                  -- 0        -- sets RINFO_REFUSED if required
+   *                                        -- sets RINFO_WITHDRAWN if required
+   *
+   *   * qafx                   -- X        -- set below
+   *   * route_type             -- X        -- set below
+   *
+   * We start by zeroizing because may, well, later copy the entire
+   * iroute_state_t
+   */
+  memset(parcel, 0, sizeof(iroute_state_t)) ;
+
+  if (attr == NULL)
+    parcel->flags     = RINFO_WITHDRAWN ;
+  else
+    {
+      parcel->attr    = attr ;
+      if (refused)
+        parcel->flags = RINFO_REFUSED ;
+    } ;
+  parcel->qafx        = nlri->qafx ;
 
   if (bgp_route_type(ZEBRA_ROUTE_BGP, BGP_ROUTE_NORMAL) != 0)
     parcel->route_type = bgp_route_type(ZEBRA_ROUTE_BGP, BGP_ROUTE_NORMAL) ;
 
   /* Crunch through the NLRI
+   *
+   * Note that we make sure we start with a completely zeroized pfx.
    */
   pnt   = nlri->pnt;
   limit = pnt + nlri->length;
 
-  prefix_default(&p, family) ;
+  prefix_default(&pfx, family) ;
   prd = NULL ;                          /* assume not MPLS      */
 
   while (1)
@@ -1917,7 +1930,6 @@ bpd_packet_update_nlri(bgp_peer peer, route_in_action_t action, attr_set attr,
       const byte* pp ;
       usize       psize ;
       ulen        plen ;
-      bool        ok ;
 
       if (pnt == limit)
         return ;                        /* done                 */
@@ -1965,9 +1977,9 @@ bpd_packet_update_nlri(bgp_peer peer, route_in_action_t action, attr_set attr,
            *
            * Log, but otherwise ignore more than one tag.
            */
-          parcel->tag = mpls_tags_decode(pp + 8, 3) ;
+          parcel->tags = mpls_tags_decode(pp + 8, 3) ;
 
-          if (parcel->tag >= mpls_tags_bad)
+          if (parcel->tags >= mpls_tags_bad)
             {
               plog_err (peer->log,
                  "%s [Error] Update packet error: "
@@ -1982,7 +1994,7 @@ bpd_packet_update_nlri(bgp_peer peer, route_in_action_t action, attr_set attr,
           plen -= (8 + 3) * 8 ;
         } ;
 
-      /* Check address.
+      /* Set and then check prefix.
        *
        * NB: have stepped past the prefix, so can 'continue' if want to ignore
        *     the current prefix.
@@ -1990,10 +2002,12 @@ bpd_packet_update_nlri(bgp_peer peer, route_in_action_t action, attr_set attr,
       if (plen > plen_max)
         break ;                 /* checked already -- paranoia  */
 
+      prefix_body_from_nlri(&pfx, pp, plen) ;
+
       switch (nlri->qafx)
         {
           case qafx_ipv4_unicast:
-            if (IN_CLASSD (ntohl (p.u.prefix4.s_addr)))
+            if (IN_CLASSD (ntohl (pfx.u.prefix4.s_addr)))
               {
                /* From draft-ietf-idr-bgp4-22, Section 6.3:
                 * If a BGP router receives an UPDATE message with a
@@ -2003,7 +2017,7 @@ bpd_packet_update_nlri(bgp_peer peer, route_in_action_t action, attr_set attr,
                 */
                 zlog (peer->log, LOG_ERR,
                       "IPv4 unicast NLRI is multicast address %s",
-                                             siptoa (family, &p.u.prefix).str) ;
+                                           siptoa (family, &pfx.u.prefix).str) ;
                 continue ;
               } ;
 
@@ -2021,11 +2035,11 @@ bpd_packet_update_nlri(bgp_peer peer, route_in_action_t action, attr_set attr,
 
 #if HAVE_IPV6
           case qafx_ipv6_unicast:
-            if (IN6_IS_ADDR_LINKLOCAL (&p.u.prefix6))
+            if (IN6_IS_ADDR_LINKLOCAL (&pfx.u.prefix6))
               {
                 zlog (peer->log, LOG_WARNING,
                       "IPv6 link-local NLRI received %s ignore this NLRI",
-                                             siptoa (family, &p.u.prefix).str) ;
+                                             siptoa (family, &pfx.u.prefix).str) ;
                 continue;
               } ;
             break ;
@@ -2045,23 +2059,16 @@ bpd_packet_update_nlri(bgp_peer peer, route_in_action_t action, attr_set attr,
             return ;
         } ;
 
-      /* We are ready to update the RIB !
+      /* We are ready to update the adj-in !
        *
        * Map the prefix and any RD to its prefix_id_entry.  This locks the
        * prefix_id_entry, pro tem.
        */
-      pie = prefix_id_find_entry(&p, prd) ;     /* locks the entry      */
+      pie = prefix_id_find_entry(&pfx, prd) ;     /* locks the entry      */
 
-      parcel->pfx_id = prefix_id_get_id(pie) ;
-
-      ok = bgp_update_from_peer(peer, parcel, false /* not refresh */) ;
+      bgp_adj_in_update(prib, pie, parcel) ;
 
       prefix_id_entry_dec_ref(pie) ;
-
-      /* Address family configuration mismatch or maximum-prefix count overflow.
-       */
-      if (!ok)
-        return ;
     } ;
 
   /* Arrives here only if and only if finds that the given bgp_nlri are

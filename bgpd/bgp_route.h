@@ -205,8 +205,15 @@ extern void bgp_route_init (void);
 extern void bgp_route_finish (void);
 
 
-extern bool bgp_update_from_peer(bgp_peer peer, route_in_parcel parcel,
-                                                                 bool refresh) ;
+extern attr_set bgp_route_in_filter(peer_rib prib, attr_set attr,
+                                                        prefix_id_entry_c pie) ;
+
+
+
+
+
+
+
 extern bool bgp_update_rs_from_peer(peer_rib prib, route_info ri_main,
                                             prefix_id_entry pie, bool process) ;
 extern void bgp_process_schedule(bgp_rib rib, bgp_rib_node rn) ;
@@ -232,8 +239,6 @@ extern void bgp_info_delete (struct bgp_node *rn, struct bgp_info *ri);
 extern struct bgp_info_extra *bgp_info_extra_get (struct bgp_info *);
 extern void bgp_info_set_flag (struct bgp_node *, struct bgp_info *, u_int32_t);
 extern void bgp_info_unset_flag (struct bgp_node *, struct bgp_info *, u_int32_t);
-
-extern bool bgp_maximum_prefix_overflow (peer_rib prib, bool always) ;
 
 extern void bgp_redistribute_add (prefix, ip_union, uint32_t, uchar);
 extern void bgp_redistribute_delete (struct prefix *, u_char);

@@ -172,7 +172,7 @@ bgp_reuse_timer (struct thread *t)
               bgp_info_unset_flag (bdi->rn, bdi->binfo, BGP_INFO_HISTORY);
               bgp_aggregate_increment (bgp, &bdi->rn->p, bdi->binfo,
                                                                     bdi->qafx) ;
-...           bgp_process_dispatch (bgp, bdi->rn);
+// xxx        bgp_process_dispatch (bgp, bdi->rn);
             }
 
           if (bdi->penalty <= damp->reuse_limit / 2.0)

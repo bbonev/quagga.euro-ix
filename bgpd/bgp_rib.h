@@ -20,6 +20,8 @@
 #ifndef _QUAGGA_BGP_RIB_H
 #define _QUAGGA_BGP_RIB_H
 
+#include "misc.h"
+
 #include "bgpd/bgp_common.h"
 #include "bgpd/bgp_attr_store.h"
 #include "bgpd/bgp_filter.h"
@@ -73,13 +75,13 @@ CONFIRM(bgp_binary_second    == 1073741824) ;
 CONFIRM(bgp_period_nano_secs ==  268435456) ;
 
 /*------------------------------------------------------------------------------
- * When a route is announced we store its state.
+ * When a route is installed we store its state.
  */
-typedef struct aroute  aroute_t ;
+typedef struct zroute  zroute_t ;
 
-struct aroute
+struct zroute
 {
-  safi_t      safi ;            /* iSAFI value  */
+  iSAFI_t     i_safi ;                  /* iSAFI value  */
   byte        flags ;
 
   uint32_t    med ;
@@ -88,19 +90,7 @@ struct aroute
   uint        ifindex;
 } ;
 
-/*------------------------------------------------------------------------------
- * RIB types...
- */
-typedef enum rib_type rib_type_t ;
-
-enum rib_type
-{
-  rib_main    = 0,
-  rib_rs      = 1,
-
-  rib_type_count,
-  rib_type_t_max = rib_type_count - 1,
-} ;
+Need_alignof(zroute_t) ;
 
 /*------------------------------------------------------------------------------
  * Peer RIB states...
@@ -162,29 +152,8 @@ struct bgp_rib_item
 
 /*------------------------------------------------------------------------------
  * There is one bgp_rib_node in a bgp_rib for each active prefix.
- *
- * Each rib-node has an 'nroute' for each context, which points at all the
- * available routes -- starting with the current selection -- and (except for
- * RS RIBs, the route as announced.
  */
 typedef enum bgp_rib_node_flags bgp_rib_node_flags_t ;
-
-typedef struct nroute nroute_t ;
-typedef const struct sroute* nroute_c ;
-
-struct nroute
-{
-  svl_base_t    ilist ;
-
-  aroute_t      announced[] ;
-} ;
-CONFIRM(sizeof(nroute_t) == offsetof(nroute_t, announced[0])) ;
-
-enum
-{
-  nroute_main_size  = offsetof(nroute_t, announced[1]),
-  nroute_rs_size    = offsetof(nroute_t, announced[0]),
-} ;
 
 enum bgp_rib_node_flags
 {
@@ -193,8 +162,6 @@ enum bgp_rib_node_flags
 
   rnf_processed          = BIT(7),      /* update process completed     */
 };
-
-typedef svec4_t rib_node_avail_t ;
 
 typedef struct bgp_rib_node  bgp_rib_node_t ;
 typedef const struct bgp_rib_node* bgp_rib_node_c ;
@@ -215,13 +182,34 @@ struct bgp_rib_node
   /* All of the routes available for the prefix are kept in an svec, so that
    * the lists of those per context use svec_index references.
    */
-  rib_node_avail_t  avail ;
+  svec4_t       avail[1] ;
 
-  /* For each Routing Context we have an 'nroute', which has a list of
-   * available iroutes, and (if not RS) the announced route.
+  /* For each Routing Context we have a list of 'iroute', where the first
+   * entry on each list is the current selection.
+   *
+   * For 'real_rib' ribs we also have a 'zroute'.  Space for the array of
+   * 'zroute' is allocated after the 'iroute_bases', and pointed to by the
+   * zroutes entry.
+   *
+   * We allocate rib-nodes as a single unit, expecting that the number of
+   * times the number of contexts will change are strictly limited.  We have
+   * one or two vectors of stuff by context-id:
+   *
+   *   iroute_bases[]
+   *   zroutes[]
+   *
+   * NB: when extending a rib-node, we copy upto but excluding the
+   *     context_count, and then copy the iroute_bases and any following
+   *     zroutes, separately.
+   *
+   *     So: NOTHING other than iroute_bases and zroutes can follow
+   *         the context_count !
    */
   uint          context_count ;
-  nroute_t      nroutes[] ;
+
+  zroute*       zroutes ;
+
+  svs_base_t    iroute_bases[] ;
 } ;
 
 CONFIRM(offsetof(bgp_rib_node_t, it) == 0) ;
@@ -355,7 +343,7 @@ typedef const struct iroute* iroute_c ;
 
 struct iroute
 {
-  svl_base_t    list ;
+  svs_list_t    list[1] ;
 
   attr_set      attr ;
   route_merit_t merit ;
@@ -373,30 +361,101 @@ enum route_merit_flags
 {
   /* The RMERIT_CHANGED flag forces the current selection to be re-announced.
    */
-  RMERIT_CHANGED        = BIT(0),
+  RMERIT_CHANGED      = BIT(0),
+
+  /* The RMERIT_UNSORTED flag causes a route selection process to run.
+   */
+  RMERIT_UNSORTED     = BIT(1),
 } ;
 
-typedef enum route_info_flags rinfo_flags_t ;
+typedef enum route_info_flags route_info_flags_t ;
 
 enum route_info_flags
 {
-  RINFO_IGP_CHANGED    = BIT( 0),
-  RINFO_ATTR_CHANGED   = BIT( 1),
+  RINFO_NULL            = 0,            /* Nothing of interest  */
 
-  RINFO_DAMPED         = BIT( 2),
-  RINFO_HISTORY        = BIT( 3),
-//RINFO_SELECTED       = BIT( 3),
+  /* In the current iroute_state_t:
+   *
+   *   * RINFO_STALE   <=> route-info is sitting on the prib->stale_queue
+   *
+   *                       is not RINFO_REFUSED | RINFO_WITHDRAWN
+   *                       so there must be current.attr, and will be
+   *                       attached to a rib-node.
+   *
+   *                       Cannot also be RINFO_PENDING !
+   *
+   * In the pending iroute_state_t:
+   *
+   *   * RINFO_PENDING <=> route-info is sitting on the prib->pending_queue.
+   *
+   *                       may be RINFO_REFUSED | RINFO_WITHDRAWN
+   *
+   *                       Cannot also be RINFO_STALE !
+   *
+   */
+  RINFO_STALE           = BIT( 0),
+  RINFO_PENDING         = BIT( 0),
 
-  RINFO_VALID          = BIT( 4),
+  /* Various degrees of "not-a-route"
+   *
+   *   * RINFO_DENIED    -- denied by filtering
+   *
+   *   * RINFO_REFUSED   -- broken attributes received, but session not dropped
+   *
+   *   * RINFO_WITHDRAWN -- neighbor withdrew the route
+   */
+  RINFO_DENIED          = BIT(13),
+  RINFO_REFUSED         = BIT(14),
+  RINFO_WITHDRAWN       = BIT(15),
 
-  RINFO_STALE          = BIT( 8),
-  RINFO_REMOVED        = BIT( 9),
-  RINFO_COUNTED        = BIT(10),
 
-  RINFO_TREAT_AS_WITHDRAW = BIT(14),
+
+
+
+
+
+  RINFO_IGP_CHANGED     = BIT( 0),
+  RINFO_ATTR_CHANGED    = BIT( 1),
+
+  RINFO_DAMPED          = BIT( 2),
+  RINFO_HISTORY         = BIT( 3),
+//RINFO_SELECTED        = BIT( 3),
+
+  RINFO_VALID           = BIT( 4),
+
+//RINFO_STALE           = BIT( 8),
+  RINFO_REMOVED         = BIT( 9),
+  RINFO_COUNTED         = BIT(10),
+
 
   RINFO_RS_DENIED      = BIT(15),
+
+  route_info_t_max     = UINT16_MAX,
 } ;
+
+typedef struct iroute_state  iroute_state_t ;
+typedef struct iroute_state* iroute_state ;
+typedef const struct iroute_state* iroute_state_c ;
+
+struct iroute_state
+{
+  attr_set          attr ;
+  mpls_tags_t       tags ;
+
+  route_info_flags_t flags : 16 ;
+
+  qafx_t            qafx       : 8;
+  bgp_route_type_t  route_type : 8 ;
+} ;
+
+CONFIRM(route_info_t_max     <= UINT16_MAX) ;
+CONFIRM(qafx_t_max           <= UINT8_MAX) ;
+CONFIRM(bgp_route_type_t_max <= UINT8_MAX) ;
+
+typedef enum route_info_flags rinfo_flags_t ;
+
+
+
 
 typedef struct route_info route_info_t ;
 typedef const struct route_info* route_info_c ;
@@ -407,59 +466,50 @@ struct route_info
    */
   peer_rib      prib ;
 
-  /* The bgp_rib_node (if any) to which the route is attached, and the list
-   * pointers for the list of routes available for that prefix.
+  /* When the route-info is attached to a rib-node, we have:
+   *
+   *   rn      -- points to the rib-node in question
+   *   rlist   -- list "pointer"s for route-infos known to the rib-node
+   *   rindex  -- index of this route-info in the rib-node's svec of known
+   *              route-infos
    */
   bgp_rib_node  rn ;
   svl_list_t    rlist ;
 
-  /* The list pointers for the list of stale routes.  Only rib_main route_info
-   * can be stale.  When refreshing an adj-in, we hope that the vast majority
-   * of routes will be re-instated, so only a few (if any) will remain on this
-   * list.
-   */
-  struct dl_list_pair(route_info) stale_list ;
+  svec_index_t  rindex ;
 
-  /* The prefix_id for this route, and the related MPLS tag set.
+  /* The prefix_id for this route
    */
   prefix_id_t   pfx_id ;
-  mpls_tags_t   tag ;           /* For MPLS VPN                 */
 
-  /* The attributes "received".
-   *
-   * For a Main RIB route_info these are:
-   *
-   *   * attr_rcv     -- the attributes as received from the peer.
-   *
-   * For an RS RIB route_info these are:
-   *
-   *   * attr_rcv     -- the attributes received *after* they are processed
-   *                     through the 'rs-in' route-map.
+  /* The current and pending state of the route.
    */
-  attr_set      attr_rcv ;
+  iroute_state_t current ;
+  iroute_state_t pending ;
+
+  /* The 'plist' (pending) is used:
+   *
+   *   1) when a new route has arrived and is waiting to be processed.
+   *
+   *   2) when a route is 'stale' -- moves to 'plist' when new route arrives
+   */
+  struct dl_list_pair(route_info) plist ;
+
+  /* Other current state of the route
+   */
   as_t          med_as ;
 
   route_extra   extra ;
 
   time_t        uptime ;
 
-  rinfo_flags_t flags : 16 ;
-
-  rib_type_t        rib_type   : 8 ;
-  qafx_t            qafx       : 8;
-  bgp_route_type_t  route_type : 8 ;
-
   /* For each Routing Context we may have a route which is a candidate for
    * selection.  Each one has its attr and merit.  Where this is a candidate
    * in a given context, it will live on that context's selection list.
    */
   uint          context_count ;
-  iroute_t      candidates[] ;
+  iroute_t      iroutes[] ;
 } ;
-
-CONFIRM(rib_type_t_max       < 256) ;
-CONFIRM(qafx_t_max           < 256) ;
-CONFIRM(bgp_route_type_t_max < 256) ;
 
 /*------------------------------------------------------------------------------
  * Route Incoming "Parcel".
@@ -485,15 +535,15 @@ struct route_in_parcel
 {
   struct dl_list_pair(route_in_parcel) list ;
 
-  attr_set      attr ;
+  attr_set              attr ;
 
-  prefix_id_t   pfx_id ;
-  mpls_tags_t   tag ;
+  prefix_id_t           pfx_id ;
+  mpls_tags_t           tag ;
 
-  qafx_t        qafx ;
-  byte          action ;
+  qafx_t                qafx ;
+  route_in_action_t     action ;
 
-  bgp_route_type_t route_type ;
+  bgp_route_type_t      route_type ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -578,8 +628,7 @@ CONFIRM(offsetof(bgp_rib_walker_t, it) == 0) ;
 
 /*------------------------------------------------------------------------------
  * For each address family which has at least one active peer in it, there
- * is a bgp_rib for the Main RIB and (if there are any RS Clients), a second
- * bgp_rib for the RS RIB.
+ * is a bgp_rib.
  */
 typedef struct bgp_rib bgp_rib_t ;
 
@@ -587,15 +636,26 @@ struct bgp_rib
 {
   bgp_inst      bgp ;                   /* parent bgp instance          */
 
-  /* State of the RIB
+  /* State of the RIB and various flags which we have here for convenience
    */
   qafx_t        qafx ;
-  rib_type_t    rib_type ;              /* Main or RS                   */
+  bool          real_rib ;
+
+  bool          always_compare_med ;    /* BGP_FLAG_ALWAYS_COMPARE_MED  */
+  bool          confed_compare_med ;    /* BGP_FLAG_MED_CONFED          */
+  bool          aspath_ignore ;         /* BGP_FLAG_ASPATH_IGNORE       */
+  bool          aspath_confed ;         /* BGP_FLAG_ASPATH_CONFED       */
+
+  uint32_t      default_local_pref ;    /* copy of bgp entry            */
+  uint          lock;
+
+  /* Each RIB has a table of the local route-contexts, which refers to the
+   * global route-contexts for the bgp instance.
+   */
+  svec4_t       rc_map ;
 
   uint          peer_count ;            /* Number of activated peers    */
   uint          context_count ;         /* Number of route-contexts     */
-
-  uint          lock;
 
   /* The nodes_table is an ihash by prefix_id_t, for all the prefixes in this
    * RIB.  Each prefix has a bgp_rib_node.
@@ -633,7 +693,7 @@ struct bgp_rib
 /*==============================================================================
  * Functions
  */
-extern bgp_rib bgp_rib_new(bgp_inst bgp, qafx_t qafx, rib_type_t rib_type) ;
+extern bgp_rib bgp_rib_new(bgp_inst bgp, qafx_t qafx) ;
 extern bgp_rib bgp_rib_destroy(bgp_rib rib) ;
 
 extern bgp_rib_node bgp_rib_node_get(bgp_rib rib, prefix_id_entry pie) ;

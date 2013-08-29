@@ -73,10 +73,12 @@ enum { bgp_send_aspath_check
 #endif
 } ;
 
-
 /*==============================================================================
- * Incoming UPDATE processing.
+ *
  */
+
+#if 0
+
 static bool bgp_update_filter_next_hop(peer_rib prib, route_in_parcel parcel,
                                                                  prefix_c pfx) ;
 static attr_set bgp_update_filter_main(peer_rib prib, attr_set attr,
@@ -93,6 +95,20 @@ inline static bool bgp_rib_node_deterministic_med(bgp_rib_node rn,
                                                                  bgp_inst bgp) ;
 
 /*------------------------------------------------------------------------------
+ * Work queue action for prib adj-in -- process route into RIB.
+ *
+ * If there is a pending adj-in change, process same into the RIB, and
+ * kick the rib if there are any new route selection(s) or other changes.
+ *
+ * Tries to process one route to completion before returning to allow for
+ * other work to be done.
+ *
+ *
+ *
+ *
+ *
+ *
+ *
  * Process update into the RIB -- for ZEBRA_ROUTE_BGP, BGP_ROUTE_NORMAL.
  *
  * The route in the given parcel has arrived from the given peer.
@@ -152,92 +168,23 @@ inline static bool bgp_rib_node_deterministic_med(bgp_rib_node rn,
  * TODO aggregate stuff
  */
 extern bool
-bgp_update_from_peer(bgp_peer peer, route_in_parcel parcel, bool rs_reprocess)
+bgp_adj_in_process(peer_rib prib)
 {
-  bgp_rib         rib ;
-  peer_rib        prib ;
-  bgp_rib_node    rn ;
   route_info      ri ;
+
+  bgp_rib         rib ;
+  bgp_rib_node    rn ;
   prefix_id_entry pie ;
   route_merit_t   merit ;
-  attr_set        attr_rcv, attr_main ;
+  attr_set        attr ;
   bool            changed, process, tag_changed, med_as_changed ;
-
-  /* Note that at this stage we expect the peer to be locked.
-   *
-   * We do not, however, touch the bgp_rib just yet.
-   */
-
-  /* Get the peer_rib and ensure is activated for this qafx.
-   */
-  prib = peer->prib[parcel->qafx] ;
-
-  if (prib == NULL)
-    return false ;
-
-  qassert(prib->qafx == parcel->qafx) ;
-
-  pie = prefix_id_get_entry(parcel->pfx_id) ;
 
   changed        = false ;
   process        = false ;
   tag_changed    = false ;
   med_as_changed = false ;
 
-  /* Run the main RIB filters -- end up with:
-   *
-   *   attr_rcv    -- NULL iff is ra_in_withdraw
-   *
-   *   attr_main   -- NULL if ra_in_withdraw, ra_in_treat_as_withdraw or is
-   *                          filtered out.
-   */
-  switch (parcel->action)
-    {
-      case ra_in_update:
-        /* Update comes with a set of attributes, which we use unless the
-         * next-hop is rejected.
-         *
-         * We run the filters here, so that ...
-         */
-        qassert(parcel->attr   != NULL) ;
-
-        attr_rcv = parcel->attr ;
-
-        if (bgp_update_filter_next_hop(prib, parcel, pie->pfx))
           attr_main = bgp_update_filter_main(prib, attr_rcv, pie->pfx) ;
-        else
-          {
-            parcel->action = ra_in_treat_as_withdraw ;
-            attr_main = NULL ;
-          } ;
-
-        break ;
-
-      case ra_in_treat_as_withdraw:
-        /* Treat as withdraw comes with a set of attributes, which we don't
-         * use, nohow.
-         */
-        qassert(parcel->attr   != NULL) ;
-
-        attr_rcv  = parcel->attr ;
-        attr_main = NULL ;
-
-        break ;
-
-      case ra_in_withdraw:
-        /* Explicit withdraw does not come with a set of attributes
-         */
-        qassert(parcel->attr   == NULL) ;
-
-        attr_rcv  = NULL ;
-        attr_main = NULL ;
-
-        break ;
-
-      default:
-        qassert(false) ;
-        return false ;
-    } ;
 
   /*--------------------------------------------------------------------------
    * Process into the peer's main adj_in.
@@ -314,7 +261,7 @@ bgp_update_from_peer(bgp_peer peer, route_in_parcel parcel, bool rs_reprocess)
    *
    * TODO Effect of change of med_as if is among the candidates
    */
-  if (ri->attr_rcv != attr_rcv)
+  if (ri->attr_recv != attr_rcv)
     {
       /* Change of received attributes -- may be:
        *
@@ -328,11 +275,11 @@ bgp_update_from_peer(bgp_peer peer, route_in_parcel parcel, bool rs_reprocess)
        *      for whom we have held on to the adj_in entry for route-flap
        *      damping reasons.
        */
-      if (ri->attr_rcv != NULL)
+      if (ri->attr_recv != NULL)
         {
           /* Implicit or explicit withdraw of the previous route.
            */
-          bgp_attr_unlock(ri->attr_rcv) ;
+          bgp_attr_unlock(ri->attr_recv) ;
         } ;
 
       if (attr_rcv != NULL)
@@ -345,7 +292,7 @@ bgp_update_from_peer(bgp_peer peer, route_in_parcel parcel, bool rs_reprocess)
           as_t med_as ;
 
           qassert(parcel->action & ra_in_update) ;
-          ri->attr_rcv = bgp_attr_lock(attr_rcv) ;
+          ri->attr_recv = bgp_attr_lock(attr_rcv) ;
 
           med_as = (peer->bgp->flags & BGP_FLAG_MED_CONFED)
                                      ? as_path_left_most_asn(attr_rcv->asp)
@@ -365,7 +312,7 @@ bgp_update_from_peer(bgp_peer peer, route_in_parcel parcel, bool rs_reprocess)
         {
           /* The sender has withdrawn the route.
            */
-          ri->attr_rcv = NULL ;
+          ri->attr_recv = NULL ;
           ri->med_as   = BGP_ASN_NULL ;
           ri->tag      = mpls_tags_null ;
         } ;
@@ -735,7 +682,7 @@ bgp_update_rs_from_peer(peer_rib prib, route_info ri_main,
   if (ri_main->flags & RINFO_TREAT_AS_WITHDRAW)
     attr_rcv = NULL ;
   else
-    attr_rcv = ri_main->attr_rcv ;
+    attr_rcv = ri_main->attr_recv ;
 
   if (attr_rcv != NULL)
     attr_rs = bgp_update_filter_rs_in(prib, attr_rcv, pie->pfx) ;
@@ -763,7 +710,7 @@ bgp_update_rs_from_peer(peer_rib prib, route_info ri_main,
 
   /* Decide whether need to do anything about the RS
    */
-  if (ri->attr_rcv != attr_rs)
+  if (ri->attr_recv != attr_rs)
     {
       /* We are replacing whatever the attr_rs were by a new set of
        * attributes.
@@ -772,10 +719,10 @@ bgp_update_rs_from_peer(peer_rib prib, route_info ri_main,
        *     bgp_update_filter_rs_in(), and we are here bequeathing that
        *     lock to ri->attr_rs.
        */
-      if (ri->attr_rcv != NULL)
-        bgp_attr_unlock(ri->attr_rcv) ;
+      if (ri->attr_recv != NULL)
+        bgp_attr_unlock(ri->attr_recv) ;
 
-      ri->attr_rcv = attr_rs ;
+      ri->attr_recv = attr_rs ;
 
       process = true ;                  /* route changed -- attributes  */
     }
@@ -874,8 +821,6 @@ bgp_update_rs_from_peer(peer_rib prib, route_info ri_main,
 
 
 
-
-#if 0
 
 
 
@@ -1854,6 +1799,21 @@ bgp_update_filter_in_log(bgp_peer peer, prefix_c pfx, const char* reason)
  *     In particular:  parcel->attr->weight  == 0
  *                     parcel->attr->tag     == 0
  *
+ * Returns:  NULL <=> filtered out -- attribute locking unchanged.
+ *           otherwise set of attributes to use now...
+ *
+ * ...where:
+ *
+ *   * if the attributes are unchanged, we return the original attributes,
+ *     with an extra lock on them...
+ *
+ *   * if the attributes are changed, we return the new attributes, with
+ *     an (extra) lock on them...
+ *
+ * In either case, the returned attributes can be attached to something,
+ * complete with a lock, and if that replaces the original attributes, those
+ * can be unlocked !
+ *
  * From bgp_inst requires:
  *
  *   bgp->my_as
@@ -1862,8 +1822,8 @@ bgp_update_filter_in_log(bgp_peer peer, prefix_c pfx, const char* reason)
  *   bgp->router_id
  *   bgp->cluster_id
  */
-static attr_set
-bgp_update_filter_main(peer_rib prib, attr_set attr, prefix_c pfx)
+extern attr_set
+bgp_route_in_filter(peer_rib prib, attr_set attr, prefix_id_entry_c pie)
 {
   bgp_peer    peer ;
   bgp_inst    bgp ;
@@ -1883,6 +1843,8 @@ bgp_update_filter_main(peer_rib prib, attr_set attr, prefix_c pfx)
   sort = peer->sort ;
 
   /* Load attribute pair in preparation for any changes later on.
+   *
+   * Loading takes an extra lock on the original attributes.
    */
   bgp_attr_pair_load(pair, attr) ;
 
@@ -2054,7 +2016,7 @@ bgp_update_filter_main(peer_rib prib, attr_set attr, prefix_c pfx)
       FILTER_EXIST_WARN("distribute-list in", access_list_is_set(dlist),
                                               access_list_get_name(dlist)) ;
 
-      if (access_list_apply (dlist, pfx) == FILTER_DENY)
+      if (access_list_apply (dlist, pie->pfx) == FILTER_DENY)
         {
           reason = "distribute-list in;";
           goto filtered;
@@ -2067,7 +2029,7 @@ bgp_update_filter_main(peer_rib prib, attr_set attr, prefix_c pfx)
       FILTER_EXIST_WARN("prefix-list in", prefix_list_is_set(plist),
                                           prefix_list_get_name(plist)) ;
 
-      if (prefix_list_apply (plist, pfx) == PREFIX_DENY)
+      if (prefix_list_apply (plist, pie->pfx) == PREFIX_DENY)
         {
           reason = "prefix-list in;";
           goto  filtered;
@@ -2126,22 +2088,25 @@ bgp_update_filter_main(peer_rib prib, attr_set attr, prefix_c pfx)
       brm->qafx      = qafx ;
       brm->rmap_type = BGP_RMAP_TYPE_IN ;
 
-      if (route_map_apply(rmap, pfx, RMAP_BGP, brm) == RMAP_DENY_MATCH)
+      if (route_map_apply(rmap, pie->pfx, RMAP_BGP, brm) == RMAP_DENY_MATCH)
         {
           reason = "route-map in;";
           goto  filtered ;
         } ;
     } ;
 
-  /* Deal with locks and then we are done.
+  /* Deal with locks and then we are done -- see above.
    */
   return bgp_attr_pair_store(pair) ;
 
-  /* This BGP update is filtered.  Log the reason then update BGP
-   * entry.
+  /* This BGP update is filtered out.  Log the reason and then:
+   *
+   *   * discard any new attributes.
+   *
+   *   * undo the extra lock we acquired earlier on the original attributes.
    */
  filtered:
-  bgp_update_filter_in_log(peer, pfx, reason) ;
+  bgp_update_filter_in_log(peer, pie->pfx, reason) ;
 
   bgp_attr_pair_unload(pair) ;
   return NULL ;
@@ -2273,7 +2238,7 @@ bgp_update_filter_rs_use(route_info ri, peer_rib crib, prefix_c pfx)
   attr_set    attr ;
   route_map   rmap ;
 
-  if (ri->attr_rcv == NULL)
+  if (ri->attr_recv == NULL)
     {
       ri->flags |= RINFO_RS_DENIED ;
       return route_merit_none ;
@@ -2281,7 +2246,7 @@ bgp_update_filter_rs_use(route_info ri, peer_rib crib, prefix_c pfx)
 
   /* Load attribute pair in preparation for any changes later on.
    */
-  bgp_attr_pair_load(pair, ri->attr_rcv) ;
+  bgp_attr_pair_load(pair, ri->attr_recv) ;
 
   /* Apply the export route-map for the given source peer.
    *
@@ -2950,101 +2915,6 @@ bgp_process_rs(bgp_rib rib, bgp_rib_walker rw, bgp_rib_node rn)
  */
 
 /*------------------------------------------------------------------------------
- * Calculate the merit of the given route
- *
- * Merit is RFC4271's "Phase 1: Degree of Preference", plus the first two
- * steps of the "Phase 2: Breaking Ties".  It includes:
- *
- *    1. weight     -- "preconfigured system policy"
- *
- *    2. Local_Pref -- from iBGP/cBGP peer and/or "preconfigured system policy"
- *
- *    3. Local Routes (internally sourced) take precedence over Peer Routes
- *
- *    4. AS-Path length
- *
- *    5. ORIGIN Attribute
- */
-static route_merit_t
-bgp_route_merit(bgp_inst bgp, attr_set attr, byte sub_type)
-{
-  route_merit_t merit, temp ;
-
-#define ROUTE_MERIT_MASK(n) (((route_merit_t)1 << n) - 1)
-
-  /* 1. attr->weight   -- RFC4271 9.1.1, "preconfigured policy".
-   *
-   *    By the time we get to here, the weight has either been set to some
-   *    default (depending on Local Route-ness) or explicitly by route-map.
-   *
-   *    We mask this as a matter of form, the compiler should eliminate it.
-   */
-  temp  = attr->weight & ROUTE_MERIT_MASK(route_merit_weight_bits) ;
-  merit = temp << route_merit_weight_shift ;
-
-  /* 2. Local Preference -- RFC4271 9.1.1.
-   *
-   *    This is the LOCAL_PREF attribute from iBGP/cBGP peer and/or
-   *    "preconfigured policy".
-   *
-   *    By the time we get to here, the Local Pref may have been set by
-   *    Route-Map.
-   *
-   *    TODO... perhaps could set the default in the original attribute set...
-   *                               ... but lots of work if default changes !!??
-   */
-  if (attr->have & atb_local_pref)
-    temp = attr->local_pref & ROUTE_MERIT_MASK(route_merit_local_pref_bits) ;
-  else
-    temp = bgp->default_local_pref
-                            & ROUTE_MERIT_MASK(route_merit_local_pref_bits) ;
-
-  merit |= temp << route_merit_local_pref_shift ;
-
-  /* 3. Local Route State  -- RFC4271 9.1.1, "preconfigured policy"
-   *
-   *    All local routes have greater merit than normal routes (learned from
-   *    peers.  They also have no path length and no origin.
-   *
-   *    Definitely "preconfigured policy".
-   */
-  if (sub_type != BGP_ROUTE_NORMAL)
-    return merit | (route_merit_as_path_max << route_merit_as_path_shift) ;
-
-  /* 4. ~AS-PATH Length   -- RFC4271 9.1.2.2 (a) -- Breaking Ties (Phase 2).
-   *
-   *    If, for some crazy reason, the AS-PATH is beyond what we have bits
-   *    for, we leave the field as 0 -- least possible merit.
-   */
-  if (! (bgp->flags & BGP_FLAG_ASPATH_IGNORE))
-    {
-       if (bgp->flags & BGP_FLAG_ASPATH_CONFED)
-         temp = as_path_total_path_length (attr->asp);
-       else
-         temp = as_path_simple_path_length (attr->asp) ;
-
-       if (temp < route_merit_as_path_max)
-         merit |= (route_merit_as_path_max - 1 - temp)
-                                                 << route_merit_as_path_shift ;
-     } ;
-
-  /* 5. ~Origin   -- RFC4271 9.1.2.2 (b) -- Breaking Ties (Phase 2).
-   *
-   *   The origin will fit, unless there is an invalid value -- which is
-   *   treated as no merit !
-   */
-  confirm(BGP_ATT_ORG_MAX < ROUTE_MERIT_MASK(route_merit_origin_bits)) ;
-
-  if (attr->origin < ROUTE_MERIT_MASK(route_merit_origin_bits))
-    merit |= (attr->origin ^ ROUTE_MERIT_MASK(route_merit_origin_bits))
-                                                   << route_merit_origin_shift ;
-
-  return merit ;
-
-#undef ROUTE_MERIT_MASK
-} ;
-
-/*------------------------------------------------------------------------------
  * Get MED value.  If MED value is missing, use the default.
  */
 inline static uint32_t
@@ -3075,7 +2945,7 @@ bgp_med_value (attr_set attr, uint32_t default_med)
  * NB: does not change the bgp_rib_node or either of the given route_info.
  */
 static route_info
-bgp_tie_break (bgp_rib_node rn, route_info best, route_info cand)
+bgp_tie_break (bgp_rib_node rn, route_info best, route_info cand, uint rc)
 {
   attr_set best_attr, cand_attr ;
   uint32_t best_igp_metric, cand_igp_metric ;
@@ -3085,8 +2955,8 @@ bgp_tie_break (bgp_rib_node rn, route_info best, route_info cand)
   bgp_peer_sort_t best_sort, cand_sort ;
   bgp_inst bgp ;
 
-  best_attr = best->attr ;
-  cand_attr = cand->attr ;
+  best_attr = best->iroutes[rc].attr ;
+  cand_attr = cand->iroutes[rc].attr ;
 
   /* 6. MED check -- RFC4271 9.1.2.2 (c), also RFC5065 for Confed.
    *
@@ -3119,8 +2989,7 @@ bgp_tie_break (bgp_rib_node rn, route_info best, route_info cand)
    * have already done the MED thing, and don't need to do it here.
    */
   bgp = rn->it.rib->bgp ;
-  if ( (bgp->flags & BGP_FLAG_ALWAYS_COMPARE_MED) ||
-                                                (best->med_as == cand->med_as) )
+  if (best->med_as == cand->med_as)
     {
       uint32_t best_med, cand_med, default_med ;
 
@@ -3155,7 +3024,7 @@ bgp_tie_break (bgp_rib_node rn, route_info best, route_info cand)
    * This is a weight/cost... so we are looking for the smaller.
    */
   best_igp_metric = best->igp_metric ;
-  cand_igp_metric = cand->igp_metric  ;
+  cand_igp_metric = cand->igp_metric ;
 
   if (best_igp_metric != cand_igp_metric)
     return (best_igp_metric < cand_igp_metric) ? best : cand ;
@@ -4710,84 +4579,6 @@ bgp_output_filter (peer_rib prib, prefix pfx, attr_set attr)
 #undef FILTER_EXIST_WARN
 } ;
 
-/*============================================================================*/
-
-
-/*------------------------------------------------------------------------------
- * See if number of prefixes has overflowed.
- *
- * Returns:  true <=> have changed to overflowed state, and closed session
- *                    (if any) with suitable NOTIFICATION.
- */
-extern bool
-bgp_maximum_prefix_overflow (peer_rib prib, bool always)
-{
-  if (!prib->pmax.set)
-    return false ;
-
-  if (prib->pcount > prib->pmax.limit)
-    {
-      bgp_note note ;
-      ptr_t p ;
-
-      if ((prib->af_status & PEER_AFS_PREFIX_LIMIT) && !always)
-        return false ;          /* reported already     */
-
-      zlog (prib->peer->log, LOG_INFO,
-          "%%MAXPFXEXCEED: No. of %s prefix received from %s %u exceed, "
-          "limit %u", get_qafx_name(prib->qafx), prib->peer->host,
-                                              prib->pcount, prib->pmax.limit);
-
-      prib->af_status |= PEER_AFS_PREFIX_LIMIT ;
-
-      if (prib->pmax.warning)
-        return false ;
-
-      /* Signal max-prefix overflow to peer
-       */
-      note = bgp_note_new(BGP_NOMC_CEASE, BGP_NOMS_C_MAX_PREF) ;
-      p = bgp_note_prep_data(note, 2 + 1 + 4) ;
-
-      store_ns(&p[0], get_iAFI(prib->qafx)) ;
-      store_b (&p[2], get_iSAFI(prib->qafx)) ;
-      store_nl(&p[3], prib->pmax.limit) ;
-
-      bgp_peer_pmax_overflow(prib->peer, prib->pmax.restart * 60, note) ;
-      return true ;
-    }
-  else
-    prib->af_status &= ~PEER_AFS_PREFIX_LIMIT ;
-
-  if (prib->pcount > prib->pmax.threshold)
-    {
-      if ((prib->af_status & PEER_AFS_PREFIX_THRESHOLD) && ! always)
-       return false ;
-
-      zlog (prib->peer->log, LOG_INFO,
-            "%%MAXPFX: No. of %s prefix received from %s reaches %u, max %u",
-            get_qafx_name(prib->qafx), prib->peer->host, prib->pcount,
-                                                             prib->pmax.limit);
-
-      prib->af_status |= PEER_AFS_PREFIX_THRESHOLD ;
-    }
-  else
-    prib->af_status &= ~PEER_AFS_PREFIX_THRESHOLD ;
-
-  return false ;
-}
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 /*==============================================================================
  * Inbound and Outbound reconfiguration
@@ -4868,13 +4659,13 @@ bgp_soft_reconfig_in (bgp_peer peer, qafx_t qafx)
 
   while ((ri = ihash_walk_next(walk, NULL)) != NULL)
     {
-      if (ri->attr_rcv != NULL)
+      if (ri->attr_recv != NULL)
         {
-          parcel->attr   = ri->attr_rcv ;
+          parcel->attr   = ri->attr_recv ;
           parcel->pfx_id = ri->pfx_id ;
           parcel->tag    = ri->tag ;
 
-          bgp_update_from_peer(peer, parcel, true /* refresh */) ;
+          bgp_adj_in_update(peer, parcel, true /* refresh */) ;
         } ;
     } ;
 } ;
@@ -5118,7 +4909,7 @@ bgp_clear_routes(bgp_peer peer, qafx_t qafx, bool nsf)
 
   while ((ri = ihash_walk_next(walk, NULL)) != NULL)
     {
-      if (nsf && (ri->attr_rcv != NULL) && !(ri->flags & BGP_INFO_STALE))
+      if (nsf && (ri->attr_recv != NULL) && !(ri->flags & BGP_INFO_STALE))
        ri->flags |= BGP_INFO_STALE ;
       else
         bgp_route_info_free(ri, false /* not "ream" */) ;

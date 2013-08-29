@@ -60,7 +60,7 @@
  * Returns:  address of the new bgp_rib
  */
 extern bgp_rib
-bgp_rib_new(bgp_inst bgp, qafx_t qafx, rib_type_t rib_type)
+bgp_rib_new(bgp_inst bgp, qafx_t qafx)
 {
   bgp_rib  rib ;
 
@@ -71,7 +71,7 @@ bgp_rib_new(bgp_inst bgp, qafx_t qafx, rib_type_t rib_type)
    *   * bgp            -- X          -- set below
    *
    *   * qafx           -- X          -- set below
-   *   * rib_type       -- X          -- set below
+   *   * real_rib       -- X          -- copied from bgp_instance
    *
    *   * peer_count     -- 0          -- none, yet
    *   * context_count  -- 0          -- none, yet
@@ -86,14 +86,14 @@ bgp_rib_new(bgp_inst bgp, qafx_t qafx, rib_type_t rib_type)
    */
   rib->bgp         = bgp ;
   rib->qafx        = qafx ;
-  rib->rib_type    = rib_type ;
+  rib->real_rib    = bgp->real_rib ;
 
   rib->nodes_table = ihash_table_init(rib->nodes_table, 0, 60) ;
 
   rib->walker      = bgp_rib_walker_new(rib) ;
   ddl_append(rib->queue_base, &rib->walker->it, queue) ;
 
-  return bgp->rib[qafx][rib_type] = rib ;
+  return bgp->rib[qafx] = rib ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -122,7 +122,7 @@ bgp_rib_destroy(bgp_rib rib)
  * Creation/Destruction etc. of Rib-Nodes
  */
 static bgp_rib_node bgp_rib_node_new(bgp_rib rib, prefix_id_t pfx_id) ;
-inline static uint bgp_rib_node_size(bgp_rib rib, uint context_count) ;
+static bgp_rib_node bgp_rib_node_free(bgp_rib_node rn, bool clear_avail) ;
 
 /*------------------------------------------------------------------------------
  * Get RIB Node for the given prefix, of the given type in the given RIB.
@@ -163,7 +163,6 @@ extern bgp_rib_node
 bgp_rib_node_extend(bgp_rib_node rn)
 {
   bgp_rib_node rn_new ;
-  uint         context_count_new ;
   route_info   ri ;
 
   /* Hope for a quick get-away.
@@ -177,9 +176,12 @@ bgp_rib_node_extend(bgp_rib_node rn)
    * including any locks it owns.
    */
   rn_new = bgp_rib_node_new(rn->it.rib, rn->pfx_id) ;
-  context_count_new = rn_new->context_count ;
 
-  memcpy(rn_new, rn, bgp_rib_node_size(rn->it.rib, rn->context_count)) ;
+  memcpy(rn_new, rn, offsetof(bgp_rib_node_t, context_count)) ;
+  memcpy(rn_new->iroute_bases, rn->iroute_bases,
+                              sizeof(rn->iroute_bases[0]) * rn->context_count) ;
+  if (rn->it.rib->real_rib)
+    memcpy(rn_new->zroutes, rn->zroutes, sizeof(zroute_t) * rn->context_count) ;
 
   /* Copying has moved across:
    *
@@ -193,11 +195,9 @@ bgp_rib_node_extend(bgp_rib_node rn)
    *
    *   * avail                  -- see below
    *
-   *   * context_count          -- restored, below
-   *
-   *   * nroutes[]              -- copied up to old context_count
+   *   * iroutes[]              -- for the old contexts
+   *   * zroutes[]              -- for the old contexts (if any)
    */
-  rn_new->context_count = context_count_new ;
 
   /* The it.queue is based at it.rib->queue, and the new item must now
    * replace the old item in that queue.
@@ -213,9 +213,11 @@ bgp_rib_node_extend(bgp_rib_node rn)
   ri = svl_head(rn->avail.base, rn->avail) ;
   while (ri != NULL)
     {
+      qassert(ri->rindex != SVEC_NULL) ;
+
       ri->rn = rn_new ;
 
-      if (ri->context_count < context_count_new)
+      if (ri->context_count < rn_new->context_count)
         ri = bgp_route_info_extend(ri) ;
 
       ri = svl_next(ri->rlist, rn->avail) ;
@@ -243,9 +245,18 @@ bgp_rib_node_new(bgp_rib rib, prefix_id_t pfx_id)
 {
   bgp_rib_node rn ;
   uint    context_count ;
+  uint    size, zroutes_offset ;
 
-  context_count = (rib->context_count | 3) + 1 ;
-  rn = XCALLOC(MTYPE_BGP_RIB_NODE, bgp_rib_node_size(rib, context_count)) ;
+  context_count = rib->context_count ;
+
+  size = offsetof(bgp_rib_node_t, iroute_bases[context_count]) ;
+  if (rib->real_rib)
+    {
+      zroutes_offset = uround_up(size, alignof(zroute_t)) ;
+      size = zroutes_offset + (context_count * sizeof(zroute_t)) ;
+    } ;
+
+  rn = XCALLOC(MTYPE_BGP_RIB_NODE, size) ;
 
   /* Zeroising has set:
    *
@@ -260,9 +271,11 @@ bgp_rib_node_new(bgp_rib rib, prefix_id_t pfx_id)
    *   * avail                  -- SVEC_NULLs -- nothing available, yet
    *
    *   * context_count          -- X        -- set below
-   *   * nroutes[]              -- all zeros
-   *             .ilist         -- SVEC_NULLs -- nothing for the context
-   *             .aroute        -- NULL       -- no aroute (if 'main')
+   *   * zroutes                -- NULL     -- set below, if required
+   *   * iroutes[]              -- SVEC_NULLs -- nothing for the context
+   *
+   *   * body of zroutes        -- all zeros, if any
+   *             .XXX fill in how empty zroute is initialised #########################
    */
   confirm(SVEC_NULL   == 0)
   confirm(rib_it_node == 0) ;
@@ -270,6 +283,9 @@ bgp_rib_node_new(bgp_rib rib, prefix_id_t pfx_id)
   rn->it.rib        = rib ;
   rn->pfx_id        = pfx_id ;
   rn->context_count = context_count ;
+
+  if (rib->real_rib)
+    rn->zroutes = (void*)((char*)rn + zroutes_offset) ;
 
   ihash_set_item(rib->nodes_table, pfx_id, rn) ;
 
@@ -306,28 +322,6 @@ bgp_rib_node_free(bgp_rib_node rn, bool clear_avail)
     } ;
 
   return NULL ;
-} ;
-
-/*------------------------------------------------------------------------------
- * Size of a rib-node for a given number of contexts and the given tyoe of rib.
- */
-inline static uint
-bgp_rib_node_size(bgp_rib rib, uint context_count)
-{
-  switch (rib->rib_type)
-    {
-      default:
-        qassert(false) ;
-        fall_through ;
-
-      case rib_main:
-        return offsetof(bgp_rib_node_t, nroutes)
-                                          + (context_count * nroute_main_size) ;
-
-      case rib_rs:
-        return offsetof(bgp_rib_node_t, nroutes)
-                                          + (context_count * nroute_rs_size) ;
-    } ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -791,7 +785,6 @@ peer_rib_new(bgp_peer peer, qafx_t qafx)
    *   * dispatch_qtr         -- NULL    )
    */
   confirm(prib_initial == 0) ;
-  confirm(rib_main == 0) ;
 
   prib->peer    = peer ;
   prib->qafx    = qafx ;
@@ -810,10 +803,9 @@ peer_rib_new(bgp_peer peer, qafx_t qafx)
    * necessary).  Note that even if there are no Main RIB peers, there is
    * always a Main RIB.
    */
-  rib =  peer->bgp->rib[qafx][rib_main] ;
+  rib =  peer->bgp->rib[qafx] ;
   if (rib == NULL)
-    rib = peer->bgp->rib[qafx][rib_main] =
-                                       bgp_rib_new(peer->bgp, qafx, rib_main) ;
+    rib = peer->bgp->rib[qafx] = bgp_rib_new(peer->bgp, qafx) ;
   prib->rib = rib ;
 
   rib->peer_count += 1 ;
@@ -858,17 +850,14 @@ peer_rib_set_rs(bgp_peer peer, qafx_t qafx)
    */
   rib = prib->rib ;                     /* the rib_main bgp_rib         */
 
-  qassert(rib->rib_type == rib_main) ;
-
   bgp_rib_walker_detach(prib) ;         /* stop if walking rib_main     */
 
   rib->peer_count -= 1 ;
 
-  rib = peer->bgp->rib[qafx][rib_rs] ;
+  rib = peer->bgp->rib[qafx] ;
   if (rib == NULL)
-    rib = peer->bgp->rib[qafx][rib_rs] = bgp_rib_new(peer->bgp, qafx, rib_rs) ;
+    rib = peer->bgp->rib[qafx] = bgp_rib_new(peer->bgp, qafx) ;
 
-  prib->rib_type = rib_rs ;
   prib->rib = rib ;
 
   rib->peer_count += 1 ;

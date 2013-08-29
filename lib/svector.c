@@ -281,7 +281,7 @@ _svec_del(svec sv, svec_index_t i, svec_index_t e)
 } ;
 
 /*==============================================================================
- * svec_list functions -- _svl_xxx()
+ * Double Link Base -- List Functions -- _svl_xxx()
  *
  * Note that macros are provided a front-ends to all these, to help arrange
  * the required arguments.
@@ -290,12 +290,12 @@ _svec_del(svec sv, svec_index_t i, svec_index_t e)
   ((svl_list)((void*)((char*)item + off)))
 
 /*------------------------------------------------------------------------------
- * Prepend item at index 'i' to the given svec-list
+ * Prepend item at index 'i' to the given svl-list
  *
- * Requires:  base     -- pointer to the svec base-pair for the list.
+ * Requires:  base     -- pointer to the svl base-pair for the list.
  *            sv       -- the svec in question -- *generic*.
  *            i        -- index of item to prepend
- *            item_p   -- pointer to the svec list-pair in item 'i' (NB !)
+ *            item_p   -- pointer to the svl list-pair in item 'i' (NB !)
  *            e        -- index of the last embedded item in the svec
  *
  * NB: it would be a very sad mistake indeed if:
@@ -309,8 +309,7 @@ _svec_del(svec sv, svec_index_t i, svec_index_t e)
  * Returns:  address of the item
  */
 Private svec_item
-_svl_prepend(svl_base base, svec sv,
-                                     svec_index_t i, size_t off, svec_index_t e)
+_svl_prepend(svl_base base, svec sv, svec_index_t i, size_t off, svec_index_t e)
 {
   svec_item     item ;
   svl_list      item_p ;
@@ -341,12 +340,12 @@ _svl_prepend(svl_base base, svec sv,
 } ;
 
 /*------------------------------------------------------------------------------
- * Append item at index 'i' to the given svec-list
+ * Append item at index 'i' to the given svl-list
  *
- * Requires:  base     -- pointer to the svec base-pair for the list.
+ * Requires:  base     -- pointer to the svl base-pair for the list.
  *            sv       -- the svec in question -- *generic*.
  *            i        -- index of item to prepend
- *            item_p   -- pointer to the svec list-pair in item 'i' (NB !)
+ *            item_p   -- pointer to the svl list-pair in item 'i' (NB !)
  *            e        -- index of the last embedded item in the svec
  *
  * NB: it would be a very sad mistake indeed if:
@@ -360,8 +359,7 @@ _svl_prepend(svl_base base, svec sv,
  * Returns:  address of the item
  */
 Private svec_item
-_svl_append(svl_base base, svec sv,
-                                     svec_index_t i, size_t off, svec_index_t e)
+_svl_append(svl_base base, svec sv, svec_index_t i, size_t off, svec_index_t e)
 {
   svec_item     item ;
   svl_list      item_p ;
@@ -392,12 +390,12 @@ _svl_append(svl_base base, svec sv,
 } ;
 
 /*------------------------------------------------------------------------------
- * Insert item before the given item, or at the *tail* of given svec-list.
+ * Insert item before the given item, or at the *tail* of given svl-list.
  *
- * Requires:  base     -- pointer to the svec base-pair for the list.
+ * Requires:  base     -- pointer to the svl base-pair for the list.
  *            sv       -- the svec in question -- *generic*.
  *            i        -- index of item to prepend
- *            item_p   -- pointer to the svec list-pair in item 'i' (NB !)
+ *            item_p   -- pointer to the svl list-pair in item 'i' (NB !)
  *            e        -- index of the last embedded item in the svec
  *            ib       -- index of item to add before
  *
@@ -456,12 +454,12 @@ _svl_in_before(svl_base base, svec sv,
 } ;
 
 /*------------------------------------------------------------------------------
- * Insert item after the given item, or at the *head* of given svec-list.
+ * Insert item after the given item, or at the *head* of given svl-list.
  *
- * Requires:  base     -- pointer to the svec base-pair for the list.
+ * Requires:  base     -- pointer to the svl base-pair for the list.
  *            sv       -- the svec in question -- *generic*.
  *            i        -- index of item to prepend
- *            item_p   -- pointer to the svec list-pair in item 'i' (NB !)
+ *            item_p   -- pointer to the svl list-pair in item 'i' (NB !)
  *            e        -- index of the last embedded item in the svec
  *            ia       -- index of item to add after
  *
@@ -520,11 +518,11 @@ _svl_in_after(svl_base base, svec sv,
 } ;
 
 /*------------------------------------------------------------------------------
- * Delete and return head of given svec-list
+ * Delete and return head of given svl-list
  *
- * Requires:  base     -- pointer to the svec base-pair for the list.
+ * Requires:  base     -- pointer to the svl base-pair for the list.
  *            sv       -- the svec in question -- *generic*.
- *            off      -- offset of the svec list-pair in items
+ *            off      -- offset of the svl list-pair in items
  *            e        -- index of the last embedded item in the svec
  *
  * NB: it would be a very sad mistake indeed if:
@@ -567,11 +565,11 @@ _svl_del_head(svl_base base, svec sv, size_t off, svec_index_t e)
 } ;
 
 /*------------------------------------------------------------------------------
- * Delete and return tail of given svec-list
+ * Delete and return tail of given svl-list
  *
- * Requires:  base     -- pointer to the svec base-pair for the list.
+ * Requires:  base     -- pointer to the svl base-pair for the list.
  *            sv       -- the svec in question -- *generic*.
- *            off      -- offset of the svec list-pair in items
+ *            off      -- offset of the svl list-pair in items
  *            e        -- index of the last embedded item in the svec
  *
  * NB: it would be a very sad mistake indeed if:
@@ -614,12 +612,12 @@ _svl_del_tail(svl_base base, svec sv, size_t off, svec_index_t e)
 } ;
 
 /*------------------------------------------------------------------------------
- * Delete item at index 'i' from given svec-list
+ * Delete item at index 'i' from given svl-list
  *
- * Requires:  base     -- pointer to the svec base-pair for the list.
+ * Requires:  base     -- pointer to the svl base-pair for the list.
  *            sv       -- the svec in question -- *generic*.
  *            i        -- index of item to prepend
- *            off      -- offset of the svec list-pair in items
+ *            off      -- offset of the svl list-pair in items
  *            e        -- index of the last embedded item in the svec
  *
  * NB: it would be a very sad mistake indeed if:
@@ -659,6 +657,406 @@ _svl_del(svl_base base, svec sv, svec_index_t i, size_t off, svec_index_t e)
 
   if (ip == SVEC_NULL)
     base->head = in ;
+  else
+    {
+      svec_item prev ;
+      svl_list  prev_p ;
+
+      prev = _svec_get(sv, ip, e) ;
+      prev_p = _svl_p(prev, off) ;
+      prev_p->next = in ;
+    } ;
+
+  item_p->next = item_p->prev = SVEC_NULL ;
+  return item ;
+} ;
+
+/*==============================================================================
+ * Single Link Base -- List Functions -- _svs_xxx()
+ *
+ */
+/*------------------------------------------------------------------------------
+ * Prepend item at index 'i' to the given svs-list
+ *
+ * Requires:  base     -- pointer to the svs base for the list.
+ *            sv       -- the svec in question -- *generic*.
+ *            i        -- index of item to prepend
+ *            item_p   -- pointer to the svec list-pair in item 'i' (NB !)
+ *            e        -- index of the last embedded item in the svec
+ *
+ * NB: it would be a very sad mistake indeed if:
+ *
+ *       * item 'i' did not exist.
+ *
+ *       * item_p were not the list-pair in item 'i'
+ *
+ *       * item 'i' was already on the list
+ *
+ * Returns:  address of the item
+ */
+Private svec_item
+_svs_prepend(svs_base base, svec sv, svec_index_t i, size_t off, svec_index_t e)
+{
+  svec_item     item ;
+  svl_list      item_p ;
+  svec_index_t  in ;
+
+  item   = _svec_get(sv, i, e) ;
+  item_p = _svl_p(item, off) ;
+
+  in = *base ;
+  if (in != SVEC_NULL)
+    {
+      svec_item next ;
+      svl_list  next_p ;
+
+      next = _svec_get(sv, in, e) ;
+
+      next_p = _svl_p(next, off) ;
+      next_p->prev = i ;
+    } ;
+
+  *base        = i ;
+  item_p->next = in ;
+  item_p->prev = SVEC_NULL ;
+
+  return item ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Append item at index 'i' to the given svs-list
+ *
+ * Requires:  base     -- pointer to the svs base for the list.
+ *            sv       -- the svec in question -- *generic*.
+ *            i        -- index of item to prepend
+ *            item_p   -- pointer to the svec list-pair in item 'i' (NB !)
+ *            e        -- index of the last embedded item in the svec
+ *
+ * NB: has to chase down the list looking for the tail.
+ *
+ * NB: it would be a very sad mistake indeed if:
+ *
+ *       * item 'i' did not exist.
+ *
+ *       * item_p were not the list-pair in item 'i'
+ *
+ *       * item 'i' was already on the list
+ *
+ * Returns:  address of the item
+ */
+Private svec_item
+_svs_append(svs_base base, svec sv, svec_index_t i, size_t off, svec_index_t e)
+{
+  svec_item     item ;
+  svl_list      item_p ;
+  svec_index_t  ip ;
+
+  item   = _svec_get(sv, i, e) ;
+  item_p = _svl_p(item, off) ;
+
+  ip = *base ;
+  if (ip == SVEC_NULL)
+    *base = i ;
+  else
+    {
+      svec_item    prev ;
+      svl_list     prev_p ;
+
+      while (1)
+        {
+          svec_index_t in ;
+
+          prev   = _svec_get(sv, ip, e) ;
+          prev_p = _svl_p(prev, off) ;
+
+          in = prev_p->next ;
+          if (in == SVEC_NULL)
+            break ;
+
+          ip = in ;
+        } ;
+
+      prev_p->next = i ;
+    } ;
+
+  item_p->next = SVEC_NULL ;
+  item_p->prev = ip ;
+
+  return item ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Insert item before the given item, or at the *tail* of given svs-list.
+ *
+ * Requires:  base     -- pointer to the svs base for the list.
+ *            sv       -- the svec in question -- *generic*.
+ *            i        -- index of item to prepend
+ *            item_p   -- pointer to the svs list-pair in item 'i' (NB !)
+ *            e        -- index of the last embedded item in the svec
+ *            ib       -- index of item to add before
+ *
+ * If 'ib' is SVEC_NULL the item is inserted at the tail -- "append".
+ * (This is consistent with, say, insert before first larger on list.)
+ *
+ * NB: append has to chase down the list looking for the last item !
+ *
+ * NB: it would be a very sad mistake indeed if:
+ *
+ *       * item 'i' did not exist.
+ *
+ *       * item_p were not the list-pair in item 'i'
+ *
+ *       * item 'i' was already on the list
+ *
+ *       * item 'ib' was NOT on the list (if not SVEC_NULL)
+ *
+ * Returns:  address of the item
+ */
+Private svec_item
+_svs_in_before(svs_base base, svec sv,
+                    svec_index_t i, size_t off, svec_index_t e, svec_index_t ib)
+{
+  svec_item     item, before ;
+  svec_index_t  ip ;
+  svl_list      item_p, before_p ;
+
+  if (ib == SVEC_NULL)
+    return _svs_append(base, sv, i, off, e) ;
+
+  item   = _svec_get(sv, i, e) ;
+  item_p = _svl_p(item, off) ;
+
+  before   = _svec_get(sv, ib, e) ;
+  before_p = _svl_p(before, off) ;
+
+  ip = before_p->prev ;
+  before_p->prev = i ;
+
+  item_p->next = ib ;
+  item_p->prev = ip ;
+
+  if (ip == SVEC_NULL)
+    *base = i ;
+  else
+    {
+      svec_item prev ;
+      svl_list  prev_p ;
+
+      prev = _svec_get(sv, ip, e) ;
+
+      prev_p = _svl_p(prev, off) ;
+      prev_p->next = i ;
+    } ;
+
+  return item ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Insert item after the given item, or at the *head* of given svs-list.
+ *
+ * Requires:  base     -- pointer to the svs base-pair for the list.
+ *            sv       -- the svec in question -- *generic*.
+ *            i        -- index of item to prepend
+ *            item_p   -- pointer to the svs list-pair in item 'i' (NB !)
+ *            e        -- index of the last embedded item in the svec
+ *            ia       -- index of item to add after
+ *
+ * If 'ia' is SVEC_NULL the item is inserted at the head -- "prepend".
+ * (This is consistent with, say, insert after last smaller or equal.)
+ *
+ * NB: it would be a very sad mistake indeed if:
+ *
+ *       * item 'i' did not exist.
+ *
+ *       * item_p were not the list-pair in item 'i'
+ *
+ *       * item 'i' was already on the list
+ *
+ *       * item 'ia' was NOT on the list (if not SVEC_NULL)
+ *
+ * Returns:  address of the item
+ */
+Private svec_item
+_svs_in_after(svs_base base, svec sv,
+                    svec_index_t i, size_t off, svec_index_t e, svec_index_t ia)
+{
+  svec_item     item, after ;
+  svec_index_t  in ;
+  svl_list      item_p, after_p ;
+
+  if (ia == SVEC_NULL)
+    return _svs_prepend(base, sv, i, off, e) ;
+
+  item    = _svec_get(sv, i, e) ;
+  item_p  = _svl_p(item, off) ;
+
+  after   = _svec_get(sv, ia, e) ;
+  after_p = _svl_p(after, off) ;
+
+  in = after_p->next ;
+  after_p->next = i ;
+
+  item_p->next = in ;
+  item_p->prev = ia ;
+
+  if (in != SVEC_NULL)
+    {
+      svec_item next ;
+      svl_list  next_p ;
+
+      next = _svec_get(sv, in, e) ;
+
+      next_p = _svl_p(next, off) ;
+      next_p->prev = i ;
+    } ;
+
+  return item ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Delete and return head of given svs-list
+ *
+ * Requires:  base     -- pointer to the svs base for the list.
+ *            sv       -- the svec in question -- *generic*.
+ *            off      -- offset of the svs list-pair in items
+ *            e        -- index of the last embedded item in the svec
+ *
+ * NB: it would be a very sad mistake indeed if:
+ *
+ *       * off were incorrect !
+ *
+ * Returns:  address of item from head of list -- NULL if none
+ */
+Private svec_item
+_svs_del_head(svs_base base, svec sv, size_t off, svec_index_t e)
+{
+  svec_index_t  i, in ;
+  svec_item     item ;
+  svl_list      item_p ;
+
+  i = *base ;
+  if (i == SVEC_NULL)
+    return NULL ;
+
+  item   = _svec_get(sv, i, e) ;
+  item_p = _svl_p(item, off) ;
+
+  in = item_p->next ;
+  if (in != SVEC_NULL)
+    {
+      svec_item next ;
+      svl_list  next_p ;
+
+      next   = _svec_get(sv, in, e) ;
+      next_p = _svl_p(next, off) ;
+
+      next_p->prev = SVEC_NULL ;
+    } ;
+
+  *base        = in ;
+  item_p->next = item_p->prev = SVEC_NULL ;
+  return item ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Delete and return tail of given svs-list
+ *
+ * Requires:  base     -- pointer to the svs base for the list.
+ *            sv       -- the svec in question -- *generic*.
+ *            off      -- offset of the svs list-pair in items
+ *            e        -- index of the last embedded item in the svec
+ *
+ * NB: has to chase down the list looking for the last item !
+ *
+ * NB: it would be a very sad mistake indeed if:
+ *
+ *       * off were incorrect !
+ *
+ * Returns:  address of item from tail of list -- NULL if none
+ */
+Private svec_item
+_svs_del_tail(svs_base base, svec sv, size_t off, svec_index_t e)
+{
+  svec_index_t  i, in ;
+  svec_item     item ;
+  svl_list      item_p ;
+
+  i = *base ;
+  if (i == SVEC_NULL)
+    return NULL ;
+
+  item   = _svec_get(sv, i, e) ;
+  item_p = _svl_p(item, off) ;
+
+  in = item_p->next ;
+  if (in == SVEC_NULL)
+    *base = in ;
+  else
+    {
+      svl_list  prev_p ;
+
+      do
+        {
+          prev_p = item_p ;
+
+          item   = _svec_get(sv, in, e) ;
+          item_p = _svl_p(item, off) ;
+
+          in = item_p->next ;
+        }
+      while (in != SVEC_NULL) ;
+
+      prev_p->next = in ;
+    } ;
+
+  item_p->next = item_p->prev = SVEC_NULL ;
+  return item ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Delete item at index 'i' from given svs-list
+ *
+ * Requires:  base     -- pointer to the svs base for the list.
+ *            sv       -- the svec in question -- *generic*.
+ *            i        -- index of item to prepend
+ *            off      -- offset of the svs list-pair in items
+ *            e        -- index of the last embedded item in the svec
+ *
+ * NB: it would be a very sad mistake indeed if:
+ *
+ *       * item 'i' did not exist.
+ *
+ *       * item 'i' was not on the list
+ *
+ *       * off were incorrect !
+ *
+ * Returns:  address of the item
+ */
+Private svec_item
+_svs_del(svs_base base, svec sv, svec_index_t i, size_t off, svec_index_t e)
+{
+  svec_item     item ;
+  svl_list    item_p ;
+  svec_index_t  in, ip ;
+
+  item   = _svec_get(sv, i, e) ;
+  item_p = _svl_p(item, off) ;
+
+  in = item_p->next ;
+  ip = item_p->prev ;
+
+  if (in != SVEC_NULL)
+    {
+      svec_item next ;
+      svl_list  next_p ;
+
+      next = _svec_get(sv, in, e) ;
+      next_p = _svl_p(next, off) ;
+      next_p->prev = ip ;
+    } ;
+
+  if (ip == SVEC_NULL)
+    *base = in ;
   else
     {
       svec_item prev ;

@@ -347,7 +347,7 @@ enum
 
 /* Prefix's family member.
  */
-#define PREFIX_FAMILY(p)  ((p)->family)
+#define PREFIX_FAMILY(pfx)  ((pfx)->family)
 
 /* Fixed length string structure for prefix in string form.
  */
@@ -372,31 +372,32 @@ extern uint prefix_bit_len (prefix_c pfx);
 extern ulen prefix_to_raw(prefix_raw eaw, prefix_c pfx) ;
 extern ulen prefix_blow(blower br, prefix_c pfx) ;
 extern void prefix_from_raw(prefix pfx, sa_family_t family, prefix_raw raw) ;
-extern void prefix_body_from_bytes(prefix p, uint plen, const byte* pb) ;
+extern void prefix_body_from_bytes(prefix pfx, const byte* pb, uint plen) ;
+extern void prefix_body_from_nlri(prefix pfx, const byte* pb, uint plen) ;
 extern void prefix_default(prefix pfx, sa_family_t family) ;
 
-extern bool str2prefix_check(prefix p, const char *str) ;
+extern bool str2prefix_check(prefix pfx, const char *str) ;
 extern int str2prefix (const char* str, prefix pfx);
 extern int prefix2str (const struct prefix *, char *, int);
 extern str_pfxtoa_t spfxtoa(prefix_c pfx) ;
 
-extern bool prefix_match (prefix_c p1, prefix_c p2);
-extern bool prefix_same (prefix_c p1, prefix_c p2);
-extern int prefix_equal (prefix_c p1, prefix_c p2) ;
-extern int prefix_cmp (prefix_c p1, prefix_c p2);
-extern int prefix_sort_cmp (prefix_c p1, prefix_c p2);
-extern int prefix_common_bits (prefix_c p1, prefix_c p2);
+extern bool prefix_match (prefix_c pfx1, prefix_c pfx2);
+extern bool prefix_same (prefix_c pfx1, prefix_c pfx2);
+extern int prefix_equal (prefix_c pfx1, prefix_c pfx2) ;
+extern int prefix_cmp (prefix_c pfx1, prefix_c pfx2);
+extern int prefix_sort_cmp (prefix_c pfx1, prefix_c pfx2);
+extern int prefix_common_bits (prefix_c pfx1, prefix_c pfx2);
 extern void prefix_copy (prefix dst, prefix_c src);
-extern void apply_mask (prefix p);
+extern void apply_mask (prefix pfx);
 
-extern prefix prefix_from_sockunion (prefix p, sockunion_c src);
+extern prefix prefix_from_sockunion (prefix pfx, sockunion_c src);
 
 extern prefix_ipv4 prefix_ipv4_new (void);
-extern void prefix_ipv4_free (prefix_ipv4 p);
-extern int str2prefix_ipv4 (const char* str, prefix_ipv4 p);
+extern void prefix_ipv4_free (prefix_ipv4 pfx);
+extern int str2prefix_ipv4 (const char* str, prefix_ipv4 pfx);
 extern bool str2ipv4 (in_addr_t* ipv4, const char* str, const char** end) ;
-extern void apply_mask_ipv4 (prefix_ipv4 p);
-extern bool prefix_check_ipv4 (prefix_ipv4 p) ;
+extern void apply_mask_ipv4 (prefix_ipv4 pfx);
+extern bool prefix_check_ipv4 (prefix_ipv4 pfx) ;
 
 #define PREFIX_COPY_IPV4(DST, SRC)      \
         *((struct prefix_ipv4 *)(DST)) = *((const struct prefix_ipv4 *)(SRC));
@@ -428,11 +429,11 @@ extern int netmask_str2prefix_str (const char *, const char *, char *);
 
 #ifdef HAVE_IPV6
 extern prefix_ipv6 prefix_ipv6_new (void);
-extern void prefix_ipv6_free (prefix_ipv6 p);
-extern int str2prefix_ipv6 (const char* str, prefix_ipv6 p);
+extern void prefix_ipv6_free (prefix_ipv6 pfx);
+extern int str2prefix_ipv6 (const char* str, prefix_ipv6 pfx);
 extern bool str2ipv6 (in6_addr_s* ipv6, const char* str, const char** end) ;
-extern void apply_mask_ipv6 (prefix_ipv6 p);
-extern bool prefix_check_ipv6 (prefix_ipv6 p) ;
+extern void apply_mask_ipv6 (prefix_ipv6 pfx);
+extern bool prefix_check_ipv6 (prefix_ipv6 pfx) ;
 
 #define PREFIX_COPY_IPV6(DST, SRC)      \
         *((struct prefix_ipv6 *)(DST)) = *((const struct prefix_ipv6 *)(SRC));

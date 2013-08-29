@@ -891,11 +891,39 @@ peer_activate_family (bgp_peer peer, qafx_t qafx)
     peer->config.af_flags[qafx] |= (PEER_AFF_SEND_COMMUNITY |
                                     PEER_AFF_SEND_EXT_COMMUNITY) ;
 
-  /* Set defaults for neighbor maximum-prefix
+  /* Set defaults for neighbor maximum-prefix -- unset
    */
-  prib->pmax.limit     = 0;
-  prib->pmax.threshold = 0;
-  prib->pmax.thresh_pc = MAXIMUM_PREFIX_THRESHOLD_DEFAULT;
+  bgp_peer_pmax_reset(prib) ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Reset the given prib's pmax settings.
+ */
+extern prefix_max
+bgp_peer_pmax_reset(peer_rib prib)
+{
+  prefix_max pmax ;
+
+  pmax = &prib->pmax ;
+  memset(pmax, 0, sizeof(prefix_max_t)) ;
+
+  /* Zeroizing sets:
+   *
+   *    * set          -- false
+   *    * warning      -- false
+   *
+   *    * trigger      -- X         -- set to indefinitely big, below
+   *
+   *    * limit        -- 0
+   *    * threshold    -- 0
+   *
+   *    * thresh_pc    -- X         -- set to default, below
+   *    * restart      -- 0
+   */
+  pmax->trigger   = UINT_MAX ;
+  pmax->thresh_pc = MAXIMUM_PREFIX_THRESHOLD_DEFAULT;
+
+  return pmax ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -4636,34 +4664,92 @@ bgp_peer_may_restart(bgp_peer peer)
     bgp_peer_restart_timer_start(peer, QTIME(1)) ;
 } ;
 
+
+
 /*------------------------------------------------------------------------------
- * Max Prefix Overflow -- set "stop", or "wait" with timer.
- *
- * Since we must be pEstablished/pssRunning, will go pClearing/pssLimping.
+ * Check for maximum prefix ...
  */
-extern void
-bgp_peer_pmax_overflow(bgp_peer peer, uint pmax_restart, bgp_note note)
+extern bool
+bgp_peer_pmax_check(peer_rib prib)
 {
-  qassert((peer->state == bgp_pEstablished) &&
-                                       (peer->session_state == bgp_pssRunning)) ;
-  if (pmax_restart == 0)
+  if (prib->pcount_recv > prib->pmax.limit)
     {
-      if (BGP_DEBUG (events, EVENTS))
-        zlog_debug ("%s Maximum-prefix stop.", peer->host) ;
+      /* We have exceeded the max-prefix limit
+       */
+      bgp_note note ;
+      ptr_t p ;
 
-      bgp_peer_set_down(peer, bgp_pisMaxPrefixStop, note,
-                                                         PEER_DOWN_MAX_PREFIX) ;
-    }
-  else
-    {
-      if (BGP_DEBUG (events, EVENTS))
-        zlog_debug ("%s Maximum-prefix restart timer started for %d secs",
-                                                     peer->host, pmax_restart) ;
-      bgp_peer_restart_timer_start(peer, QTIME(pmax_restart)) ;
+      if (prib->pmax.trigger < UINT_MAX)
+        {
+          /* First time we have seen this, so report.
+           */
+          zlog (prib->peer->log, LOG_INFO,
+              "%%MAXPFXEXCEED: No. of %s prefix received from %s %u exceed, "
+                "limit %u", get_qafx_name(prib->qafx), prib->peer->host,
+                                         prib->pcount_recv, prib->pmax.limit) ;
 
-      bgp_peer_set_idle(peer, bgp_pisMaxPrefixWait, note,
+          /* Set the trigger so we don't come back !
+           */
+          prib->pmax.trigger = UINT_MAX ;
+        } ;
+
+      if (prib->pmax.warning)
+        return true ;                   /* it's OK, though      */
+
+      /* Signal max-prefix overflow to peer
+       */
+      note = bgp_note_new(BGP_NOMC_CEASE, BGP_NOMS_C_MAX_PREF) ;
+      p = bgp_note_prep_data(note, 2 + 1 + 4) ;
+
+      store_ns(&p[0], get_iAFI(prib->qafx)) ;
+      store_b (&p[2], get_iSAFI(prib->qafx)) ;
+      store_nl(&p[3], prib->pmax.limit) ;
+
+      qassert((prib->peer->state == bgp_pEstablished) &&
+                                (prib->peer->session_state == bgp_pssRunning)) ;
+
+      if (prib->pmax.restart == 0)
+        {
+          if (BGP_DEBUG (events, EVENTS))
+            zlog_debug ("%s Maximum-prefix stop.", prib->peer->host) ;
+
+          bgp_peer_set_down(prib->peer, bgp_pisMaxPrefixStop, note,
                                                          PEER_DOWN_MAX_PREFIX) ;
+        }
+      else
+        {
+          if (BGP_DEBUG (events, EVENTS))
+            zlog_debug ("%s Maximum-prefix restart timer started for %d secs",
+                                         prib->peer->host, prib->pmax.restart) ;
+          bgp_peer_restart_timer_start(prib->peer, QTIME(prib->pmax.restart)) ;
+
+          bgp_peer_set_idle(prib->peer, bgp_pisMaxPrefixWait, note,
+                                                         PEER_DOWN_MAX_PREFIX) ;
+        } ;
+
+      return false ;            /* STOP !!!     */
     } ;
+
+  if (prib->pcount_recv > prib->pmax.threshold)
+    {
+      /* We have exceeded the max-prefix threshold.
+       */
+      if (prib->pmax.trigger < prib->pmax.limit)
+        {
+          /* First time we have seen this, so report.
+           */
+          zlog (prib->peer->log, LOG_INFO,
+            "%%MAXPFX: No. of %s prefix received from %s reaches %u, max %u",
+            get_qafx_name(prib->qafx), prib->peer->host, prib->pcount_recv,
+                                                             prib->pmax.limit);
+
+          /* Set the trigger for limit.
+           */
+          prib->pmax.trigger = prib->pmax.limit ;
+        } ;
+    } ;
+
+  return true ;                 /* OK to continue       */
 } ;
 
 /*------------------------------------------------------------------------------

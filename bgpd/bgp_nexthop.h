@@ -26,6 +26,40 @@ Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
 #include "sockunion.h"
 #include "bgp_attr_store.h"
 
+/*==============================================================================
+ * Work in progress... new next-hop stuff
+ */
+
+typedef enum next_hop_state next_hop_state_t ;
+
+enum next_hop_state
+{
+  nhs_unknown       = 0,
+
+  nhs_valid,
+  nhs_invalid,
+
+  nhs_reachable,
+  nhs_unreachable,
+
+} ;
+
+extern next_hop_state_t bgp_next_hop_in_valid(attr_set_c attr) ;
+extern next_hop_state_t bgp_next_hop_in_reachable(attr_set_c attr) ;
+
+
+
+
+
+
+
+
+
+
+/*==============================================================================
+ * To be displaced Next-Hop Stuff
+ */
+
 #define BGP_SCAN_INTERVAL_DEFAULT   60
 #define BGP_IMPORT_INTERVAL_DEFAULT 15
 

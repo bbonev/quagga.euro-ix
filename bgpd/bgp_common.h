@@ -70,7 +70,7 @@ typedef struct route_extra*     route_extra ;
 typedef struct route_zebra*     route_zebra ;
 typedef struct nroute*          nroute ;
 typedef struct iroute*          iroute ;
-typedef struct aroute*          aroute ;
+typedef struct zroute*          zroute ;
 
 
 typedef struct adj_out*         adj_out ;
@@ -932,6 +932,9 @@ typedef byte bgp_zebra_route_t ;
 
 enum bgp_route_subtype
 {
+  /* BGP_ROUTE_NORMAL  -- learned from peer
+   *
+   */
   BGP_ROUTE_NORMAL,
   BGP_ROUTE_AGGREGATE,
   BGP_ROUTE_REDISTRIBUTE,
@@ -948,11 +951,18 @@ enum bgp_route_type
   BGP_ROUTE_SUBTYPE_MASK  = BIT(BGP_ZEBRA_ROUTE_SHIFT)     - 1,
   BGP_ZEBRA_ROUTE_MASK    = BIT(8 - BGP_ZEBRA_ROUTE_SHIFT) - 1,
 
+  bgp_route_type_null     = 0,
+
+  bgp_route_type_normal   = (ZEBRA_ROUTE_BGP << BGP_ZEBRA_ROUTE_SHIFT)
+                                                             | BGP_ROUTE_NORMAL,
+
   bgp_route_type_t_max    = BGP_ROUTE_SUBTYPE_MASK | BGP_ZEBRA_ROUTE_MASK,
 } ;
 
 CONFIRM((BGP_ROUTE_SUBTYPE_COUNT - 1) <= BGP_ROUTE_SUBTYPE_MASK) ;
 CONFIRM((ZEBRA_ROUTE_MAX         - 1) <= BGP_ZEBRA_ROUTE_MASK) ;
+CONFIRM(bgp_route_type_null == ((ZEBRA_ROUTE_SYSTEM << BGP_ZEBRA_ROUTE_SHIFT)
+                                                          | BGP_ROUTE_NORMAL)) ;
 CONFIRM(bgp_route_type_t_max <= 255) ;  /* byte         */
 
 Inline bgp_route_subtype_t bgp_route_subtype(bgp_route_type_t type)

@@ -6959,7 +6959,7 @@ bgp_show_summary (struct vty *vty, struct bgp *bgp, qafx_t qafx)
 
       if (peer->state == bgp_pEstablished)
         {
-          vty_out (vty, " %8u", prib->pcount);
+          vty_out (vty, " %8u", prib->pcount_accept);
         }
       else
         {
@@ -7505,7 +7505,8 @@ bgp_show_peer_afi (vty vty, bgp_peer peer, qafx_t qafx)
 
   /* Receive prefix count
    */
-  vty_out (vty, "  %u accepted prefixes\n", prib->pcount);
+  vty_out (vty, "  %u accepted prefixes (%u received)\n", prib->pcount_accept,
+                                                            prib->pcount_recv) ;
 
   /* Maximum prefix
    */

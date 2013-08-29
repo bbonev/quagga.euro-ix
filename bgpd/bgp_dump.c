@@ -615,8 +615,7 @@ bgp_dump_routes_family(bgp_dump bd, struct bgp *bgp, qAFI_t q_afi)
 
   /* Get the required table -- gets empty vector, if none
    */
-  rv = bgp_rib_extract(bgp->rib[qafx_from_q(q_afi, qSAFI_Unicast)][rib_main],
-                                                                         NULL) ;
+  rv = bgp_rib_extract(bgp->rib[qafx_from_q(q_afi, qSAFI_Unicast)], NULL) ;
   /* Walk down each BGP route
    */
   for (i = 0 ; i < vector_length(rv) ; ++i)
@@ -629,7 +628,7 @@ bgp_dump_routes_family(bgp_dump bd, struct bgp *bgp, qAFI_t q_afi)
       uint16_t      entry_count ;
 
       rn = vector_get_item(rv, i) ;
-      ri = ddl_head(rn->routes) ;
+      ri = svs_head(&rn->iroute_bases[0], rn->avail) ;
 
       if (ri == NULL)
         continue ;              /* ignore if no routes available        */
@@ -678,11 +677,11 @@ bgp_dump_routes_family(bgp_dump bd, struct bgp *bgp, qAFI_t q_afi)
             break ;
 
           blow_init(br, stream_get_end(s), left) ;
-          step = bgp_dump_routes_attr(br, ri->attr, pfx) ;
+          step = bgp_dump_routes_attr(br, ri->iroutes[0].attr, pfx) ;
 
           stream_forward_endp (s, step) ;
 
-          ri = ddl_next(ri, route_list) ;
+          ri = svs_next(ri->iroutes[0].list, rn->avail) ;
         }
       while (ri != NULL) ;
 

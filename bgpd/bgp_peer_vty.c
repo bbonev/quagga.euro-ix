@@ -2386,6 +2386,9 @@ peer_maximum_prefix_set (bgp_peer peer, qafx_t qafx, uint32_t max,
   pmax = &prib->pmax ;
   memset(pmax, 0, sizeof(prefix_max_t)) ;
 
+  if (thresh_pc > 100)
+    thresh_pc = 100 ;                   /* clamp        */
+
   prib->pmax.set       = true ;
   prib->pmax.warning   = warning ;
 
@@ -2393,6 +2396,8 @@ peer_maximum_prefix_set (bgp_peer peer, qafx_t qafx, uint32_t max,
   prib->pmax.threshold = ((urlong)max * thresh_pc) / 100 ; ;
   prib->pmax.thresh_pc = thresh_pc ;
   prib->pmax.restart   = restart ;
+
+  prib->pmax.trigger   = prib->pmax.threshold ;
 
   /* Update peer-group members
    */
@@ -2442,8 +2447,7 @@ peer_maximum_prefix_unset (bgp_peer peer, qafx_t qafx)
 
   /* Unset value for peer or peer-group.
    */
-  pmax = &prib->pmax ;
-  memset(pmax, 0, sizeof(prefix_max_t)) ;
+  pmax = bgp_peer_pmax_reset(prib) ;
 
   if (peer->type == PEER_TYPE_GROUP_CONF)
     {

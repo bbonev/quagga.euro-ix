@@ -34,14 +34,21 @@
 /*------------------------------------------------------------------------------
  * Prototypes.
  */
-extern void bgp_adj_in_init(peer_rib prib, rib_type_t rib_type) ;
+extern void bgp_adj_in_init(peer_rib prib) ;
 extern void bgp_adj_in_reset(peer_rib prib) ;
 
-extern route_info bgp_route_info_new(peer_rib prib, rib_type_t rib_type,
-                             prefix_id_entry pie, bgp_route_type_t route_type) ;
+extern route_info bgp_route_info_new(peer_rib prib, prefix_id_entry pie) ;
+extern route_info bgp_route_info_extend(route_info ri) ;
+
 extern route_info bgp_route_info_free(route_info ri, bool ream) ;
 
-extern void bgp_adj_in_discard(peer_rib prib, rib_type_t rib_type) ;
+
+extern void bgp_adj_in_update(peer_rib prib, prefix_id_entry pie,
+                                                          iroute_state parcel) ;
+
+
+
+extern void bgp_adj_in_discard(peer_rib prib) ;
 extern void bgp_adj_in_set_stale(peer_rib prib) ;
 extern void bgp_adj_in_discard_stale(peer_rib prib) ;
 extern void bgp_adj_in_refresh(peer_rib prib) ;

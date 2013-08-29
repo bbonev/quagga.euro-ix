@@ -350,36 +350,36 @@ prefix6_bit (const struct in6_addr *prefix, const u_char prefixlen)
 #endif /* HAVE_IPV6 */
 
 /*------------------------------------------------------------------------------
- * If n includes p prefix then return true.
+ * If pfx_n includes prefix pfx then return true.
  *
  * NB: takes no notice of the prefixes' families.
  *
  *     Inter alia, does not check that the prefixlen is valid.  (If it is not
  *     valid, may read beyond the end of either prefix.)
  *
- * NB: the src and dst are nominally prefix_t, but both may be one of the
+ * NB: the arguments are nominally prefix_t, but both may be one of the
  *     variations on the prefix theme.
  *
- *     The result if src and dst are different variants is *undefined*.  (But
- *     may include reading beyond the end of prefix 'p'.)
+ *     The result if arguments are different variants is *undefined*.  (But
+ *     may include reading beyond the end of prefix pfx.)
  */
 extern bool
-prefix_match (prefix_c n, prefix_c p)
+prefix_match (prefix_c pfx_n, prefix_c pfx)
 {
   uint i, m ;
 
-  if (n->prefixlen > p->prefixlen)
+  if (pfx_n->prefixlen > pfx->prefixlen)
     return false ;
 
-  i = n->prefixlen / 32 ;
-  m = n->prefixlen % 32 ;
+  i = pfx_n->prefixlen / 32 ;
+  m = pfx_n->prefixlen % 32 ;
 
   if (m != 0)
-    if (ntohl(n->u.n32[i] ^ p->u.n32[i]) > (0xFFFFFFFF >> m))
+    if (ntohl(pfx_n->u.n32[i] ^ pfx->u.n32[i]) > (0xFFFFFFFF >> m))
       return false ;
 
   while (i-- != 0)
-    if (n->u.n32[i] != p->u.n32[i])
+    if (pfx_n->u.n32[i] != pfx->u.n32[i])
       return false ;
 
   return true ;         /* match        */
@@ -474,17 +474,17 @@ prefix_copy (prefix dst, prefix_c src)
  * NB: assumes that any and all bits beyond 'prefixlen' are zero.
  */
 extern bool
-prefix_same (prefix_c p1, prefix_c p2)
+prefix_same (prefix_c pfx1, prefix_c pfx2)
 {
-  if ((p1->prefixlen == p2->prefixlen) && (p1->family == p2->family))
+  if ((pfx1->prefixlen == pfx2->prefixlen) && (pfx1->family == pfx2->family))
     {
-      switch (p1->family)
+      switch (pfx1->family)
       {
         case AF_INET:
-          return p1->u.ipv4 == p2->u.ipv4 ;
+          return pfx1->u.ipv4 == pfx2->u.ipv4 ;
 #ifdef HAVE_IPV6
         case AF_INET6:
-          return IPV6_ADDR_SAME (&p1->u.ipv6, &p2->u.ipv6) ;
+          return IPV6_ADDR_SAME (&pfx1->u.ipv6, &pfx2->u.ipv6) ;
 #endif /* HAVE_IPV6 */
 
         default:
@@ -508,17 +508,17 @@ prefix_same (prefix_c p1, prefix_c p2)
  * NB: assumes that any and all bits beyond 'prefixlen' are zero.
  */
 extern int
-prefix_equal (prefix_c p1, prefix_c p2)
+prefix_equal (prefix_c pfx1, prefix_c pfx2)
 {
-  if ((p1->prefixlen == p2->prefixlen) && (p1->family == p2->family))
+  if ((pfx1->prefixlen == pfx2->prefixlen) && (pfx1->family == pfx2->family))
     {
-      switch (p1->family)
+      switch (pfx1->family)
       {
         case AF_INET:
-          return (p1->u.ipv4 == p2->u.ipv4) ? 0 : 1 ;
+          return (pfx1->u.ipv4 == pfx2->u.ipv4) ? 0 : 1 ;
 #ifdef HAVE_IPV6
         case AF_INET6:
-          return IPV6_ADDR_CMP (&p1->u.ipv6, &p2->u.ipv6) ;
+          return IPV6_ADDR_CMP (&pfx1->u.ipv6, &pfx2->u.ipv6) ;
 #endif /* HAVE_IPV6 */
 
         default:
@@ -554,22 +554,22 @@ prefix_equal (prefix_c p1, prefix_c p2)
  * NB: assumes that any and all bits beyond 'prefixlen' are zero.
  */
 extern int
-prefix_cmp (prefix_c p1, prefix_c p2)
+prefix_cmp (prefix_c pfx1, prefix_c pfx2)
 {
   uint i, m ;
 
-  if ((p1->family != p2->family) || (p1->prefixlen != p2->prefixlen))
+  if ((pfx1->family != pfx2->family) || (pfx1->prefixlen != pfx2->prefixlen))
     return 1;
 
-  i = p1->prefixlen / 32 ;
-  m = p1->prefixlen % 32 ;
+  i = pfx1->prefixlen / 32 ;
+  m = pfx1->prefixlen % 32 ;
 
   if (m != 0)
-    if (ntohl(p1->u.n32[i] ^ p2->u.n32[i]) > (U32_1s >> m))
+    if (ntohl(pfx1->u.n32[i] ^ pfx2->u.n32[i]) > (U32_1s >> m))
       return 1;
 
   while (i--)
-    if (p1->u.n32[i] != p2->u.n32[i])
+    if (pfx1->u.n32[i] != pfx2->u.n32[i])
       return 1;
 
   return 0;             /* equal        */
@@ -598,16 +598,16 @@ prefix_cmp (prefix_c p1, prefix_c p2)
  * NB: assumes that any and all bits beyond 'prefixlen' are zero.
  */
 extern int
-prefix_sort_cmp (prefix_c p1, prefix_c p2)
+prefix_sort_cmp (prefix_c pfx1, prefix_c pfx2)
 {
   uint  i, pl1, pl2 ;
   int   pl ;
 
-  if (p1->family != p2->family)
-    return (p1->family < p2->family) ? -1 : +1 ;
+  if (pfx1->family != pfx2->family)
+    return (pfx1->family < pfx2->family) ? -1 : +1 ;
 
-  pl1 = p1->prefixlen ;
-  pl2 = p2->prefixlen ;
+  pl1 = pfx1->prefixlen ;
+  pl2 = pfx2->prefixlen ;
 
   i  = 0 ;
   pl = (pl1 <= pl2) ? pl1 : pl2 ;
@@ -616,8 +616,8 @@ prefix_sort_cmp (prefix_c p1, prefix_c p2)
     {
       uint32_t w1, w2 ;
 
-      w1 = p1->u.n32[i] ;
-      w2 = p2->u.n32[i] ;
+      w1 = pfx1->u.n32[i] ;
+      w2 = pfx2->u.n32[i] ;
 
       if (w1 != w2)
         return (ntohl(w1) < ntohl(w2)) ? -1 : +1 ;
@@ -639,32 +639,32 @@ prefix_sort_cmp (prefix_c p1, prefix_c p2)
  * in range 0 ... maximum prefix length for the address family.
  */
 extern int
-prefix_common_bits (prefix_c p1, prefix_c p2)
+prefix_common_bits (prefix_c pfx1, prefix_c pfx2)
 {
   uint32_t dn32 ;
 #ifdef HAVE_IPV6
   uint64_t dn64 ;
 #endif
 
-  if (p1->family != p2->family)
+  if (pfx1->family != pfx2->family)
     return -1;
 
-  switch (p1->family)
+  switch (pfx1->family)
     {
       case AF_INET:
 
-        dn32 = p1->u.n32[0] ^ p2->u.n32[0] ;
+        dn32 = pfx1->u.n32[0] ^ pfx2->u.n32[0] ;
 
         return (dn32 != 0) ? local_clz_n32(dn32) : 32 ;
 
 #ifdef HAVE_IPV6
       case AF_INET6:
-        dn64 = p1->u.n64[0] ^ p2->u.n64[0] ;
+        dn64 = pfx1->u.n64[0] ^ pfx2->u.n64[0] ;
 
         if (dn64 != 0)
           return local_clz_n64(dn64) ;
 
-        dn64 = p1->u.n64[1] ^ p2->u.n64[1] ;
+        dn64 = pfx1->u.n64[1] ^ pfx2->u.n64[1] ;
 
         return (dn64 != 0) ? 64 + local_clz_n64(dn64) : 128 ;
 #endif
@@ -678,9 +678,9 @@ prefix_common_bits (prefix_c p1, prefix_c p2)
  * Return prefix family type string.
  */
 const char *
-prefix_family_str (const struct prefix *p)
+prefix_family_str (prefix_c pfx)
 {
-  switch (p->family)
+  switch (pfx->family)
     {
       case AF_INET:
         return "inet";
@@ -710,15 +710,15 @@ prefix_family_str (const struct prefix *p)
 struct prefix_ipv4 *
 prefix_ipv4_new ()
 {
-  struct prefix_ipv4 *p;
+  struct prefix_ipv4 *pfx;
 
   /* Call prefix_new to allocate a full-size struct prefix to avoid problems
    * where the struct prefix_ipv4 is cast to struct prefix and unallocated
    * bytes were being referenced (e.g. in structure assignments).
    */
-  p = (struct prefix_ipv4 *)prefix_new();
-  p->family = AF_INET;
-  return p;
+  pfx = (struct prefix_ipv4 *)prefix_new();
+  pfx->family = AF_INET;
+  return pfx;
 }
 
 /*------------------------------------------------------------------------------
@@ -727,9 +727,9 @@ prefix_ipv4_new ()
  * NB: does not, in fact, free a prefix_ipv4_t... frees a prefix_t !!
  */
 extern void
-prefix_ipv4_free (struct prefix_ipv4 *p)
+prefix_ipv4_free (struct prefix_ipv4 *pfx)
 {
-  prefix_free((struct prefix *)p);
+  prefix_free((struct prefix *)pfx);
 }
 
 /*------------------------------------------------------------------------------
@@ -756,17 +756,17 @@ prefix_ipv4_free (struct prefix_ipv4 *p)
  *     prefix length.
  */
 extern int
-str2prefix_ipv4 (const char *str, prefix_ipv4 p)
+str2prefix_ipv4 (const char *str, prefix_ipv4 pfx)
 {
   const char* pnt ;
   uint     plen ;
   strtox_t tox ;
 
-  memset(p, 0, sizeof(prefix_ht)) ;
+  memset(pfx, 0, sizeof(prefix_ht)) ;
 
   confirm((AF_UNSPEC == 0) && (prefix_rd_id_null == 0)) ;
 
-  if (!str2ipv4 (&p->prefix.s_addr, str, &pnt))
+  if (!str2ipv4 (&pfx->prefix.s_addr, str, &pnt))
     return 0 ;                  /* Invalid leading IPv4 part    */
 
   switch (*pnt)
@@ -787,8 +787,8 @@ str2prefix_ipv4 (const char *str, prefix_ipv4 p)
         return 0 ;
     } ;
 
-  p->family    = AF_INET;
-  p->prefixlen = plen;
+  pfx->family    = AF_INET;
+  pfx->prefixlen = plen;
 
   return 1 ;
 }
@@ -877,9 +877,9 @@ ip_mask_check (in_addr_t netmask)
  * Apply mask to IPv4 prefix (network byte order).
  */
 extern void
-apply_mask_ipv4 (prefix_ipv4 p)
+apply_mask_ipv4 (prefix_ipv4 pfx)
 {
-  p->prefix.s_addr &= n32_mask(p->prefixlen) ;
+  pfx->prefix.s_addr &= n32_mask(pfx->prefixlen) ;
 }
 
 /*------------------------------------------------------------------------------
@@ -888,17 +888,17 @@ apply_mask_ipv4 (prefix_ipv4 p)
  * Return:  true <=> is all zeros beyond the prefix length
  */
 extern bool
-prefix_check_ipv4 (prefix_ipv4 p)
+prefix_check_ipv4 (prefix_ipv4 pfx)
 {
-  return !(p->prefix.s_addr & n32_wild(p->prefixlen)) ;
+  return !(pfx->prefix.s_addr & n32_wild(pfx->prefixlen)) ;
 }
 
 /*------------------------------------------------------------------------------
  * If prefix is 0.0.0.0/0 then return 1 else return 0. */
 extern bool
-prefix_ipv4_any (prefix_ipv4_c p)
+prefix_ipv4_any (prefix_ipv4_c pfx)
 {
-  return (p->prefix.s_addr == 0 && p->prefixlen == 0);
+  return (pfx->prefix.s_addr == 0 && pfx->prefixlen == 0);
 }
 
 /*==============================================================================
@@ -910,20 +910,20 @@ prefix_ipv4_any (prefix_ipv4_c p)
 struct prefix_ipv6 *
 prefix_ipv6_new (void)
 {
-  struct prefix_ipv6 *p;
+  struct prefix_ipv6 *pfx;
 
   /* Allocate a full-size struct prefix to avoid problems with structure
      size mismatches. */
-  p = (struct prefix_ipv6 *)prefix_new();
-  p->family = AF_INET6;
-  return p;
+  pfx = (struct prefix_ipv6 *)prefix_new();
+  pfx->family = AF_INET6;
+  return pfx;
 }
 
 /* Free prefix for IPv6. */
 void
-prefix_ipv6_free (struct prefix_ipv6 *p)
+prefix_ipv6_free (struct prefix_ipv6 *pfx)
 {
-  prefix_free((struct prefix *)p);
+  prefix_free((struct prefix *)pfx);
 }
 
 /*------------------------------------------------------------------------------
@@ -946,17 +946,17 @@ prefix_ipv6_free (struct prefix_ipv6 *p)
  * work.
  */
 int
-str2prefix_ipv6 (const char *str, prefix_ipv6 p)
+str2prefix_ipv6 (const char *str, prefix_ipv6 pfx)
 {
   const char* pnt ;
   uint     plen ;
   strtox_t tox ;
 
-  memset(p, 0, sizeof(prefix_ht)) ;
+  memset(pfx, 0, sizeof(prefix_ht)) ;
 
   confirm((AF_UNSPEC == 0) && (prefix_rd_id_null == 0)) ;
 
-  if (!str2ipv6 (&p->prefix, str, &pnt))
+  if (!str2ipv6 (&pfx->prefix, str, &pnt))
     return 0 ;                  /* Invalid leading IPv6 part    */
 
   switch (*pnt)
@@ -977,8 +977,8 @@ str2prefix_ipv6 (const char *str, prefix_ipv6 p)
         return 0 ;
     } ;
 
-  p->family    = AF_INET6;
-  p->prefixlen = plen;
+  pfx->family    = AF_INET6;
+  pfx->prefixlen = plen;
 
   return 1 ;
 } ;
@@ -1080,42 +1080,42 @@ masklen2ip6 (uint masklen, struct in6_addr *netmask)
 }
 
 void
-apply_mask_ipv6 (struct prefix_ipv6 *p)
+apply_mask_ipv6 (struct prefix_ipv6 *pfx)
 {
   uint plen ;
 
-  confirm(sizeof(in6_addr_t) == sizeof(p->prefix)) ;
+  confirm(sizeof(in6_addr_t) == sizeof(pfx->prefix)) ;
 
-  plen = p->prefixlen ;
+  plen = pfx->prefixlen ;
   if (plen < 64)
     {
-      ((in6_addr_t)p->prefix).n64[0] &= n64_mask(plen) ;
-      ((in6_addr_t)p->prefix).n64[1] = 0 ;
+      ((in6_addr_t)pfx->prefix).n64[0] &= n64_mask(plen) ;
+      ((in6_addr_t)pfx->prefix).n64[1] = 0 ;
     }
   else
     {
-      ((in6_addr_t)p->prefix).n64[1] &= n64_mask(plen - 64) ;
+      ((in6_addr_t)pfx->prefix).n64[1] &= n64_mask(plen - 64) ;
     } ;
 }
 
 extern bool
-prefix_check_ipv6 (prefix_ipv6 p)
+prefix_check_ipv6 (prefix_ipv6 pfx)
 {
   uint plen ;
 
-  confirm(sizeof(in6_addr_t) == sizeof(p->prefix)) ;
+  confirm(sizeof(in6_addr_t) == sizeof(pfx->prefix)) ;
 
-  plen = p->prefixlen ;
+  plen = pfx->prefixlen ;
   if (plen < 64)
     {
-      if (((in6_addr_t)p->prefix).n64[1] != 0)
+      if (((in6_addr_t)pfx->prefix).n64[1] != 0)
         return false ;
 
-      return ( ((in6_addr_t)p->prefix).n64[0] & n64_wild(plen) ) == 0 ;
+      return ( ((in6_addr_t)pfx->prefix).n64[0] & n64_wild(plen) ) == 0 ;
     }
   else
     {
-      return ( ((in6_addr_t)p->prefix).n64[1] & n64_wild(plen - 64) ) == 0 ;
+      return ( ((in6_addr_t)pfx->prefix).n64[1] & n64_wild(plen - 64) ) == 0 ;
     } ;
 } ;
 
@@ -1145,20 +1145,20 @@ str2in6_addr (const char *str, struct in6_addr *addr)
  * This ensures that the prefix is valid.
  */
 extern void
-apply_mask (prefix p)
+apply_mask (prefix pfx)
 {
-  switch (p->family)
+  switch (pfx->family)
     {
       case AF_INET:
-        if (p->prefixlen > IPV4_MAX_BITLEN)
-          p->prefixlen = IPV4_MAX_BITLEN ;
-        apply_mask_ipv4 ((prefix_ipv4)p);
+        if (pfx->prefixlen > IPV4_MAX_BITLEN)
+          pfx->prefixlen = IPV4_MAX_BITLEN ;
+        apply_mask_ipv4 ((prefix_ipv4)pfx);
         break;
 #ifdef HAVE_IPV6
       case AF_INET6:
-        if (p->prefixlen > IPV6_MAX_BITLEN)
-          p->prefixlen = IPV6_MAX_BITLEN ;
-        apply_mask_ipv6 ((prefix_ipv6)p);
+        if (pfx->prefixlen > IPV6_MAX_BITLEN)
+          pfx->prefixlen = IPV6_MAX_BITLEN ;
+        apply_mask_ipv6 ((prefix_ipv6)pfx);
         break;
 #endif /* HAVE_IPV6 */
       default:
@@ -1178,43 +1178,43 @@ apply_mask (prefix p)
  * NB: sets the rd_id == prefix_rd_id_null
  */
 extern prefix
-prefix_from_sockunion (prefix p, sockunion_c su)
+prefix_from_sockunion (prefix pfx, sockunion_c su)
 {
   switch (su->sa.sa_family)
     {
       case AF_INET:
-        if (p == NULL)
-          p = prefix_new() ;            /* zeroises entire structure    */
+        if (pfx == NULL)
+          pfx = prefix_new() ;          /* zeroises entire structure    */
         else
-          memset(p, 0, sizeof(prefix_ht)) ;
+          memset(pfx, 0, sizeof(prefix_ht)) ;
 
         confirm(prefix_rd_id_null == 0) ;
 
-        p->family    = AF_INET;
-        p->prefixlen = IPV4_MAX_BITLEN;
-        p->u.prefix4 = su->sin.sin_addr;
+        pfx->family    = AF_INET;
+        pfx->prefixlen = IPV4_MAX_BITLEN;
+        pfx->u.prefix4 = su->sin.sin_addr;
         break ;
 
 #ifdef HAVE_IPV6
       case AF_INET6:
-        if (p == NULL)
-          p = prefix_new() ;            /* zeroises entire structure    */
+        if (pfx == NULL)
+          pfx = prefix_new() ;          /* zeroises entire structure    */
         else
-          memset(p, 0, sizeof(prefix_ht)) ;
+          memset(pfx, 0, sizeof(prefix_ht)) ;
 
         confirm(prefix_rd_id_null == 0) ;
 
-        p->family    = AF_INET6;
-        p->prefixlen = IPV6_MAX_BITLEN;
-        p->u.prefix6 = su->sin6.sin6_addr;
+        pfx->family    = AF_INET6;
+        pfx->prefixlen = IPV6_MAX_BITLEN;
+        pfx->u.prefix6 = su->sin6.sin6_addr;
         break ;
 #endif /* HAVE_IPV6 */
 
       default:
-        p = NULL ;
+        pfx = NULL ;
     } ;
 
-  return p ;
+  return pfx ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -1287,20 +1287,20 @@ prefix_bit_len (prefix_c pfx)
  * NB: the address part is all zeros beyond the given prefix length (if any).
  */
 extern bool
-str2prefix_check(prefix p, const char *str)
+str2prefix_check(prefix pfx, const char *str)
 {
-  memset(p, 0, sizeof(prefix_t)) ;
+  memset(pfx, 0, sizeof(prefix_t)) ;
 
   /* First we try to convert string to struct prefix_ipv4.
    */
-  if (str2prefix_ipv4(str, (prefix_ipv4)p) > 0)
-    return prefix_check_ipv4((prefix_ipv4)p) ;
+  if (str2prefix_ipv4(str, (prefix_ipv4)pfx) > 0)
+    return prefix_check_ipv4((prefix_ipv4)pfx) ;
 
 #ifdef HAVE_IPV6
   /* Not IPv43, so try to convert string to struct prefix_ipv6.
   */
-  if (str2prefix_ipv6(str, (prefix_ipv6)p) > 0)
-    return prefix_check_ipv6((prefix_ipv6)p) ;
+  if (str2prefix_ipv6(str, (prefix_ipv6)pfx) > 0)
+    return prefix_check_ipv6((prefix_ipv6)pfx) ;
 
 #endif /* HAVE_IPV6 */
 
@@ -1325,21 +1325,21 @@ str2prefix_check(prefix p, const char *str)
  *     prefix length -- so can read "address + network mask" in '/' notation.
  */
 extern int
-str2prefix (const char *str, prefix p)
+str2prefix (const char *str, prefix pfx)
 {
   int ret;
 
-  memset(p, 0, sizeof(prefix_t)) ;
+  memset(pfx, 0, sizeof(prefix_t)) ;
 
   /* First we try to convert string to struct prefix_ipv4.
    */
-  ret = str2prefix_ipv4 (str, (prefix_ipv4)p);
+  ret = str2prefix_ipv4 (str, (prefix_ipv4)pfx);
 
 #ifdef HAVE_IPV6
   /* If not IPv4, try to convert to struct prefix_ipv6.
    */
   if (ret == 0)
-    ret = str2prefix_ipv6 (str, (prefix_ipv6)p);
+    ret = str2prefix_ipv6 (str, (prefix_ipv6)pfx);
 #endif /* HAVE_IPV6 */
 
   return ret;
@@ -1349,12 +1349,12 @@ str2prefix (const char *str, prefix p)
  * Convert given prefix to string in the given buffer.
  */
 extern int
-prefix2str (prefix_c p, char *str, int size)
+prefix2str (prefix_c pfx, char *str, int size)
 {
   char buf[BUFSIZ];
 
-  inet_ntop (p->family, &p->u.prefix, buf, BUFSIZ);
-  snprintf (str, size, "%s/%d", buf, p->prefixlen);
+  inet_ntop (pfx->family, &pfx->u.prefix, buf, BUFSIZ);
+  snprintf (str, size, "%s/%d", buf, pfx->prefixlen);
   return 0;
 }
 
@@ -1363,28 +1363,28 @@ prefix2str (prefix_c p, char *str, int size)
  * prefix.
  */
 extern str_pfxtoa_t
-spfxtoa(prefix_c p)
+spfxtoa(prefix_c pfx)
 {
   str_pfxtoa_t QFB_QFS(pfa, qfs) ;
 
-  switch (p->family)
+  switch (pfx->family)
     {
       case AF_INET:
         confirm(sizeof(pfa.str) > (INET_ADDRSTRLEN + 3)) ;
 
-        qfs_put_ip_prefix(qfs, &p->u.prefix, p->prefixlen, pf_ipv4, 0) ;
+        qfs_put_ip_prefix(qfs, &pfx->u.prefix, pfx->prefixlen, pf_ipv4, 0) ;
         break ;
 
 #ifdef HAVE_IPV6
       case AF_INET6:
         confirm(sizeof(pfa.str) > (INET6_ADDRSTRLEN + 4)) ;
 
-        qfs_put_ip_prefix(qfs, &p->u.prefix, p->prefixlen, pf_ipv6, 0) ;
+        qfs_put_ip_prefix(qfs, &pfx->u.prefix, pfx->prefixlen, pf_ipv6, 0) ;
         break ;
 #endif
 
       default:
-        qfs_printf(qfs, "?unknown address family=%u?", p->family) ;
+        qfs_printf(qfs, "?unknown address family=%u?", pfx->family) ;
         break ;
     } ;
 
@@ -1415,9 +1415,9 @@ prefix_new ()
  * NB: must be generic prefix_t object.
  */
 extern void
-prefix_free (struct prefix *p)
+prefix_free (struct prefix *pfx)
 {
-  XFREE (MTYPE_PREFIX, p);
+  XFREE (MTYPE_PREFIX, pfx);
 }
 
 /*------------------------------------------------------------------------------
@@ -1438,30 +1438,30 @@ all_digit (const char *str)
  * Utility function to convert ipv4 prefixes to Classful prefixes
  */
 extern void
-apply_classful_mask_ipv4 (prefix_ipv4 p)
+apply_classful_mask_ipv4 (prefix_ipv4 pfx)
 {
   uint32_t destination;
 
-  destination = ntohl (p->prefix.s_addr);
+  destination = ntohl (pfx->prefix.s_addr);
 
-  if (p->prefixlen == IPV4_MAX_PREFIXLEN)
+  if (pfx->prefixlen == IPV4_MAX_PREFIXLEN)
     {
       /* do nothing for host routes     */
     }
   else if (IN_CLASSC (destination))
     {
-      p->prefixlen = 24;
-      apply_mask_ipv4(p);
+      pfx->prefixlen = 24;
+      apply_mask_ipv4(pfx);
     }
   else if (IN_CLASSB(destination))
     {
-      p->prefixlen = 16;
-      apply_mask_ipv4(p);
+      pfx->prefixlen = 16;
+      apply_mask_ipv4(pfx);
     }
   else
     {
-      p->prefixlen = 8;
-      apply_mask_ipv4(p);
+      pfx->prefixlen = 8;
+      apply_mask_ipv4(pfx);
     } ;
 } ;
 
@@ -1560,7 +1560,7 @@ inet6_ntoa (struct in6_addr addr)
  */
 static const byte prefix_last_byte_mask[8] = { 0xFF, 0x80, 0xC0, 0xE0,
                                                0xF0, 0xF8, 0xFC, 0xFE } ;
-inline static void prefix_body_set(prefix p, uint plen, const byte* pb,
+inline static void prefix_body_set(prefix pfx, const byte* pb, uint plen,
                                                            sa_family_t family) ;
 inline static ulen prefix_body_copy(byte* dst, const byte* src, uint plen) ;
 
@@ -1575,13 +1575,13 @@ inline static ulen prefix_body_copy(byte* dst, const byte* src, uint plen) ;
  * Returns:  byte length of the prefix -- prefix length + prefix body
  */
 extern ulen
-prefix_to_raw(prefix_raw raw, prefix_c p)
+prefix_to_raw(prefix_raw raw, prefix_c pfx)
 {
   ulen  plen ;
 
-  plen = p->prefixlen ;
+  plen = pfx->prefixlen ;
 
-  switch (p->family)
+  switch (pfx->family)
     {
       case AF_INET:
         if (plen > IPV4_MAX_PREFIXLEN)
@@ -1599,7 +1599,7 @@ prefix_to_raw(prefix_raw raw, prefix_c p)
         plen = 0 ;
     } ;
 
-  return prefix_body_copy(raw->prefix, p->u.b, plen) ;
+  return prefix_body_copy(raw->prefix, pfx->u.b, plen) ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -1651,14 +1651,14 @@ prefix_blow(blower br, prefix_c pfx)
  * NB:
  */
 extern void
-prefix_from_raw(prefix p, sa_family_t family, prefix_raw raw)
+prefix_from_raw(prefix pfx, sa_family_t family, prefix_raw raw)
 {
-  memset(p, 0, sizeof(prefix_t)) ;
+  memset(pfx, 0, sizeof(prefix_t)) ;
   confirm(prefix_rd_id_null == 0) ;
 
-  p->family = family ;
+  pfx->family = family ;
 
-  prefix_body_set(p, raw->prefix_len, raw->prefix, family) ;
+  prefix_body_set(pfx, raw->prefix, raw->prefix_len, family) ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -1669,16 +1669,35 @@ prefix_from_raw(prefix p, sa_family_t family, prefix_raw raw)
  *
  * Zeroises the prefix beyond the (clamped) prefix length (bits and bytes).
  *
- * NB: requires and does not change p->family
+ * NB: requires and does not change pfx->family
  *
- *     does not affect the p->pr_id
+ *     does not affect the pfx->pr_id
  */
 extern void
-prefix_body_from_bytes(prefix p, uint plen, const byte* pb)
+prefix_body_from_bytes(prefix pfx, const byte* pb, uint plen)
 {
-  memset(p->u.b, 0, sizeof(((prefix)0)->u)) ;
+  memset(pfx->u.b, 0, sizeof(((prefix)0)->u)) ;
 
-  prefix_body_set(p, plen, pb, p->family) ;
+  prefix_body_set(pfx, pb, plen, pfx->family) ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Set prefix length and body from nlri.
+ *
+ * Silently enforces maximum prefix length for known families.  Forces zero
+ * prefix length for unknown families.
+ *
+ * Zeroises the prefix beyond the (clamped) prefix length (bits and bytes).
+ *
+ * NB: requires and does not change pfx->family
+ *
+ *     does not affect the pfx->pr_id
+ */
+extern void
+prefix_body_from_nlri(prefix pfx, const byte* pb, uint plen)
+{
+  pfx->prefixlen = plen ;
+  prefix_body_copy(pfx->u.b, pb, plen) ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -1691,11 +1710,11 @@ prefix_body_from_bytes(prefix p, uint plen, const byte* pb)
  *
  * NB: does NOT zeroise *bytes* beyond the last prefix byte.
  *
- * NB: does not affect p->family
- *     does not affect the p->pr_id
+ * NB: does not affect pfx->family
+ *     does not affect the pfx->pr_id
  */
 inline static void
-prefix_body_set(prefix p, uint plen, const byte* pb, sa_family_t family)
+prefix_body_set(prefix pfx, const byte* pb, uint plen, sa_family_t family)
 {
   switch (family)
     {
@@ -1715,8 +1734,8 @@ prefix_body_set(prefix p, uint plen, const byte* pb, sa_family_t family)
         plen = 0 ;
     } ;
 
-  p->prefixlen = plen ;
-  prefix_body_copy(p->u.b, pb, plen) ;
+  pfx->prefixlen = plen ;
+  prefix_body_copy(pfx->u.b, pb, plen) ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -1744,17 +1763,17 @@ prefix_body_copy(byte* dst, const byte* src, uint plen)
 /*------------------------------------------------------------------------------
  * Set prefix to default route for given family -- ie. 0.0.0.0/0 or ::/0
  *
- * Sets p->pr_id to prefix_rd_id_null
+ * Sets pfx->pr_id to prefix_rd_id_null
  *
  * Will set an unknown family -- setting prefix length and body all zero.
  */
 extern void
-prefix_default(prefix p, sa_family_t family)
+prefix_default(prefix pfx, sa_family_t family)
 {
-  memset(p, 0, sizeof(prefix_t)) ;
+  memset(pfx, 0, sizeof(prefix_t)) ;
   confirm(prefix_rd_id_null == 0) ;
 
-  p->family = family ;
+  pfx->family = family ;
 } ;
 
 /*==============================================================================

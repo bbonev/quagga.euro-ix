@@ -189,9 +189,10 @@ struct bgp
    */
   bgp_table aggregate[qafx_count];
 
-  /* BGP routing information bases -- one per AFI/SAFI and one for Main/RS.
+  /* BGP routing information bases -- one per AFI/SAFI.
    */
-  bgp_rib  rib[qafx_count][rib_type_count];
+  bgp_rib  rib[qafx_count] ;
+  bool     real_rib ;           /* true <=> install routes      */
 
   /* BGP redistribute
    */

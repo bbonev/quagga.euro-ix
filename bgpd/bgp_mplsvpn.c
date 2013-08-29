@@ -489,7 +489,7 @@ show_adj_route_vpn (vty vty, const char* peer_str, const char* rd_str)
     }
 #endif
 
-  rv = bgp_rib_extract(bgp->rib[qafx_ipv4_mpls_vpn][rib_main], prd) ;
+  rv = bgp_rib_extract(bgp->rib[qafx_ipv4_mpls_vpn], prd) ;
 
   header = false ;
   rd_id  = prefix_rd_id_null ;
@@ -501,7 +501,7 @@ show_adj_route_vpn (vty vty, const char* peer_str, const char* rd_str)
       prefix       pfx ;
 
       rn = vector_get_item(rv, i) ;
-      ri = ddl_head(rn->routes) ;
+      ri = svs_head(&rn->iroute_bases[0], rn->avail) ;
 
       if (ri == NULL)
         continue ;
@@ -553,9 +553,9 @@ show_adj_route_vpn (vty vty, const char* peer_str, const char* rd_str)
 
       do
         {
-          route_vty_out_tmp (vty, pfx, ri->attr, ri->qafx);
+          route_vty_out_tmp (vty, pfx, ri->iroutes[0].attr, ri->current.qafx);
 
-          ri = ddl_next(ri, route_list) ;
+          ri = svs_next(ri->iroutes[0].list, rn->avail) ;
         }
       while (ri != NULL) ;
     } ;
@@ -612,7 +612,7 @@ bgp_show_mpls_vpn (vty vty, const char* rd_str, enum bgp_show_type type,
         return CMD_WARNING;
     } ;
 
-  rv = bgp_rib_extract(bgp->rib[qafx_ipv4_mpls_vpn][rib_main], prd) ;
+  rv = bgp_rib_extract(bgp->rib[qafx_ipv4_mpls_vpn], prd) ;
 
   header = false ;
   rd_id  = prefix_rd_id_null ;
@@ -623,7 +623,7 @@ bgp_show_mpls_vpn (vty vty, const char* rd_str, enum bgp_show_type type,
       route_info   ri ;
 
       rn = vector_get_item(rv, i) ;
-      ri = ddl_head(rn->routes) ;
+      ri = svs_head(&rn->iroute_bases[0], rn->avail) ;
 
       while (ri != NULL)
         {
@@ -696,7 +696,7 @@ bgp_show_mpls_vpn (vty vty, const char* rd_str, enum bgp_show_type type,
           else
             route_vty_out (vty, pfx, ri, true);
 
-          ri = ddl_next(ri, route_list) ;
+          ri = svs_next(ri->iroutes[0].list, rn->avail) ;
         } ;
     } ;
 

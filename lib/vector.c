@@ -441,11 +441,14 @@ vector_insert_item_here(vector v, vector_index_t i, int rider,
                                                           p_vector_item p_v)
 {
   if (rider == 0)
-    return vector_set_item(v, i, p_v) ;
+    vector_set_item(v, i, p_v) ;
+  else
+    {
+      if (rider > 0)
+        ++i ;       /* insert before next item */
 
-  if (rider > 0)
-    ++i ;       /* insert before next item */
-  vector_insert_item(v, i, p_v) ;
+      vector_insert_item(v, i, p_v) ;
+    } ;
 } ;
 
 /*------------------------------------------------------------------------------
