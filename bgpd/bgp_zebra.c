@@ -60,7 +60,7 @@ bgp_router_id_update (int command, struct zclient *zclient, zebra_size_t length)
 {
   struct prefix router_id;
   struct listnode *node, *nnode;
-  struct bgp *bgp;
+  bgp_inst bgp;
 
   zebra_router_id_update_read(zclient->ibuf,&router_id);
 
@@ -154,8 +154,8 @@ bgp_interface_down (int command, struct zclient *zclient, zebra_size_t length)
   /* Fast external-failover (Currently IPv4 only) */
   {
     struct listnode *mnode;
-    struct bgp *bgp;
-    struct peer *peer;
+    bgp_inst bgp;
+    bgp_peer peer;
     struct interface *peer_if;
 
     for (ALL_LIST_ELEMENTS_RO (bm->bgp, mnode, bgp))
@@ -518,7 +518,7 @@ if_get_ipv6_local (struct interface *ifp, struct in6_addr *addr)
 
 int
 bgp_nexthop_set (sockunion local, sockunion remote,
-                 bgp_nexthop nexthop, struct peer *peer)
+                 bgp_nexthop nexthop, bgp_peer peer)
 {
   int ret = 0;
   struct interface *ifp = NULL;
@@ -643,15 +643,15 @@ bgp_nexthop_set (sockunion local, sockunion remote,
  *   * next_hop   -- zero
  *   * ifindex    -- zero;
  */
-static route_zebra
-bgp_zebra_route_set(route_zebra zr, bgp_peer peer, route_info ri)
+static zroute
+bgp_zebra_route_set(zroute zr, bgp_peer peer, route_info ri)
 {
   if (zr == NULL)
-    zr = XCALLOC(0, sizeof(route_zebra_t)) ;
+    zr = XCALLOC(0, sizeof(zroute_t)) ;
   else
-    zr = memset(zr, 0, sizeof(route_zebra_t)) ;
+    zr = memset(zr, 0, sizeof(zroute_t)) ;
 
-  zr->safi = get_iSAFI(ri->qafx) ;
+  zr->i_safi = get_iSAFI(ri->current.qafx) ;
 
   switch (peer->sort)
     {
@@ -670,7 +670,7 @@ bgp_zebra_route_set(route_zebra zr, bgp_peer peer, route_info ri)
         break ;
     } ;
 
-  zr->med  = ri->attr->med ;
+  zr->med  = ri->iroutes[lc_view_id].attr->med ;
 
   return zr ;
 }
@@ -680,8 +680,8 @@ bgp_zebra_route_set(route_zebra zr, bgp_peer peer, route_info ri)
  *
  * Automatically withdraws any existing route for the given prefix.
  */
-extern route_zebra
-bgp_zebra_announce (route_zebra zr, bgp_rib_node rn, prefix_c p)
+extern zroute
+bgp_zebra_announce (zroute zr, bgp_rib_node rn, prefix_c pfx)
 {
   route_info    ri ;
   bgp_peer      peer ;
@@ -689,25 +689,25 @@ bgp_zebra_announce (route_zebra zr, bgp_rib_node rn, prefix_c p)
   bool          ok ;
 
   if ((zclient->sock < 0) || !zclient->redist[ZEBRA_ROUTE_BGP])
-    return bgp_zebra_discard(zr, p) ;
+    return bgp_zebra_discard(zr, pfx) ;
 
   ok = false ;
 
-  ri = rn->selected ;
-  nh = &ri->attr->next_hop ;
+  ri = svs_head(rn->aroutes[lc_view_id].base, rn->avail) ;
+  nh = &ri->iroutes[lc_view_id].attr->next_hop ;
 
   peer  = ri->prib->peer;
   qassert(peer->type == PEER_TYPE_REAL) ;
 
-  switch (p->family)
+  switch (pfx->family)
     {
       case AF_INET:
         {
           struct zapi_ipv4 api;
           struct in_addr*  nexthop[1] ;
 
-          if ( (ri->qafx != qafx_ipv4_unicast) &&
-               (ri->qafx != qafx_ipv4_multicast) )
+          if ( (ri->current.qafx != qafx_ipv4_unicast) &&
+               (ri->current.qafx != qafx_ipv4_multicast) )
             break ;
 
           if (nh->type != nh_ipv4)
@@ -723,7 +723,7 @@ bgp_zebra_announce (route_zebra zr, bgp_rib_node rn, prefix_c p)
 
           api.flags        = zr->flags ;
           api.type         = ZEBRA_ROUTE_BGP;
-          api.safi         = zr->safi ;
+          api.safi         = zr->i_safi ;
 
           api.message     |= ZAPI_MESSAGE_NEXTHOP ;
           api.nexthop_num  = 1;
@@ -734,21 +734,21 @@ bgp_zebra_announce (route_zebra zr, bgp_rib_node rn, prefix_c p)
           api.message     |= ZAPI_MESSAGE_METRIC ;
           api.metric       = zr->med;
 
-          api.distance     = bgp_distance_apply (peer, p) ;
+          api.distance     = bgp_distance_apply (peer, pfx) ;
           if (api.distance != 0)
             api.message   |= ZAPI_MESSAGE_DISTANCE ;
 
           if (BGP_DEBUG(zebra, ZEBRA))
             {
               zlog_debug("Zebra send: IPv4 route add %s/%d nexthop %s metric %u",
-                         siptoa(AF_INET, &p->u.prefix4).str,
-                         p->prefixlen,
+                         siptoa(AF_INET, &pfx->u.prefix4).str,
+                         pfx->prefixlen,
                          siptoa(AF_INET, nexthop[0]).str,
                          api.metric);
             }
 
           zapi_ipv4_route (ZEBRA_IPV4_ROUTE_ADD, zclient,
-                                       (const struct prefix_ipv4 *)p, &api);
+                                       (const struct prefix_ipv4 *)pfx, &api);
         } ;
         break ;
 
@@ -760,8 +760,8 @@ bgp_zebra_announce (route_zebra zr, bgp_rib_node rn, prefix_c p)
           struct in6_addr* nexthop[1] ;
           struct zapi_ipv6 api ;
 
-          if ( (ri->qafx != qafx_ipv6_unicast) &&
-               (ri->qafx != qafx_ipv6_multicast) )
+          if ( (ri->current.qafx != qafx_ipv6_unicast) &&
+               (ri->current.qafx != qafx_ipv6_multicast) )
             break ;
 
           if ( (nh->type != nh_ipv6_1) &&
@@ -809,7 +809,7 @@ bgp_zebra_announce (route_zebra zr, bgp_rib_node rn, prefix_c p)
            */
           api.flags       = zr->flags;
           api.type        = ZEBRA_ROUTE_BGP;
-          api.safi        = zr->safi;
+          api.safi        = zr->i_safi;
 
           api.message    |= ZAPI_MESSAGE_NEXTHOP ;
           api.nexthop_num = 1;
@@ -825,14 +825,14 @@ bgp_zebra_announce (route_zebra zr, bgp_rib_node rn, prefix_c p)
           if (BGP_DEBUG(zebra, ZEBRA))
             {
               zlog_debug("Zebra send: IPv6 route add %s/%d nexthop %s metric %u",
-                         siptoa(AF_INET6, &p->u.prefix6).str,
-                         p->prefixlen,
+                         siptoa(AF_INET6, &pfx->u.prefix6).str,
+                         pfx->prefixlen,
                          siptoa(AF_INET6, nexthop[0]).str,
                          api.metric);
             }
 
           zapi_ipv6_route (ZEBRA_IPV6_ROUTE_ADD, zclient,
-                           (const struct prefix_ipv6 *) p, &api);
+                           (const struct prefix_ipv6 *) pfx, &api);
         } ;
         break ;
 #endif /* HAVE_IPV6 */
@@ -845,7 +845,7 @@ bgp_zebra_announce (route_zebra zr, bgp_rib_node rn, prefix_c p)
    * set !
    */
   if (!ok)
-    bgp_zebra_withdraw(zr, p) ;
+    bgp_zebra_withdraw(zr, pfx) ;
 
   return zr ;
 } ;
@@ -853,12 +853,12 @@ bgp_zebra_announce (route_zebra zr, bgp_rib_node rn, prefix_c p)
 /*------------------------------------------------------------------------------
  * Tell Zebra that no longer have a route for the given prefix.
  */
-extern route_zebra
-bgp_zebra_discard (route_zebra zr, prefix_c p)
+extern zroute
+bgp_zebra_discard (zroute zr, prefix_c pfx)
 {
   if (zr != NULL)
     {
-      bgp_zebra_withdraw(zr, p) ;
+      bgp_zebra_withdraw(zr, pfx) ;
 
       XFREE(0, zr) ;
     } ;
@@ -870,13 +870,13 @@ bgp_zebra_discard (route_zebra zr, prefix_c p)
  * Tell Zebra that no longer have a route for the given prefix.
  */
 extern void
-bgp_zebra_withdraw (route_zebra zr, prefix_c p)
+bgp_zebra_withdraw (zroute zr, prefix_c pfx)
 {
-  if ((zr == NULL) || (zr->safi == iSAFI_Reserved))
+  if ((zr == NULL) || (zr->i_safi == iSAFI_Reserved))
     return ;
 
   if (zclient->sock >= 0)
-    switch (p->family)
+    switch (pfx->family)
       {
         case AF_INET:
           {
@@ -888,7 +888,7 @@ bgp_zebra_withdraw (route_zebra zr, prefix_c p)
 
             api.flags       = zr->flags ;
             api.type        = ZEBRA_ROUTE_BGP;
-            api.safi        = zr->safi;
+            api.safi        = zr->i_safi;
 
             api.message    |= ZAPI_MESSAGE_NEXTHOP ;
             api.nexthop_num = 1;
@@ -902,14 +902,14 @@ bgp_zebra_withdraw (route_zebra zr, prefix_c p)
               {
                 zlog_debug("Zebra send: IPv4 route delete %s/%d "
                                                         "nexthop %s metric %u",
-                       siptoa(AF_INET, &p->u.prefix4).str,
-                       p->prefixlen,
-                       siptoa(AF_INET, nexthop[1]).str,
+                       siptoa(AF_INET, &pfx->u.prefix4).str,
+                       pfx->prefixlen,
+                       siptoa(AF_INET, nexthop[0]).str,
                        api.metric);
               }
 
             zapi_ipv4_route (ZEBRA_IPV4_ROUTE_DELETE, zclient,
-                                         (const struct prefix_ipv4 *) p, &api) ;
+                                       (const struct prefix_ipv4 *) pfx, &api) ;
           } ;
           break ;
 
@@ -924,7 +924,7 @@ bgp_zebra_withdraw (route_zebra zr, prefix_c p)
 
             api.flags       = zr->flags;
             api.type        = ZEBRA_ROUTE_BGP;
-            api.safi        = zr->safi;
+            api.safi        = zr->i_safi;
 
             api.message    |= ZAPI_MESSAGE_NEXTHOP ;
             api.nexthop_num = 1;
@@ -942,14 +942,14 @@ bgp_zebra_withdraw (route_zebra zr, prefix_c p)
               {
                 zlog_debug("Zebra send: IPv6 route delete %s/%d "
                                                         "nexthop %s metric %u",
-                           siptoa(AF_INET6, &p->u.prefix6).str,
-                           p->prefixlen,
+                           siptoa(AF_INET6, &pfx->u.prefix6).str,
+                           pfx->prefixlen,
                            siptoa(AF_INET6, nexthop[0]).str,
                            api.metric);
               }
 
             zapi_ipv6_route (ZEBRA_IPV6_ROUTE_DELETE, zclient,
-                                        (const struct prefix_ipv6 *) p, &api);
+                                        (const struct prefix_ipv6 *) pfx, &api);
           } ;
           break ;
 #endif /* HAVE_IPV6 */
@@ -958,12 +958,12 @@ bgp_zebra_withdraw (route_zebra zr, prefix_c p)
           break ;
       } ;
 
-  zr->safi = iSAFI_Reserved ;
+  zr->i_safi = iSAFI_Reserved ;
 } ;
 
 /* Other routes redistribution into BGP. */
 int
-bgp_redistribute_set (struct bgp *bgp, afi_t afi, int type)
+bgp_redistribute_set (bgp_inst bgp, afi_t afi, int type)
 {
   /* Set flag to BGP instance. */
   bgp->redist[afi][type] = true ;
@@ -989,7 +989,7 @@ bgp_redistribute_set (struct bgp *bgp, afi_t afi, int type)
 
 /* Redistribute with route-map specification.  */
 int
-bgp_redistribute_rmap_set (struct bgp *bgp, afi_t afi, int type,
+bgp_redistribute_rmap_set (bgp_inst bgp, afi_t afi, int type,
                            const char *name)
 {
   if (bgp->rmap[afi][type].name
@@ -1006,7 +1006,7 @@ bgp_redistribute_rmap_set (struct bgp *bgp, afi_t afi, int type,
 
 /* Redistribute with metric specification.  */
 int
-bgp_redistribute_metric_set (struct bgp *bgp, afi_t afi, int type,
+bgp_redistribute_metric_set (bgp_inst bgp, afi_t afi, int type,
                              u_int32_t metric)
 {
   if (bgp->redist_metric_set[afi][type]
@@ -1023,7 +1023,7 @@ bgp_redistribute_metric_set (struct bgp *bgp, afi_t afi, int type,
  * Unset redistribution.
  */
 extern cmd_ret_t
-bgp_redistribute_unset (struct bgp *bgp, qAFI_t q_afi, int type)
+bgp_redistribute_unset (bgp_inst bgp, qAFI_t q_afi, int type)
 {
   /* Unset flag from BGP instance. */
   bgp->redist[q_afi][type] = false ;
@@ -1061,7 +1061,7 @@ bgp_redistribute_unset (struct bgp *bgp, qAFI_t q_afi, int type)
 
 /* Unset redistribution route-map configuration.  */
 int
-bgp_redistribute_routemap_unset (struct bgp *bgp, afi_t afi, int type)
+bgp_redistribute_routemap_unset (bgp_inst bgp, afi_t afi, int type)
 {
   if (! bgp->rmap[afi][type].name)
     return 0;
@@ -1076,7 +1076,7 @@ bgp_redistribute_routemap_unset (struct bgp *bgp, afi_t afi, int type)
 
 /* Unset redistribution metric configuration.  */
 int
-bgp_redistribute_metric_unset (struct bgp *bgp, afi_t afi, int type)
+bgp_redistribute_metric_unset (bgp_inst bgp, afi_t afi, int type)
 {
   if (! bgp->redist_metric_set[afi][type])
     return 0;

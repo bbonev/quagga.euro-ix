@@ -386,18 +386,23 @@ vhash_set(vhash_item item)
  *
  * The item may then be ready to be freed, but is not freed at this time.
  *
- * A later call of vhash_unset() will proceed to free the item, if the reference
- * count is zero.
+ * A later call of vhash_unset() will proceed to free the item, if the
+ * reference count is zero.
+ *
+ * The "set" state is expected to be used to signal that some "owner" of the
+ * item has it in their hands and/or that the value of the item is "set".
+ * When the "owner" is about to release an item and/or its value is about to
+ * be dismantled, the "set" state can be cleared to signal that.
  *
  * NB: a later call of vhash_dec_ref() could also free the item... so, to be
  *     completely certain of holding onto the item once it is unset:
  *
- *        vhash_in_ref()
+ *        vhash_inc_ref()
  *        vhash_clear_set()
  *
  *        ....
  *
- *        vhash_dec_ref()
+ *        vhash_dec_ref()       // which may then free the item
  *
  * Returns:  the item
  */
@@ -406,7 +411,7 @@ vhash_clear_set(vhash_item item)
 {
   confirm(vhash_node_offset == 0) ;
 
-  ((vhash_node)item)->ref_count &= ~vhash_ref_count_set ;
+  ((vhash_node)item)->ref_count &= ~(vhash_ref_count_t)vhash_ref_count_set ;
 
   return item ;
 } ;

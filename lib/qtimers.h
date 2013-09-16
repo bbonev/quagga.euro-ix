@@ -109,7 +109,7 @@ struct qtimer
 
 struct qtimer_pile
 {
-  struct heap timers ;
+  heap_t      timers ;
 
   bool        ok ;              /* for pile verification                */
 

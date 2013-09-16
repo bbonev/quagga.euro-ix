@@ -37,10 +37,12 @@
  * Here are a number of "incomplete" declarations, which allow a number of
  * bgpd structures to refer to each other.
  */
-typedef struct bgp*             bgp_inst ;
-typedef struct peer*            bgp_peer ;
-typedef struct peer_group*      peer_group ;
-typedef struct bgp_peer_config* bgp_peer_config ;
+typedef struct bgp_inst*        bgp_inst ;
+typedef struct bgp_rcontext*    bgp_rcontext ;
+typedef struct bgp_rib*         bgp_rib ;
+typedef struct bgp_lcontext*    bgp_lcontext ;
+typedef struct bgp_peer*        bgp_peer ;
+typedef struct bgp_prib*        bgp_prib ;
 typedef struct bgp_session*     bgp_session ;
 typedef struct bgp_connection*  bgp_connection ;
 typedef struct bgp_cops*        bgp_cops ;
@@ -54,20 +56,21 @@ typedef struct bgp_msg_reader*  bgp_msg_reader ;
 
 typedef struct bgp_note*        bgp_note ;
 
+typedef struct bgp_peer_group*  bgp_peer_group ;
+typedef struct bgp_peer_config* bgp_peer_config ;
+
+
 //typedef struct bgp_event*      bgp_event ;
 
 typedef struct attr_set*        attr_set ;
 typedef struct asn_set*         asn_set ;
 
-typedef struct bgp_rib*         bgp_rib ;
-typedef struct peer_rib*        peer_rib ;
 typedef struct bgp_rib_node*    bgp_rib_node ;
 typedef struct bgp_rib_walker*  bgp_rib_walker ;
 typedef struct bgp_rib_item*    bgp_rib_item ;
 
 typedef struct route_info*      route_info ;
 typedef struct route_extra*     route_extra ;
-typedef struct route_zebra*     route_zebra ;
 typedef struct nroute*          nroute ;
 typedef struct iroute*          iroute ;
 typedef struct zroute*          zroute ;
@@ -97,6 +100,12 @@ typedef struct bgp_adj_in*      bgp_adj_in ;
 typedef struct bgp_sync*        bgp_sync ;
 
 typedef struct bgp_adv*         bgp_adv ;
+
+/*==============================================================================
+ * Route-Context-Id and Local-Context-Id
+ */
+typedef uint16_t bgp_rc_id_t ;
+typedef uint16_t bgp_lc_id_t ;
 
 /*==============================================================================
  * AFI/SAFI encodings for bgpd
@@ -571,10 +580,10 @@ enum bgp_session_events
  *
  *        all other states are IMPOSSIBLE
  *
- *      When at least one address family is enabled the peer can go pUp, and
- *      a session will be enabled.
+ *      When at least one address family is enabled the peer can go pStarted,
+ *      and a session will be started.
  *
- *   2. pUp
+ *   2. pStarted
  *
  *      This is the case when a message has been sent to the BGP engine to
  *      enable a new session, and is now waiting for the session to be
@@ -586,24 +595,24 @@ enum bgp_session_events
  *
  *      The BGP Engine may send event messages, which signal:
  *
- *        * feXxxxx, but not "stopped"    -> remains pUp
+ *        * feXxxxx, but not "stopped"    -> remains pStarted
  *
  *          the BGP Engine signals various events which do not stop it from
  *          trying to establish a session, but may be of interest.
  *
  *        * session is (now) sEstablished -> pEstablished
  *
- *        * feXxxxx, and "stopped"        -> pClearing (however briefly)
+ *        * feXxxxx, and "stopped"        -> pResetting (however briefly)
  *
  *      All other messages are discarded -- there should not be any.
  *
  *   3. pEstablished
  *
- *      Reaches this state from pUp when a session becomes established.
+ *      Reaches this state from pStarted when a session becomes established.
  *
  *      The session must be sUp.
  *
- *      If the Routeing Engine disables the session -> pClearing and pssLimping.
+ *      If the Routeing Engine disables the session -> pResetting/pssLimping.
  *
  *          The Routeing Engine sets the "down reason" etc. according to why
  *          the session is being disabled.  While pssLimping, this is
@@ -619,16 +628,16 @@ enum bgp_session_events
  *          the BGP Engine may signal events which do not stop the established
  *          session, but may be of interest.
  *
- *        * feXxxxx, and "stopped"        -> pClearing (however briefly)
+ *        * feXxxxx, and "stopped"        -> pResetting (however briefly)
  *                                           and psStopped
  *
  *          The "down reason" is set according to what the BGP Engine reports.
  *
  *      Accepts and sends UPDATE etc messages while is pEstablished.
  *
- *   4. pClearing
+ *   4. pResetting
  *
- *      Reaches this state from pUp or pEstablished, as above.
+ *      Reaches this state from pStarted or pEstablished, as above.
  *
  *      When a disable message is sent to the BGP Engine it is set pssLimping,
  *      and will go pssStopped when is seen to stop.  While is pssLimping, all
@@ -643,7 +652,7 @@ enum bgp_session_events
  *
  *         peer    -> pDown/pssStopped
  *
- *      NB: while pClearing the peer's routes and RIBs may be being processed
+ *      NB: while pResetting the peer's routes and RIBs may be being processed
  *         (and may or may not be being discarded).
  *
  *          All other parts of the peer may be modified... but mindful of the
@@ -820,13 +829,20 @@ enum bgp_conn_ord
  *
  *                         Ignored if not csMay_Accept !
  *
- *                         This is cleared if the peer is pDown
+ *                         This is cleared if the peer is pisDown
  *
  *   * csRun            -- run the session or session acquisition.
  *
- *                         Ignored if not csAccept or csConnect.
+ *                         Ignored if not csMay_Accept or csMay_Connect,
+ *                         unless a session is established already.
  *
- * When a peer is reset, will clear csRun, and when it is down, will clear
+ *                         This is cleared if the peer is not pisRunnable
+ *
+ * Note that may be csRun without either csMayAccept/Connect.  In particular,
+ * once a session is Established, changes to csMayAccept/Connect do not affect
+ * the session, but clearing csRun brings it down.
+ *
+ * When a peer is stopped, will clear csRun, and when it is down, will clear
  * both csRun and csTrack.
  */
 typedef enum bgp_conn_state bgp_conn_state_t ;
@@ -863,13 +879,14 @@ enum bgp_peer_idle_state
   /* These are temporary states -- when they are cleared, the connection may
    * well be up again, and that should trigger session state change.
    */
-  bgp_pisClearing       = BIT(1),   /* clearing from last session drop  */
-  bgp_pisMaxPrefixWait  = BIT(2),   /* waiting for restart timer        */
+  bgp_pisConfiguring    = BIT(1),   /* updating configuration           */
+  bgp_pisClearing       = BIT(2),   /* clearing from last session drop  */
+  bgp_pisMaxPrefixWait  = BIT(3),   /* waiting for restart timer        */
 
   /* These are serious, configuration set issues, and will cause the acceptor
    * to reject incoming connections.
    *
-   * NB:
+   * NB: for status display, the highest numbered bit is used.
    */
   bgp_pisMaxPrefixStop  = BIT(4),   /* max prefix -- no restart         */
   bgp_pisNoAF           = BIT(5),   /* no address families are enabled  */

@@ -35,16 +35,16 @@
 /*==============================================================================
  *
  */
-inline static pfifo_period_t bgp_adj_out_set_now(peer_rib prib) ;
-static void bgp_adj_out_unset_dispatcher(peer_rib prib) ;
-static void bgp_adj_out_delay_dispatcher(peer_rib prib, pfifo_period_t dt) ;
+inline static pfifo_period_t bgp_adj_out_set_now(bgp_prib prib) ;
+static void bgp_adj_out_unset_dispatcher(bgp_prib prib) ;
+static void bgp_adj_out_delay_dispatcher(bgp_prib prib, pfifo_period_t dt) ;
 static vhash_table bgp_attr_flux_hash_new(void) ;
 static vhash_table bgp_attr_flux_hash_delete(vhash_table af_hash) ;
 static void bgp_attr_flux_hash_flush(vhash_table af_hash) ;
 static void bgp_adj_out_dispatch(qtimer qtr, void* timer_info,
                                                             qtime_mono_t when) ;
-static route_flux bgp_adj_out_unset(peer_rib prib, adj_out ao, bool stale) ;
-static void bgp_adj_out_add_batch(peer_rib prib, route_flux rf,
+static route_flux bgp_adj_out_unset(bgp_prib prib, adj_out ao, bool stale) ;
+static void bgp_adj_out_add_batch(bgp_prib prib, route_flux rf,
                                                            prefix_id_t pfx_id) ;
 
 /*------------------------------------------------------------------------------
@@ -81,7 +81,7 @@ static void bgp_adj_out_add_batch(peer_rib prib, route_flux rf,
  *    dispatch_qtr       -- set to invoke bgp_adj_out_dispatch()
  */
 extern void
-bgp_adj_out_init(peer_rib prib)
+bgp_adj_out_init(bgp_prib prib)
 {
   pfifo_period_t periods ;
 
@@ -249,7 +249,7 @@ bgp_adj_out_init(peer_rib prib)
  * Must bgp_adj_out_init() if the peer_rib is to be used again.
  */
 extern void
-bgp_adj_out_discard(peer_rib prib)
+bgp_adj_out_discard(bgp_prib prib)
 {
   ihash_walker_t walk[1] ;
   adj_out        ao ;
@@ -310,7 +310,7 @@ bgp_adj_out_discard(peer_rib prib)
  * be set to.
  */
 extern void
-bgp_adj_out_set_stale(peer_rib prib, uint delay)
+bgp_adj_out_set_stale(bgp_prib prib, uint delay)
 {
   ihash_walker_t    walk[1] ;
   adj_out           ao ;
@@ -378,10 +378,92 @@ bgp_adj_out_set_stale(peer_rib prib, uint delay)
  * Truncates the current monotonic time to a pfifo_period.
  */
 inline static pfifo_period_t
-bgp_adj_out_set_now(peer_rib prib)
+bgp_adj_out_set_now(bgp_prib prib)
 {
   return prib->now = qt_period_fm(qt_get_monotonic(), prib->period_origin,
                                                              bgp_period_shift) ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Get the adj_out entry for the given prefix.
+ */
+extern adj_out_ptr_t
+bgp_adj_out_lookup(bgp_prib prib, prefix_id_t pfx_id)
+{
+  adj_out_ptr_t ao ;
+
+  ao.anon = ihash_get_item(prib->adj_out, pfx_id, NULL) ;
+
+  return ao ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Get the current attributes associated with the given adj_out entry.
+ */
+extern attr_set
+bgp_adj_out_attr(bgp_prib prib, adj_out_ptr_t ao)
+{
+  adj_out_type_t type ;
+
+  while (1)                     /* loops back if aob_flux       */
+    {
+      if (ao.anon == NULL)
+        return NULL ;           /* easy !               */
+
+      /* If the entry is in steady-state, then we have the attributes in our
+       * hand, or we have an MPLS entry.
+       *
+       * If the entry is not steady state, then the flux.current has what we
+       * want, and we loop back !
+       */
+      type = (ao.anon->bits >> aob_type_shift) & aob_type_mask ;
+      switch (type)
+        {
+          /* Not steady state.
+           */
+          case aob_flux:
+            ao.anon = ao.flux->current ;
+
+            qassert((ao.anon == NULL) ||
+            (((ao.anon->bits >> aob_type_shift) & aob_type_mask) != aob_flux)) ;
+
+            continue ;
+
+          /* Steady state -- with an mpls route
+           *
+           * If the request makes no difference, exit now.  Otherwise continue
+           * and schedule a change.
+           *
+           * Note that in steady state we never have mpls->atp == NULL, because
+           * that would imply a redundant route_mpls object !
+           */
+          case aob_mpls:
+            qassert(prib->is_mpls) ;
+
+            qassert(ao.mpls->atp != NULL) ;
+            qassert(((adj_out)ao.mpls->atp)->bits & aob_attr_set) ;
+
+            return ao.mpls->atp ;
+
+          /* Steady state -- with simple attribute set.
+           *
+           * If the request is withdraw, exit now.  Otherwise continue and
+           * schedule a change.
+           */
+          default:
+            if (!(type & aob_attr_set))
+              {
+                /* Unrecognised type
+                 */
+                qassert(false) ;
+                return NULL ;           /* <<<< exit: safety            */
+              } ;
+
+            qassert(!prib->is_mpls) ;
+
+            return ao.attr ;
+        } ;
+    } ;
 } ;
 
 /*==============================================================================
@@ -464,25 +546,25 @@ bgp_adj_out_set_now(peer_rib prib)
  * discarded, rf->current becomes the adj_out pointer.
  *
  */
-static void bgp_adj_out_update_again(peer_rib prib, route_flux rf,
+static void bgp_adj_out_update_again(bgp_prib prib, route_flux rf,
                                             attr_set attr, mpls_tags_t tag) ;
-static void bgp_adj_out_update_revert(peer_rib prib, route_flux rf,
+static void bgp_adj_out_update_revert(bgp_prib prib, route_flux rf,
                                                attr_set attr_pending,
                                                 route_mpls mpls, attr_flux af) ;
-static void bgp_adj_out_set_steady(peer_rib prib, route_flux rf,
+static void bgp_adj_out_set_steady(bgp_prib prib, route_flux rf,
                                                       route_mpls mpls_pending) ;
-static void bgp_adj_out_change_batch(peer_rib prib, route_flux rf) ;
-static void bgp_adj_out_change_announce(peer_rib prib, route_flux rf,
+static void bgp_adj_out_change_batch(bgp_prib prib, route_flux rf) ;
+static void bgp_adj_out_change_announce(bgp_prib prib, route_flux rf,
                                                  attr_flux af, attr_set* p_ap) ;
 
-static void bgp_adj_out_mrai_withdraw(peer_rib prib, route_flux rf) ;
-static void bgp_adj_out_mrai_announce(peer_rib prib, route_flux rf) ;
-static void bgp_adj_out_mrai_revert(peer_rib prib, route_flux rf,
+static void bgp_adj_out_mrai_withdraw(bgp_prib prib, route_flux rf) ;
+static void bgp_adj_out_mrai_announce(bgp_prib prib, route_flux rf) ;
+static void bgp_adj_out_mrai_revert(bgp_prib prib, route_flux rf,
                                                       route_mpls mpls_pending) ;
 
-static void bgp_adj_out_add_announce(peer_rib prib, route_flux rf,
+static void bgp_adj_out_add_announce(bgp_prib prib, route_flux rf,
                                             pfifo_period_t st, attr_set* p_ap) ;
-static pfifo_period_t bgp_adj_out_del_announce(peer_rib prib, route_flux rf,
+static pfifo_period_t bgp_adj_out_del_announce(bgp_prib prib, route_flux rf,
                                                                  attr_flux af) ;
 
 inline static pfifo_index_t bgp_adj_out_get_index(pfifo pf, adj_out ao) ;
@@ -493,10 +575,10 @@ inline static void bgp_adj_out_set_index_dl(adj_out ao,
                                                      pfifo_index_t i, int dl) ;
 inline static pfifo_period_t bgp_adj_out_get_dl(adj_out ao) ;
 
-static void bgp_attr_flux_free(peer_rib prib, attr_flux af) ;
+static void bgp_attr_flux_free(bgp_prib prib, attr_flux af) ;
 
-static void bgp_adj_out_update_dispatcher(peer_rib prib, pfifo_period_t dt) ;
-static void bgp_adj_out_dispatch_queue(peer_rib prib, route_flux rf_next,
+static void bgp_adj_out_update_dispatcher(bgp_prib prib, pfifo_period_t dt) ;
+static void bgp_adj_out_dispatch_queue(bgp_prib prib, route_flux rf_next,
                                                                      pfifo pf) ;
 
 /*------------------------------------------------------------------------------
@@ -731,7 +813,7 @@ static void bgp_adj_out_dispatch_queue(peer_rib prib, route_flux rf_next,
  * batch-delay overlays the tail end of MRAI.
  */
 extern void
-bgp_adj_out_update (peer_rib prib, prefix_id_entry pie, attr_set attr,
+bgp_adj_out_update (bgp_prib prib, prefix_id_entry pie, attr_set attr,
                                                              mpls_tags_t tag)
 {
   void*         ao ;
@@ -915,7 +997,7 @@ bgp_adj_out_update (peer_rib prib, prefix_id_entry pie, attr_set attr,
  *                      added to the batch_fifo.
  */
 static route_flux
-bgp_adj_out_unset(peer_rib prib, adj_out ao, bool stale)
+bgp_adj_out_unset(bgp_prib prib, adj_out ao, bool stale)
 {
   route_flux     rf ;
   route_mpls     mpls ;
@@ -1188,7 +1270,7 @@ bgp_adj_out_unset(peer_rib prib, adj_out ao, bool stale)
  *                        * update the pending state, otherwise.
  */
 static void
-bgp_adj_out_update_again(peer_rib prib, route_flux rf, attr_set attr,
+bgp_adj_out_update_again(bgp_prib prib, route_flux rf, attr_set attr,
                                                             mpls_tags_t tag)
 {
   route_flux_action_t action ;
@@ -1523,7 +1605,7 @@ bgp_adj_out_update_again(peer_rib prib, route_flux rf, attr_set attr,
  * to steady state.
  */
 static void
-bgp_adj_out_update_revert(peer_rib prib, route_flux rf, attr_set attr_pending,
+bgp_adj_out_update_revert(bgp_prib prib, route_flux rf, attr_set attr_pending,
                                           route_mpls mpls_pending, attr_flux af)
 {
   if (attr_pending != NULL)
@@ -1588,7 +1670,7 @@ bgp_adj_out_update_revert(peer_rib prib, route_flux rf, attr_set attr_pending,
  * Dispatches everything in the fifo_batch
  */
 extern void
-bgp_adj_out_eor(peer_rib prib)
+bgp_adj_out_eor(bgp_prib prib)
 {
   route_flux  rf_first ;
   typedef struct dl_base_pair(attr_flux) dl_af ;
@@ -1641,7 +1723,7 @@ bgp_adj_out_eor(peer_rib prib)
  *     collection will do that later.
  */
 static void
-bgp_adj_out_set_steady(peer_rib prib, route_flux rf, route_mpls mpls_pending)
+bgp_adj_out_set_steady(bgp_prib prib, route_flux rf, route_mpls mpls_pending)
 {
   ihash_set_item(prib->adj_out, rf->pfx_id, rf->current) ;
 
@@ -1661,7 +1743,7 @@ bgp_adj_out_set_steady(peer_rib prib, route_flux rf, route_mpls mpls_pending)
  * Note that we schedule one period ahead of the current period -- rounds up.
  */
 static void
-bgp_adj_out_add_batch(peer_rib prib, route_flux rf, prefix_id_t pfx_id)
+bgp_adj_out_add_batch(bgp_prib prib, route_flux rf, prefix_id_t pfx_id)
 {
   pfifo_index_t i ;
 
@@ -1681,7 +1763,7 @@ bgp_adj_out_add_batch(peer_rib prib, route_flux rf, prefix_id_t pfx_id)
  * dead-line.
  */
 static void
-bgp_adj_out_change_batch(peer_rib prib, route_flux rf)
+bgp_adj_out_change_batch(bgp_prib prib, route_flux rf)
 {
   pfifo_index_t   i ;
 
@@ -1734,7 +1816,7 @@ bgp_adj_out_change_batch(peer_rib prib, route_flux rf)
  * attr_flux.
  */
 static void
-bgp_adj_out_add_announce(peer_rib prib, route_flux rf, pfifo_period_t st,
+bgp_adj_out_add_announce(bgp_prib prib, route_flux rf, pfifo_period_t st,
                                                                  attr_set* p_ap)
 {
   attr_set      attr ;
@@ -1802,7 +1884,7 @@ bgp_adj_out_add_announce(peer_rib prib, route_flux rf, pfifo_period_t st,
  * NB: the route_flux is the owner of a lock on the attribute set returned.
  */
 static pfifo_period_t
-bgp_adj_out_del_announce(peer_rib prib, route_flux rf, attr_flux af)
+bgp_adj_out_del_announce(bgp_prib prib, route_flux rf, attr_flux af)
 {
   pfifo_index_t  i ;
   pfifo_period_t st ;
@@ -1851,7 +1933,7 @@ bgp_adj_out_del_announce(peer_rib prib, route_flux rf, attr_flux af)
  * as a withdraw.
  */
 static void
-bgp_adj_out_change_announce(peer_rib prib, route_flux rf, attr_flux af,
+bgp_adj_out_change_announce(bgp_prib prib, route_flux rf, attr_flux af,
                                                                  attr_set* p_ap)
 {
   pfifo_period_t  st ;
@@ -1999,7 +2081,7 @@ bgp_adj_out_change_announce(peer_rib prib, route_flux rf, attr_flux af,
  * Enters state (1) or state (3) of MRAI.
  */
 static void
-bgp_adj_out_set_mrai(peer_rib prib, route_flux rf, bool announce)
+bgp_adj_out_set_mrai(bgp_prib prib, route_flux rf, bool announce)
 {
   pfifo_period_t  nst, dl ;
   pfifo_index_t   i ;
@@ -2097,7 +2179,7 @@ bgp_adj_out_set_mrai(peer_rib prib, route_flux rf, bool announce)
  * NB: this can change the route_flux from rf_act_mrai to rf_act_batch.
  */
 static void
-bgp_adj_out_mrai_withdraw(peer_rib prib, route_flux rf)
+bgp_adj_out_mrai_withdraw(bgp_prib prib, route_flux rf)
 {
   pfifo_index_t   i ;
   pfifo_period_t  nst, dl ;
@@ -2176,7 +2258,7 @@ bgp_adj_out_mrai_withdraw(peer_rib prib, route_flux rf)
  * NB: this can change the route_flux from rf_act_mrai to rf_act_batch.
  */
 static void
-bgp_adj_out_mrai_announce(peer_rib prib, route_flux rf)
+bgp_adj_out_mrai_announce(bgp_prib prib, route_flux rf)
 {
   pfifo_index_t   i ;
   pfifo_period_t  nst, dl ;
@@ -2257,7 +2339,7 @@ bgp_adj_out_mrai_announce(peer_rib prib, route_flux rf)
  *     the route_flux and any route_mpls.
  */
 static void
-bgp_adj_out_mrai_revert(peer_rib prib, route_flux rf, route_mpls mpls_pending)
+bgp_adj_out_mrai_revert(bgp_prib prib, route_flux rf, route_mpls mpls_pending)
 {
   pfifo_index_t   i ;
   pfifo_period_t  nst, dl ;
@@ -2431,14 +2513,14 @@ bgp_adj_out_get_dl(adj_out ao)
  *
  *
  */
-static void bgp_adj_out_set_dispatcher(peer_rib prib, pfifo_period_t dt) ;
-static void bgp_adj_out_set_timer(peer_rib prib, pfifo_period_t dt) ;
+static void bgp_adj_out_set_dispatcher(bgp_prib prib, pfifo_period_t dt) ;
+static void bgp_adj_out_set_timer(bgp_prib prib, pfifo_period_t dt) ;
 
 /*------------------------------------------------------------------------------
  * Set the dispatch process going for the given prib.
  */
 static void
-bgp_adj_out_start_dispatcher(peer_rib prib)
+bgp_adj_out_start_dispatcher(bgp_prib prib)
 {
   pfifo_period_t dt ;
 
@@ -2472,7 +2554,7 @@ bgp_adj_out_start_dispatcher(peer_rib prib)
  * so this function has no effect !
  */
 static void
-bgp_adj_out_update_dispatcher(peer_rib prib, pfifo_period_t dt)
+bgp_adj_out_update_dispatcher(bgp_prib prib, pfifo_period_t dt)
 {
   if (dt >= prib->dispatch_time)
     return ;
@@ -2484,7 +2566,7 @@ bgp_adj_out_update_dispatcher(peer_rib prib, pfifo_period_t dt)
  * Unset the dispatch timer
  */
 static void
-bgp_adj_out_unset_dispatcher(peer_rib prib)
+bgp_adj_out_unset_dispatcher(bgp_prib prib)
 {
   bgp_adj_out_set_dispatcher(prib, PFIFO_PERIOD_MAX) ;
 } ;
@@ -2495,7 +2577,7 @@ bgp_adj_out_unset_dispatcher(peer_rib prib)
  * If the given dispatch time is >= PFIFO_PERIOD_MAX, will stop the timer.
  */
 static void
-bgp_adj_out_set_dispatcher(peer_rib prib, pfifo_period_t dt)
+bgp_adj_out_set_dispatcher(bgp_prib prib, pfifo_period_t dt)
 {
   prib->dispatch_time  = dt ;
   prib->dispatch_delay = 0 ;
@@ -2518,7 +2600,7 @@ bgp_adj_out_set_dispatcher(peer_rib prib, pfifo_period_t dt)
  * If the given dispatch time is >= PFIFO_PERIOD_MAX, will stop the timer.
  */
 static void
-bgp_adj_out_delay_dispatcher(peer_rib prib, pfifo_period_t dt)
+bgp_adj_out_delay_dispatcher(bgp_prib prib, pfifo_period_t dt)
 {
   prib->dispatch_time  = 0 ;
   prib->dispatch_delay = dt ;
@@ -2533,7 +2615,7 @@ bgp_adj_out_delay_dispatcher(peer_rib prib, pfifo_period_t dt)
  * the timer.
  */
 static void
-bgp_adj_out_set_timer(peer_rib prib, pfifo_period_t dt)
+bgp_adj_out_set_timer(bgp_prib prib, pfifo_period_t dt)
 {
   if (dt < PFIFO_PERIOD_MAX)
     qtimer_set(prib->dispatch_qtr,
@@ -2554,7 +2636,7 @@ static void
 bgp_adj_out_dispatch(qtimer qtr, void* timer_info, qtime_mono_t when)
 {
   route_flux rf_next ;
-  peer_rib   prib ;
+  bgp_prib   prib ;
   pfifo_period_t dt, temp ;
 
   prib = timer_info ;
@@ -2598,7 +2680,7 @@ bgp_adj_out_dispatch(qtimer qtr, void* timer_info, qtime_mono_t when)
    */
   if ((prib->withdraw_queue.head != NULL) ||
                                     (prib->announce_queue->ex.head != NULL))
-    bgp_session_self_XON(prib->peer) ;
+    bgp_session_kick_write(prib->peer) ;
 
   /* If required, schedule the next dispatch run
    */
@@ -2611,7 +2693,7 @@ bgp_adj_out_dispatch(qtimer qtr, void* timer_info, qtime_mono_t when)
  * NB: assumes there is at least one thing in the queue !
  */
 static void
-bgp_adj_out_dispatch_queue(peer_rib prib, route_flux rf_next, pfifo pf)
+bgp_adj_out_dispatch_queue(bgp_prib prib, route_flux rf_next, pfifo pf)
 {
   ddl_init(pf->ex) ;            /* empty the ex list    */
 
@@ -2685,17 +2767,16 @@ bgp_adj_out_dispatch_queue(peer_rib prib, route_flux rf_next, pfifo pf)
  * announce_queue and rescheduling for MRAI.
  *
  */
-static route_out_parcel bgp_adj_out_ret_withdraw(peer_rib prib,
+static route_out_parcel bgp_adj_out_ret_withdraw(bgp_prib prib,
                                        route_out_parcel parcel, route_flux rf) ;
-static route_out_parcel bgp_adj_out_ret_announce(peer_rib prib,
+static route_out_parcel bgp_adj_out_ret_announce(bgp_prib prib,
                          route_out_parcel parcel, attr_flux af, route_flux rf) ;
-static route_out_parcel bgp_adj_out_ret_eor(peer_rib prib,
+static route_out_parcel bgp_adj_out_ret_eor(bgp_prib prib,
                                                       route_out_parcel parcel) ;
-static route_out_parcel bgp_adj_out_ret_next_announce(peer_rib prib,
+static route_out_parcel bgp_adj_out_ret_next_announce(bgp_prib prib,
                                         route_out_parcel parcel, attr_flux af) ;
 
-
-static route_out_parcel bgp_adj_out_announce_dequeue(peer_rib prib,
+static route_out_parcel bgp_adj_out_announce_dequeue(bgp_prib prib,
                                                                  attr_flux af) ;
 
 /*------------------------------------------------------------------------------
@@ -2743,7 +2824,7 @@ static route_out_parcel bgp_adj_out_announce_dequeue(peer_rib prib,
  * attributes as the first (and is not an EoR !).
  */
 extern void
-bgp_adj_out_start_updates(peer_rib prib)
+bgp_adj_out_start_updates(bgp_prib prib)
 {
   bgp_adj_out_set_now(prib) ;
   pfifo_take(prib->fifo_batch, prib->now + 1, true) ;
@@ -2759,7 +2840,7 @@ bgp_adj_out_start_updates(peer_rib prib)
  * Returns:  address of parcel (as given) -- NULL <=> no *withdraws* pending
  */
 extern route_out_parcel
-bgp_adj_out_next_withdraw(peer_rib prib, route_out_parcel parcel)
+bgp_adj_out_next_withdraw(bgp_prib prib, route_out_parcel parcel)
 {
   route_flux rf ;
 
@@ -2795,7 +2876,7 @@ bgp_adj_out_next_withdraw(peer_rib prib, route_out_parcel parcel)
  * Returns:  address of parcel (as given) -- NULL <=> nothing pending
  */
 extern route_out_parcel
-bgp_adj_out_next_update(peer_rib prib, route_out_parcel parcel)
+bgp_adj_out_next_update(bgp_prib prib, route_out_parcel parcel)
 {
   route_flux rf ;
 
@@ -2842,8 +2923,6 @@ bgp_adj_out_next_update(peer_rib prib, route_out_parcel parcel)
  *
  * Returns parcel:
  *
- *   * list                     -- unchanged
- *
  *   * attr                     -- NULL
  *
  *   * pfx_id                   -- from route_flux
@@ -2853,7 +2932,7 @@ bgp_adj_out_next_update(peer_rib prib, route_out_parcel parcel)
  *   * action                   -- ra_out_withdraw
  */
 static route_out_parcel
-bgp_adj_out_ret_withdraw(peer_rib prib, route_out_parcel parcel, route_flux rf)
+bgp_adj_out_ret_withdraw(bgp_prib prib, route_out_parcel parcel, route_flux rf)
 {
   parcel->attr   = NULL ;
   parcel->pfx_id = rf->pfx_id ;
@@ -2869,8 +2948,6 @@ bgp_adj_out_ret_withdraw(peer_rib prib, route_out_parcel parcel, route_flux rf)
  *
  * Returns parcel:
  *
- *   * list                     -- unchanged
- *
  *   * attr                     -- from attr_flux
  *
  *   * pfx_id                   -- from route_flux
@@ -2881,7 +2958,7 @@ bgp_adj_out_ret_withdraw(peer_rib prib, route_out_parcel parcel, route_flux rf)
  *   * action                   -- ra_out_initial/ra_out_update
  */
 static route_out_parcel
-bgp_adj_out_ret_announce(peer_rib prib, route_out_parcel parcel,
+bgp_adj_out_ret_announce(bgp_prib prib, route_out_parcel parcel,
                                                     attr_flux af, route_flux rf)
 {
   qassert(af->attr != NULL) ;
@@ -2915,8 +2992,6 @@ bgp_adj_out_ret_announce(peer_rib prib, route_out_parcel parcel,
  *
  * Returns parcel:
  *
- *   * list                     -- unchanged
- *
  *   * attr                     -- NULL
  *
  *   * pfx_id                   -- prefix_id_null
@@ -2926,7 +3001,7 @@ bgp_adj_out_ret_announce(peer_rib prib, route_out_parcel parcel,
  *   * action                   -- ra_out_eor
  */
 static route_out_parcel
-bgp_adj_out_ret_eor(peer_rib prib, route_out_parcel parcel)
+bgp_adj_out_ret_eor(bgp_prib prib, route_out_parcel parcel)
 {
   parcel->attr   = NULL ;
   parcel->pfx_id = prefix_id_null ;
@@ -2953,7 +3028,7 @@ bgp_adj_out_ret_eor(peer_rib prib, route_out_parcel parcel)
  *     given to either bgp_adj_out_ret_withdraw/_done_withdraw()
  */
 extern route_out_parcel
-bgp_adj_out_done_withdraw(peer_rib prib, route_out_parcel parcel)
+bgp_adj_out_done_withdraw(bgp_prib prib, route_out_parcel parcel)
 {
   route_flux rf ;
 
@@ -2988,7 +3063,7 @@ bgp_adj_out_done_withdraw(peer_rib prib, route_out_parcel parcel)
  *     bgp_adj_out_next_update/_done_announce()
  */
 extern route_out_parcel
-bgp_adj_out_done_announce(peer_rib prib, route_out_parcel parcel)
+bgp_adj_out_done_announce(bgp_prib prib, route_out_parcel parcel)
 {
   attr_flux   af ;
   route_flux  rf ;
@@ -3034,7 +3109,7 @@ bgp_adj_out_done_announce(peer_rib prib, route_out_parcel parcel)
 
   /* Now return the next announcement for this attr_flux or release it.
    */
-  bgp_adj_out_ret_next_announce(prib, parcel, af) ;
+  return bgp_adj_out_ret_next_announce(prib, parcel, af) ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -3044,7 +3119,7 @@ bgp_adj_out_done_announce(peer_rib prib, route_out_parcel parcel)
  * Returns:  NULL
  */
 extern route_out_parcel
-bgp_adj_out_done_eor(peer_rib prib)
+bgp_adj_out_done_eor(bgp_prib prib)
 {
   attr_flux   af ;
 
@@ -3083,7 +3158,7 @@ bgp_adj_out_done_eor(peer_rib prib)
  *     bgp_adj_out_next_update/_done_announce()
  */
 extern route_out_parcel
-bgp_adj_out_done_no_announce(peer_rib prib, route_out_parcel parcel)
+bgp_adj_out_done_no_announce(bgp_prib prib, route_out_parcel parcel)
 {
   attr_flux   af ;
   route_flux  rf ;
@@ -3156,7 +3231,7 @@ bgp_adj_out_done_no_announce(peer_rib prib, route_out_parcel parcel)
  * NB: this is for attr_flux which is NOT an EoR !
  */
 static route_out_parcel
-bgp_adj_out_ret_next_announce(peer_rib prib, route_out_parcel parcel,
+bgp_adj_out_ret_next_announce(bgp_prib prib, route_out_parcel parcel,
                                                                    attr_flux af)
 {
   route_flux rf ;
@@ -3179,7 +3254,7 @@ bgp_adj_out_ret_next_announce(peer_rib prib, route_out_parcel parcel,
  * Returns:  NULL
  */
 static route_out_parcel
-bgp_adj_out_announce_dequeue(peer_rib prib, attr_flux af)
+bgp_adj_out_announce_dequeue(bgp_prib prib, attr_flux af)
 {
   attr_flux afx ;
 
@@ -3371,7 +3446,7 @@ bgp_attr_flux_vhash_free(vhash_item item, vhash_table table)
  * Returns:  the attribute set associated with the attr_flux.
  */
 static void
-bgp_attr_flux_free(peer_rib prib, attr_flux af)
+bgp_attr_flux_free(bgp_prib prib, attr_flux af)
 {
   af->attr = NULL ;                     /* tidy                 */
   af->vhash.ref_count = aob_attr_flux ; /* discard times        */

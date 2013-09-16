@@ -686,7 +686,9 @@ bgp_init_second_stage(bool pthreads)
   qpn_add_hook_function(&be_nexus->in_thread_final, bgp_listeners_finish) ;
 
   qpn_add_hook_function(&re_nexus->foreground, routing_foreground) ;
+#if 0
   qpn_add_hook_function(&be_nexus->foreground, bgp_connection_queue_process) ;
+#endif
 
   qpn_add_hook_function(&re_nexus->background, routing_background) ;
 
@@ -766,7 +768,7 @@ routing_background(void)
 static void
 bgp_exit (int status)
 {
-  struct bgp *bgp;
+  bgp_inst bgp;
   struct listnode *node, *nnode;
   struct interface *ifp;
   extern struct zclient *zclient;

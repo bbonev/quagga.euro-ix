@@ -19,8 +19,8 @@ libzebra_la_SOURCES = \
   qpselect.c  qpthreads.c  qrand.c  qstring.c  qs_pcsub.c  \
   qtime.c  qtimers.c  ring_buffer.c  routemap.c  sigevent.c  \
   smux.c  sockopt.c  sockunion.c  str.c  stream.c  svector.c  table.c  \
-  thread.c  vector.c  vhash.c  vio_fifo.c  vio_lines.c  vty.c  \
-  vty_cli.c  vty_command.c  vty_io.c  vty_io_basic.c  \
+  thread.c  tstring.c  vector.c  vhash.c  vio_fifo.c  vio_lines.c  \
+  vty.c  vty_cli.c  vty_command.c  vty_io.c  vty_io_basic.c  \
   vty_io_file.c  vty_io_std.c  vty_io_term.c  vty_io_vtysh.c  \
   vty_log.c  vty_vtysh.c  vty_vtysh_content.c  workqueue.c  \
   zclient.c

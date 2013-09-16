@@ -439,7 +439,7 @@ extern void
 qfs_put_n_hex(qf_str qfs, const byte* src, uint n, pf_flags_t pf)
 {
   const byte* e ;
-  const byte* pd ;
+  const char* pd ;
   char scratch[3] ;
   uint l ;
 

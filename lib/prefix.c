@@ -816,7 +816,7 @@ str2ipv4 (in_addr_t* ipv4, const char *str, const char** end)
   *end = cp ;
 
   if (*cp != '\0')
-    cp = tstring_set_n(temp, str, len) ;
+    cp = tstring_set_str_n(temp, str, len) ;
 
   ret = inet_pton (AF_INET, cp, ipv4);
 
@@ -1006,7 +1006,7 @@ str2ipv6 (in6_addr_s* ipv6, const char *str, const char** end)
   *end = cp ;
 
   if (*cp != '\0')
-    cp = tstring_set_n(temp, str, len) ;
+    cp = tstring_set_str_n(temp, str, len) ;
 
   ret = inet_pton (AF_INET6, cp, &ipv6);
 

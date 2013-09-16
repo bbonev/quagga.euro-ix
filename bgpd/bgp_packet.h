@@ -29,7 +29,7 @@ Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
  */
 extern void bgp_packet_write_stuff(bgp_peer peer, ring_buffer rb) ;
 
-extern void bgp_route_refresh_send (peer_rib prib, byte orf_type,
+extern void bgp_route_refresh_send (bgp_prib prib, byte orf_type,
                                             byte when_to_refresh, bool remove) ;
 
 

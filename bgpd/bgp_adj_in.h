@@ -34,26 +34,25 @@
 /*------------------------------------------------------------------------------
  * Prototypes.
  */
-extern void bgp_adj_in_init(peer_rib prib) ;
-extern void bgp_adj_in_reset(peer_rib prib) ;
+extern void bgp_adj_in_init(bgp_prib prib) ;
+extern void bgp_adj_in_reset(bgp_prib prib) ;
 
-extern route_info bgp_route_info_new(peer_rib prib, prefix_id_entry pie) ;
+extern route_info bgp_route_info_new(bgp_prib prib, prefix_id_entry pie) ;
 extern route_info bgp_route_info_extend(route_info ri) ;
 
-extern route_info bgp_route_info_free(route_info ri, bool ream) ;
+extern route_info bgp_route_info_free(route_info ri, bool remove) ;
 
 
-extern void bgp_adj_in_update(peer_rib prib, prefix_id_entry pie,
+extern void bgp_adj_in_update_prefix(bgp_prib prib, prefix_id_entry pie,
                                                           iroute_state parcel) ;
 
+extern route_info bgp_route_select(bgp_rib_node rn, bgp_lc_id_t lc) ;
 
 
-extern void bgp_adj_in_discard(peer_rib prib) ;
-extern void bgp_adj_in_set_stale(peer_rib prib) ;
-extern void bgp_adj_in_discard_stale(peer_rib prib) ;
-extern void bgp_adj_in_refresh(peer_rib prib) ;
-extern void bgp_adj_in_rs_enable(peer_rib prib) ;
-extern void bgp_adj_in_rs_disable(peer_rib prib) ;
+extern void bgp_adj_in_discard(bgp_prib prib) ;
+extern void bgp_adj_in_set_stale(bgp_prib prib) ;
+extern void bgp_adj_in_discard_stale(bgp_prib prib) ;
+extern void bgp_adj_in_refresh(bgp_prib prib) ;
 
 
 #endif /* _QUAGGA_BGP_ADJ_IN_H */

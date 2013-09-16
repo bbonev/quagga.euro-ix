@@ -438,8 +438,8 @@ bgp_dump_free(bgp_dump bd)
 /*==============================================================================
  * TABLE (and TABLE_NOW) dumps
  */
-static bgp_dump bgp_dump_routes_index_table(bgp_dump bd, struct bgp *bgp) ;
-static bgp_dump bgp_dump_routes_family(bgp_dump bd, struct bgp *bgp,
+static bgp_dump bgp_dump_routes_index_table(bgp_dump bd, bgp_inst bgp) ;
+static bgp_dump bgp_dump_routes_family(bgp_dump bd, bgp_inst bgp,
                                                                   qAFI_t q_afi);
 
 static stream bgp_dump_header (bgp_dump bd, int type, int subtype) ;
@@ -453,7 +453,7 @@ static void bgp_dump_set_size (stream s, uint plus) ;
 static void
 bgp_dump_table(bgp_dump_control bdc)
 {
-  struct bgp *bgp ;
+  bgp_inst bgp ;
   bgp_dump bd ;
 
   if (qdebug)
@@ -500,10 +500,10 @@ bgp_dump_table(bgp_dump_control bdc)
  * Returns:  bd if OK, or NULL if failed (or was NULL already).
  */
 static bgp_dump
-bgp_dump_routes_index_table(bgp_dump bd, struct bgp *bgp)
+bgp_dump_routes_index_table(bgp_dump bd, bgp_inst bgp)
 {
   struct stream* s ;
-  struct peer *peer ;
+  bgp_peer peer ;
   struct listnode *node ;
   uint16_t peerno, len ;
 
@@ -586,7 +586,7 @@ bgp_dump_routes_index_table(bgp_dump bd, struct bgp *bgp)
  * NB: assumes that th afi is known !
  */
 static bgp_dump
-bgp_dump_routes_family(bgp_dump bd, struct bgp *bgp, qAFI_t q_afi)
+bgp_dump_routes_family(bgp_dump bd, bgp_inst bgp, qAFI_t q_afi)
 {
   vector         rv ;
   vector_index_t i ;
@@ -615,7 +615,8 @@ bgp_dump_routes_family(bgp_dump bd, struct bgp *bgp, qAFI_t q_afi)
 
   /* Get the required table -- gets empty vector, if none
    */
-  rv = bgp_rib_extract(bgp->rib[qafx_from_q(q_afi, qSAFI_Unicast)], NULL) ;
+  rv = bgp_rib_extract(bgp->rib[qafx_from_q(q_afi, qSAFI_Unicast)], lc_view_id,
+                                                                         NULL) ;
   /* Walk down each BGP route
    */
   for (i = 0 ; i < vector_length(rv) ; ++i)
@@ -628,7 +629,7 @@ bgp_dump_routes_family(bgp_dump bd, struct bgp *bgp, qAFI_t q_afi)
       uint16_t      entry_count ;
 
       rn = vector_get_item(rv, i) ;
-      ri = svs_head(&rn->iroute_bases[0], rn->avail) ;
+      ri = svs_head(rn->aroutes[lc_view_id].base, rn->avail) ;
 
       if (ri == NULL)
         continue ;              /* ignore if no routes available        */

@@ -384,29 +384,69 @@ CONFIRM(offsetof(attr_flux_t, vhash) == 0) ;     /* see vhash.h  */
 CONFIRM(offsetof(adj_out_t, bits)  == offsetof(attr_flux_t, vhash.ref_count)) ;
 CONFIRM(sizeof(((adj_out)0)->bits) == sizeof(((attr_flux)0)->vhash.ref_count)) ;
 
+
+/*==============================================================================
+ *
+ */
+
+
+/*------------------------------------------------------------------------------
+ * Route Outgoing "Parcel".
+ *
+ * Routes as they sent are bundled up in a parcel, which collects all the
+ * properties in one place, and can be queued for output.
+ */
+typedef enum route_out_action  route_out_action_t ;
+enum route_out_action
+{
+  ra_out_initial   = 0,         /* update from nothing                     */
+  ra_out_withdraw  = 1,         /* update from something to nothing        */
+  ra_out_update    = 2,         /* update from something to something else */
+  ra_out_eor       = 3,
+};
+
+typedef struct route_out_parcel  route_out_parcel_t ;
+
+typedef struct dl_base_pair(route_out_parcel) route_out_parcel_base_t ;
+typedef route_out_parcel_base_t* route_out_parcel_base ;
+
+struct route_out_parcel
+{
+  attr_set       attr ;
+
+  prefix_id_t    pfx_id ;
+  mpls_tags_t    tag ;
+
+  byte           qafx ;
+  byte           action ;
+} ;
+
 /*------------------------------------------------------------------------------
  * Prototypes.
  */
-extern void bgp_adj_out_init(peer_rib prib) ;
-extern void bgp_adj_out_discard(peer_rib prib) ;
-extern void bgp_adj_out_set_stale(peer_rib prib, uint delay) ;
+extern void bgp_adj_out_init(bgp_prib prib) ;
+extern void bgp_adj_out_discard(bgp_prib prib) ;
+extern void bgp_adj_out_set_stale(bgp_prib prib, uint delay) ;
 
-extern void bgp_adj_out_update(peer_rib prib, prefix_id_entry pie,
+extern void bgp_adj_out_update(bgp_prib prib, prefix_id_entry pie,
                                                attr_set attr, mpls_tags_t tag) ;
-extern void bgp_adj_out_eor(peer_rib prib) ;
+extern void bgp_adj_out_eor(bgp_prib prib) ;
 
-extern void bgp_adj_out_start_updates(peer_rib prib) ;
-extern route_out_parcel bgp_adj_out_next_withdraw(peer_rib prib,
+extern void bgp_adj_out_start_updates(bgp_prib prib) ;
+extern route_out_parcel bgp_adj_out_next_withdraw(bgp_prib prib,
                                                       route_out_parcel parcel) ;
-extern route_out_parcel bgp_adj_out_next_update(peer_rib prib,
+extern route_out_parcel bgp_adj_out_next_update(bgp_prib prib,
                                                       route_out_parcel parcel) ;
 
-extern route_out_parcel bgp_adj_out_done_withdraw(peer_rib prib,
+extern route_out_parcel bgp_adj_out_done_withdraw(bgp_prib prib,
                                                       route_out_parcel parcel) ;
-extern route_out_parcel bgp_adj_out_done_announce(peer_rib prib,
+extern route_out_parcel bgp_adj_out_done_announce(bgp_prib prib,
                                                       route_out_parcel parcel) ;
-extern route_out_parcel bgp_adj_out_done_eor(peer_rib prib) ;
-extern route_out_parcel bgp_adj_out_done_no_announce(peer_rib prib,
+extern route_out_parcel bgp_adj_out_done_eor(bgp_prib prib) ;
+extern route_out_parcel bgp_adj_out_done_no_announce(bgp_prib prib,
                                                       route_out_parcel parcel) ;
+
+extern adj_out_ptr_t bgp_adj_out_lookup(bgp_prib prib, prefix_id_t pfx_id) ;
+extern attr_set bgp_adj_out_attr(bgp_prib prib, adj_out_ptr_t ao) ;
 
 #endif /* _QUAGGA_BGP_ADJ_OUT_H */

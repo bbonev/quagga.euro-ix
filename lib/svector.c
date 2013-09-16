@@ -119,7 +119,7 @@ _svec_clear(svec sv, svec_index_t e)
  * Returns:  index at which the item has been added.
  */
 Private svec_index_t
-_svec_add(svec sv, void* item, svec_index_t e)
+_svec_add(svec sv, svec_item item, svec_index_t e)
 {
   svec_item*   p_item ;
   svec_index_t i, f ;
@@ -246,7 +246,7 @@ _svec_add(svec sv, void* item, svec_index_t e)
 
           while (f > (i + 1))
             {
-              p_item[f - 1 - i] = (void*)(uintptr_t)f ;
+              p_item[f - 1 - i] = (svec_item)(uintptr_t)f ;
               f -= 1 ;
             } ;
         } ;
@@ -274,7 +274,7 @@ _svec_del(svec sv, svec_index_t i, svec_index_t e)
 
   p_item  = _svec_get_p(sv, i, e) ;
   item    = *p_item ;
-  *p_item = (void*)(uintptr_t)(sv->free) ;
+  *p_item = (svec_item)(uintptr_t)(sv->free) ;
   sv->free = i ;
 
   return item ;

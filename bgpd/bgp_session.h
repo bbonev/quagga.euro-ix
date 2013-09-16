@@ -120,6 +120,8 @@ struct bgp_session
   bgp_conn_ord_t        ord ;           /* primary/secondary connection */
   bgp_fsm_eqb_t         eqb ;           /* what last happened           */
 
+  bgp_note              note ;          // TODO !!
+
   /* This is private to the RE, and set when goes pEstablished.
    */
   bgp_conn_ord_t        ord_estd ;
@@ -357,8 +359,7 @@ inline static void BGP_SESSION_UNLOCK(bgp_session session)
  */
 extern bgp_session bgp_session_init_new(bgp_peer peer) ;
 extern void bgp_session_start(bgp_session session) ;
-
-extern void bgp_session_prod(bgp_session session, bgp_note note, bool refresh) ;
+extern bgp_note bgp_session_recharge(bgp_session session, bgp_note note) ;
 
 
 
@@ -376,6 +377,7 @@ extern void bgp_session_kick_re_read(bgp_session session) ;
 extern void bgp_session_kick_be_read(bgp_peer peer) ;
 extern void bgp_session_kick_be_write(bgp_peer peer) ;
 extern void bgp_session_kick_re_write(bgp_session session) ;
+
 extern void bgp_session_kick_write(bgp_peer peer) ;
 extern void bgp_session_kick_read(bgp_peer peer) ;
 

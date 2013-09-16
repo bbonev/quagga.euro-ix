@@ -12,6 +12,7 @@
 
 /* prototypes */
 static void test_svl(void);
+static void test_ddl(void)   Unused ;
 
 static uint assert_limit ;
 
@@ -49,9 +50,10 @@ main(int argc, char **argv)
   assert_limit = 25 ;
 
   test_svl() ;
+#if 0
   test_sdl() ;
   test_ddl() ;
-
+#endif
 
 
   return 0;
@@ -60,7 +62,10 @@ main(int argc, char **argv)
 /*==============================================================================
  * Construct a majic mark from two addresses
  */
-static unsigned majic(void* a, void* b)
+static unsigned majic(void* a, void* b)              Unused ; // pro tem
+
+static unsigned
+majic(void* a, void* b)
 {
   uintptr_t z = (uintptr_t)a ^ (uintptr_t)b ^ (uintptr_t)&majic ;
   return z ;
@@ -150,13 +155,13 @@ struct test_svec
     } u ;
 } ;
 
-static void test_svec_init(test_svec tsv) ;
-static void test_svec_reset(test_svec tsv) ;
-static void test_svec_clear(test_svec tsv) ;
+static void test_svec_init(test_svec tsv)    Unused ;
+static void test_svec_reset(test_svec tsv)   Unused ;
+static void test_svec_clear(test_svec tsv)   Unused ;
 
-static svec_index_t test_svec_add(test_svec tsv, void* item) ;
-static svec_item test_svec_del(test_svec tsv, svec_index_t i) ;
-static svec_item test_svec_get(test_svec tsv, svec_index_t i) ;
+static svec_index_t test_svec_add(test_svec tsv, void* item)    Unused ;
+static svec_item test_svec_del(test_svec tsv, svec_index_t i)   Unused ;
+static svec_item test_svec_get(test_svec tsv, svec_index_t i)   Unused ;
 
 
 
@@ -178,11 +183,11 @@ test_svec_init(test_svec tsv)
         break ;
 
       case 1:
-        svec_init(tsv->u.sv1) ;
+        svec_init(&tsv->u.sv1) ;
         break ;
 
       case 2:
-        svec_init(tsv->u.sv2) ;
+        svec_init(&tsv->u.sv2) ;
         break ;
 
       case 3:
@@ -190,11 +195,11 @@ test_svec_init(test_svec tsv)
         break ;
 
       case 4:
-        svec_init(tsv->u.sv4) ;
+        svec_init(&tsv->u.sv4) ;
         break ;
 
       case 11:
-        svec_init(tsv->u.sv11) ;
+        svec_init(&tsv->u.sv11) ;
         break ;
 
       default:
@@ -215,11 +220,11 @@ test_svec_reset(test_svec tsv)
         break ;
 
       case 1:
-        svec_reset(tsv->u.sv1) ;
+        svec_reset(&tsv->u.sv1) ;
         break ;
 
       case 2:
-        svec_reset(tsv->u.sv2) ;
+        svec_reset(&tsv->u.sv2) ;
         break ;
 
       case 3:
@@ -227,11 +232,11 @@ test_svec_reset(test_svec tsv)
         break ;
 
       case 4:
-        svec_reset(tsv->u.sv4) ;
+        svec_reset(&tsv->u.sv4) ;
         break ;
 
       case 11:
-        svec_reset(tsv->u.sv11) ;
+        svec_reset(&tsv->u.sv11) ;
         break ;
 
       default:
@@ -252,11 +257,11 @@ test_svec_clear(test_svec tsv)
         break ;
 
       case 1:
-        svec_clear(tsv->u.sv1) ;
+        svec_clear(&tsv->u.sv1) ;
         break ;
 
       case 2:
-        svec_clear(tsv->u.sv2) ;
+        svec_clear(&tsv->u.sv2) ;
         break ;
 
       case 3:
@@ -264,11 +269,11 @@ test_svec_clear(test_svec tsv)
         break ;
 
       case 4:
-        svec_clear(tsv->u.sv4) ;
+        svec_clear(&tsv->u.sv4) ;
         break ;
 
       case 11:
-        svec_clear(tsv->u.sv11) ;
+        svec_clear(&tsv->u.sv11) ;
         break ;
 
       default:
@@ -289,11 +294,11 @@ test_svec_add(test_svec tsv, svec_item item)
         break ;
 
       case 1:
-        return svec_add(tsv->u.sv1, item) ;
+        return svec_add(&tsv->u.sv1, item) ;
         break ;
 
       case 2:
-        return svec_add(tsv->u.sv2, item) ;
+        return svec_add(&tsv->u.sv2, item) ;
         break ;
 
       case 3:
@@ -301,11 +306,11 @@ test_svec_add(test_svec tsv, svec_item item)
         break ;
 
       case 4:
-        return svec_add(tsv->u.sv4, item) ;
+        return svec_add(&tsv->u.sv4, item) ;
         break ;
 
       case 11:
-        return svec_add(tsv->u.sv11, item) ;
+        return svec_add(&tsv->u.sv11, item) ;
         break ;
 
       default:
@@ -326,11 +331,11 @@ test_svec_del(test_svec tsv, svec_index_t i)
         break ;
 
       case 1:
-        return svec_del(tsv->u.sv1, i) ;
+        return svec_del(&tsv->u.sv1, i) ;
         break ;
 
       case 2:
-        return svec_del(tsv->u.sv2, i) ;
+        return svec_del(&tsv->u.sv2, i) ;
         break ;
 
       case 3:
@@ -338,11 +343,11 @@ test_svec_del(test_svec tsv, svec_index_t i)
         break ;
 
       case 4:
-        return svec_del(tsv->u.sv4, i) ;
+        return svec_del(&tsv->u.sv4, i) ;
         break ;
 
       case 11:
-        return svec_del(tsv->u.sv11, i) ;
+        return svec_del(&tsv->u.sv11, i) ;
         break ;
 
       default:
@@ -363,11 +368,11 @@ test_svec_get(test_svec tsv, svec_index_t i)
         break ;
 
       case 1:
-        return svec_get(tsv->u.sv1, i) ;
+        return svec_get(&tsv->u.sv1, i) ;
         break ;
 
       case 2:
-        return svec_get(tsv->u.sv2, i) ;
+        return svec_get(&tsv->u.sv2, i) ;
         break ;
 
       case 3:
@@ -375,11 +380,11 @@ test_svec_get(test_svec tsv, svec_index_t i)
         break ;
 
       case 4:
-        return svec_get(tsv->u.sv4, i) ;
+        return svec_get(&tsv->u.sv4, i) ;
         break ;
 
       case 11:
-        return svec_get(tsv->u.sv11, i) ;
+        return svec_get(&tsv->u.sv11, i) ;
         break ;
 
       default:
@@ -535,6 +540,25 @@ typedef struct ddt_test_list* ddt_test_list ;
 typedef struct ddt_test_list  ddt_test_list_t ;
 
 static ddt_test_list_t ddt_lists[list_count] ;
+
+
+
+
+
+
+
+static void
+test_svl(void)
+{
+
+} ;
+
+
+
+
+
+
+
 
 
 static inline ddt_list_pair

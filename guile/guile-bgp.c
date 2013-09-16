@@ -41,10 +41,10 @@ static int
 scm_print_bgp (SCM vect, SCM port, scm_print_state *pstate)
 {
   unsigned short num;
-  struct bgp *bgp;
+  bgp_inst bgp;
 
   num = 0;
-  bgp = (struct bgp *) SCM_CDR (vect);
+  bgp = (bgp_inst ) SCM_CDR (vect);
   num = bgp->as;
   scm_puts ("#<bgp ", port);
   scm_intprint (num, 10, port);
@@ -72,8 +72,8 @@ scm_router_bgp (SCM as_number)
 {
   SCM cell;
   long num;
-  struct bgp *bgp;
-  struct bgp *bgp_create ();
+  bgp_inst bgp;
+  bgp_inst bgp_create ();
 
   SCM_ASSERT (SCM_INUMP (as_number), as_number, SCM_ARG1, "router-bgp");
 

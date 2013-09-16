@@ -109,17 +109,17 @@
 
 #define INIT_DL_BASE_PAIR    { NULL, NULL }
 
-typedef struct dl_base_pair(void*) dl_base_pair_vt ;
-typedef struct dl_list_pair(void*) dl_list_pair_vt ;
+typedef struct dl_base_pair(vp) dl_base_pair_vt ;
+typedef struct dl_list_pair(vp) dl_list_pair_vt ;
 
 typedef dl_base_pair_vt* dl_base_pair_v ;
 typedef dl_list_pair_vt* dl_list_pair_v ;
 
 #define dl_list_ptr_make(item, offset) \
-  ((dl_list_pair_v)((void*)((char*)item + offset)))
+  ((dl_list_pair_v)((vp)((char*)item + offset)))
 
 #define sl_list_ptr_make(item, offset) \
-  ((void*)((char*)item + (offset)))
+  ((vp)((char*)item + (offset)))
 
 #define _lu_off(obj, field) ((char*)&((obj)->field) - (char*)(obj))
 
@@ -497,29 +497,29 @@ Private bool ssl_del_func(void** prev_p, void* item, void** item_p) ;
  *
  * Supports:
  *
- *   ddl_init(base)                 -- initialise base
+ *   ddl_init(base)                     -- initialise base
  *
  *     An empty list has *both* head and tail pointers NULL.
  *
  *     NB: confusion will arise if only one of these pointers is NULL.
  *
- *   ddl_init_pair(item, list)      -- initialise pointer pair
+ *   ddl_init_pair(item, list)          -- initialise pointer pair
  *
  *     Sets both pointers NULL -- not strictly necessary, but tidy.
  *
- *   ddl_push(base, item, list)     -- insert at head of list
+ *   ddl_push(base, item, list)         -- insert at head of list
  *
  *     Treat as void function.  The item may *not* be NULL.
  *
  *     Undefined if item is already on any list (including this one).
  *
- *   ddl_append(base, item, list)   -- insert at tail of list
+ *   ddl_append(base, item, list)       -- insert at tail of list
  *
  *     Treat as void function.  The item may *not* be NULL.
  *
  *     Undefined if item is already on any list (including this one).
  *
- *   ddl_in_after(after, base, item, list)   -- insert after
+ *   ddl_in_after(after, base, item, list)      -- insert after
  *
  *     Treat as void function.  The item may *not* be NULL.
  *
@@ -530,7 +530,7 @@ Private bool ssl_del_func(void** prev_p, void* item, void** item_p) ;
  *     Undefined if item is already on any list (including this one), or if
  *     after is not on the list.
  *
- *   ddl_in_before(before, base, item, list) -- insert before
+ *   ddl_in_before(before, base, item, list)    -- insert before
  *
  *     Treat as void function.  The item may *not* be NULL.
  *
@@ -541,7 +541,13 @@ Private bool ssl_del_func(void** prev_p, void* item, void** item_p) ;
  *     Undefined if item is already on any list (including this one), or if
  *     before is not on the list.
  *
- *   ddl_pop(&dst, base, next)      -- pop head of list, if any
+ *   ddl_insert(base, item, list, cmp)  -- insert in (ascending) order
+ *
+ *     Treat as void function.  The item may *not* be NULL.
+ *
+ *     Undefined if item is already on any list (including this one) !
+ *
+ *   ddl_pop(&dst, base, next)          -- pop head of list, if any
  *
  *     Treat as function returning void*.
  *
@@ -549,7 +555,7 @@ Private bool ssl_del_func(void** prev_p, void* item, void** item_p) ;
  *
  *     Returns NULL and sets dst == NULL if list is empty.
  *
- *   ddl_crop(&dst, base, next)     -- crop tail of list, if any
+ *   ddl_crop(&dst, base, next)         -- crop tail of list, if any
  *
  *     Treat as function returning void*.
  *
@@ -557,7 +563,7 @@ Private bool ssl_del_func(void** prev_p, void* item, void** item_p) ;
  *
  *     Returns NULL and sets dst == NULL if list is empty.
  *
- *   ddl_del(base, item, list)      -- delete from list
+ *   ddl_del(base, item, list)          -- delete from list
  *
  *     Treat as void function.  The item may *not* be NULL.
  *
@@ -569,31 +575,31 @@ Private bool ssl_del_func(void** prev_p, void* item, void** item_p) ;
  *
  *     Undefined if item is not on the list (or if new already is !).
  *
- *   ddl_del_head(base, next)       -- delete head of list
+ *   ddl_del_head(base, next)           -- delete head of list
  *
  *     Treat as void function.  Does nothing if the list is empty.
  *
- *   ddl_del_tail(base, next)       -- delete tail of list
+ *   ddl_del_tail(base, next)           -- delete tail of list
  *
  *     Treat as void function.  Does nothing if the list is empty.
  *
- *   ddl_head(base)                 -- return head of list
+ *   ddl_head(base)                     -- return head of list
  *
  *     Treat as function returning void*.
  *
- *   ddl_tail(base)                 -- return tail of list
+ *   ddl_tail(base)                     -- return tail of list
  *
  *     Treat as function returning void*.
  *
- *   ddl_next(item, next)           -- step to next item, if any
+ *   ddl_next(item, next)               -- step to next item, if any
  *
  *     Treat as function returning void*.  Returns NULL if the item is NULL.
  *
- *   ddl_prev(item, next)           -- step to prev item, if any
+ *   ddl_prev(item, next)               -- step to prev item, if any
  *
  *     Treat as function returning void*.  Returns NULL if the item is NULL.
  *
- *   ddl_slice(base, sub, list)     -- remove sublist from given list
+ *   ddl_slice(base, sub, list)         -- remove sublist from given list
  *
  *     Treat as void function.  Does nothing if the sublist is empty.
  *
@@ -604,7 +610,7 @@ Private bool ssl_del_func(void** prev_p, void* item, void** item_p) ;
  *     tail->list.next will be NULL).
  *
  *   ddl_splice_after(after, base, sub, list)
- *                                  -- insert sublist after given item
+ *                                      -- insert sublist after given item
  *
  *     Treat as void function.  Does nothing if the sublist is empty.
  *
@@ -618,7 +624,7 @@ Private bool ssl_del_func(void** prev_p, void* item, void** item_p) ;
  *     and tail->list.next may well be.
  *
  *   ddl_splice_before(before, base, sub, list)
- *                                  -- insert sublist before given item
+ *                                      -- insert sublist before given item
  *
  *     Treat as void function.  Does nothing if the sublist is empty.
  *
@@ -631,7 +637,7 @@ Private bool ssl_del_func(void** prev_p, void* item, void** item_p) ;
  *     sub is unchanged by this operation -- but its head->list.prev and
  *     and tail->list.next may well be.
  *
- *   ddl_append_list(base, sub, list) -- append sub list to base list
+ *   ddl_append_list(base, sub, list)   -- append sub list to base list
  *
  *     Treat as void function.
  *
@@ -641,7 +647,7 @@ Private bool ssl_del_func(void** prev_p, void* item, void** item_p) ;
  *     sub is unchanged by this operation -- but its head->list.prev and
  *     and tail->list.next may well be.
  *
- *   ddl_prepend_list(base, sub, list) -- prepend sub list to base list
+ *   ddl_prepend_list(base, sub, list)  -- prepend sub list to base list
  *
  *     Treat as void function.
  *
@@ -672,6 +678,8 @@ Private bool ssl_del_func(void** prev_p, void* item, void** item_p) ;
  *          That is... a variable or field which is a pointer pointer pair,
  *          *but* where the head->list.prev and tail->list.next need not be
  *          NULL and may well not be.
+ *
+ *   "cmp"  is sort_cmp() function -- see misc.h.
  *
  *------------------------------------------------------------------------------
  * For example:
@@ -789,6 +797,13 @@ Private bool ssl_del_func(void** prev_p, void* item, void** item_p) ;
        else                                                             \
          ddl_append(base, item, list) ;                                 \
   } while (0)
+
+#define ddl_insert(base, item, list, cmp)                               \
+  _ddl_insert(&((dl_base_pair_vt)(base)), item,                         \
+                               &((dl_list_pair_vt)((item)->list)), cmp)
+
+extern void _ddl_insert(dl_base_pair_v base, vp item, dl_list_pair_v item_p,
+                                                               sort_cmp* cmp) ;
 
 #define ddl_del(base, item, list)                                       \
   do { if ((item)->list.next != NULL)                                   \
@@ -955,6 +970,11 @@ Private bool ssl_del_func(void** prev_p, void* item, void** item_p) ;
              } ;                                                        \
          }                                                              \
   } while (0)
+
+
+extern void
+_dl_sort(void** base, dl_list_pair_v item_p, sort_cmp* cmp, bool double_base) ;
+
 
 /*==============================================================================
  * Double Base, Single Link

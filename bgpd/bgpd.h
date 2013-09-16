@@ -34,6 +34,7 @@ Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
 #include "ihash.h"
 #include "sockunion.h"
 #include "workqueue.h"
+#include "list_util.h"
 
 /*------------------------------------------------------------------------------
  * BGP master for system wide configurations and variables.
@@ -104,9 +105,9 @@ enum bgp_af_flag_bits
 } ;
 typedef uint8_t bgp_af_flag_bits_t ;    /* NB: <= 8 bits defined        */
 
-typedef struct bgp bgp_inst_t ;
+typedef struct bgp_inst bgp_inst_t ;
 
-struct bgp
+struct bgp_inst
 {
   /* AS number of this BGP instance.
    */
@@ -115,6 +116,11 @@ struct bgp
   /* Name of this BGP instance.
    */
   char* name;
+
+  /* Route-Contexts by name, if any and the view's rcontext, ditto.
+   */
+  vhash_table   rc_name_index ;
+  bgp_rcontext  rc_view ;
 
   /* Reference count to allow bgp_peer_delete to finish after bgp_delete
    */
@@ -241,16 +247,15 @@ struct bgp
 
 /* BGP peer-group support.
  */
-typedef struct peer_group peer_group_t ;
+typedef struct bgp_peer_group bgp_peer_group_t ;
 
-struct peer_group
+struct bgp_peer_group
 {
   char*     name;
 
   bgp_inst  bgp;                /* Does not own a lock          */
 
-  struct list* peer ;           /* Peer-group client list.      */
-  struct list* members ;        /* Peer-group client list.      */
+  struct dl_base_pair(bgp_peer) members ;
 
   bgp_peer conf ;               /* the configuration            */
 };
@@ -488,7 +493,7 @@ extern void bgp_reset (void);
 
 extern void bgp_zclient_reset (void);                      /* See bgp_zebra ! */
 extern int bgp_nexthop_set (union sockunion *, union sockunion *,
-                     struct bgp_nexthop *, struct peer *); /* See bgp_zebra ! */
+                     struct bgp_nexthop *, bgp_peer ); /* See bgp_zebra ! */
 
 extern bgp_inst bgp_get_default (void);
 extern bgp_inst bgp_lookup (as_t, const char *);

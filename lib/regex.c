@@ -27,7 +27,10 @@
 #undef  _GNU_SOURCE
 #define _GNU_SOURCE
 
+/* For the benefit of Eclipse... skip this if not required.
+ */
 #include "misc.h"
+#if !defined(HAVE_LIBPCREPOSIX) && !defined(HAVE_GNU_REGEX)
 
 #ifdef _WIN32
 /* Windows does not provide unistd.h, which is required for abort() */
@@ -5892,3 +5895,4 @@ weak_alias (__regfree, regfree)
 #endif
 
 #endif /* not emacs  */
+#endif /* !defined(HAVE_LIBPCREPOSIX) && !defined(HAVE_GNU_REGEX) */

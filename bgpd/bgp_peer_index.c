@@ -1,4 +1,4 @@
-/* BGP Peer Index -- header
+/* BGP Peer Index
  * Copyright (C) 2009 Chris Hall (GMCH), Highwayman
  *
  * This file is part of GNU Zebra.

@@ -23,8 +23,6 @@
 #define _ZEBRA_TSTRING_H
 
 #include "misc.h"
-#include "zassert.h"
-#include "memory.h"
 
 /*==============================================================================
  * tstrings are allocated on the stack, but if (unexpectedly) the standard
@@ -33,7 +31,14 @@
  * To declare a "tstring":
  *
  *   tstring(foo, 64) ;   // creates a "tstring" variable called "foo"
- *                        // with 64 char buffer.
+ *                        // with (at least) 64 char buffer (called "fooBuf").
+ *
+ * The size is rounded "up-up" to multiple of sizeof(void*) -- so will be
+ * at least sizeof(void*) bigger than the nominal size, which allows for
+ * trailing '\0' and a touch more.
+ *
+ * The variable foo and the buffer fooBuf are initialised with a '\0' at the
+ * start of fooBuf.
  *
  * Can then:
  *
@@ -49,26 +54,99 @@
  *
  *   tstring_free(foo) ;    // releases any dynamically allocated memory.
  */
-
 struct tstring
 {
-  usize   size ;
   char*   str ;
-  char*   alloc ;
+  usize   size ;
+  bool    alloc ;
+  char    fb[1] ;
 } ;
 
 typedef struct tstring tstring[1] ;
 
-/* tstring(foo, 93) ;   -- declare the variable "foo".          */
+/* tstring(foo, 93) ;   -- declare the variable "foo", and initialise it
+ *                         empty.
+ */
 #define tstring_t(name, sz) \
-  char      _zlxq_##name##_b[ ((sz) + 7) & 0xFFFFFFF8] ; \
-  tstring name = { { .size  = ((sz) + 7) & 0xFFFFFFF8, \
-                                      .str   = _zlxq_##name##_b, \
-                                      .alloc = NULL } }
+  char    name##Buf[          ROUND_UP_UP(sz, sizeof(void*))] = { '\0' } ; \
+  tstring name = { { .size  = ROUND_UP_UP(sz, sizeof(void*)), \
+                     .str   = name##Buf, \
+                     .alloc = false } }
+
+/*==============================================================================
+ * Functions
+ */
+Inline char* tstring_need(tstring ts, usize len) ;
+Inline void tstring_clear(tstring ts) ;
+Inline void tstring_free(tstring ts) ;
+
+Private char* tstringP_need(tstring ts, usize len) ;
+Private void tstringP_free(tstring ts) ;
+
+Inline char* tstring_set_str(struct tstring* ts, const char* str) ;
+Inline char* tstring_set_str_n(tstring ts, const char* str, usize len) ;
+extern char* tstring_set_fill(tstring ts, usize len, const char* src) ;
+extern char* tstring_set_fill_n(tstring ts, usize len, const char* src,
+                                                                   usize flen) ;
+
+extern char* tstring_append_str(tstring ts, const char* src) ;
+extern char* tstring_append_str_n(tstring ts, const void* src, usize n) ;
+extern char* tstring_append_ch_x_n(tstring ts, char ch, uint n) ;
+extern char* tstring_append_ch(tstring ts, char ch) ;
+
+/*==============================================================================
+ * The Inline stuff.
+ */
 
 /*------------------------------------------------------------------------------
- * Ensure the tstring "foo" can accomodate at least "len" characters plus the
+ * Ensure the tstring "foo" can accommodate at least "len" characters *plus* a
  * terminating '\0'.
+ *
+ * Returns: address of buffer
+ *
+ * NB: address of buffer may not be the same as returned by a previous
+ *     operation on foo.
+ *
+ * NB: the contents of foo are preserved, and the extended portion set to
+ *     all zeros.
+ */
+Inline char*
+tstring_need(tstring ts, usize len)
+{
+  return (len < ts->size) ? ts->str : tstringP_need(ts, len) ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Clear the given tstring to zero.
+ */
+Inline void
+tstring_clear(tstring ts)
+{
+  memset(ts->str, 0, ts->size) ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * If have dynamically allocated buffer for tstring "foo", release it now.
+ *
+ * Once a buffer has been dynamically allocated there is no real need to
+ * free it until the tstring is no longer required -- so makes no attempt
+ * to set the tstring back to the original buffer.
+ *
+ * NB: for safety, freeing a dynamically allocated buffer sets the size and
+ *     pointer to the 'fb' inside the tstring.  So, it is possible to continue
+ *     to use it... but not advised.
+ */
+Inline void
+tstring_free(tstring ts)
+{
+  if (ts->alloc)
+    tstringP_free(ts) ;
+ } ;
+
+/*------------------------------------------------------------------------------
+ * Copy the string "str" to the tstring "foo", with terminating '\0'.
+ *
+ * If "str" is NULL, sets "foo" to be an empty string.
  *
  * Returns: address of buffer
  *
@@ -76,15 +154,9 @@ typedef struct tstring tstring[1] ;
  *     on foo.  Also, previous contents of foo may be lost.
  */
 Inline char*
-tstring_set_len(struct tstring* ts, usize len)
+tstring_set_str(tstring ts, const char* src)
 {
-  if (len >= ts->size)
-    {
-      ts->size = len + 1 ;
-      ts->str  = ts->alloc = XREALLOC(MTYPE_TMP, ts->alloc, len + 1) ;
-    } ;
-
-  return ts->str ;
+  return tstring_set_str_n(ts, src, (src != NULL) ? strlen(src) : 0) ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -98,42 +170,16 @@ tstring_set_len(struct tstring* ts, usize len)
  * NB: address of buffer may not be the same as returned by a previous operation
  *     on foo.  Also, previous contents of foo may be lost.
  */
-static inline char*
-tstring_set_n(struct tstring* ts, const char* str, usize len)
+Inline char*
+tstring_set_str_n(tstring ts, const char* src, usize len)
 {
-  char* tss = tstring_set_len(ts, len) ;
+  char* tss = tstring_need(ts, len) ;
 
   if (len > 0)
-    memcpy(tss, str, len) ;
+    memcpy(tss, src, len) ;
   *(tss + len) = '\0' ;
 
   return tss ;
-} ;
-
-/*------------------------------------------------------------------------------
- * Copy the string "str" to the tstring "foo", with terminating '\0'.
- *
- * If "str" is NULL, sets "foo" to be an empty string.
- *
- * Returns: address of buffer
- *
- * NB: address of buffer may not be the same as returned by a previous operation
- *     on foo.  Also, previous contents of foo may be lost.
- */
-static inline char*
-tstring_set(struct tstring* ts, const char* str)
-{
-  return tstring_set_n(ts, str, (str != NULL) ? strlen(str) : 0) ;
-} ;
-
-/*------------------------------------------------------------------------------
- * If have dynamically allocated buffer for tstring "foo", release it now.
- */
-static inline void
-tstring_free(struct tstring* ts)
-{
-  if (ts->alloc != NULL)
-    XFREE(MTYPE_TMP, ts->alloc) ;       /* sets ts->alloc NULL  */
 } ;
 
 #endif /* _ZEBRA_TSTRING_H */

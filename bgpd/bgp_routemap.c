@@ -165,12 +165,14 @@ route_match_peer(void* value, prefix_c pfx, route_map_object_t type,
     }
   else
     {
-      struct peer_group *group;
-      struct peer *peer;
-      struct listnode *node, *nnode;
+      bgp_peer_group group;
+      bgp_peer peer;
 
       group = brm->peer->group ;
-      for (ALL_LIST_ELEMENTS (group->peer, node, nnode, peer))
+
+      for (peer = ddl_head(group->members) ;
+           peer != NULL ;
+           peer = ddl_next(peer, member_list))
         {
           if (sockunion_same (su, peer->su_name))
             return RMAP_MATCH;

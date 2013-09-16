@@ -55,16 +55,16 @@ Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
 /*==============================================================================
  * Construction and output of UPDATE and other messages.
  */
-static bool bgp_packet_write_announce(peer_rib prib, ring_buffer rb,
+static bool bgp_packet_write_announce(bgp_prib prib, ring_buffer rb,
                                                       route_out_parcel parcel) ;
-static bool bgp_packet_write_withdraw(peer_rib prib, ring_buffer rb,
+static bool bgp_packet_write_withdraw(bgp_prib prib, ring_buffer rb,
                                                       route_out_parcel parcel) ;
-static bool bgp_packet_write_eor(peer_rib prib, ring_buffer rb,
+static bool bgp_packet_write_eor(bgp_prib prib, ring_buffer rb,
                                                       route_out_parcel parcel) ;
 static bool bgp_packet_write_rr(bgp_peer peer, ring_buffer rb) ;
 
-static qstring bgp_packet_attrs_string(peer_rib prib, route_out_parcel parcel) ;
-static qstring bgp_packet_prefix_string(qstring qs_pfx, peer_rib prib,
+static qstring bgp_packet_attrs_string(bgp_prib prib, route_out_parcel parcel) ;
+static qstring bgp_packet_prefix_string(qstring qs_pfx, bgp_prib prib,
                                                       route_out_parcel parcel) ;
 static bool bgp_packet_write_rr_orf_part(blower br, bgp_route_refresh rr,
                                                bgp_form_t form, bgp_peer peer) ;
@@ -80,14 +80,15 @@ static bool bgp_packet_write_rr_orf_part(blower br, bgp_route_refresh rr,
 extern void
 bgp_packet_write_stuff(bgp_peer peer, ring_buffer rb)
 {
-  peer_rib     prib ;
-  peer_rib     running[qafx_count] ;
+  bgp_prib     prib ;
+  bgp_prib     running[qafx_count] ;
   bool         full, first ;
   uint         i, n ;
   route_out_parcel_t parcel_s ;
   route_out_parcel   parcel ;
 
   full = false ;
+  memset(&parcel_s, 0, sizeof(parcel_s)) ;      /* tidy */
 
   /* Flush any pending Route Refresh requests.
    *
@@ -117,7 +118,7 @@ bgp_packet_write_stuff(bgp_peer peer, ring_buffer rb)
    * We will remain in this loop, sending out withdraws, until there are no
    * more or the ring-buffer fills.
    */
-  n = peer->af_running_count ;
+  n = peer->prib_running_count ;
   for (i = 0 ; (i <= n) && !full ; ++i)
     {
       prib = peer->prib_running[i] ;
@@ -243,7 +244,7 @@ bgp_packet_write_stuff(bgp_peer peer, ring_buffer rb)
  *          false -> ring-buffer is not full -- can keep going !
  */
 static bool
-bgp_packet_write_announce(peer_rib prib, ring_buffer rb,
+bgp_packet_write_announce(bgp_prib prib, ring_buffer rb,
                                                         route_out_parcel parcel)
 {
   bgp_rb_msg_out_type_t rb_type ;
@@ -389,7 +390,7 @@ bgp_packet_write_announce(peer_rib prib, ring_buffer rb,
 
           count += 1 ;
           if (parcel->action == ra_out_initial)
-            prib->scount += 1 ;
+            prib->pcount_sent += 1 ;
 
           if (BGP_DEBUG (update, UPDATE_OUT))
             qs_updates = bgp_packet_prefix_string(qs_updates, prib, parcel) ;
@@ -567,7 +568,7 @@ bgp_packet_write_announce(peer_rib prib, ring_buffer rb,
  * Construct qstring containing the attributes to be announced.
  */
 static qstring
-bgp_packet_attrs_string(peer_rib prib, route_out_parcel parcel)
+bgp_packet_attrs_string(bgp_prib prib, route_out_parcel parcel)
 {
   attr_next_hop_t* next_hop, * mp_next_hop ;
 
@@ -584,7 +585,7 @@ bgp_packet_attrs_string(peer_rib prib, route_out_parcel parcel)
  * Construct qstring containing the attributes to be announced.
  */
 static qstring
-bgp_packet_prefix_string(qstring qs_pfx, peer_rib prib,
+bgp_packet_prefix_string(qstring qs_pfx, bgp_prib prib,
                                                 route_out_parcel parcel)
 {
   prefix_id_entry pie ;
@@ -613,7 +614,7 @@ bgp_packet_prefix_string(qstring qs_pfx, peer_rib prib,
  *          false -> ring-buffer is not full -- can keep going !
  */
 static bool
-bgp_packet_write_withdraw(peer_rib prib, ring_buffer rb,
+bgp_packet_write_withdraw(bgp_prib prib, ring_buffer rb,
                                                         route_out_parcel parcel)
 {
   bgp_rb_msg_out_type_t type ;
@@ -732,7 +733,7 @@ bgp_packet_write_withdraw(peer_rib prib, ring_buffer rb,
       ptr_t p_put ;
       uint  rb_len ;
 
-      prib->scount -= count ;
+      prib->pcount_sent -= count ;
 
       if (!mp_unreach)
         {
@@ -845,7 +846,7 @@ bgp_packet_write_withdraw(peer_rib prib, ring_buffer rb,
  *          false -> ring-buffer is not full -- can keep going !
  */
 static bool
-bgp_packet_write_eor(peer_rib prib, ring_buffer rb, route_out_parcel parcel)
+bgp_packet_write_eor(bgp_prib prib, ring_buffer rb, route_out_parcel parcel)
 {
   ulen        eor_msg_len ;
   ptr_t       p_seg, p_put ;
@@ -1235,7 +1236,7 @@ bgp_packet_write_rr_orf_part(blower br, bgp_route_refresh rr, bgp_form_t form,
  * then prods the I/O stuff.
  */
 extern void
-bgp_route_refresh_send (peer_rib prib, byte orf_type,
+bgp_route_refresh_send (bgp_prib prib, byte orf_type,
                                              byte when_to_refresh, bool remove)
 {
   bgp_route_refresh rr ;
@@ -1380,7 +1381,7 @@ bgp_packet_read_update(bgp_peer peer, sucker sr)
   byte* attr_p ;
   bgp_attr_parsing_t args[1] ;
   bool      refused ;
-  peer_rib  prib ;
+  bgp_prib  prib ;
 
   /* Status must be Established.
    */
@@ -1832,7 +1833,7 @@ static void
 bpd_packet_update_nlri(bgp_peer peer, attr_set attr, bgp_nlri nlri,
                                                                   bool refused)
 {
-  peer_rib     prib ;
+  bgp_prib     prib ;
   const byte*  pnt ;
   const byte*  limit ;
   const byte*  prd ;
@@ -2066,7 +2067,7 @@ bpd_packet_update_nlri(bgp_peer peer, attr_set attr, bgp_nlri nlri,
        */
       pie = prefix_id_find_entry(&pfx, prd) ;     /* locks the entry      */
 
-      bgp_adj_in_update(prib, pie, parcel) ;
+      bgp_adj_in_update_prefix(prib, pie, parcel) ;
 
       prefix_id_entry_dec_ref(pie) ;
     } ;
@@ -2097,7 +2098,7 @@ bgp_packet_read_rr(bgp_peer peer, sucker sr)
 {
   bgp_route_refresh rr ;
   qafx_t qafx ;
-  peer_rib     prib ;
+  bgp_prib     prib ;
 
   /* Parse the message into a new bgp_route_refresh object -- if can.
    *
@@ -2176,7 +2177,7 @@ bgp_packet_read_rr(bgp_peer peer, sucker sr)
 
   /* Perform route refreshment to the peer
    */
-  bgp_announce_family(peer, qafx);
+  bgp_announce_family(peer, qafx, 10);
 } ;
 
 /*==============================================================================
@@ -2496,7 +2497,7 @@ bgp_packet_orf_recv(bgp_route_refresh rr,
 /* xTODO: require BGP Engine support for Dynamic Capability messages.    */
 
 extern void
-bgp_capability_send (struct peer *peer, qafx_t qafx, int capability_code,
+bgp_capability_send (bgp_peer peer, qafx_t qafx, int capability_code,
                                                                      int action)
 {
   struct stream *s;
@@ -2583,7 +2584,7 @@ bgp_afi_safi_valid_indices (iAFI_t i_afi, iSAFI_t i_safi)
  * Dynamic Capability Message handling.
  */
 static int
-bgp_capability_msg_parse (struct peer *peer, u_char *pnt, bgp_size_t length)
+bgp_capability_msg_parse (bgp_peer peer, u_char *pnt, bgp_size_t length)
 {
   u_char *end;
   struct capability_mp_data mpc;
@@ -2709,10 +2710,10 @@ bgp_capability_msg_parse (struct peer *peer, u_char *pnt, bgp_size_t length)
  *
  * This is exported for unit-test purposes
  */
-extern int bgp_capability_receive(struct peer*, bgp_size_t) ;
+extern int bgp_capability_receive(bgp_peer , bgp_size_t) ;
 
 int
-bgp_capability_receive (struct peer *peer, bgp_size_t size)
+bgp_capability_receive (bgp_peer peer, bgp_size_t size)
 {
   if (BGP_DEBUG (normal, NORMAL))
     zlog_debug ("%s rcv CAPABILITY", peer->host);

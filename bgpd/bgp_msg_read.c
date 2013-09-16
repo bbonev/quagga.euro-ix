@@ -1098,7 +1098,7 @@ bgp_msg_read_take_from_in_hand(ptr_t msg_body, bgp_msg_reader reader,
                                                bgp_msg_in_state_t msg_in_state)
 {
   ptr_t sp ;
-  uint  in_hand, have, take, take_1, take_2 ;
+  uint  have, take, take_1, take_2 ;
 
   qassert(reader->msg_in_state == bms_in_hand) ;
   qassert(reader->msg_body     == NULL) ;
@@ -1125,7 +1125,7 @@ bgp_msg_read_take_from_in_hand(ptr_t msg_body, bgp_msg_reader reader,
    * If that that wrap around the end of the buffer, do that in two takes.
    */
   take = reader->msg_body_length - reader->msg_awaited ;
-  qassert(in_hand >= take) ;
+  qassert(reader->in_hand  >= take) ;
 
   if (take != 0)
     {
@@ -1163,8 +1163,8 @@ bgp_msg_read_take_from_in_hand(ptr_t msg_body, bgp_msg_reader reader,
           sp += take_2 ;
         } ;
 
-      reader->sp      = sp ;
-      reader->in_hand = in_hand - take ;
+      reader->sp       = sp ;
+      reader->in_hand -= take ;
     } ;
 
   reader->msg_in_state = msg_in_state ;
@@ -1564,7 +1564,9 @@ bgp_msg_notify_parse(bgp_connection connection, bgp_msg_reader reader)
   note = bgp_note_new_with_data(code, subcode, sr->ptr, suck_left(sr)) ;
   note->received = true ;
 
+#if 0   // TODO need to move logging elsewhere
   bgp_notify_print(session->peer, note) ; XXX ;  /* Logging */
+#endif
 
   return note ;
 } ;

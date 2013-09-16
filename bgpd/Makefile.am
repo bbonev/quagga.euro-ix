@@ -18,9 +18,9 @@ libbgp_a_SOURCES = \
   bgp_mplsvpn.c  bgp_msg_read.c  bgp_msg_write.c  bgp_names.c  \
   bgp_network.c  bgp_nexthop.c  bgp_notification.c  \
   bgp_open_state.c  bgp_packet.c  bgp_peer.c  bgp_peer_vty.c  \
-  bgp_peer_index.c  bgp_regex.c  bgp_rib.c  bgp_route.c  \
-  bgp_routemap.c  bgp_route_refresh.c  bgp_session.c  bgp_snmp.c  \
-  bgp_table.c  bgp_unknown.c  bgp_vty.c  bgp_zebra.c
+  bgp_peer_index.c  bgp_rcontext.c  bgp_regex.c  bgp_rib.c  \
+  bgp_route.c  bgp_routemap.c  bgp_route_refresh.c  bgp_session.c  \
+  bgp_snmp.c  bgp_table.c  bgp_unknown.c  bgp_vty.c  bgp_zebra.c
 
 noinst_HEADERS = \
   bgp.h  \
@@ -31,9 +31,9 @@ noinst_HEADERS = \
   bgp_mplsvpn.h  bgp_mrt.h  bgp_msg_read.h  bgp_msg_write.h  \
   bgp_names.h  bgp_network.h  bgp_nexthop.h  bgp_notification.h  \
   bgp_open_state.h  bgp_packet.h  bgp_peer.h  bgp_peer_vty.h  \
-  bgp_peer_index.h  bgp_regex.h  bgp_rib.h  bgp_route.h  \
-  bgp_route_refresh.h  bgp_session.h  bgp_snmp.h  bgp_table.h  \
-  bgp_unknown.h  bgp_vty.h  bgp_zebra.h
+  bgp_peer_index.h  bgp_rcontext.h  bgp_regex.h  bgp_rib.h  \
+  bgp_route.h  bgp_route_refresh.h  bgp_session.h  bgp_snmp.h  \
+  bgp_table.h  bgp_unknown.h  bgp_vty.h  bgp_zebra.h
 
 bgpd_SOURCES = bgp_main.c
 bgpd_LDADD = libbgp.a ../lib/libzebra.la @LIBCAP@ @LIBM@

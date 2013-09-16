@@ -188,6 +188,8 @@ Private void _svec_clear(svec sv, svec_index_t e) ;
  *
  *   * svec_add(sv, item)     -- add given item to the svec
  *
+ *                               NB: item may be NULL.
+ *
  *                               Returns: index of the item.
  *
  *   * svec_del(sv, i)        -- remove item at the given index from the svec.
@@ -198,6 +200,15 @@ Private void _svec_clear(svec sv, svec_index_t e) ;
  *
  *                               Returns: item
  *
+ *   * svec_set(sv, i)        -- set address of item at the given index.
+ *
+ *                               Returns: item
+ *
+ *   * svec_get_(sv, i)       -- get pointer to address of item at the given
+ *                               index.
+ *
+ *                               Returns: pointer to item
+ *
  * NB: the svec_get() in particular is "light-weight" -- no checking is done
  *     on the index, the state of the svec or anything else.
  */
@@ -205,13 +216,90 @@ Private void _svec_clear(svec sv, svec_index_t e) ;
 #define svec_del(sv, i) _svec_del((svec)sv, i, svec_embedded(sv))
 #define svec_get(sv, i) _svec_get((svec)sv, i, svec_embedded(sv))
 #define svec_set(sv, i, item) _svec_set((svec)sv, i, item, svec_embedded(sv))
+#define svec_get_p(sv, i) _svec_get_p((svec)sv, i, svec_embedded(sv))
 
-Private svec_index_t _svec_add(svec sv, void* item, svec_index_t e) ;
-Private void* _svec_del(svec sv, svec_index_t i, svec_index_t e) ;
+Private svec_index_t _svec_add(svec sv, svec_item item, svec_index_t e) ;
+Private svec_item _svec_del(svec sv, svec_index_t i, svec_index_t e) ;
 Inline svec_item _svec_get(svec sv, svec_index_t i, svec_index_t e) ;
-Inline svec_item _svec_set(svec sv, svec_index_t i, void* item, svec_index_t e);
+Inline svec_item _svec_set(svec sv, svec_index_t i, svec_item item,
+                                                               svec_index_t e) ;
+Inline svec_item _svec_get_p(svec sv, svec_index_t i, svec_index_t e) ;
+
+/*==============================================================================
+ * The inline functions:
+ */
 
 /*------------------------------------------------------------------------------
+ * Basic "get item".
+ *
+ * Returns:  item -- NULL if i == SVEC_NULL or i > sv->last
+ *
+ * NB: 'e' is the index of the last embedded item.
+ */
+Inline svec_item
+_svec_get(svec sv, svec_index_t i, svec_index_t e)
+{
+  qassert(e <= sv->last) ;
+
+  if (i <= e)
+    {
+      if (i > SVEC_NULL)
+        return sv->body[i] ;
+      else
+        return NULL ;
+    }
+  else
+    {
+      if (i <= sv->last)
+        return ((void**)(sv->body[SVEC_EXT_BODY]))[i - e - 1] ;
+      else
+        return NULL ;
+    } ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Basic get pointer to item -- ie address of the svec entry.
+ *
+ * Returns:  address of pointer to item
+ *
+ * NB: if i == SVEC_NULL, returns address of pointer to SVEC_EXT_BODY !!
+ *
+ * NB: if i > sv->last, returns bogus address !!
+ *
+ * NB: 'e' is the index of the last embedded item.
+ */
+Inline svec_item
+_svec_get_p(svec sv, svec_index_t i, svec_index_t e)
+{
+  qassert((i != SVEC_NULL) && (i <= sv->last) && (e <= sv->last)) ;
+
+  if (i <= e)
+    return &sv->body[i] ;
+  else
+    return &((void**)(sv->body[SVEC_EXT_BODY]))[i - e - 1] ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Basic "set item".
+ *
+ * Returns:  item as given
+ *
+ * NB: will go BADLY WRONG if the given index is invalid !!
+ *
+ * NB: 'e' is the index of the last embedded item.
+ */
+Inline svec_item
+_svec_set(svec sv, svec_index_t i, void* item, svec_index_t e)
+{
+  qassert((i != SVEC_NULL) && (i <= sv->last) && (e <= sv->last)) ;
+
+  if (i <= e)
+    return sv->body[i] = item ;
+  else
+    return ((void**)(sv->body[SVEC_EXT_BODY]))[i - e - 1] = item ;
+} ;
+
+/*==============================================================================
  * Double Link Base -- List Functions.
  *
  * These "functions" are (mostly) macro front ends to actual functions.  The
@@ -383,7 +471,7 @@ Private svec_item _svl_del_tail(svl_base base, svec sv,
 Private svec_item _svl_del(svl_base base, svec sv, svec_index_t i,
                                                    size_t off, svec_index_t e) ;
 
-/*------------------------------------------------------------------------------
+/*==============================================================================
  * Single Link Base -- List Functions.
  *
  * These are almost the same as the Double Link Base functions, above, except
@@ -556,67 +644,5 @@ Private svec_item _svs_del_tail(svs_base base, svec sv,
                                                    size_t off, svec_index_t e) ;
 Private svec_item _svs_del(svs_base base, svec sv, svec_index_t i,
                                                    size_t off, svec_index_t e) ;
-
-/*==============================================================================
- * The inline functions:
- */
-
-/*------------------------------------------------------------------------------
- * Basic "get item".
- *
- * Returns:  item -- NULL if i == SVEC_NULL
- *
- * NB: 'e' is the index of the last embedded item.
- */
-Inline svec_item
-_svec_get(svec sv, svec_index_t i, svec_index_t e)
-{
-  qassert(e <= sv->last) ;
-
-  if (i <= e)
-    return (i == SVEC_NULL) ? NULL : sv->body[i] ;
-  else
-    return ((void**)(sv->body[SVEC_EXT_BODY]))[i - e] ;
-} ;
-
-/*------------------------------------------------------------------------------
- * Basic get pointer to item
- *
- * Returns:  address of pointer to item
- *
- * NB: if i == SVEC_NULL, returns address of pointer to SVEC_EXT_BODY !!
- *
- * NB: 'e' is the index of the last embedded item.
- */
-Inline svec_item
-_svec_get_p(svec sv, svec_index_t i, svec_index_t e)
-{
-  qassert((i != SVEC_NULL) && (i <= sv->last) && (e <= sv->last)) ;
-
-  if (i <= e)
-    return &sv->body[i] ;
-  else
-    return &((void**)(sv->body[SVEC_EXT_BODY]))[i - e] ;
-} ;
-
-/*------------------------------------------------------------------------------
- * Basic "set item".
- *
- * Returns:  item as given
- *
- * NB: will go BADLY WRONG if the given index is invalid !!
- *
- * NB: 'e' is the index of the last embedded item.
- */
-Inline svec_item
-_svec_set(svec sv, svec_index_t i, void* item, svec_index_t e)
-{
-  qassert((i != SVEC_NULL) && (i <= sv->last) && (e <= sv->last)) ;
-
-  if (i <= e)
-    return sv->body[i] = item ;
-  else
-    return ((void**)(sv->body[SVEC_EXT_BODY]))[i - e] = item ;
-} ;
 
 #endif /* _ZEBRA_SVECTOR_H */

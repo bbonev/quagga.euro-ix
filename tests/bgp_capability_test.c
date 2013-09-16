@@ -497,11 +497,16 @@ struct test_segment opt_params[] =
   { NULL, NULL, {0}, 0, 0}
 };
 
-extern int bgp_capability_receive(struct peer*, bgp_size_t) ;
+extern int bgp_capability_receive(bgp_peer , bgp_size_t) ;
+extern int peek_for_as4_capability(bgp_peer , bgp_size_t) ;
+extern int bgp_open_option_parse(bgp_peer , bgp_size_t, int*) ;
+
+
+
 
 /* basic parsing test */
 static void
-parse_test (struct peer *peer, struct test_segment *t, int type)
+parse_test (bgp_peer peer, struct test_segment *t, int type)
 {
   stream ibuf ;
 
@@ -536,7 +541,7 @@ parse_test (struct peer *peer, struct test_segment *t, int type)
   stream_put (ibuf, t->data, t->len);
 
   printf ("%s: %s\n", t->name, t->desc);
-
+#if 0
   switch (type)
     {
       case CAPABILITY:
@@ -558,6 +563,7 @@ parse_test (struct peer *peer, struct test_segment *t, int type)
         printf ("unknown type %u\n", type);
         exit(1);
     }
+#endif
 
   if (!ret && t->validate_afi)
     {
@@ -608,27 +614,27 @@ parse_test (struct peer *peer, struct test_segment *t, int type)
   stream_free(ibuf) ;
 }
 
-static struct bgp *bgp;
+static bgp_inst bgp;
 static as_t asn = 100;
 
-static struct peer * peer_create_accept (struct bgp *bgp) ;
+static bgp_peer peer_create_accept (bgp_inst bgp) ;
 
 int
 main (int argc, char **argv)
 {
-  struct peer *peer;
+  bgp_peer peer;
   int i, j;
 
-  conf_bgp_debug_fsm = -1UL;
-  conf_bgp_debug_events = -1UL;
-  conf_bgp_debug_packet = -1UL;
-  conf_bgp_debug_normal = -1UL;
-  conf_bgp_debug_as4 = -1UL;
-  term_bgp_debug_fsm = -1UL;
-  term_bgp_debug_events = -1UL;
-  term_bgp_debug_packet = -1UL;
-  term_bgp_debug_normal = -1UL;
-  term_bgp_debug_as4 = -1UL;
+  conf_bgp_debug_fsm = -1U;
+  conf_bgp_debug_events = -1U;
+  conf_bgp_debug_packet = -1U;
+  conf_bgp_debug_normal = -1U;
+  conf_bgp_debug_as4 = -1U;
+  term_bgp_debug_fsm = -1U;
+  term_bgp_debug_events = -1U;
+  term_bgp_debug_packet = -1U;
+  term_bgp_debug_normal = -1U;
+  term_bgp_debug_as4 = -1U;
 
   qlib_init_first_stage(0);     /* Absolutely first     */
   host_init(argv[0]) ;
@@ -685,10 +691,9 @@ main (int argc, char **argv)
 /*------------------------------------------------------------------------------
  * Make accept BGP peer... used in test programs...  TODO
  */
-struct peer *
-peer_create_accept (struct bgp *bgp)
+bgp_peer peer_create_accept (bgp_inst bgp)
 {
-  struct peer *peer;
+  bgp_peer peer;
 
   peer = bgp_peer_new (bgp, PEER_TYPE_REAL);
 

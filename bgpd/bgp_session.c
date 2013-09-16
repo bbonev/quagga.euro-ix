@@ -339,8 +339,8 @@ bgp_session_set_lox(bgp_session session)
 /*==============================================================================
  * Enabling and disabling sessions and session events
  */
-static bool bgp_session_args_make(bgp_session session, bool refresh) ;
-static bool bgp_session_cops_make(bgp_session session, bool refresh) ;
+static bgp_note bgp_session_prod(bgp_session session, bgp_note note,
+                                                                   bool force) ;
 
 /*------------------------------------------------------------------------------
  * Routeing Engine: start session -- as possible
@@ -373,6 +373,7 @@ static bool bgp_session_cops_make(bgp_session session, bool refresh) ;
  *
  *                 pssStopped/sReset    -- previous session started, but was not
  *                                         pisRunnable/csRun
+ *
  * In these states there is no activity for the peer in the BGP Engine, and
  * there are no messages outstanding to or from the BGP Engine.
  *
@@ -380,13 +381,18 @@ static bool bgp_session_cops_make(bgp_session session, bool refresh) ;
  *
  * Does nothing if the session is pisDown -- stays in current state
  *
- * Otherwise: refresh the cops_tx and the args_tx and send a prod message.
+ * Otherwise: refresh the cops_tx and the args_tx and send a prod message
+ *                           (whether or not the cops and/or args have changed).
  *
  *            Sets: sReset     -- the last session (if any) is now completely
  *                                forgotten.
  *
  *                  pssRunning -- iff pisRunnable
  *                  pssStopped        otherwise
+ *
+ * The principal difference between this and bgp_session_recharge() is that
+ * this may only be used when the session is quiet -- and is designed to
+ * perform a clean start of session.
  */
 extern void
 bgp_session_start(bgp_session session)
@@ -395,8 +401,7 @@ bgp_session_start(bgp_session session)
   qtime_t       idle_hold_time ;
 
   peer = session->peer ;
-
-  qassert(session          == peer->session) ;
+  qassert(session == peer->session) ;
 
   if      (peer->session_state == bgp_pssInitial)
     qassert(session->state == bgp_sReset) ;
@@ -406,7 +411,7 @@ bgp_session_start(bgp_session session)
   else
     qassert(false) ;
 
-  if (bm->reading_config || (peer->idle & bgp_pisDown))
+  if (peer->idle & bgp_pisDown)
     return ;
 
   /* Clear the session and set:
@@ -445,7 +450,53 @@ bgp_session_start(bgp_session session)
    */
   peer->session_state = (peer->idle == bgp_pisRunnable) ? bgp_pssRunning
                                                         : bgp_pssStopped ;
-  bgp_session_prod(session, NULL, true /* refresh */) ;
+  bgp_session_prod(session, NULL, true /* force */) ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Routeing Engine: recharge session, if necessary and possible -- may stop it !
+ *
+ * This will update the BGP Engine's view of the cops and (if necessary) the
+ * args, if there is a change in those.
+ *
+ * In particular:
+ *
+ *   * will update csRun and csTrack to be consistent with the current
+ *     peer->idle state.
+ *
+ *     This is the mechanism for stopping sessions.
+ *
+ *     It is also the mechanism for updating the Acceptor, if cops change
+ *     while the peer is idle for some reason, but not pisDown.
+ *
+ *   * if not pEstablished (ie Established from the Routeing Engine
+ *     perspective) will send a change of args to the BGP Engine.
+ *
+ *     This is used when is pStarted and something changes which may affect
+ *     the way in which a session should be configured.  When the news
+ *     reaches the BGP Engine:
+ *
+ *       * if it is still trying to acquire a session, it will start again, if
+ *         the change requires.
+ *
+ *         The Routeing Engine will, eventually, see a session become
+ *         established with the changed cops and/or args.
+ *
+ *       * but if a session has become established already, it will drop that,
+ *         if the change requires.
+ *
+ *         The Routeing Engine may see the previous session come up, followed
+ *         by it coming down again pretty promptly.
+ *
+ * If a connection is up and has to be dropped, will send the given note, if
+ * any.
+ *
+ * Returns:  note XXX  ...........................................................
+ */
+extern bgp_note
+bgp_session_recharge(bgp_session session, bgp_note note)
+{
+  return bgp_session_prod(session, note, false /* not forced */) ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -460,10 +511,21 @@ bgp_session_start(bgp_session session)
  * Since those are of no interest to the peer, we simply ensure they are
  * zero in the peer->cops.
  *
- * Returns:  true <=> cops changed since session->cops_sent or 'refresh'
+ * And the:
+ *
+ *   * conn_state       -- from which we take only the "may" bits
+ *
+ * The conn_state for the session includes the csRun and csTrack bits, which
+ * are manufactured from the peer->idle state.
+ *
+ * NB: csRun and csTrack bits are the mechanism used to start/stop connections.
+ *
+ *     In particular, clearing csRun will bring down an existing session.
+ *
+ * Returns:  true <=> cops changed since session->cops_sent or 'force'
  */
 static bool
-bgp_session_cops_make(bgp_session session, bool refresh)
+bgp_session_cops_make(bgp_session session, bool force)
 {
   bgp_peer   peer ;
   bgp_cops   p_cops ;
@@ -486,14 +548,14 @@ bgp_session_cops_make(bgp_session session, bool refresh)
       /* Update the: bgp_csTrack  -- ! pisDown
        *             bgp_csRun    --   pisRunnable
        */
-      conn_state = p_cops->conn_state  ;
+      conn_state = p_cops->conn_state & bgp_csMayMask ;
 
-      if (peer->idle == bgp_pisRunnable)
-        conn_state =  conn_state |  (bgp_csTrack | bgp_csRun) ;
-      else
-        conn_state = (conn_state & ~(bgp_csTrack | bgp_csRun))
-                                 | ((peer->idle == bgp_pisDown) ? 0
-                                                                : bgp_csTrack) ;
+      if (!(peer->idle & bgp_pisDown))
+        {
+          conn_state |= bgp_csTrack ;
+          if (peer->idle == bgp_pisRunnable)
+            conn_state |= bgp_csRun ;
+        } ;
     }
   else
     {
@@ -514,17 +576,17 @@ bgp_session_cops_make(bgp_session session, bool refresh)
 
   p_cops->conn_state = conn_state ;
 
-  /* Now... if a refresh is not required, and the result is the same as the
+  /* Now... if a refresh is not forced, and the result is the same as the
    * last cops_sent, we are done.
    */
-  if (!refresh && (session->cops_sent != NULL)
+  if (!force && (session->cops_sent != NULL)
                && memsame(p_cops, session->cops_sent, sizeof(*p_cops)))
     return false ;
 
   /* Update (or create) session->cops_sent
    */
   session->cops_sent = bgp_cops_copy(session->cops_sent, p_cops) ;
-  return true ;                        /* changed or refreshed  */
+  return true ;                        /* changed or forced     */
 } ;
 
 /*------------------------------------------------------------------------------
@@ -557,10 +619,10 @@ bgp_session_cops_make(bgp_session session, bool refresh)
  *   * gr.can_preserve          -- empty
  *   * gr.has_preserved         -- empty
  *
- * Returns:  true <=> args changed since session->args_sent or 'refresh'
+ * Returns:  true <=> args changed since session->args_sent or 'force'
  */
 static bool
-bgp_session_args_make(bgp_session session, bool refresh)
+bgp_session_args_make(bgp_session session, bool force)
 {
   bgp_peer   peer ;
   bgp_session_args_t args[1] ;
@@ -647,17 +709,17 @@ bgp_session_args_make(bgp_session session, bool refresh)
   args->gr.has_preserved   = 0 ;        /* has not preserved forwarding */
   args->gr.restarting      = false ;    /* is not restarting            */
 
-  /* Now... if the result differs from the args_sent, we need to prepare
-   * a copy to replace same.
+  /* Now... if the result differs from the args_sent, or a refresh is forced,
+   * we need to prepare a copy to replace same.
    */
-  if (!refresh && (session->args_sent != NULL)
-               && memsame(args, session->args_sent, sizeof(args)))
+  if (!force && (session->args_sent != NULL)
+             && memsame(args, session->args_sent, sizeof(args)))
     return false ;                      /* no change            */
 
   /* Update (or create) session->args_sent.
    */
   session->args_sent = bgp_session_args_copy(session->args_sent, args) ;
-  return true ;                        /* changed or refreshed  */
+  return true ;                        /* changed or forced     */
 } ;
 
 /*==============================================================================
@@ -679,28 +741,34 @@ static void bgp_session_args_update(bgp_session session,
  * This can be called when the peer cops and/or args may have changed, or when
  * the session has been detached from the peer.
  *
- * Does nothing at all if reading_config.
- *
  * Works out what cops and/or args should be passed to the session, and if
  * those have changed since what we last sent, we send them.
+ *
+ * The cops include csRun and csTrack, which are set according to the
+ * peer->idle state.  In particular, csRun is cleared if is not pisRunnable,
+ * and this is the mechanism for stopping a running session !
  *
  * If the peer is pEstablished, then we (a) do not send any changes to the
  * args -- once we are pEstablished, changes here require a full reset of
  * the session; and (b) any changes to cops are passed with the
  * 'peer_established' flag set -- which inhibits the application of the cops
  * to the session, unless is !csRun.
+ *
+ * If uses the given 'note', takes a copy of it.
+ *
+ * Returns:  the original note, if (a copy) has been sent.
+ *           NULL => no need to send a prod,
+ *                   or one already in flight with a previous 'note'.
  */
-extern void
-bgp_session_prod(bgp_session session, bgp_note note, bool refresh)
+static bgp_note
+bgp_session_prod(bgp_session session, bgp_note note, bool force)
 {
   mqueue_block mqb ;
   bgp_session_args args_new, args_swap ;
   bgp_cops         cops_new, cops_swap ;
   bool             send ;
   bool             peer_established ;
-
-  if (bm->reading_config)
-    return ;
+  bgp_note         note_copy ;
 
   peer_established = (session->peer != NULL)
                                  && (session->peer->state == bgp_pEstablished) ;
@@ -712,13 +780,13 @@ bgp_session_prod(bgp_session session, bgp_note note, bool refresh)
    *
    * If there is nothing to change, leave.
    */
-  if (bgp_session_cops_make(session, refresh))
+  if (bgp_session_cops_make(session, force))
     cops_new = bgp_cops_dup(session->cops_sent) ;
   else
     cops_new = NULL ;
 
   if (!peer_established && (session->cops_sent->conn_state & bgp_csRun)
-                        && bgp_session_args_make(session, refresh))
+                        && bgp_session_args_make(session, force))
     args_new = bgp_session_args_dup(session->args_sent) ;
   else
     args_new = NULL ;
@@ -726,10 +794,17 @@ bgp_session_prod(bgp_session session, bgp_note note, bool refresh)
   send = ((cops_new != NULL) || (args_new != NULL)) ;
 
   if (!send)
-    return ;                    /* nothing to update            */
+    return bgp_note_free(note) ;        /* nothing to update    */
+
+  /* If we have a 'note' to send, arrange to send a copy of it.
+   */
+  note_copy = bgp_note_dup(note) ;
 
   /* If there is a prod message in flight, then if it agrees
    * peer_established'-wise then we update its contents.
+   *
+   * If updates the in-flight message, adds the copy of the given 'note',
+   * unless there is a note there already.
    *
    * Otherwise, we will send a new message.
    *
@@ -750,8 +825,8 @@ bgp_session_prod(bgp_session session, bgp_note note, bool refresh)
         {
           if (mqba->note == NULL)
             {
-              mqba->note = note ;
-              note = NULL ;
+              mqba->note = note_copy ;
+              note_copy  = NULL ;
             } ;
 
           if (cops_new != NULL)
@@ -785,7 +860,7 @@ bgp_session_prod(bgp_session session, bgp_note note, bool refresh)
 
       mqba = mqb_get_args(mqb) ;
 
-      mqba->note    = bgp_note_dup(note) ;
+      mqba->note = note_copy ;
       mqba->peer_established = peer_established ;
 
       mqba->args    = bgp_session_args_dup(session->args_sent) ;
@@ -799,7 +874,19 @@ bgp_session_prod(bgp_session session, bgp_note note, bool refresh)
     {
       bgp_session_args_free(args_swap) ;
       bgp_cops_free(cops_swap) ;
+
+      /* If we still have a copy of the 'note' in hand, that means that we
+       * did not send a note, because there is already one 'in flight', so
+       * discard the original and the copy.
+       */
+      if (note_copy != NULL)
+        {
+          bgp_note_free(note_copy) ;
+          note = bgp_note_free(note) ;
+        } ;
     } ;
+
+  return note ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -990,16 +1077,9 @@ bgp_session_do_event(mqueue_block mqb, mqb_flag_t flag)
 
       switch (args->state)
         {
-          /* If now Established, then the BGP Engine has exchanged BGP Open
-           * messages, and received the KeepAlive that acknowledges our Open.
+          /* sReset, waiting to start to make connection(s).
            *
-           * The args->ordinal gives which connection it was that became the
-           * established one.  The established connection becomes the
-           * "primary".
-           *
-           * Ignore this, however, if the session is sLimping -- which can
-           * happen when the session has been disabled, but it became
-           * established before the BGP Engine had seen the disable message.
+           * We are not much interested in the events in this state.
            */
           case bgp_sReset:
             ;

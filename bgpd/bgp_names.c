@@ -105,18 +105,59 @@ const map_direct_t bgp_fsm_event_map =
 
 /*------------------------------------------------------------------------------
  * Names of Peer status values
+ *
+ * When is pDown or pResetting, may wish to consult bgp_peer_idle_state_str()
  */
 const char* const bgp_peer_status_map_body[] =
 {
   [bgp_pDown]         = "Idle (Down)",
   [bgp_pStarted]      = "Idle (Up)",
   [bgp_pEstablished]  = "Established",
-  [bgp_pClearing]     = "Clearing",
+  [bgp_pResetting]    = "Resetting",
   [bgp_pDeleting]     = "Deleting",
 };
 
 const map_direct_t bgp_peer_status_map =
      map_direct_s(bgp_peer_status_map_body, "unknown(%d)") ;
+
+extern name_str_t
+bgp_peer_idle_state_str(bgp_peer_state_t state, bgp_peer_idle_state_t idle)
+{
+  const char* name ;
+
+  switch (state)
+    {
+      case bgp_pDown:
+      case bgp_pResetting:
+        break ;
+
+      default:
+        return map_direct(bgp_peer_status_map, state) ;
+    } ;
+
+  if      (idle & bgp_pisDeconfigured)
+    name = "Deconfigured" ;
+  else if (idle & bgp_pisShutdown)
+    name = "Shut-Down" ;
+  else if (idle & bgp_pisNoAF)
+    name = "No AFI/SAFI" ;
+  else if (idle & bgp_pisMaxPrefixStop)
+    name = "Max-Pfx Stop" ;
+  else if (idle & bgp_pisMaxPrefixWait)
+    name = "Max-Pfx Wait" ;
+  else if (idle & bgp_pisClearing)
+    name = "Clearing" ;
+  else if (idle & bgp_pisReset)
+    return map_direct(bgp_peer_status_map, bgp_pResetting) ;
+  else if (idle & bgp_pisConfiguring)
+    name = "Configuring" ;
+  else if (idle == bgp_pisRunnable)
+    return map_direct(bgp_peer_status_map, bgp_pDown) ;
+  else
+    return map_name_str_val("??0x%x??", idle) ;
+
+  return map_name_str(name) ;
+} ;
 
 /*------------------------------------------------------------------------------
  * BGP message type names.
@@ -426,14 +467,15 @@ const char* const bgp_peer_down_map_body[] =
   [PEER_DOWN_RS_CLIENT_CHANGE]     = "RS client config change",
   [PEER_DOWN_UPDATE_SOURCE_CHANGE] = "Update source change",
   [PEER_DOWN_AF_ACTIVATE]          = "Address family activated",
-  [PEER_DOWN_GROUP_BIND]            = "Peer-group add member",
-  [PEER_DOWN_GROUP_UNBIND]          = "Peer-group delete member",
+  [PEER_DOWN_GROUP_BIND]           = "Peer-group add member",
+  [PEER_DOWN_GROUP_UNBIND]         = "Peer-group delete member",
   [PEER_DOWN_DONT_CAPABILITY]      = "dont-capability-negotiate changed",
   [PEER_DOWN_OVERRIDE_CAPABILITY]  = "override-capability changed",
   [PEER_DOWN_STRICT_CAP_MATCH]     = "strict-capability-match changed",
   [PEER_DOWN_CAPABILITY_CHANGE]    = "Capability changed",
   [PEER_DOWN_PASSIVE_CHANGE]       = "Passive config change",
   [PEER_DOWN_MULTIHOP_CHANGE]      = "Multihop config change",
+  [PEER_DOWN_GTSM_CHANGE]          = "GTSM config change",
   [PEER_DOWN_AF_DEACTIVATE]        = "Address family deactivated",
   [PEER_DOWN_PASSWORD_CHANGE]      = "MD5 Password changed",
   [PEER_DOWN_ALLOWAS_IN_CHANGE]    = "Allow AS in changed",

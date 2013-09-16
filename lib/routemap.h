@@ -23,6 +23,7 @@
 #define _ZEBRA_ROUTEMAP_H
 
 #include "misc.h"
+#include "prefix.h"
 #include "list_util.h"
 
 /* Route map's type.

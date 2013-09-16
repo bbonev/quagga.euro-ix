@@ -432,7 +432,7 @@ static struct test_segment mp_unreach_segments [] =
 
 /* basic parsing test */
 static void
-parse_test (struct peer *peer, struct test_segment *t, int type)
+parse_test (bgp_peer peer, struct test_segment *t, int type)
 {
   stream ibuf ;
   byte flags ;
@@ -517,27 +517,27 @@ parse_test (struct peer *peer, struct test_segment *t, int type)
   stream_free(ibuf) ;
 }
 
-static struct bgp *bgp;
+static bgp_inst bgp;
 static as_t asn = 100;
 
-static struct peer * peer_create_accept (struct bgp *bgp) ;
+static bgp_peer peer_create_accept (bgp_inst bgp) ;
 
 int
 main (int argc, char **argv)
 {
-  struct peer *peer;
+  bgp_peer peer;
   int i, j;
 
-  conf_bgp_debug_fsm = -1UL;
-  conf_bgp_debug_events = -1UL;
-  conf_bgp_debug_packet = -1UL;
-  conf_bgp_debug_normal = -1UL;
-  conf_bgp_debug_as4 = -1UL;
-  term_bgp_debug_fsm = -1UL;
-  term_bgp_debug_events = -1UL;
-  term_bgp_debug_packet = -1UL;
-  term_bgp_debug_normal = -1UL;
-  term_bgp_debug_as4 = -1UL;
+  conf_bgp_debug_fsm = -1U;
+  conf_bgp_debug_events = -1U;
+  conf_bgp_debug_packet = -1U;
+  conf_bgp_debug_normal = -1U;
+  conf_bgp_debug_as4 = -1U;
+  term_bgp_debug_fsm = -1U;
+  term_bgp_debug_events = -1U;
+  term_bgp_debug_packet = -1U;
+  term_bgp_debug_normal = -1U;
+  term_bgp_debug_as4 = -1U;
 
   qlib_init_first_stage(0);     /* Absolutely first     */
   host_init(argv[0]) ;
@@ -577,10 +577,9 @@ main (int argc, char **argv)
 /*------------------------------------------------------------------------------
  * Make accept BGP peer... used in test programs...  TODO
  */
-struct peer *
-peer_create_accept (struct bgp *bgp)
+bgp_peer peer_create_accept (bgp_inst bgp)
 {
-  struct peer *peer;
+  bgp_peer peer;
 
   peer = bgp_peer_new (bgp, PEER_TYPE_REAL);
 

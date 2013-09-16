@@ -21,28 +21,9 @@
 
 #include "bgp_rib.h"
 #include "bgp_peer.h"
+#include "bgp_adj_in.h"
 
 /*==============================================================================
- * The RIB spaghetti.
- *
- * Each bgp_inst has a rib_main bgp_rib for each AFI/SAFI with one or more
- * peers activated in that AFI/SAFI, or static routes or anything else defined
- * for it.  Once a rib_main bgp_rib has been created, it is not destroyed
- * until the bgp_inst is destroyed.
- *
- * A bgp_inst will (also) have a rib_rs bgp_rib for an AFI/SAFI while there is
- * one or more Route Server Clients.
- *
- * The bgp_inst has a list of all the peers configured for that instance.
- * That list is kept in peer "name" order.
- *
- * bgp_inst->rib[qafx][rib_main] -> bgp_rib for all known prefixes
- *                    [rib_rs]   -> bgp_rib if...
- *
- *
- *
- *
- *
  */
 
 
@@ -74,7 +55,7 @@ bgp_rib_new(bgp_inst bgp, qafx_t qafx)
    *   * real_rib       -- X          -- copied from bgp_instance
    *
    *   * peer_count     -- 0          -- none, yet
-   *   * context_count  -- 0          -- none, yet
+   *   * local_context_count  -- 0          -- none, yet
    *
    *   * lock           -- 0          -- initial value
    *
@@ -91,6 +72,8 @@ bgp_rib_new(bgp_inst bgp, qafx_t qafx)
   rib->nodes_table = ihash_table_init(rib->nodes_table, 0, 60) ;
 
   rib->walker      = bgp_rib_walker_new(rib) ;
+  rib->walker->it.flags = rib_itf_rib_queue | rib_itf_update ;
+
   ddl_append(rib->queue_base, &rib->walker->it, queue) ;
 
   return bgp->rib[qafx] = rib ;
@@ -108,9 +91,11 @@ bgp_rib_destroy(bgp_rib rib)
     {
       bgp_rib_node rn ;
 
+#if 0
       while ((rn = ihash_table_ream(rib->nodes_table, keep_it /* embedded */))
                                                                        != NULL)
         pnode_unlock(rn) ;
+#endif
 
       XFREE (MTYPE_BGP_RIB, rib);
     } ;
@@ -164,10 +149,15 @@ bgp_rib_node_extend(bgp_rib_node rn)
 {
   bgp_rib_node rn_new ;
   route_info   ri ;
+  uint         lcc_new, lcc_old ;
+  zroute       zroutes_new ;
 
   /* Hope for a quick get-away.
    */
-  if (rn->it.rib->context_count <= rn->context_count)
+  lcc_new = rn->it.rib->local_context_count ;
+  lcc_old = rn->local_context_count ;
+
+  if (lcc_new <= lcc_old)
     return rn ;
 
   /* We need a new rib-node, which will replace the one we have.
@@ -175,13 +165,10 @@ bgp_rib_node_extend(bgp_rib_node rn)
    * The new rib-node will inherit all the properties of the existing one,
    * including any locks it owns.
    */
-  rn_new = bgp_rib_node_new(rn->it.rib, rn->pfx_id) ;
+  rn_new      = bgp_rib_node_new(rn->it.rib, rn->pfx_id) ;
+  zroutes_new = rn_new->zroutes ;
 
-  memcpy(rn_new, rn, offsetof(bgp_rib_node_t, context_count)) ;
-  memcpy(rn_new->iroute_bases, rn->iroute_bases,
-                              sizeof(rn->iroute_bases[0]) * rn->context_count) ;
-  if (rn->it.rib->real_rib)
-    memcpy(rn_new->zroutes, rn->zroutes, sizeof(zroute_t) * rn->context_count) ;
+  memcpy(rn_new, rn, offsetof(bgp_rib_node_t, aroutes[lcc_old])) ;
 
   /* Copying has moved across:
    *
@@ -195,9 +182,24 @@ bgp_rib_node_extend(bgp_rib_node rn)
    *
    *   * avail                  -- see below
    *
-   *   * iroutes[]              -- for the old contexts
-   *   * zroutes[]              -- for the old contexts (if any)
+   *   * local_context_count    -- old version
+   *   * changed
+   *
+   *   * zroutes                -- old version, if any
+   *
+   *   * aroutes[]              -- for the old contexts
+   *
+   *   * zroutes[]              -- still all zero, copied as required, below
    */
+  rn_new->local_context_count = lcc_new ;
+
+  if (rn->it.rib->real_rib)
+    {
+      rn_new->zroutes = zroutes_new ;
+      memcpy(zroutes_new, rn->zroutes, sizeof(zroute_t) * lcc_old) ;
+    }
+  else
+    qassert(zroutes_new == NULL) ;
 
   /* The it.queue is based at it.rib->queue, and the new item must now
    * replace the old item in that queue.
@@ -210,14 +212,14 @@ bgp_rib_node_extend(bgp_rib_node rn)
    * new one...  at the same time, all the route-infos may, themselves, have
    * to be extended !
    */
-  ri = svl_head(rn->avail.base, rn->avail) ;
+  ri = svl_head(rn->avail->base, rn->avail) ;
   while (ri != NULL)
     {
       qassert(ri->rindex != SVEC_NULL) ;
 
       ri->rn = rn_new ;
 
-      if (ri->context_count < rn_new->context_count)
+      if (ri->local_context_count < lcc_new)
         ri = bgp_route_info_extend(ri) ;
 
       ri = svl_next(ri->rlist, rn->avail) ;
@@ -247,14 +249,12 @@ bgp_rib_node_new(bgp_rib rib, prefix_id_t pfx_id)
   uint    context_count ;
   uint    size, zroutes_offset ;
 
-  context_count = rib->context_count ;
+  context_count = rib->local_context_count ;
 
-  size = offsetof(bgp_rib_node_t, iroute_bases[context_count]) ;
+  size = offsetof(bgp_rib_node_t, aroutes[context_count]) ;
+  zroutes_offset = uround_up(size, alignof(zroute_t)) ;
   if (rib->real_rib)
-    {
-      zroutes_offset = uround_up(size, alignof(zroute_t)) ;
-      size = zroutes_offset + (context_count * sizeof(zroute_t)) ;
-    } ;
+    size = zroutes_offset + (context_count * sizeof(zroute_t)) ;
 
   rn = XCALLOC(MTYPE_BGP_RIB_NODE, size) ;
 
@@ -270,7 +270,7 @@ bgp_rib_node_new(bgp_rib rib, prefix_id_t pfx_id)
    *
    *   * avail                  -- SVEC_NULLs -- nothing available, yet
    *
-   *   * context_count          -- X        -- set below
+   *   * local_context_count          -- X        -- set below
    *   * zroutes                -- NULL     -- set below, if required
    *   * iroutes[]              -- SVEC_NULLs -- nothing for the context
    *
@@ -282,7 +282,7 @@ bgp_rib_node_new(bgp_rib rib, prefix_id_t pfx_id)
 
   rn->it.rib        = rib ;
   rn->pfx_id        = pfx_id ;
-  rn->context_count = context_count ;
+  rn->local_context_count = context_count ;
 
   if (rib->real_rib)
     rn->zroutes = (void*)((char*)rn + zroutes_offset) ;
@@ -371,7 +371,8 @@ bgp_rib_walker_new(bgp_rib rib)
  *
  *            deletes and frees any related work queue item.
  *
- *            ensures that there are no dangling references to pribs
+ *            ensures that there are no dangling references to pribs, and
+ *            clears the prib->walker pointer for all related refresh pribs.
  *
  * NB: it is the caller's responsibility to discard any pointers to the walker.
  *
@@ -382,7 +383,7 @@ bgp_rib_walker_discard(bgp_rib_walker rw)
 {
   if (rw != NULL)
     {
-      prib_state_t pst ;
+      bgp_prib     prib ;
 
       qassert(rw->it.type == rib_it_walker) ;
 
@@ -403,14 +404,13 @@ bgp_rib_walker_discard(bgp_rib_walker rw)
           rw->it.flags ^= rib_itf_rib_queue ;
         } ;
 
-      for (pst = 0 ; pst < prib_state_count ; ++pst)
+      for (prib = ddl_head(rw->refresh_peers) ; prib != NULL ;
+                                               prib = ddl_next(prib, walk_list))
         {
-          peer_rib prib ;
-
-          for (prib = ddl_head(rw->peers[pst]) ;
-                                       prib != NULL ;
-                                       prib = ddl_next(prib, walk_list))
-            prib->walker = NULL ;
+          qassert(prib->refresh) ;
+          prib->walker       = NULL ;
+          prib->refresh      = false ;
+          prib->eor_required = false ;
         } ;
 
       XFREE(MTYPE_BGP_RIB_WALKER, rw) ;
@@ -455,52 +455,75 @@ bgp_rib_walker_free(bgp_rib_walker rw)
 /*------------------------------------------------------------------------------
  * Detach given prib from any rib walker.
  *
- * If this is the only prib attached to the walker, free the walker if it is
- * a rib_it_initial_walk.
+ * Detach the prib from its current walker, if any.  If is in the prib's
+ * update_view_peers or update_peers, remove it.
  *
- * NB: to be done before the prib->update_state is changed.
+ * If is currently attached to a "refresh" walker, and this is the only
+ * prib attached to that walker, then we can discard the walker.
+ *
+ * NB: to be done before starting a new refresh walk, or when stopping the
+ *     prib altogether.
  *
  * Sets prib->walker to NULL.
- *
- * This may leave a rib_it_update_walk with no pribs attached, and that walker
- * may be on the queue and be active -- tant pis.
  *
  * Returns:  NULL
  */
 extern bgp_rib_walker
-bgp_rib_walker_detach(peer_rib prib)
+bgp_rib_walker_detach(bgp_prib prib)
 {
   bgp_rib_walker rw ;
 
   rw = prib->walker ;
-  if (rw != NULL)
+
+  if (rw == NULL)
+    qassert(!prib->refresh) ;
+  else
     {
-      ddl_del(rw->peers[prib->update_state], prib, walk_list) ;
-      prib->walker = NULL ;
-
-      if (rw != prib->rib->walker)
+      if (prib->refresh)
         {
-          qassert(prib->update_state == prib_initial) ;
-          qassert(ddl_head(rw->peers[prib_update]) == NULL) ;
+          /* Is in refresh state, associated with a refresh walker
+           */
+          rw = prib->walker ;
+          ddl_del(rw->refresh_peers, prib, walk_list) ;
 
-          if (ddl_head(rw->peers[prib_initial]) == NULL)
-            bgp_rib_walker_discard(rw) ;
+          if (!(rw->it.flags & rib_itf_update))
+            {
+              qassert(rw != prib->rib->walker) ;
+
+              if (ddl_head(rw->refresh_peers) == NULL)
+                bgp_rib_walker_discard(rw) ;
+            } ;
+
+          prib->refresh = false ;
+        }
+      else
+        {
+          /* Is not in refresh state, so must be one of the rib's
+           * update_view_peers or update_peers -- remove it.
+           */
+          bgp_prib* p_base ;
+
+          qassert((rw->it.flags & rib_itf_update) &&
+                                                    (rw != prib->rib->walker)) ;
+          if (prib->lc_id == lc_view_id)
+            p_base = &prib->rib->update_view_peers ;
+          else
+            p_base = svec_get_p(prib->rib->update_peers, prib->lc_id) ;
+
+          sdl_del(*p_base, prib, walk_list) ;
         } ;
+
+      prib->walker = NULL ;
     } ;
 
   return NULL ;
 } ;
 
 /*------------------------------------------------------------------------------
- * Start an "initial" rib walker for the given peer_rib.
+ * Start a "refresh" rib walker for the given peer_rib.
  *
- * The "initial" rib walker walks the rib_main or rib_rs, depending on the
- * rib_type of the peer.
- *
- * Detach the prib from its current walker, if any.  (Were the prib to already
- * be attached to an initial walker, and be the only prib so attached, then
- * this would be a bit of a waste of time... but we don't expect that to be
- * the case !)
+ * Detach the prib from its current walker, if any.  If is in the prib's
+ * update_view_peers or update_peers, remove it.
  *
  * If there is a walker already queued at the start of the bgp_rib queue, then
  * join that and make sure it is going.
@@ -510,7 +533,7 @@ bgp_rib_walker_detach(peer_rib prib)
  * Returns: address of the rib walker
  */
 extern bgp_rib_walker
-bgp_rib_walker_start_initial(peer_rib prib, wq_function func)
+bgp_rib_walker_start_refresh(bgp_prib prib, wq_function func)
 {
   bgp_rib        rib ;
   bgp_rib_walker rw ;
@@ -568,8 +591,19 @@ bgp_rib_walker_start(bgp_rib_walker rw, wq_function func)
 /*==============================================================================
  * Extracting all or part of a bgp_rib
  */
+typedef struct bgp_rib_extractor  bgp_rib_extractor_t ;
+typedef struct bgp_rib_extractor* bgp_rib_extractor ;
+
+struct bgp_rib_extractor
+{
+  prefix_rd_id_entry    rdie ;
+  bgp_lc_id_t              lc ;
+} ;
+
+static bool bgp_rib_node_lc_select(const bgp_rib_node_c* p_a,
+                                                        bgp_rib_extractor rex) ;
 static bool bgp_rib_node_rd_select(const bgp_rib_node_c* p_a,
-                                                      prefix_rd_id_entry rdie) ;
+                                                        bgp_rib_extractor rex) ;
 
 /*------------------------------------------------------------------------------
  * Extract a vector of pointers to bgp_rib_nodes for the current contents of
@@ -589,24 +623,28 @@ static bool bgp_rib_node_rd_select(const bgp_rib_node_c* p_a,
  *     vector all in one go !
  */
 extern vector
-bgp_rib_extract(bgp_rib rib, prefix_rd prd)
+bgp_rib_extract(bgp_rib rib, bgp_lc_id_t lc, prefix_rd prd)
 {
-  prefix_rd_id_entry  rdie ;
+  bgp_rib_extractor_t  rex ;
 
   if ((rib == NULL) || (ihash_entry_count(rib->nodes_table) == 0))
     return vector_new(0) ;
 
+  memset(&rex, 0, sizeof(rex)) ;
+  rex.lc = lc ;
+
   if (prd == NULL)
-    return ihash_table_extract(rib->nodes_table, NULL, NULL, true,
+    return ihash_table_extract(rib->nodes_table,
+                       (ihash_select_test*)bgp_rib_node_lc_select, &rex, true,
                                             (ihash_sort_cmp*)bgp_rib_node_cmp) ;
 
-  rdie = prefix_rd_id_seek_entry(prd->val) ;
-  if (rdie == NULL)
+  rex.rdie = prefix_rd_id_seek_entry(prd->val) ;
+  if (rex.rdie == NULL)
     return NULL ;
 
   return ihash_table_extract(rib->nodes_table,
-                      (ihash_select_test*)bgp_rib_node_rd_select, rdie, false,
-                                          (ihash_sort_cmp*)bgp_rib_node_cmp) ;
+                      (ihash_select_test*)bgp_rib_node_rd_select, &rex, false,
+                                            (ihash_sort_cmp*)bgp_rib_node_cmp) ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -619,16 +657,38 @@ bgp_rib_node_cmp(const bgp_rib_node_c* p_a, const bgp_rib_node_c* p_b)
 } ;
 
 /*------------------------------------------------------------------------------
- * Select bgp_rib_node entry if it matches the give Route Distinguisher
+ * Select bgp_rib_node entry if we have at least one route in the local context
  */
 static bool
-bgp_rib_node_rd_select(const bgp_rib_node_c* p_a, prefix_rd_id_entry rdie)
+bgp_rib_node_lc_select(const bgp_rib_node_c* p_a, bgp_rib_extractor rex)
 {
-  prefix_id_entry pie ;
+  bgp_rib_node_c  rn ;
 
-  pie = prefix_id_get_entry((*p_a)->pfx_id) ;
+  rn = *p_a ;
 
-  return pie->pfx->rd_id == rdie->id ;
+  if (rex->lc >= rn->local_context_count)
+    return false ;
+
+  return (*(rn->aroutes[rex->lc].base) != SVEC_NULL) ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Select bgp_rib_node entry if it matches the give Route Distinguisher, and
+ *                               we have at least one route in the local context
+ */
+static bool
+bgp_rib_node_rd_select(const bgp_rib_node_c* p_a, bgp_rib_extractor rex)
+{
+  if (bgp_rib_node_lc_select(p_a, rex))
+    {
+      prefix_id_entry pie ;
+
+      pie = prefix_id_get_entry((*p_a)->pfx_id) ;
+
+      return pie->pfx->rd_id == rex->rdie->id ;
+    } ;
+
+  return false ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -701,15 +761,15 @@ bgp_rib_rd_seek(bgp_rib rib, prefix_rd prd)
  *
  * Returns:  address of the new peer_rib
  */
-extern peer_rib
+extern bgp_prib
 peer_rib_new(bgp_peer peer, qafx_t qafx)
 {
-  peer_rib prib ;
+  bgp_prib prib ;
   bgp_rib  rib ;
 
   qassert(peer->prib[qafx] == NULL) ;
 
-  prib = XCALLOC(MTYPE_BGP_PEER_RIB, sizeof(peer_rib_t)) ;
+  prib = XCALLOC(MTYPE_BGP_PEER_RIB, sizeof(bgp_prib_t)) ;
 
   /* Zeroising has set:
    *
@@ -744,8 +804,9 @@ peer_rib_new(bgp_peer peer, qafx_t qafx)
    *
    *   * nsf                  -- false    -- initial state
    *
-   *   * pcount               -- 0        -- nothing yet
-   *   * scount               -- 0        -- nothing yet
+   *   * pcount_recv          -- 0       )
+   *   * pcount_in            -- 0       )   nothing yet
+   *   * p_count_sent         -- 0       )
    *
    *   * dlist                -- NULLs   )
    *   * plist                -- NULLs   )
@@ -784,8 +845,6 @@ peer_rib_new(bgp_peer peer, qafx_t qafx)
    *   * dispatch_time        -- 0       )   see bgp_adj_out_init()
    *   * dispatch_qtr         -- NULL    )
    */
-  confirm(prib_initial == 0) ;
-
   prib->peer    = peer ;
   prib->qafx    = qafx ;
   prib->i_afi   = get_iAFI(qafx) ;
@@ -816,6 +875,20 @@ peer_rib_new(bgp_peer peer, qafx_t qafx)
 } ;
 
 /*------------------------------------------------------------------------------
+ * Discard peer_rib structure.
+ */
+extern bgp_prib
+peer_rib_free(bgp_prib prib)
+{
+
+
+  XFREE(MTYPE_BGP_PEER_RIB, prib) ;
+  return NULL ;
+} ;
+
+
+#if 0
+/*------------------------------------------------------------------------------
  * If the given peer is not already an RS Client for the AFI/SAFI, set it to be
  *                                                                 an RS Client.
  *
@@ -832,10 +905,10 @@ peer_rib_new(bgp_peer peer, qafx_t qafx)
  *
  * Returns:  address of the new peer_rib
  */
-extern peer_rib
+extern bgp_prib
 peer_rib_set_rs(bgp_peer peer, qafx_t qafx)
 {
-  peer_rib prib ;
+  bgp_prib prib ;
   bgp_rib  rib ;
 
   prib = peer->prib[qafx] ;
@@ -881,10 +954,10 @@ peer_rib_set_rs(bgp_peer peer, qafx_t qafx)
  *
  * Returns:  address of the new peer_rib
  */
-extern peer_rib
+extern bgp_prib
 peer_rib_unset_rs(bgp_peer peer, qafx_t qafx)
 {
-  peer_rib prib ;
+  bgp_prib prib ;
   bgp_rib  rib ;
 
   prib = peer->prib[qafx] ;
@@ -916,16 +989,5 @@ peer_rib_unset_rs(bgp_peer peer, qafx_t qafx)
   return prib ;
 } ;
 
-/*------------------------------------------------------------------------------
- * Discard peer_rib structure.
- */
-extern peer_rib
-peer_rib_free(peer_rib prib)
-{
-
-
-  XFREE(MTYPE_BGP_PEER_RIB, prib) ;
-  return NULL ;
-} ;
-
+#endif
 

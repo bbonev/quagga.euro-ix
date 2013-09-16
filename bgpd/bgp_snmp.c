@@ -270,7 +270,7 @@ static u_char *
 bgpLocalAs (struct variable *v, oid name[], size_t *length,
             int exact, size_t *var_len, WriteMethod **write_method)
 {
-  struct bgp *bgp;
+  bgp_inst bgp;
 
   if (smux_header_generic(v, name, length, exact, var_len, write_method)
       == MATCH_FAILED)
@@ -284,11 +284,10 @@ bgpLocalAs (struct variable *v, oid name[], size_t *length,
   return SNMP_INTEGER (bgp->my_as);
 }
 
-static struct peer *
-peer_lookup_addr_ipv4 (struct in_addr *src)
+static bgp_peer peer_lookup_addr_ipv4 (struct in_addr *src)
 {
-  struct bgp *bgp;
-  struct peer *peer;
+  bgp_inst bgp;
+  bgp_peer peer;
   struct listnode *node;
   struct in_addr addr;
   int ret;
@@ -309,11 +308,10 @@ peer_lookup_addr_ipv4 (struct in_addr *src)
   return NULL;
 }
 
-static struct peer *
-bgp_peer_lookup_next (struct in_addr *src)
+static bgp_peer bgp_peer_lookup_next (struct in_addr *src)
 {
-  struct bgp *bgp;
-  struct peer *peer;
+  bgp_inst bgp;
+  bgp_peer peer;
   struct listnode *node;
   struct in_addr *p;
   union sockunion su;
@@ -342,11 +340,10 @@ bgp_peer_lookup_next (struct in_addr *src)
   return NULL;
 }
 
-static struct peer *
-bgpPeerTable_lookup (struct variable *v, oid name[], size_t *length,
+static bgp_peer bgpPeerTable_lookup (struct variable *v, oid name[], size_t *length,
                      struct in_addr *addr, int exact)
 {
-  struct peer *peer = NULL;
+  bgp_peer peer = NULL;
   int len;
 
   if (exact)
@@ -388,7 +385,7 @@ write_bgpPeerTable (int action, u_char *var_val,
                     struct variable *v)
 {
   struct in_addr addr;
-  struct peer *peer;
+  bgp_peer peer;
   long intval;
   size_t bigsize = SNMP_MAX_LEN;
 
@@ -462,7 +459,7 @@ bgpPeerTable (struct variable *v, oid name[], size_t *length,
               int exact, size_t *var_len, WriteMethod **write_method)
 {
   static struct in_addr addr;
-  struct peer *peer;
+  bgp_peer peer;
   struct bgp_session_stats stats;
 
   *write_method = NULL;
@@ -607,7 +604,7 @@ static u_char *
 bgpIdentifier (struct variable *v, oid name[], size_t *length,
                int exact, size_t *var_len, WriteMethod **write_method)
 {
-  struct bgp *bgp;
+  bgp_inst bgp;
 
   if (smux_header_generic(v, name, length, exact, var_len, write_method)
       == MATCH_FAILED)
@@ -633,7 +630,7 @@ bgpRcvdPathAttrTable (struct variable *v, oid name[], size_t *length,
 
 static struct bgp_info *
 bgp4PathAttrLookup (struct variable *v, oid name[], size_t *length,
-                    struct bgp *bgp, struct prefix_ipv4 *addr, int exact)
+                    bgp_inst bgp, struct prefix_ipv4 *addr, int exact)
 {
   oid *offset;
   int offsetlen;
@@ -772,7 +769,7 @@ static u_char *
 bgp4PathAttrTable (struct variable *v, oid name[], size_t *length,
                    int exact, size_t *var_len, WriteMethod **write_method)
 {
-  struct bgp *bgp;
+  bgp_inst bgp;
   struct bgp_info *binfo;
   struct prefix_ipv4 addr;
 
@@ -856,7 +853,7 @@ struct trap_object bgpTrapList[] =
 };
 
 void
-bgpTrapEstablished (struct peer *peer)
+bgpTrapEstablished (bgp_peer peer)
 {
   int ret;
   struct in_addr addr;
@@ -875,7 +872,7 @@ bgpTrapEstablished (struct peer *peer)
 }
 
 void
-bgpTrapBackwardTransition (struct peer *peer)
+bgpTrapBackwardTransition (bgp_peer peer)
 {
   int ret;
   struct in_addr addr;

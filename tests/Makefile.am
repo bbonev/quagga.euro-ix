@@ -6,7 +6,7 @@ AM_LDFLAGS = $(PILDFLAGS)
 
 noinst_PROGRAMS = testsig testbuffer testmemory heavy heavywq heavythread \
                   testprivs teststream testbgpcap \
-                  testchecksum testvector testheap \
+                  testchecksum testsvector testvector testheap \
                   testlistutil testqpath testqlump testavl testqfs testprefix \
                   testbgpmpattr testbgpunk testbgpclust testbgpcomm \
                   testbgpecomm testbgpaspath testbgpattrstore

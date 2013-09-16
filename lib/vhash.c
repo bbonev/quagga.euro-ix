@@ -82,7 +82,7 @@
  *     (The item may be an orphan, so have been removed from the table some
  *     time ago.)
  *
- *     The expected action is that the item's and any value it may have will be
+ *     The expected action is that the item, and any value it may have, will be
  *     freed.  If vhash_table_inc_ref() was called when the item was created,
  *     the vhash_table_dec_ref() will be required.  The function should
  *     return NULL.
@@ -188,6 +188,14 @@
  *
  *                          if the reference count is not zero, call orphan()
  *
+ *                        NB: in this case, when free() or orphan() are called
+ *                            the item may still be "set".
+ *
+ *                            Generally, only the "owner" of an item will
+ *                            vhash_delete() it, so the "set" state signals
+ *                            that any value is still present, and may (well)
+ *                            need to be discarded.
+ *
  * Note that vhash_delete() can create orphan items, which are covered below.
  *
  *------------------------------------------------------------------------------
@@ -277,7 +285,7 @@
 extern vhash_item
 vhash_orphan_null(vhash_item item, vhash_table table)
 {
-  ((vhash_node)item)->ref_count &= ~vhash_ref_count_set ;
+  ((vhash_node)item)->ref_count &= ~(vhash_ref_count_t)vhash_ref_count_set ;
 
   return item ;
 } ;
@@ -527,7 +535,7 @@ vhash_table_reset(vhash_table table, free_keep_b free_table)
 
       if (free_table)
         {
-          table->ref_count &= ~vhash_ref_count_set ;
+          table->ref_count &= ~(vhash_ref_count_t)vhash_ref_count_set ;
           if (table->ref_count == 0)
             XFREE(MTYPE_VHASH_TABLE, table) ;
 
@@ -936,7 +944,7 @@ vhash_unset(vhash_item item, vhash_table table)
 {
   confirm(vhash_node_offset == 0) ;
 
-  ((vhash_node)item)->ref_count &= ~vhash_ref_count_set ;
+  ((vhash_node)item)->ref_count &= ~(vhash_ref_count_t)vhash_ref_count_set ;
 
   if (((vhash_node)item)->ref_count != 0)
     return item ;
@@ -966,7 +974,7 @@ vhash_unset_delete(vhash_item item, vhash_table table)
 
   confirm(vhash_node_offset == 0) ;
 
-  ((vhash_node)item)->ref_count &= ~vhash_ref_count_set ;
+  ((vhash_node)item)->ref_count &= ~(vhash_ref_count_t)vhash_ref_count_set ;
 
   return vhash_remove(item, table) ;
 } ;

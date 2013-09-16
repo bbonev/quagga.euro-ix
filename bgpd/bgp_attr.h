@@ -169,11 +169,11 @@ extern void bgp_attr_parse (bgp_attr_parsing restrict prs,
                                            const byte* start_p, uint attr_len) ;
 extern void bgp_attr_check (bgp_attr_parsing restrict prs) ;
 
-extern ulen bgp_packet_write_attribute(blower br, peer_rib prib, attr_set attr) ;
-extern ulen bgp_reach_attribute(blower br, peer_rib prib, attr_set attr) ;
-extern ulen bgp_blow_prefix(blower br, peer_rib prib, prefix_id_t pfx_id,
+extern ulen bgp_packet_write_attribute(blower br, bgp_prib prib, attr_set attr) ;
+extern ulen bgp_reach_attribute(blower br, bgp_prib prib, attr_set attr) ;
+extern ulen bgp_blow_prefix(blower br, bgp_prib prib, prefix_id_t pfx_id,
                                                              mpls_tags_t tags) ;
-extern ulen bgp_unreach_attribute(blower br, peer_rib prib) ;
+extern ulen bgp_unreach_attribute(blower br, bgp_prib prib) ;
 
 extern ulen bgp_dump_routes_attr(blower br, attr_set attr, prefix p) ;
 

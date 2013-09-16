@@ -36,6 +36,6 @@ Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
 
 extern void bgp_regex_free (regex_t *regex);
 extern regex_t *bgp_regcomp (const char *str);
-extern int bgp_regexec_asp (regex_t *regex, as_path asp);
+extern reg_errcode_t bgp_regexec_asp (regex_t *regex, as_path asp);
 
 #endif /* _QUAGGA_BGP_REGEX_H */

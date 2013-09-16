@@ -462,7 +462,7 @@ bgp_attr_check (bgp_attr_parsing restrict prs)
  * NB: does a blow_overrun_check() (or equivalent) before returning
  */
 extern ulen
-bgp_packet_write_attribute(blower br, peer_rib prib, attr_set attr)
+bgp_packet_write_attribute(blower br, bgp_prib prib, attr_set attr)
 {
   bgp_peer  peer ;
   bool as4, send_as4_path, send_as4_aggregator ;
@@ -807,7 +807,7 @@ bgp_packet_write_attribute(blower br, peer_rib prib, attr_set attr)
  * NB: the *total* length includes the 3 Flags/Type/Length bytes.
  */
 extern ulen
-bgp_reach_attribute(blower br, peer_rib prib, attr_set attr)
+bgp_reach_attribute(blower br, bgp_prib prib, attr_set attr)
 {
   ptr_t p, s ;
   uint  len ;
@@ -910,7 +910,7 @@ bgp_reach_attribute(blower br, peer_rib prib, attr_set attr)
  * Returns:  byte length of the prefix -- prefix length + prefix body
  */
 extern ulen
-bgp_blow_prefix(blower br, peer_rib prib, prefix_id_t pfx_id, mpls_tags_t tags)
+bgp_blow_prefix(blower br, bgp_prib prib, prefix_id_t pfx_id, mpls_tags_t tags)
 {
   prefix_id_entry pie ;
   prefix_raw_t pfx_raw[1] ;
@@ -977,7 +977,7 @@ bgp_blow_prefix(blower br, peer_rib prib, prefix_id_t pfx_id, mpls_tags_t tags)
  * NB: the *total* length includes the 3 Flags/Type/Length bytes.
  */
 extern ulen
-bgp_unreach_attribute(blower br, peer_rib prib)
+bgp_unreach_attribute(blower br, bgp_prib prib)
 {
   ptr_t p ;
 
@@ -2929,7 +2929,7 @@ bgp_attr_as_path_set_if_ok(bgp_attr_parsing restrict prs)
   if ((prs->sort == BGP_PEER_EBGP)
                 && (as_path_first_simple_asn(asp) != prs->peer->args.remote_as))
     {
-      struct bgp* bgp ;
+      bgp_inst bgp ;
 
       bgp = prs->peer->bgp;
 
