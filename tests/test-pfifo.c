@@ -51,7 +51,7 @@ test_pfifo_item_head(void)
   // [END] Single item && Single period
 
 
-  // [BEGIN] Multiple items && Single period
+  // [BEGIN] Multiple items && Separate period
   //
   // Add two items to two separate periods. Ensure
   // pfifo_item_head removes both items from pfifo.
@@ -81,7 +81,7 @@ test_pfifo_item_head(void)
   }
   fprintf(stderr, "OK\n");
   //
-  // [END] Multiple items && Single period
+  // [END] Multiple items && Separate period
 
   /* Free up any lingering memory pieces. */
   pfifo_free(p);
