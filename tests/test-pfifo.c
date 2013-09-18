@@ -26,6 +26,27 @@ new_pfifo(void) {
 }
 
 
+static void
+test_pfifo_item_head_empty(void) {
+  fprintf(stderr, "test_pfifo_item_head_empty... \t\t");
+  pfifo p;
+  p = new_pfifo();
+
+  datum* unsafe;
+  unsafe = pfifo_item_head(p);
+
+  if (unsafe != NULL) {
+    fprintf(stderr, "Failed\n");
+    fprintf(stderr, "[ERROR] Made a call to pfifo_item_head on an empty pfifo. Did not return NULL.\n");
+  } else {
+    fprintf(stderr, "OK\n");
+  }
+
+  pfifo_free(p);
+  return;
+}
+
+
 // Add an item to period ptime and remove from pfifo using
 // pfifo_item_head
 static void
@@ -106,15 +127,8 @@ test_pfifo_item_head_many_periods(void) {
 static void
 test_pfifo_item_del(void) {
   fprintf(stderr, "test_item_del... \t\t\t");
-
-  /* Initialize pfifo. */
-  uint max_periods;
-  max_periods = 5;
-  uint alloc_on_progression;
-  alloc_on_progression = 1;
-
   pfifo p;
-  p = pfifo_init_new(NULL, max_periods, alloc_on_progression, offsetof(datum, list_pointers));
+  p = new_pfifo();
 
   datum item;
   item.junk = "broken microwave";
@@ -187,6 +201,7 @@ test_pfifo_first_not_ex_period(void) {
 
 int
 main(int argc, char* argv[]) {
+  test_pfifo_item_head_empty();
   test_pfifo_item_head_single_period();
   test_pfifo_item_head_many_periods();
   test_pfifo_item_del();
