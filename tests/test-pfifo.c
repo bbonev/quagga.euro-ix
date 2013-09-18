@@ -368,7 +368,7 @@ test_pfifo_take(void) {
 
   if ( strcmp(item_p->junk, item_a.junk) != 0 ) {
     fprintf(stderr, "Failed\n");
-    fprintf(stderr, "2. Expected: %s, Got: %s\n", item_a.junk, item_p->junk);
+    fprintf(stderr, "1. Expected: %s, Got: %s\n", item_a.junk, item_p->junk);
   } else {
     fprintf(stderr, "OK\n");
   }
