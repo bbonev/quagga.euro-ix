@@ -70,10 +70,11 @@ test_pfifo_item_head_single_period(void)
 
   /* Ensure data was preserved. */
   if ( strcmp(new_stuff.junk, old_item->junk) != 0 ) {
-    fprintf(stderr, "Failed single_item_single_period\n");
+    fprintf(stderr, "Failed\n");
     fprintf(stderr, "Expected: %s, Got: %s\n", new_stuff.junk, old_item->junk);
+  } else {
+    fprintf(stderr, "OK\n");
   }
-  fprintf(stderr, "OK\n");
   pfifo_free(p);
   return;
 }
@@ -157,6 +158,11 @@ test_pfifo_item_del(void) {
 }
 
 
+// + Basic Move
+// period-1 <- item-a
+// period-2 <- item-b
+// move item-a to period-3
+// check its period is 3
 static void
 test_pfifo_item_move_fwd(void) {
   fprintf(stderr, "test_pfifo_item_move_fwd... \t\t");
@@ -171,8 +177,7 @@ test_pfifo_item_move_fwd(void) {
   pfifo_period_t period;
   period = 10;
 
-  pfifo_index_t loc_a;
-  loc_a = pfifo_item_add(p, &item_a, period);
+  pfifo_item_add(p, &item_a, period);
 
   pfifo_index_t loc_b;
   loc_b = pfifo_item_add(p, &item_b, period + 1);
@@ -183,7 +188,7 @@ test_pfifo_item_move_fwd(void) {
   period_of_b = pfifo_period_get(p, loc_b);
   if (period_of_b != period + 2) {
     fprintf(stderr, "Failed\n");
-    fprintf(stderr, "[ERROR] Item was not moved to the correct period. Expected %d, got %d", (int)period, (int)(period + 2));
+    fprintf(stderr, "[ERROR] Item was not moved to the correct period. Expected %d, but got %d\n", (int)(period + 2), (int)period_of_b);
   } else {
     fprintf(stderr, "OK\n");
   }
@@ -193,14 +198,137 @@ test_pfifo_item_move_fwd(void) {
 }
 
 
+// + Backwards Move
+// period-1 <- item-a
+// period-2 <- item-b
+// move item-b to period 1
+// check its period is 1
 static void
 test_pfifo_item_move_bwd(void) {
+  fprintf(stderr, "test_pfifo_item_move_bwd... \t\t");
+  pfifo p;
+  p = new_pfifo();
+
+  datum item_a;
+  item_a.junk = "ie6";
+  datum item_b;
+  item_b.junk = "svn";
+
+  pfifo_period_t period;
+  period = 10;
+
+  pfifo_item_add(p, &item_a, period);
+
+  pfifo_index_t loc_b;
+  loc_b = pfifo_item_add(p, &item_b, period + 1);
+
+  loc_b = pfifo_item_move(p, &item_b, loc_b, period);
+
+  pfifo_period_t period_of_b;
+  period_of_b = pfifo_period_get(p, loc_b);
+  if (period_of_b != period) {
+    fprintf(stderr, "Failed\n");
+    fprintf(stderr, "[ERROR] Item was not moved to the correct period. Expected %d, but got %d\n", (int)period, (int)period_of_b);
+  } else {
+    fprintf(stderr, "OK\n");
+  }
+
+  pfifo_free(p);
   return;
 }
 
 
+// pull item from pfifo, ensure NULL
 static void
-test_pfifo_item_next(void) {
+test_pfifo_item_next_empty(void) {
+  fprintf(stderr, "test_pfifo_item_next_empty... \t\t");
+  pfifo p;
+  p = new_pfifo();
+
+  datum* unsafe;
+  unsafe = pfifo_item_next(p);
+
+  if (unsafe != NULL) {
+    fprintf(stderr, "Failed\n");
+    fprintf(stderr, "[ERROR] Made a call to pfifo_item_head on an empty pfifo. Did not return NULL.\n");
+  } else {
+    fprintf(stderr, "OK\n");
+  }
+
+  pfifo_free(p);
+  return;
+}
+
+
+// pull item from pfifo
+static void
+test_pfifo_item_next_single_period(void) {
+  fprintf(stderr, "test_pfifo_item_next_single_period... \t");
+  pfifo p;
+  p = new_pfifo();
+
+  pfifo_period_t ptime;
+  ptime = 1;
+
+  /* Add items to the first period in the pfifo. */
+  datum item_a;
+  item_a.junk = "pascal";
+  pfifo_item_add(p, &item_a, ptime);
+
+  /* Extract item from pfifo. */
+  datum* item_ap;
+  item_ap = pfifo_item_next(p);
+
+  /* Ensure data was preserved. */
+  if ( strcmp(item_a.junk, item_ap->junk) != 0 ) {
+    fprintf(stderr, "Failed\n");
+    fprintf(stderr, "Expected: %s, Got: %s\n", item_a.junk, item_ap->junk);
+  } else {
+    fprintf(stderr, "OK\n");
+  }
+  pfifo_free(p);
+  return;
+}
+
+
+// pull all added items from pfifo in order
+static void
+test_pfifo_item_next_many_periods(void) {
+  fprintf(stderr, "test_pfifo_item_next_many_periods... \t");
+  pfifo p;
+  p = new_pfifo();
+
+  pfifo_period_t ptime;
+  ptime = 2;
+
+  datum item_a;
+  item_a.junk = "Item a";
+  pfifo_item_add(p, &item_a, ptime);
+
+  ptime = 3;
+  datum item_b;
+  item_b.junk = "Item b";
+  pfifo_item_add(p, &item_b, ptime);
+
+  datum* item_a_out;
+  item_a_out = pfifo_item_next(p);
+  if ( strcmp(item_a.junk, item_a_out->junk) != 0 ) {
+    fprintf(stderr, "Failed\n");
+    fprintf(stderr, "1. Expected: %s, Got: %s\n", item_a.junk, item_a_out->junk);
+    pfifo_free(p);
+    return;
+  }
+
+  datum* item_b_out;
+  item_b_out = pfifo_item_head(p);
+  if ( strcmp(item_b.junk, item_b_out->junk) != 0 ) {
+    fprintf(stderr, "Failed\n");
+    fprintf(stderr, "2. Expected: %s, Got: %s\n", item_b.junk, item_b_out->junk);
+  } else {
+    fprintf(stderr, "OK\n");
+  }
+
+  pfifo_free(p);
   return;
 }
 
@@ -240,10 +368,15 @@ main(int argc, char* argv[]) {
   test_pfifo_item_head_empty();
   test_pfifo_item_head_single_period();
   test_pfifo_item_head_many_periods();
+
   test_pfifo_item_del();
+
   test_pfifo_item_move_fwd();
   test_pfifo_item_move_bwd();
-  test_pfifo_item_next();
+
+  test_pfifo_item_next_empty();
+  test_pfifo_item_next_single_period();
+  test_pfifo_item_next_many_periods();
 
   test_pfifo_take();
   test_pfifo_flush();
