@@ -158,7 +158,43 @@ test_pfifo_item_del(void) {
 
 
 static void
-test_pfifo_item_move(void) {
+test_pfifo_item_move_fwd(void) {
+  fprintf(stderr, "test_pfifo_item_move_fwd... \t\t");
+  pfifo p;
+  p = new_pfifo();
+
+  datum item_a;
+  item_a.junk = "ie6";
+  datum item_b;
+  item_b.junk = "svn";
+
+  pfifo_period_t period;
+  period = 10;
+
+  pfifo_index_t loc_a;
+  loc_a = pfifo_item_add(p, &item_a, period);
+
+  pfifo_index_t loc_b;
+  loc_b = pfifo_item_add(p, &item_b, period + 1);
+
+  loc_b = pfifo_item_move(p, &item_b, loc_b, period + 2);
+
+  pfifo_period_t period_of_b;
+  period_of_b = pfifo_period_get(p, loc_b);
+  if (period_of_b != period + 2) {
+    fprintf(stderr, "Failed\n");
+    fprintf(stderr, "[ERROR] Item was not moved to the correct period. Expected %d, got %d", (int)period, (int)(period + 2));
+  } else {
+    fprintf(stderr, "OK\n");
+  }
+
+  pfifo_free(p);
+  return;
+}
+
+
+static void
+test_pfifo_item_move_bwd(void) {
   return;
 }
 
@@ -205,7 +241,8 @@ main(int argc, char* argv[]) {
   test_pfifo_item_head_single_period();
   test_pfifo_item_head_many_periods();
   test_pfifo_item_del();
-  test_pfifo_item_move();
+  test_pfifo_item_move_fwd();
+  test_pfifo_item_move_bwd();
   test_pfifo_item_next();
 
   test_pfifo_take();
