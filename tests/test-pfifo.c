@@ -333,8 +333,47 @@ test_pfifo_item_next_many_periods(void) {
 }
 
 
+// p1 <- item_a
+// p2 <- item_b
+// p3 <- item_c
+// item_p = take(p3)
+// check that item_a.junk == (*item_p).junk
 static void
 test_pfifo_take(void) {
+  fprintf(stderr, "test_pfifo_take... \t\t\t");
+  pfifo p;
+  p = new_pfifo();
+
+  pfifo_period_t ptime;
+  ptime = 10;
+
+  /* Add items to the first period in the pfifo. */
+  datum item_a;
+  item_a.junk = "cats";
+  pfifo_item_add(p, &item_a, ptime);
+  ptime += 1;
+
+  datum item_b;
+  item_b.junk = "salad";
+  pfifo_item_add(p, &item_b, ptime);
+  ptime += 1;
+
+  datum item_c;
+  item_c.junk = "bluray";
+  pfifo_item_add(p, &item_c, ptime);
+
+  // NOIDEA what third arg does???
+  datum* item_p;
+  item_p = pfifo_take(p, ptime, true);
+
+  if ( strcmp(item_p->junk, item_a.junk) != 0 ) {
+    fprintf(stderr, "Failed\n");
+    fprintf(stderr, "2. Expected: %s, Got: %s\n", item_a.junk, item_p->junk);
+  } else {
+    fprintf(stderr, "OK\n");
+  }
+
+  pfifo_free(p);
   return;
 }
 
