@@ -11,9 +11,9 @@ typedef struct
   const char* junk;
 } datum;
 
-static void
-test_pfifo_item_head(void)
-{
+
+static pfifo
+new_pfifo(void) {
   /* Initialize pfifo. */
   uint max_periods;
   max_periods = 5;
@@ -22,13 +22,19 @@ test_pfifo_item_head(void)
 
   pfifo p;
   p = pfifo_init_new(NULL, max_periods, alloc_on_progression, offsetof(datum, list_pointers));
+  return p;
+}
 
 
-  // [BEGIN] Single item && Single period
-  //
-  // Add an item to period ptime and remove from pfifo using
-  // pfifo_item_head
-  fprintf(stderr, "test_item_head_one_period... \t");
+// Add an item to period ptime and remove from pfifo using
+// pfifo_item_head
+static void
+test_pfifo_item_head_single_period(void)
+{
+  fprintf(stderr, "test_pfifo_item_head_single_period... \t");
+  pfifo p;
+  p = new_pfifo();
+
   pfifo_period_t ptime;
   ptime = 1;
 
@@ -47,16 +53,23 @@ test_pfifo_item_head(void)
     fprintf(stderr, "Expected: %s, Got: %s\n", new_stuff.junk, old_item->junk);
   }
   fprintf(stderr, "OK\n");
-  //
-  // [END] Single item && Single period
+  pfifo_free(p);
+  return;
+}
 
 
-  // [BEGIN] Multiple items && Separate period
-  //
-  // Add two items to two separate periods. Ensure
-  // pfifo_item_head removes both items from pfifo.
-  fprintf(stderr, "test_item_head_many_periods... \t");
+// Add two items to two separate periods. Ensure
+// pfifo_item_head returns a pointer to the first item
+// in the pfifo after n calls.
+static void
+test_pfifo_item_head_many_periods(void) {
+  fprintf(stderr, "test_pfifo_item_head_many_periods... \t");
+  pfifo p;
+  p = new_pfifo();
+
+  pfifo_period_t ptime;
   ptime = 2;
+
   datum misp_a;
   misp_a.junk = "Item a";
   pfifo_item_add(p, &misp_a, ptime);
@@ -68,32 +81,31 @@ test_pfifo_item_head(void)
 
   datum* misp_a_out;
   misp_a_out = pfifo_item_head(p);
-  if ( strcmp(new_stuff.junk, old_item->junk) != 0 ) {
+  if ( strcmp(misp_a.junk, misp_a_out->junk) != 0 ) {
     fprintf(stderr, "Failed\n");
-    fprintf(stderr, "Expected: %s, Got: %s\n", misp_a.junk, misp_a_out->junk);
+    fprintf(stderr, "1. Expected: %s, Got: %s\n", misp_a.junk, misp_a_out->junk);
+    pfifo_free(p);
+    return;
   }
 
   datum* misp_b_out;
   misp_b_out = pfifo_item_head(p);
-  if ( strcmp(new_stuff.junk, old_item->junk) != 0 ) {
+  if ( strcmp(misp_a.junk, misp_b_out->junk) != 0 ) {
     fprintf(stderr, "Failed\n");
-    fprintf(stderr, "Expected: %s, Got: %s\n", misp_b.junk, misp_b_out->junk);
+    fprintf(stderr, "2. Expected: %s, Got: %s\n", misp_a.junk, misp_b_out->junk);
+  } else {
+    fprintf(stderr, "OK\n");
   }
-  fprintf(stderr, "OK\n");
-  //
-  // [END] Multiple items && Separate period
 
-  /* Free up any lingering memory pieces. */
   pfifo_free(p);
   return;
 }
-
 
 // Add a single item to a single period. Delete the item, then
 // call head to verify the pfifo is indeed empty.
 static void
 test_pfifo_item_del(void) {
-  fprintf(stderr, "test_item_del... \t");
+  fprintf(stderr, "test_item_del... \t\t\t");
 
   /* Initialize pfifo. */
   uint max_periods;
@@ -175,7 +187,8 @@ test_pfifo_first_not_ex_period(void) {
 
 int
 main(int argc, char* argv[]) {
-  test_pfifo_item_head();
+  test_pfifo_item_head_single_period();
+  test_pfifo_item_head_many_periods();
   test_pfifo_item_del();
   test_pfifo_item_move();
   test_pfifo_item_next();
