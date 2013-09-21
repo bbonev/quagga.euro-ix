@@ -159,7 +159,8 @@ if(0)
 
       if (attr)
         bgp_update (peer, &p, attr, AFI_IP, SAFI_MPLS_VPN,
-                    ZEBRA_ROUTE_BGP, BGP_ROUTE_NORMAL, &prd, tagpnt, 0);
+                    ZEBRA_ROUTE_BGP, BGP_ROUTE_NORMAL, &prd, tagpnt,
+                                                    false /* !soft_reconfig */);
       else
         bgp_withdraw (peer, &p, attr, AFI_IP, SAFI_MPLS_VPN,
                       ZEBRA_ROUTE_BGP, BGP_ROUTE_NORMAL, &prd, tagpnt);

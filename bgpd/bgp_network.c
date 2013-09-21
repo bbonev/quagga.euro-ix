@@ -477,7 +477,7 @@ bgp_reset_listeners(bgp_listener* p_listener)
 extern void
 bgp_prepare_to_accept(bgp_connection connection)
 {
-  int err ;
+  int err Unused ;
 
   /* This logs an error if setting the password fails.
    */
@@ -499,7 +499,7 @@ bgp_prepare_to_accept(bgp_connection connection)
 extern void
 bgp_not_prepared_to_accept(bgp_connection connection)
 {
-  int err ;
+  int err Unused ;
 
   if (connection->session->password != NULL)
     {

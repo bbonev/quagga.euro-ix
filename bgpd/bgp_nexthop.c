@@ -447,7 +447,8 @@ bgp_scan (afi_t afi, safi_t safi)
         {
           next = bi->info_next;
 
-          if (bi->type == ZEBRA_ROUTE_BGP && bi->sub_type == BGP_ROUTE_NORMAL)
+          if ((bi->type == ZEBRA_ROUTE_BGP) &&
+                                             (bi->sub_type == BGP_ROUTE_NORMAL))
             {
               changed = 0;
               metricchanged = 0;
@@ -1036,7 +1037,7 @@ bgp_import (struct thread *t)
                 nexthop = bgp_static->igpnexthop;
 
                 if (bgp_flag_check (bgp, BGP_FLAG_IMPORT_CHECK)
-                    && afi == AFI_IP && safi == SAFI_UNICAST)
+                    && (afi == AFI_IP) && (safi == SAFI_UNICAST))
                   bgp_static->valid = bgp_import_check (&rn->p, &bgp_static->igpmetric,
                                                         &bgp_static->igpnexthop);
                 else

@@ -596,7 +596,7 @@ DEFUN (no_bgp_confederation_identifier,
        "AS number\n")
 {
   struct bgp *bgp;
-  as_t as;
+  as_t as Unused ;
 
   bgp = vty->index;
 
@@ -3048,7 +3048,7 @@ static int
 peer_weight_set_vty (struct vty *vty, const char *ip_str,
                      const char *weight_str)
 {
-  int ret;
+  int ret Unused ;
   struct peer *peer;
   unsigned long weight;
 
@@ -3214,7 +3214,7 @@ static int
 peer_timers_connect_set_vty (struct vty *vty, const char *ip_str,
                              const char *time_str)
 {
-  int ret;
+  int ret Unused ;
   struct peer *peer;
   u_int32_t connect;
 
@@ -3232,7 +3232,7 @@ peer_timers_connect_set_vty (struct vty *vty, const char *ip_str,
 static int
 peer_timers_connect_unset_vty (struct vty *vty, const char *ip_str)
 {
-  int ret;
+  int ret Unused ;
   struct peer *peer;
 
   peer = peer_and_group_lookup_vty (vty, ip_str);
@@ -3282,7 +3282,7 @@ static int
 peer_advertise_interval_vty (struct vty *vty, const char *ip_str,
                              const char *time_str, int set)
 {
-  int ret;
+  int ret Unused ;
   struct peer *peer;
   u_int32_t routeadv = 0;
 
@@ -3336,7 +3336,7 @@ ALIAS (no_neighbor_advertise_interval,
 static int
 peer_interface_vty (struct vty *vty, const char *ip_str, const char *str)
 {
-  int ret;
+  int ret Unused ;
   struct peer *peer;
 
   peer = peer_lookup_vty (vty, ip_str);

@@ -2736,15 +2736,17 @@ peer_default_originate_set (struct peer *peer, afi_t afi, safi_t safi,
   struct peer_group *group;
   struct listnode *node, *nnode;
 
-  /* Adress family must be activated.  */
+  /* Address family must be activated.
+   */
   if (! peer->afc[afi][safi])
     return BGP_ERR_PEER_INACTIVE;
 
-  /* Default originate can't be used for peer group memeber.  */
+  /* Default originate can't be used for peer group memeber.
+   */
   if (peer_is_group_member (peer, afi, safi))
     return BGP_ERR_INVALID_FOR_PEER_GROUP_MEMBER;
 
-  if (! CHECK_FLAG (peer->af_flags[afi][safi], PEER_FLAG_DEFAULT_ORIGINATE)
+  if (!(peer->af_flags[afi][safi] & PEER_FLAG_DEFAULT_ORIGINATE)
       || (rmap && ! peer->default_rmap[afi][safi].name)
       || (rmap && strcmp (rmap, peer->default_rmap[afi][safi].name) != 0))
     {
@@ -2759,14 +2761,15 @@ peer_default_originate_set (struct peer *peer, afi_t afi, safi_t safi,
         }
     }
 
-  if (! CHECK_FLAG (peer->sflags, PEER_STATUS_GROUP))
+  if (!(peer->sflags & PEER_STATUS_GROUP))
     {
       if (peer->state == bgp_peer_pEstablished && peer->afc_nego[afi][safi])
-        bgp_default_originate (peer, afi, safi, 0);
+        bgp_default_originate (peer, afi, safi, false /* !withdraw */);
       return 0;
     }
 
-  /* peer-group member updates. */
+  /* peer-group member updates.
+   */
   group = peer->group;
   for (ALL_LIST_ELEMENTS (group->peer, node, nnode, peer))
     {
@@ -2781,7 +2784,7 @@ peer_default_originate_set (struct peer *peer, afi_t afi, safi_t safi,
         }
 
       if (peer->state == bgp_peer_pEstablished && peer->afc_nego[afi][safi])
-        bgp_default_originate (peer, afi, safi, 0);
+        bgp_default_originate (peer, afi, safi, false /* !withdraw */);
     }
   return 0;
 }
@@ -2792,15 +2795,17 @@ peer_default_originate_unset (struct peer *peer, afi_t afi, safi_t safi)
   struct peer_group *group;
   struct listnode *node, *nnode;
 
-  /* Adress family must be activated.  */
+  /* Address family must be activated.
+   */
   if (! peer->afc[afi][safi])
     return BGP_ERR_PEER_INACTIVE;
 
-  /* Default originate can't be used for peer group memeber.  */
+  /* Default originate can't be used for peer group member.
+   */
   if (peer_is_group_member (peer, afi, safi))
     return BGP_ERR_INVALID_FOR_PEER_GROUP_MEMBER;
 
-  if (CHECK_FLAG (peer->af_flags[afi][safi], PEER_FLAG_DEFAULT_ORIGINATE))
+  if (peer->af_flags[afi][safi] & PEER_FLAG_DEFAULT_ORIGINATE)
     {
       UNSET_FLAG (peer->af_flags[afi][safi], PEER_FLAG_DEFAULT_ORIGINATE);
 
@@ -2810,14 +2815,15 @@ peer_default_originate_unset (struct peer *peer, afi_t afi, safi_t safi)
       peer->default_rmap[afi][safi].map = NULL;
     }
 
-  if (! CHECK_FLAG (peer->sflags, PEER_STATUS_GROUP))
+  if (!(peer->sflags & PEER_STATUS_GROUP))
     {
       if (peer->state == bgp_peer_pEstablished && peer->afc_nego[afi][safi])
-        bgp_default_originate (peer, afi, safi, 1);
+        bgp_default_originate (peer, afi, safi, true /* withdraw */);
       return 0;
     }
 
-  /* peer-group member updates. */
+  /* peer-group member updates.
+   */
   group = peer->group;
   for (ALL_LIST_ELEMENTS (group->peer, node, nnode, peer))
     {
@@ -2829,7 +2835,7 @@ peer_default_originate_unset (struct peer *peer, afi_t afi, safi_t safi)
       peer->default_rmap[afi][safi].map = NULL;
 
       if (peer->state == bgp_peer_pEstablished && peer->afc_nego[afi][safi])
-        bgp_default_originate (peer, afi, safi, 1);
+        bgp_default_originate (peer, afi, safi, true /* withdraw */);
     }
   return 0;
 }

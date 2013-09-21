@@ -341,7 +341,8 @@ int
 if_is_operative (struct interface *ifp)
 {
   return ((ifp->flags & IFF_UP) &&
-          (ifp->flags & IFF_RUNNING || !CHECK_FLAG(ifp->status, ZEBRA_INTERFACE_LINKDETECTION)));
+          ( (ifp->flags & IFF_RUNNING)
+              || !(ifp->status & ZEBRA_INTERFACE_LINKDETECTION) ));
 }
 
 /* Is this loopback interface ? */
@@ -426,7 +427,7 @@ static void
 if_dump (const struct interface *ifp)
 {
   struct listnode *node;
-  struct connected *c;
+  struct connected *c Unused ;
 
   for (ALL_LIST_ELEMENTS_RO (ifp->connected, node, c))
     zlog_info ("Interface %s index %d metric %d mtu %d "

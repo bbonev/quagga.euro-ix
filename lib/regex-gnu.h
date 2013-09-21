@@ -20,6 +20,11 @@
    write to the Free Software Foundation, Inc., 59 Temple Place - Suite 330,
    Boston, MA 02111-1307, USA.  */
 
+/* For the benefit of Eclipse (static code checking)... skip if not required.
+ */
+#include "zconfig.h"
+#if !defined(HAVE_LIBPCREPOSIX) && !defined(HAVE_GNU_REGEX)
+
 #ifndef _REGEX_H
 #define _REGEX_H 1
 
@@ -537,7 +542,7 @@ extern void regfree _RE_ARGS ((regex_t *__preg));
 #endif  /* C++ */
 
 #endif /* regex.h */
-
+#endif /* !defined(HAVE_LIBPCREPOSIX) && !defined(HAVE_GNU_REGEX) */
 
 /*
 Local variables:

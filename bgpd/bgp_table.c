@@ -79,7 +79,8 @@ bgp_node_create (void)
   return XCALLOC (MTYPE_BGP_NODE, sizeof (struct bgp_node));
 }
 
-/* Allocate new route node with prefix set. */
+/* Allocate new route node with prefix set.
+ */
 static struct bgp_node *
 bgp_node_set (struct bgp_table *table, struct prefix *prefix)
 {
@@ -93,7 +94,8 @@ bgp_node_set (struct bgp_table *table, struct prefix *prefix)
   return node;
 }
 
-/* Free route node. */
+/* Free route node.
+ */
 static void
 bgp_node_free (struct bgp_node *node)
 {
@@ -101,7 +103,8 @@ bgp_node_free (struct bgp_node *node)
   XFREE (MTYPE_BGP_NODE, node);
 }
 
-/* Free route table. */
+/* Free route table.
+ */
 static void
 bgp_table_free (struct bgp_table *rt)
 {
@@ -130,10 +133,10 @@ bgp_table_free (struct bgp_table *rt)
           continue;
         }
 
-      assert(  (node->info     == NULL)
-            && (node->adj_out  == NULL)
-            && (node->adj_in   == NULL)
-            && (node->on_wq    == 0) ) ;
+      qassert(  (node->info     == NULL)
+             && (node->adj_out  == NULL)
+             && (node->adj_in   == NULL)
+             && (node->on_wq    == false) ) ;
 
       tmp_node = node;
       node = node->parent;
@@ -313,7 +316,11 @@ bgp_node_lookup (const struct bgp_table *table, struct prefix *p)
   return NULL;
 }
 
-/* Add node to routing table. */
+/*------------------------------------------------------------------------------
+ * For given table and prefix: find or add node.
+ *
+ * Once a node has been created, the prefix is stable, until the lock expires.
+ */
 struct bgp_node *
 bgp_node_get (struct bgp_table *const table, struct prefix *p)
 {

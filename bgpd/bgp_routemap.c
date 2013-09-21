@@ -1228,7 +1228,7 @@ route_set_metric (void *rule, struct prefix *prefix,
 static void *
 route_set_metric_compile (const char *arg)
 {
-  u_int32_t metric;
+  u_int32_t metric Unused ;
   unsigned long larg;
   char *endptr = NULL;
 

@@ -56,7 +56,7 @@
  */
 bool vtysh_integrated_vtysh_config = false ;
 
-extern char config_default[];
+//extern char config_default[] ;
 
 /*==============================================================================
  * The vtysh has its own vty, which is used:
@@ -1009,7 +1009,7 @@ static int
 execute_command (const char *command, int argc, const char *arg1,
                  const char *arg2)
 {
-  int ret;
+  int ret Unused ;
   pid_t pid;
   int status;
 

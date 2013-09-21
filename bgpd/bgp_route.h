@@ -178,7 +178,7 @@ extern void bgp_route_finish (void);
 
 extern void bgp_announce_route (struct peer *, afi_t, safi_t);
 extern void bgp_announce_route_all (struct peer *);
-extern void bgp_default_originate (struct peer *, afi_t, safi_t, int);
+extern void bgp_default_originate (struct peer *, afi_t, safi_t, bool);
 extern void bgp_soft_reconfig_in (struct peer *, afi_t, safi_t);
 extern void bgp_soft_reconfig_rsclient (struct peer *, afi_t, safi_t);
 extern void bgp_check_local_routes_rsclient (struct peer *rsclient,
@@ -225,7 +225,7 @@ extern int bgp_static_unset_vpnv4 (struct vty *, const char *,
 /* this is primarily for MPLS-VPN */
 extern int bgp_update (struct peer *, struct prefix *, struct attr *,
                        afi_t, safi_t, int, int, struct prefix_rd *,
-                       u_char *, int);
+                       u_char *, bool);
 extern int bgp_withdraw (struct peer *, struct prefix *, struct attr *,
                          afi_t, safi_t, int, int, struct prefix_rd *, u_char *);
 
