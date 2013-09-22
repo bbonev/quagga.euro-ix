@@ -436,20 +436,66 @@ bgp_attr_extra_get (struct attr *attr)
   return attr->extra;
 }
 
-/* Shallow copy of an attribute
- * Though, not so shallow that it doesn't copy the contents
- * of the attr_extra pointed to by 'extra'
+/*------------------------------------------------------------------------------
+ * Shallow copy of an attribute, but creating a new 'extra' structure.
+ *
+ * Forces the reference count to zero.
+ *
+ * NB: all sub-objects MUST be interned, even if the attributes being copied
+ *     are not.
+ *
+ *     The copy does not change the reference counts on the sub-objects.
+ *
+ *     So, the copy can simply be discarded if it is not required -- noting
+ *     that the 'extra' structure also needs to be discarded.
+ *
+ *     Sub-objects may also simply be discarded if they are no longer
+ *     required.
+ *
+ *     Sub-objects may be replaced by new sub-objects with 0 ref-count (so
+ *     NOT interned).  The copy is responsible for all sub-objects with
+ *     0 ref-count:
+ *
+ *       * replacing a sub-object which has a 0 ref-count must first
+ *         discard that sub-object.
+ *
+ *       * when the copy is discarded, any object with a 0 ref-count must be
+ *         discarded.
+ *
+ *     Sub-objects may be replaced by already interned sub-objects, *without*
+ *     increasing their reference count.
+ *
+ *     It is a MISTAKE to replace a sub-object by a newly interned new
+ *     sub-object -- because the reference count of '1' is '1' too big !!!
+ *
+ *     The copy may be interned, which will increment the reference count on
+ *     all sub-objects, including new ones (with ref-count == 0, which will
+ *     themselves be interned at the same time).
+ *
+ * NB: after interning the copy, it and the 'extra' structure must immediately
+ *     be discarded.
+ *
+ * NB: The copy depends on the original attributes reference counts to hold
+ *     the sub-attributes in existence.  So, the original must not be
+ *     uninterned until the copy has been interned and/or discarded.
  */
-void
+extern struct attr *
 bgp_attr_dup (struct attr *new, struct attr *orig)
 {
+  qassert(bgp_sub_attr_are_interned(orig)) ;
+
   *new = *orig;
+
   if (orig->extra)
     {
       new->extra = bgp_attr_extra_new();
       *new->extra = *orig->extra;
-    }
-}
+    } ;
+
+  new->refcnt = 0 ;
+
+  return new ;
+} ;
 
 unsigned long int
 attr_count (void)
@@ -578,6 +624,18 @@ attr_show_all (struct vty *vty)
                 vty);
 }
 
+/*------------------------------------------------------------------------------
+ * Allocate a new entry for the attribute hash table.
+ *
+ * This creates a brand new attr object, with a new 'extra' sub-object (if any).
+ *
+ * Copies the contents of the given objects, but forces the reference count to
+ * zero.
+ *
+ * This is done *after* all the components of the given attr have been
+ * interned and/or their ref-counts incremented.  The new object inherits
+ * those references.
+ */
 static void *
 bgp_attr_hash_alloc (void *p)
 {
@@ -596,7 +654,7 @@ bgp_attr_hash_alloc (void *p)
 }
 
 /*------------------------------------------------------------------------------
- * Internet argument attribute.
+ * Intern attributes.
  *
  * 1. "internalise" and increase reference count for each of:
  *
@@ -612,45 +670,100 @@ bgp_attr_hash_alloc (void *p)
  *   Each of these pointers is updated to point at either a new entry in the
  *   relevant attribute store, or at the existing entry.
  *
+ *   In any case, the reference count is incremented.
+ *
  * 2. "internalise" the complete attribute object and increase its reference
  *    count.
  *
  *   If the attribute collection is new, then this function returns a pointer
- *   to a brand new attribute object, complete with a copy of the attr->extra.
+ *   to a brand new attribute object, complete with a COPY of the attr->extra.
  *
  *   If the attribute collection is not new, then this function returns a
  *   pointer to the stored attribute object.
  *
- *   In any event, the pointer returned != pointer passed in.
+ *   In any event, the pointer returned != pointer passed in, unless the given
+ *   attr was interned, and has not changed.
  *
- *   NB: the incoming attr reference count is ignored.
+ * NB: the incoming attr reference count is ignored.
  *
- * Note that the original attr object remains with its own attr->extra object.
+ * Returns:  interned attributes with reference count(s) increased.
+ *
+ * NB: returned attr == given attr, iff the given attr are already interned.
+ *
+ * NB: if the given attributes were not interned, then they are unchanged,
+ *     except that:
+ *
+ *       * any uninterned sub-attr are now interned, and have ref-count == 1
+ *
+ *         BUT NB: the newly interned attr body owns the ref-count.
+ *
+ *       * any interned sub-attr have their ref-count increased
+ *
+ *         SO NB: the newly interned attr body has its own ref-count, and
+ *                whoever owned the ref-count before, still owns it.
+ *
+ *     Noting that the attr body ref-count is *unchanged*.
+ *
+ *     The attr set passed in is ambiguous if it contained any uninterned
+ *     sub-attr.  So, there are two use cases:
+ *
+ *       1) where all sub-attr are interned.
+ *
+ *          In this state it doesn't matter whether the attr body is interned
+ *          or not.  Indeed, such attr can be uninterned whether the attr body
+ *          is interned or not.
+ *
+ *          If the attr body is not interned, it retains its ref-count on
+ *          all sub-attr.
+ *
+ *          bgp_attr_intern() can be used in this case.
+ *
+ *       2) where the attr started as a copy of a set of attr where all the
+ *          sub-attr were interned -- see bgp_attr_dup().
+ *
+ *          The working copy can have new, uninterned sub-attr added and
+ *          new uninterned sub-attr can replace interned ones.  Where an
+ *          uninterned sub-attr is replaced it must be discarded.  The result
+ *          is a mix of still interned sub-attr (whose ref-count belongs to
+ *          the original set), and uninterned or empty sub-attr, which
+ *          belong to the copy.
+ *
+ *          In this case, after interning the temporary copy it must be
+ *          discarded.  All uninterned sub-attr now belong to the newly
+ *          interned attr.  All interned sub-attr still belong to the original
+ *          set.
+ *
+ *          bgp_attr_intern_temp() should be used in this case.  It also
+ *          frees off any 'extra' and clears dangling references to aspath
+ *          and community (for completeness).
  */
-struct attr *
+extern struct attr *
 bgp_attr_intern (struct attr *attr)
 {
   struct attr *find;
+  struct attr_extra *attre ;
 
-  /* Intern referenced structure. */
+  /* Intern referenced structure and/or increment the reference count.
+   */
   if (attr->aspath)
     {
       if (! attr->aspath->refcnt)
         attr->aspath = aspath_intern (attr->aspath);
       else
         attr->aspath->refcnt++;
-    }
+    } ;
+
   if (attr->community)
     {
       if (! attr->community->refcnt)
         attr->community = community_intern (attr->community);
       else
         attr->community->refcnt++;
-    }
-  if (attr->extra)
-    {
-      struct attr_extra *attre = attr->extra;
+    } ;
 
+  attre = attr->extra ;
+  if (attre != NULL)
+    {
       if (attre->ecommunity)
         {
           if (! attre->ecommunity->refcnt)
@@ -673,13 +786,52 @@ bgp_attr_intern (struct attr *attr)
           else
             attre->transit->refcnt++;
         }
-    }
+    } ;
 
+  /* We increment the reference count on the found attributes.
+   *
+   * The effect is that we increment the count on the components the same
+   * number of times we increment the count on interned attributes.
+   */
   find = (struct attr *) hash_get (attrhash, attr, bgp_attr_hash_alloc);
   find->refcnt++;
 
   return find;
-}
+} ;
+
+/*------------------------------------------------------------------------------
+ * Intern attributes from temporary copy -- discard any 'extra'.
+ *
+ * NB: for uninterned attr body *only*.
+ *
+ * See bgp_attr_intern(), above.
+ *
+ * NB: discards any 'extra' and clears aspath and community sub-attr.
+ *
+ *     All sub-attr in the temporary copy now belong either to the (newly)
+ *     interned attr body or to that and the original attrs.
+ *
+ *     Caller should discard the attr body -- its contents are now in the
+ *     (newly) interned set.
+ *
+ * Returns:  interned attributes with reference count(s) increased.
+ */
+extern struct attr *
+bgp_attr_intern_temp(struct attr *attr)
+{
+  struct attr * interned ;
+
+  qassert(attr->refcnt == 0) ;          /* temporaries *only*           */
+
+  interned = bgp_attr_intern (attr) ;
+  qassert(interned != attr) ;           /* ho ho                        */
+
+  bgp_attr_extra_free(attr) ;           /* sets attr->extra NULL        */
+  attr->aspath    = NULL ;              /* tidy                         */
+  attr->community = NULL ;              /* tidy                         */
+
+  return interned ;
+} ;
 
 /* Make network statement's attribute.
  *
@@ -776,39 +928,8 @@ bgp_attr_aggregate_intern (struct bgp *bgp, u_char origin,
   return new;
 }
 
-/* Unintern just the sub-components of the attr, but not the attr */
-extern void
-bgp_attr_unintern_sub (struct attr *attr, bool free_extra)
-{
-  /* aspath refcount shoud be decrement. */
-  if (attr->aspath)
-    aspath_unintern (&attr->aspath);
-  UNSET_FLAG(attr->flag, BGP_ATTR_AS_PATH);
-
-  if (attr->community)
-    community_unintern (&attr->community);
-  UNSET_FLAG(attr->flag, BGP_ATTR_COMMUNITIES);
-
-  if (attr->extra)
-    {
-      if (attr->extra->ecommunity)
-        ecommunity_unintern (&attr->extra->ecommunity);
-      UNSET_FLAG(attr->flag, BGP_ATTR_EXT_COMMUNITIES);
-
-      if (attr->extra->cluster)
-        cluster_unintern (&attr->extra->cluster);
-      UNSET_FLAG(attr->flag, BGP_ATTR_CLUSTER_LIST);
-
-      if (attr->extra->transit)
-        transit_unintern (&attr->extra->transit);
-
-      if (free_extra)
-        bgp_attr_extra_free (attr) ;
-    }
-}
-
 /*------------------------------------------------------------------------------
- * Free bgp attribute and aspath.
+ * Free bgp attribute.
  *
  * For all the elements of the given attributes:
  *
@@ -818,88 +939,206 @@ bgp_attr_unintern_sub (struct attr *attr, bool free_extra)
  *
  * For the attribute object itself:
  *
- *   decrement the reference count
- *   if the reference count is now zero, remove from hash table and discard
- *   stored value.
+ *   if reference count > 1, it is decremented and we are done.
  *
- * So... do NOT do this to a set of attributes whose elements have not been
- * interned !
+ *   if reference count == 1, the attr body is uninterned and discarded,
+ *                                                    complete with any 'extra'.
  *
- * Can do this to an attribute object which has not been interned, because its
- * reference count SHOULD be zero.
+ *   if reference count == 0, this is deemed to be a temporary attr set.
  *
- * Sets *attr = NULL iff the attributes are discarded.
+ *     all sub-attr with ref-count <= 1 are uninterned and/or freed, as
+ *     above.
+ *
+ *     the attr->extra are discarded, if there are any.
+ *
+ *     the attr->aspath and attr->community pointers are cleared -- so that
+ *     there can be no dangling references.
+ *
+ *     otherwise the attr body is left as it is.
+ *
+ *     NB: this is dangerous.
+ *
+ *         The only safe case for using this is where a temporary attr set
+ *         has been created, including some interned sub-attr, and NO
+ *         uninterned ones.
+ *
+ *         NB: if the attr are changed without doing a bgp_attr_dup(), then
+ *             replacing an interned sub-attr by an uninterned one is
+ *             problematic -- unless the replacement knows to unintern the
+ *             sub-attr being replaced.
+ *
+ *         NB: when a temporary set of attributes is interned, all sub-attr
+ *             have their ref-count increased.  The sub-attr are still
+ *             referred to by the temporary set.  If any of the sub-attr
+ *             were ref-count == 0, they will now be ref-count == 1, BUT
+ *             pointed at by two attr -- the interned and the temporary.
+ *
+ *     So, what is supported is:
+ *
+ *       * construction of a temporary set of attributes, with interned
+ *         sub-attributes.
+ *
+ *       * interning that and using the result.
+ *
+ *       * bgp_attr_dup() the temporary set, and operating on that
+ *
+ *           - adding uninterned sub-attr:
+ *
+ *              - overwriting any which are interned in the temporary set,
+ *                (interned sub-attr belong to the original temporary)
+ *
+ *              - or replacing uninterned sub-attr which are then discarded.
+ *                (uninterned sub-attr belong to the dupped temporary).
+ *
+ *           - discarding the dupped temporary -- using bgp_attr_flush() to
+ *             discard any uninterned sub-attr.
+ *
+ *           - interning the dupped temporary, and then discarding it,
+ *             by bgp_attr_extra_free() and freeing the dupped body if
+ *             required.  The dupped temporary cannot be used after it has
+ *             been interned.
+ *
+ * Returns:  NULL
  */
-void
-bgp_attr_unintern (struct attr **attr)
+extern struct attr*
+bgp_attr_unintern (struct attr *attr)
 {
-  struct attr       tmp ;
-  struct attr_extra tmp_extra ;
+  attr_refcnt_t refcnt_was ;
+  struct attr_extra* extra ;
 
-  /* Take copy of attributes so that can unintern sub-objects   */
-  tmp = *(*attr);
+  /* Decide whether we will discard these attr, and if so, remove from the
+   * attrhash BEFORE we change any values -- so hash_release() can find
+   * stuff.
+   */
+  refcnt_was = attr->refcnt ;
 
-  if ((*attr)->extra)
+  if      (refcnt_was >  1)
+    attr->refcnt = refcnt_was - 1 ;
+  else if (refcnt_was == 1)
     {
-      tmp.extra = &tmp_extra ;
-      memcpy (tmp.extra, (*attr)->extra, sizeof (struct attr_extra));
-    }
+      /* Time to remove the attr from the hash and later to free it.
+       */
+      struct attr *ret;
+      ret = hash_release (attrhash, attr);
 
-  /* If reference becomes zero then free attribute object.      */
-  if ((*attr)->refcnt != 0)
-    {
-      --(*attr)->refcnt ;
-      if ((*attr)->refcnt == 0)
+      if (ret != attr)
         {
-          struct attr *ret;
-          ret = hash_release (attrhash, *attr);
+          /* This is bad.  Something is bent out of shape.
+           */
+          zlog_err("BUG: failed to find interned attr -- found %s",
+                             (ret == NULL) ? "nothing" : "something else") ;
 
-          if (ret == *attr)
-            {
-              /* OK: can free stuff now.
-               */
-              bgp_attr_extra_free (*attr);
-              XFREE (MTYPE_ATTR, *attr);    /* sets *attr = NULL    */
-            }
-          else
-            {
-              zlog_err("BUG: failed to find interned attr -- found %s",
-                                 (ret == NULL) ? "nothing" : "something else") ;
-              *attr = NULL ;
-              return ;          /* don't make things worse !    */
-            } ;
+          return NULL ; /* don't make things worse !    */
         } ;
     } ;
 
-  /* Now the sub-objects
+  /* Do the sub-attr, now -- discarding anything with ref-count <= 1.
+   *
+   * NB: the sub-attr ref-count MUST be >= original attr body ref-count !
+   *
+   *     So... will only be discarding the sub-attr if we are discarding the
+   *     attr body, or it was uninterned.
    */
-  bgp_attr_unintern_sub (&tmp, false /* don't free extra */) ;
-}
+  if (attr->aspath)
+    {
+      qassert(attr->aspath->refcnt >= refcnt_was) ;
+      aspath_unintern (&attr->aspath);
+    } ;
+
+  if (attr->community)
+    {
+      qassert(attr->community->refcnt >= refcnt_was) ;
+      community_unintern (&attr->community);
+    } ;
+
+  if ((extra = attr->extra) != NULL)
+    {
+      if (extra->ecommunity)
+        {
+          qassert(extra->ecommunity->refcnt >= refcnt_was) ;
+          ecommunity_unintern(&extra->ecommunity);
+        } ;
+
+      if (extra->cluster)
+        {
+          qassert(extra->cluster->refcnt >= refcnt_was) ;
+          cluster_unintern (&extra->cluster);
+        } ;
+
+      if (extra->transit)
+        {
+          qassert(extra->transit->refcnt >= refcnt_was) ;
+          transit_unintern (&extra->transit);
+        } ;
+    } ;
+
+  /* Finally, if was or is now uninterned:
+   *
+   *   * free the 'extra', if any
+   *
+   *   * free the body or clear all remaining references to sub-attr (tidy).
+   */
+  if (refcnt_was <= 1)
+    {
+      bgp_attr_extra_free (attr) ;      /* attr->extra = NULL   */
+
+      if (refcnt_was == 1)
+        XFREE (MTYPE_ATTR, attr) ;
+      else
+        {
+          attr->flag &= ~(BGP_ATTR_AS_PATH | BGP_ATTR_COMMUNITIES
+                                           | BGP_ATTR_EXT_COMMUNITIES
+                                           | BGP_ATTR_CLUSTER_LIST) ;
+          attr->aspath    = NULL ;
+          attr->community = NULL ;
+        } ;
+    } ;
+
+  return NULL ;
+} ;
 
 /*------------------------------------------------------------------------------
- * Release any element whose reference count is zero.
+ * Release any element whose reference count is zero and free any 'extra'.
  *
- * This is used where attributes have been replaced, but not internalised, and
+ * The attr body MUST be uninterned.
+ *
+ * Frees any 'extra' unconditionally.
+ *
+ * This is used where attributes have been replaced, but not interned, and
  * which are no longer of interest -- typically where a route-map returns DENY.
+ *
+ * NB: caller is expected to have lost interest in the attributes altogether,
+ *     and is about to discard them.
+ *
+ *     This is IMPORTANT, because the pointers to the various sub-objects
+ *     may now be dangling references to objects which have been freed.
  */
-void
+extern struct attr*
 bgp_attr_flush (struct attr *attr)
 {
+  qassert(attr->refcnt == 0) ;
+
   if (attr->aspath && (attr->aspath->refcnt == 0))
     aspath_free (attr->aspath);
   if (attr->community && (attr->community->refcnt == 0))
     community_free (attr->community);
+
   if (attr->extra)
     {
       struct attr_extra *attre = attr->extra;
+
       if (attre->ecommunity && (attre->ecommunity->refcnt == 0))
         ecommunity_free (attre->ecommunity);
       if (attre->cluster && (attre->cluster->refcnt == 0))
         cluster_free (attre->cluster);
       if (attre->transit && (attre->transit->refcnt == 0))
         transit_free (attre->transit);
-    }
-}
+
+      bgp_attr_extra_free (attr) ;
+    } ;
+
+  return NULL ;
+} ;
 
 /*------------------------------------------------------------------------------
  * Get address of start of attribute (byte 0 of header) and total length of

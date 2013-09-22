@@ -338,7 +338,7 @@ bgp_updated(bgp_peer peer, bgp_advertise adv, afi_t afi, safi_t safi,
     {
       if (adj->attr != NULL)
         {
-          bgp_attr_unintern (&adj->attr);
+          bgp_attr_unintern (adj->attr);
           adj->attr = NULL ;
           peer->scount[afi][safi]--;
         } ;
@@ -346,7 +346,7 @@ bgp_updated(bgp_peer peer, bgp_advertise adv, afi_t afi, safi_t safi,
   else
     {
       if (adj->attr != NULL)
-        bgp_attr_unintern (&adj->attr);
+        bgp_attr_unintern (adj->attr);
       else
         peer->scount[afi][safi]++;
 
@@ -1337,7 +1337,10 @@ bgp_update_receive (struct peer *peer, bgp_size_t size)
     } ;
 
   /* NLRI is processed only when the peer is configured specific
-     Address Family and Subsequent Address Family. */
+   * Address Family and Subsequent Address Family.
+   */
+  qassert(bgp_sub_attr_are_interned(&args->attr)) ;
+
   if (peer->afc[AFI_IP][SAFI_UNICAST])
     {
       if (args->withdraw.length)
@@ -1487,13 +1490,20 @@ bgp_update_receive (struct peer *peer, bgp_size_t size)
         }
     }
 
-  /* Everything is done.  We unintern temporary structures which
-   * interned in bgp_attr_parse().
+  /* Everything is done.  We unintern all the sub-objects which were interned
+   * by bgp_attr_parse(), and discard any 'extra'.
+   *
+   * The body of the attributes is embedded in the args structure, which
+   * is about to disappear.
    */
   ret = 0 ;
 
  exit_bgp_update_receive:
-  bgp_attr_unintern_sub (&args->attr, true) ; /* true => free extra   */
+  qassert(args->attr.refcnt == 0) ;
+  qassert(bgp_sub_attr_are_interned(&args->attr)) ;
+
+  args->attr.refcnt = 0 ;              /* belt-and-braces      */
+  bgp_attr_unintern(&args->attr) ;
 
   return ret ;
 }

@@ -25,6 +25,9 @@ Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
 
 #include "bgpd/bgp_common.h"
 #include "bgpd/bgpd.h"
+#include "bgpd/bgp_aspath.h"
+#include "bgpd/bgp_community.h"
+#include "bgpd/bgp_ecommunity.h"
 
 /* Simple bit mapping. */
 #define BITMAP_NBBY 8
@@ -179,11 +182,11 @@ extern bgp_attr_parse_ret_t bgp_attr_parse (restrict bgp_attr_parser_args args);
 extern int bgp_attr_check (struct peer *, struct attr *, bool);
 extern struct attr_extra *bgp_attr_extra_get (struct attr *);
 extern void bgp_attr_extra_free (struct attr *);
-extern void bgp_attr_dup (struct attr *, struct attr *);
+extern struct attr *bgp_attr_dup (struct attr *, struct attr *);
 extern struct attr *bgp_attr_intern (struct attr *attr);
-extern void bgp_attr_unintern_sub (struct attr *attr, bool free_extra) ;
-extern void bgp_attr_unintern (struct attr **);
-extern void bgp_attr_flush (struct attr *);
+extern struct attr *bgp_attr_intern_temp(struct attr *attr) ;
+extern struct attr *bgp_attr_unintern (struct attr *);
+extern struct attr *bgp_attr_flush (struct attr * attr);
 extern struct attr *bgp_attr_default_set (struct attr *attr, u_char);
 extern struct attr *bgp_attr_default_intern (u_char);
 extern struct attr *bgp_attr_aggregate_intern (struct bgp *, u_char,
@@ -213,5 +216,50 @@ extern int cluster_loop_check (struct cluster_list *, struct in_addr);
  * */
 extern int bgp_mp_reach_parse (bgp_attr_parser_args args);
 extern int bgp_mp_unreach_parse (bgp_attr_parser_args args);
+
+/*==============================================================================
+ * qdebug stuff
+ */
+
+/*------------------------------------------------------------------------------
+ * See if all sub-attr of the given attr are interned, with suitable refcnt.
+ *
+ * Returns:  true <=> all existing sub-attr have refcnt > 0
+ *                                           and refcnt >= attr itself
+ *
+ * NB: the attr may have reference count == 0.
+ */
+Inline bool
+bgp_sub_attr_are_interned(struct attr* attr)
+{
+#define bgp_sub_attr_is_interned(f, m) (((f) == NULL) || ((f)->refcnt >= m))
+
+  struct attr_extra* extra ;
+  attr_refcnt_t min_refcnt ;
+
+  min_refcnt = attr->refcnt ;
+  if (min_refcnt == 0)
+    min_refcnt = 1 ;
+  extra = attr->extra ;
+
+  return bgp_sub_attr_is_interned(attr->aspath, min_refcnt) &&
+         bgp_sub_attr_is_interned(attr->community, min_refcnt) &&
+         ( (extra == NULL) ||
+             (bgp_sub_attr_is_interned(extra->ecommunity, min_refcnt) &&
+              bgp_sub_attr_is_interned(extra->cluster, min_refcnt) &&
+              bgp_sub_attr_is_interned(extra->transit, min_refcnt)) ) ;
+
+#undef bgp_sub_attr_is_interned
+} ;
+
+/*------------------------------------------------------------------------------
+ * See if given attr is interned, and all its sub-attr are interned, with
+ *                                                              suitable refcnt.
+ */
+Inline bool
+bgp_attr_is_interned(struct attr* attr)
+{
+  return (attr->refcnt != 0) && bgp_sub_attr_are_interned(attr) ;
+} ;
 
 #endif /* _QUAGGA_BGP_ATTR_H */
