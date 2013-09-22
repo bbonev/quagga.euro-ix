@@ -314,36 +314,61 @@ aspath_new (void)
 }
 
 /* Free AS path structure. */
-void
+extern struct aspath *
 aspath_free (struct aspath *aspath)
 {
-  if (!aspath)
-    return;
-  if (aspath->segments)
-    assegment_free_all (aspath->segments);
-  if (aspath->str)
-    XFREE (MTYPE_AS_STR, aspath->str);
-  XFREE (MTYPE_AS_PATH, aspath);
-}
-
-/* Unintern aspath from AS path bucket. */
-void
-aspath_unintern (struct aspath **aspath)
-{
-  struct aspath *ret;
-  struct aspath *asp = *aspath;
-
-  asp->refcnt--;
-
-  if (asp->refcnt == 0)
+  if (aspath != NULL)
     {
-      /* This aspath must exist in aspath hash table. */
-      ret = hash_release (ashash, asp);
-      assert (ret != NULL);
-      aspath_free (asp);
-      *aspath = NULL;
-    }
+      if (aspath->segments)
+        assegment_free_all (aspath->segments);
+      if (aspath->str)
+        XFREE (MTYPE_AS_STR, aspath->str);
+      XFREE (MTYPE_AS_PATH, aspath);
+    } ;
+  return NULL ;
 }
+
+/*------------------------------------------------------------------------------
+ * Reduce references to the given aspath.
+ *
+ * Reduce reference count if is > 1, and fin.
+ *
+ * Otherwise: remove the aspath from the hash if the reference count == 1
+ *
+ *            free the aspath and set *p_asp = NULL
+ *
+ * Returns:  NULL (unconditionally)
+ *           *p_asp = NULL iff freed the value
+ */
+extern struct aspath *
+aspath_unintern (struct aspath **p_asp)
+{
+  struct aspath *asp ;
+
+  asp = *p_asp ;
+
+  if (asp->refcnt > 1)
+    asp->refcnt -= 1 ;
+  else
+    {
+      if (asp->refcnt == 1)
+        {
+          struct aspath *ret;
+
+          ret = hash_release (ashash, asp);
+          if (ret != asp)
+            {
+              zlog_err("BUG: failed to find interned aspath -- found %s",
+                                 (ret == NULL) ? "nothing" : "something else") ;
+              asp = NULL ;      /* leaky but safer      */
+            } ;
+        } ;
+
+      *p_asp = aspath_free (asp);
+    } ;
+
+  return NULL ;
+} ;
 
 /* Return the start or end delimiters for a particular Segment type */
 #define AS_SEG_START 0
@@ -652,10 +677,7 @@ aspath_hash_alloc (void *arg)
 
   /* Malformed AS path value. */
   if (! aspath->str)
-    {
-      aspath_free (aspath);
-      return NULL;
-    }
+    return aspath_free (aspath);
 
   return aspath;
 }
@@ -1664,20 +1686,17 @@ aspath_segment_add (struct aspath *as, int type)
 }
 
 /*------------------------------------------------------------------------------
- * Construct an interned empty AS Path
+ * Construct an empty AS Path, interned or otherwise
  */
 struct aspath *
-aspath_empty (void)
-{
-  return aspath_parse (NULL, 0, true, false);   /* 32Bit ;-) not AS4_PATH */
-}
-
-struct aspath *
-aspath_empty_get (void)
+aspath_empty (bool intern)
 {
   struct aspath *aspath;
 
   aspath = aspath_new ();
+  if (intern)
+    return aspath_intern(aspath) ;
+
   aspath->str = aspath_make_str_count (aspath);
   return aspath;
 }

@@ -22,6 +22,7 @@ Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
 
 #include "hash.h"
 #include "memory.h"
+#include "log.h"
 
 #include "bgpd/bgp_community.h"
 
@@ -37,14 +38,18 @@ community_new (void)
 }
 
 /* Free communities value.  */
-void
+extern struct community *
 community_free (struct community *com)
 {
-  if (com->val)
-    XFREE (MTYPE_COMMUNITY_VAL, com->val);
-  if (com->str)
-    XFREE (MTYPE_COMMUNITY_STR, com->str);
-  XFREE (MTYPE_COMMUNITY, com);
+  if (com != NULL)
+    {
+      if (com->val)
+        XFREE (MTYPE_COMMUNITY_VAL, com->val);
+      if (com->str)
+        XFREE (MTYPE_COMMUNITY_STR, com->str);
+      XFREE (MTYPE_COMMUNITY, com);
+    } ;
+  return NULL ;
 }
 
 /* Add one community value to the community. */
@@ -326,25 +331,48 @@ community_intern (struct community *com)
   return find;
 }
 
-/* Free community attribute. */
-void
-community_unintern (struct community **com)
+/*------------------------------------------------------------------------------
+ * Reduce references to the given community.
+ *
+ * Reduce reference count if is > 1, and fin.
+ *
+ * Otherwise: remove the community from the hash if the reference count == 1
+ *
+ *            free the community and set *p_com = NULL
+ *
+ * Returns:  NULL (unconditionally)
+ *           *p_com = NULL iff freed the value
+ */
+extern struct community *
+community_unintern (struct community **p_com)
 {
-  struct community *ret;
+  struct community *com ;
 
-  if ((*com)->refcnt)
-    (*com)->refcnt--;
+  com = *p_com ;
 
-  /* Pull off from hash.  */
-  if ((*com)->refcnt == 0)
+  if (com->refcnt > 1)
+    com->refcnt -= 1 ;
+  else
     {
-      /* Community value com must exist in hash. */
-      ret = (struct community *) hash_release (comhash, *com);
-      assert (ret != NULL);
+      if (com->refcnt == 1)
+        {
+          /* Community value com must exist in hash.
+           */
+          struct community *ret;
 
-      community_free (*com);
-      *com = NULL;
-    }
+          ret = (struct community *) hash_release (comhash, com);
+          if (ret != com)
+            {
+              zlog_err("BUG: failed to find interned community -- found %s",
+                                 (ret == NULL) ? "nothing" : "something else") ;
+              com = NULL ;      /* leaky but safer      */
+            } ;
+        } ;
+
+      *p_com = community_free (com) ;
+    } ;
+
+  return NULL ;
 }
 
 /* Create new community attribute. */

@@ -48,7 +48,7 @@ struct bgp_advertise_attr
   struct bgp_advertise_fifo_base base ;
 
   /* Reference counter.  */
-  unsigned long refcnt;
+  attr_refcnt_t refcnt;
 
   /* Attribute pointer to be announced.  */
   struct attr *attr;

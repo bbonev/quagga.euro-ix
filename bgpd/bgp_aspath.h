@@ -52,7 +52,7 @@ struct assegment
 struct aspath
 {
   /* Reference count to this aspath.  */
-  unsigned long refcnt;
+  attr_refcnt_t refcnt;
 
   /* segment data */
   struct assegment *segments;
@@ -77,12 +77,11 @@ extern struct aspath *aspath_add_confed_seq (struct aspath *, as_t);
 extern int aspath_cmp_left (const struct aspath *, const struct aspath *);
 extern int aspath_cmp_left_confed (const struct aspath *, const struct aspath *);
 extern struct aspath *aspath_delete_confed_seq (struct aspath *);
-extern struct aspath *aspath_empty (void);
-extern struct aspath *aspath_empty_get (void);
+extern struct aspath *aspath_empty (bool intern);
 extern struct aspath *aspath_str2aspath (const char *);
-extern void aspath_free (struct aspath *);
+extern struct aspath *aspath_free (struct aspath *);
 extern struct aspath *aspath_intern (struct aspath *);
-extern void aspath_unintern (struct aspath **);
+extern struct aspath *aspath_unintern (struct aspath **);
 extern const char *aspath_print (struct aspath *);
 extern void aspath_print_vty (struct vty *, const char *, struct aspath *, const char *);
 extern void aspath_print_all_vty (struct vty *);

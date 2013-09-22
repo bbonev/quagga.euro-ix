@@ -42,15 +42,18 @@ ecommunity_new (void)
 }
 
 /* Allocate ecommunities.  */
-void
-ecommunity_free (struct ecommunity **ecom)
+extern struct ecommunity*
+ecommunity_free (struct ecommunity *ecom)
 {
-  if ((*ecom)->val)
-    XFREE (MTYPE_ECOMMUNITY_VAL, (*ecom)->val);
-  if ((*ecom)->str)
-    XFREE (MTYPE_ECOMMUNITY_STR, (*ecom)->str);
-  XFREE (MTYPE_ECOMMUNITY, *ecom);
-  ecom = NULL;
+  if (ecom != NULL)
+    {
+      if (ecom->val)
+        XFREE (MTYPE_ECOMMUNITY_VAL, ecom->val);
+      if (ecom->str)
+        XFREE (MTYPE_ECOMMUNITY_STR, ecom->str);
+      XFREE (MTYPE_ECOMMUNITY, ecom);
+    } ;
+  return NULL;
 }
 
 /* Add a new Extended Communities value to Extended Communities
@@ -188,8 +191,23 @@ ecommunity_merge (struct ecommunity *ecom1, struct ecommunity *ecom2)
   return ecom1;
 }
 
-/* Intern Extended Communities Attribute.  */
-struct ecommunity *
+/*------------------------------------------------------------------------------
+ * Intern Extended Communities Attribute.
+ *
+ * Takes responsibility for the given ecom:
+ *
+ *   * if an interned version already exists, will free the given ecom,
+ *     and return the interned copy.
+ *
+ *   * if an interned version does not already exist, places the given
+ *     ecom in the hash, and returns it.
+ *
+ * So... the ecom MUST have been created by ecommunity_new(), and the caller
+ * is no longer responsible for it.
+ *
+ * NB: this MUST NOT be an already interned ecommunity -- so refcnt == 0.
+ */
+extern struct ecommunity *
 ecommunity_intern (struct ecommunity *ecom)
 {
   struct ecommunity *find;
@@ -199,7 +217,7 @@ ecommunity_intern (struct ecommunity *ecom)
   find = (struct ecommunity *) hash_get (ecomhash, ecom, hash_alloc_intern);
 
   if (find != ecom)
-    ecommunity_free (&ecom);
+    ecommunity_free (ecom);
 
   find->refcnt++;
 
@@ -209,25 +227,49 @@ ecommunity_intern (struct ecommunity *ecom)
   return find;
 }
 
-/* Unintern Extended Communities Attribute.  */
-void
-ecommunity_unintern (struct ecommunity **ecom)
+/*------------------------------------------------------------------------------
+ * Reduce references to the given ecommunity.
+ *
+ * Reduce reference count if is > 1, and fin.
+ *
+ * Otherwise: remove the ecommunity from the hash if the reference count == 1
+ *
+ *            free the ecommunity and set *p_ecom = NULL
+ *
+ * Returns:  NULL (unconditionally)
+ *           *p_ecom = NULL iff freed the value
+ */
+extern struct ecommunity *
+ecommunity_unintern (struct ecommunity **p_ecom)
 {
-  struct ecommunity *ret;
+  struct ecommunity *ecom ;
 
-  if ((*ecom)->refcnt)
-    (*ecom)->refcnt--;
+  ecom = *p_ecom ;
 
-  /* Pull off from hash.  */
-  if ((*ecom)->refcnt == 0)
+  if (ecom->refcnt > 1)
+    ecom->refcnt -= 1 ;
+  else
     {
-      /* Extended community must be in the hash.  */
-      ret = (struct ecommunity *) hash_release (ecomhash, *ecom);
-      assert (ret != NULL);
+      if (ecom->refcnt == 1)
+        {
+          /* ecommunity value ecom must exist in hash.
+           */
+          struct ecommunity *ret;
 
-      ecommunity_free (ecom);
-    }
-}
+          ret = (struct ecommunity *) hash_release (ecomhash, ecom);
+          if (ret != ecom)
+            {
+              zlog_err("BUG: failed to find interned ecommunity -- found %s",
+                                 (ret == NULL) ? "nothing" : "something else") ;
+              ecom = NULL ;     /* leaky but safer      */
+            } ;
+        } ;
+
+      *p_ecom = ecommunity_free (ecom);
+    } ;
+
+  return NULL ;
+} ;
 
 /* Utinity function to make hash key.  */
 unsigned int
@@ -517,11 +559,8 @@ ecommunity_str2com (const char *str, int type, int keyword_included)
         case ecommunity_token_rt:
         case ecommunity_token_soo:
           if (! keyword_included || keyword)
-            {
-              if (ecom)
-                ecommunity_free (&ecom);
-              return NULL;
-            }
+            return ecommunity_free (ecom);
+
           keyword = 1;
 
           if (token == ecommunity_token_rt)
@@ -537,11 +576,8 @@ ecommunity_str2com (const char *str, int type, int keyword_included)
           if (keyword_included)
             {
               if (! keyword)
-                {
-                  if (ecom)
-                    ecommunity_free (&ecom);
-                  return NULL;
-                }
+                return ecommunity_free (ecom);
+
               keyword = 0;
             }
           if (ecom == NULL)
@@ -551,9 +587,7 @@ ecommunity_str2com (const char *str, int type, int keyword_included)
           break;
         case ecommunity_token_unknown:
         default:
-          if (ecom)
-            ecommunity_free (&ecom);
-          return NULL;
+          return ecommunity_free (ecom);
         }
     }
   return ecom;

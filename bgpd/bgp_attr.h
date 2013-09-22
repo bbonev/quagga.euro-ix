@@ -105,7 +105,7 @@ struct attr
   struct attr_extra *extra;
 
   /* Reference count of this attribute. */
-  unsigned long refcnt;
+  attr_refcnt_t refcnt;
 
   /* Flag of attribute is set or not. */
   u_int32_t flag;
@@ -122,7 +122,7 @@ struct attr
 /* Router Reflector related structure. */
 struct cluster_list
 {
-  unsigned long refcnt;
+  attr_refcnt_t refcnt;
   int length;
   struct in_addr *list;
 };
@@ -130,7 +130,7 @@ struct cluster_list
 /* Unknown transit attribute. */
 struct transit
 {
-  unsigned long refcnt;
+  attr_refcnt_t refcnt;
   int length;
   u_char *val;
 };
@@ -208,10 +208,6 @@ extern unsigned long int attr_unknown_count (void);
 
 /* Cluster list prototypes. */
 extern int cluster_loop_check (struct cluster_list *, struct in_addr);
-extern void cluster_unintern (struct cluster_list *);
-
-/* Transit attribute prototypes. */
-void transit_unintern (struct transit *);
 
 /* Below exported for unit-test purposes only
  * */

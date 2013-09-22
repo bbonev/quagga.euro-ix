@@ -146,10 +146,14 @@ enum bgp_peer_states
  * Other common types and ....
  */
 
-/* AS Numbers                                                           */
+/* AS Numbers
+ */
 typedef uint32_t as_t ;
 typedef uint16_t as16_t ;       /* we may still encounter 16 Bit asnums */
 
+/* Attribute reference count.
+ */
+typedef ulong attr_refcnt_t ;
 
 /*==============================================================================
  * AFI/SAFI encodings for bgpd

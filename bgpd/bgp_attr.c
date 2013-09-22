@@ -196,12 +196,16 @@ cluster_hash_cmp (const void *p1, const void *p2)
           memcmp (cluster1->list, cluster2->list, cluster1->length) == 0);
 }
 
-static void
+static struct cluster_list *
 cluster_free (struct cluster_list *cluster)
 {
-  if (cluster->list)
-    XFREE (MTYPE_CLUSTER_VAL, cluster->list);
-  XFREE (MTYPE_CLUSTER, cluster);
+  if (cluster != NULL)
+    {
+      if (cluster->list)
+        XFREE (MTYPE_CLUSTER_VAL, cluster->list);
+      XFREE (MTYPE_CLUSTER, cluster);
+    } ;
+  return NULL ;
 }
 
 #if 0
@@ -236,18 +240,51 @@ cluster_intern (struct cluster_list *cluster)
   return find;
 }
 
-void
-cluster_unintern (struct cluster_list *cluster)
+/*------------------------------------------------------------------------------
+ * Reduce references to the given cluster.
+ *
+ * Reduce reference count if is > 1, and fin.
+ *
+ * Otherwise: remove the cluster from the hash if the reference count == 1
+ *
+ *            free the cluster and set *p_cluster = NULL
+ *
+ * Returns:  NULL (unconditionally)
+ *           *p_cluster = NULL iff freed the value
+ */
+static struct cluster_list *
+cluster_unintern (struct cluster_list **p_cluster)
 {
-  if (cluster->refcnt)
-    cluster->refcnt--;
+  struct cluster_list *cluster ;
 
-  if (cluster->refcnt == 0)
+  cluster = *p_cluster ;
+
+  if (cluster->refcnt > 1)
+    cluster->refcnt -= 1 ;
+  else
     {
       hash_release (cluster_hash, cluster);
-      cluster_free (cluster);
-    }
-}
+
+      if (cluster->refcnt == 1)
+        {
+          /* cluster value cluster must exist in hash.
+           */
+          struct cluster_list *ret;
+
+          ret = (struct cluster_list *) hash_release (cluster_hash, cluster) ;
+          if (ret != cluster)
+            {
+              zlog_err("BUG: failed to find interned cluster -- found %s",
+                                 (ret == NULL) ? "nothing" : "something else") ;
+              cluster = NULL ;  /* leaky but safer      */
+            } ;
+        } ;
+
+      *p_cluster = cluster_free (cluster);
+    } ;
+
+  return NULL ;
+} ;
 
 static void
 cluster_init (void)
@@ -265,12 +302,16 @@ cluster_finish (void)
 /* Unknown transit attribute. */
 static struct hash *transit_hash;
 
-static void
+static struct transit *
 transit_free (struct transit *transit)
 {
-  if (transit->val)
-    XFREE (MTYPE_TRANSIT_VAL, transit->val);
-  XFREE (MTYPE_TRANSIT, transit);
+  if (transit != NULL)
+    {
+      if (transit->val)
+        XFREE (MTYPE_TRANSIT_VAL, transit->val);
+      XFREE (MTYPE_TRANSIT, transit);
+    } ;
+  return NULL ;
 }
 
 
@@ -294,17 +335,48 @@ transit_intern (struct transit *transit)
   return find;
 }
 
-void
-transit_unintern (struct transit *transit)
+/*------------------------------------------------------------------------------
+ * Reduce references to the given transit attribute(s).
+ *
+ * Reduce reference count if is > 1, and fin.
+ *
+ * Otherwise: remove the transit from the hash if the reference count == 1
+ *
+ *            free the transit and set *p_transit = NULL
+ *
+ * Returns:  NULL (unconditionally)
+ *           *p_transit = NULL iff freed the value
+ */
+static struct transit *
+transit_unintern (struct transit **p_transit)
 {
-  if (transit->refcnt)
-    transit->refcnt--;
+  struct transit *transit ;
 
-  if (transit->refcnt == 0)
+  transit = *p_transit ;
+
+  if (transit->refcnt > 1)
+    transit->refcnt -= 1 ;
+  else
     {
-      hash_release (transit_hash, transit);
-      transit_free (transit);
-    }
+      if (transit->refcnt == 1)
+        {
+          /* transit value transit must exist in hash.
+           */
+          struct transit *ret;
+
+          ret = (struct transit *) hash_release (transit_hash, transit);
+          if (ret != transit)
+            {
+              zlog_err("BUG: failed to find interned transit -- found %s",
+                                 (ret == NULL) ? "nothing" : "something else") ;
+              transit = NULL ;  /* leaky but safer      */
+            } ;
+        } ;
+
+      *p_transit = transit_free (transit);
+    } ;
+
+  return NULL ;
 }
 
 static unsigned int
@@ -621,7 +693,7 @@ bgp_attr_default_set (struct attr *attr, u_char origin)
 
   attr->origin = origin;
   attr->flag |= ATTR_FLAG_BIT (BGP_ATTR_ORIGIN);
-  attr->aspath = aspath_empty ();
+  attr->aspath = aspath_empty (true /* intern */);
   attr->flag |= ATTR_FLAG_BIT (BGP_ATTR_AS_PATH);
   attr->extra->weight = BGP_ATTR_DEFAULT_WEIGHT;
   attr->flag |= ATTR_FLAG_BIT (BGP_ATTR_NEXT_HOP);
@@ -672,7 +744,7 @@ bgp_attr_aggregate_intern (struct bgp *bgp, u_char origin,
   if (aspath)
     attr.aspath = aspath_intern (aspath);
   else
-    attr.aspath = aspath_empty ();
+    attr.aspath = aspath_empty (true /* intern */);
   attr.flag |= ATTR_FLAG_BIT (BGP_ATTR_AS_PATH);
 
   /* Next hop attribute.  */
@@ -724,11 +796,11 @@ bgp_attr_unintern_sub (struct attr *attr, bool free_extra)
       UNSET_FLAG(attr->flag, BGP_ATTR_EXT_COMMUNITIES);
 
       if (attr->extra->cluster)
-        cluster_unintern (attr->extra->cluster);
+        cluster_unintern (&attr->extra->cluster);
       UNSET_FLAG(attr->flag, BGP_ATTR_CLUSTER_LIST);
 
       if (attr->extra->transit)
-        transit_unintern (attr->extra->transit);
+        transit_unintern (&attr->extra->transit);
 
       if (free_extra)
         bgp_attr_extra_free (attr) ;
@@ -781,9 +853,21 @@ bgp_attr_unintern (struct attr **attr)
         {
           struct attr *ret;
           ret = hash_release (attrhash, *attr);
-          assert (ret != NULL);
-          bgp_attr_extra_free (*attr);
-          XFREE (MTYPE_ATTR, *attr);    /* sets *attr = NULL    */
+
+          if (ret == *attr)
+            {
+              /* OK: can free stuff now.
+               */
+              bgp_attr_extra_free (*attr);
+              XFREE (MTYPE_ATTR, *attr);    /* sets *attr = NULL    */
+            }
+          else
+            {
+              zlog_err("BUG: failed to find interned attr -- found %s",
+                                 (ret == NULL) ? "nothing" : "something else") ;
+              *attr = NULL ;
+              return ;          /* don't make things worse !    */
+            } ;
         } ;
     } ;
 
@@ -809,7 +893,7 @@ bgp_attr_flush (struct attr *attr)
     {
       struct attr_extra *attre = attr->extra;
       if (attre->ecommunity && (attre->ecommunity->refcnt == 0))
-        ecommunity_free (&attre->ecommunity);
+        ecommunity_free (attre->ecommunity);
       if (attre->cluster && (attre->cluster->refcnt == 0))
         cluster_free (attre->cluster);
       if (attre->transit && (attre->transit->refcnt == 0))
@@ -2295,7 +2379,7 @@ bgp_attr_parse (restrict bgp_attr_parser_args args)
  attr_parse_exit:
 
   if (args->as4_path != NULL)
-    aspath_unintern (&args->as4_path);
+    args->as4_path = aspath_unintern (&args->as4_path);
 
   if ((attr_count != 1) || (aret != BGP_ATTR_PARSE_PROCEED))
     args->mp_eor = false ;
@@ -2765,7 +2849,7 @@ bgp_packet_attribute (struct bgp *bgp, struct peer *peer,
     }
 
   if (aspath != attr->aspath)
-    aspath_free (aspath);
+    aspath = aspath_free (aspath);
 
   if ( send_as4_aggregator )
     {

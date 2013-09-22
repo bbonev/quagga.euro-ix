@@ -1428,7 +1428,7 @@ bgp_announce_check (struct bgp_info *ri, struct peer *peer, struct prefix *p,
   if ((sort == BGP_PEER_EBGP)
       && peer_af_flag_check (peer, afi, safi, PEER_FLAG_REMOVE_PRIVATE_AS)
       && aspath_private_as_check (attr->aspath))
-    attr->aspath = aspath_empty_get ();
+    attr->aspath = aspath_empty (false /* !intern */);
 
   /* Route map & unsuppress-map apply.
    */
@@ -1671,7 +1671,7 @@ bgp_announce_check_rsclient (struct bgp_info *ri, struct peer *rsclient,
   if ((peer_sort (rsclient) == BGP_PEER_EBGP) &&
       peer_af_flag_check (rsclient, afi, safi, PEER_FLAG_REMOVE_PRIVATE_AS) &&
       aspath_private_as_check (attr->aspath))
-    attr->aspath = aspath_empty_get ();
+    attr->aspath = aspath_empty (false /* !intern */);
 
   /* Route map & unsuppress-map apply.
    */

@@ -21,11 +21,14 @@ Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
 #ifndef _QUAGGA_BGP_COMMUNITY_H
 #define _QUAGGA_BGP_COMMUNITY_H
 
+#include "lib/misc.h"
+#include "bgpd/bgp_common.h"
+
 /* Communities attribute.  */
 struct community
 {
   /* Reference count of communities value.  */
-  unsigned long refcnt;
+  attr_refcnt_t refcnt;
 
   /* Communities value size.  */
   int size;
@@ -53,11 +56,11 @@ struct community
 /* Prototypes of communities attribute functions.  */
 extern void community_init (void);
 extern void community_finish (void);
-extern void community_free (struct community *);
+extern struct community *community_free (struct community *);
 extern struct community *community_uniq_sort (struct community *);
 extern struct community *community_parse (u_int32_t *, u_short);
 extern struct community *community_intern (struct community *);
-extern void community_unintern (struct community **);
+extern struct community *community_unintern (struct community **);
 extern char *community_str (struct community *);
 extern unsigned int community_hash_make (struct community *);
 extern struct community *community_str2com (const char *);

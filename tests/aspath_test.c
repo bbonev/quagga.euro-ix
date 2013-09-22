@@ -998,7 +998,7 @@ validate (struct aspath *as, const struct test_spec *sp)
 static void
 empty_get_test ()
 {
-  struct aspath *as = aspath_empty_get ();
+  struct aspath *as = aspath_empty (false /* !intern */);
   struct test_spec sp = { "", "", 0, 0, 0, 0, 0, 0 };
 
   printf ("empty_get_test, as: %s\n",aspath_print (as));
@@ -1073,7 +1073,7 @@ empty_prepend_test (struct test_segment *t)
   printf ("empty prepend %s: %s\n", t->name, t->desc);
 
   asp1 = make_aspath (t->asdata, t->len, 0);
-  asp2 = aspath_empty ();
+  asp2 = aspath_empty (true /* intern */);
 
   ascratch = aspath_dup (asp2);
   aspath_unintern (&asp2);
@@ -1142,7 +1142,7 @@ aggregate_test (struct tests *t)
   aspath_unintern (&asp1);
   aspath_unintern (&asp2);
   aspath_free (ascratch);
-/*  aspath_unintern (ascratch);*/
+/*  aspath_unintern (&ascratch);*/
 }
 
 /* cmp_left tests  */

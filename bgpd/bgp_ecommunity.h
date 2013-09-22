@@ -21,6 +21,9 @@ Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
 #ifndef _QUAGGA_BGP_ECOMMUNITY_H
 #define _QUAGGA_BGP_ECOMMUNITY_H
 
+#include "lib/misc.h"
+#include "bgpd/bgp_common.h"
+
 /* High-order octet of the Extended Communities type field.  */
 #define ECOMMUNITY_ENCODE_AS                0x00
 #define ECOMMUNITY_ENCODE_IP                0x01
@@ -45,7 +48,7 @@ Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
 struct ecommunity
 {
   /* Reference counter.  */
-  unsigned long refcnt;
+  attr_refcnt_t refcnt;
 
   /* Size of Extended Communities attribute.  */
   int size;
@@ -67,17 +70,19 @@ struct ecommunity_val
 
 extern void ecommunity_init (void);
 extern void ecommunity_finish (void);
-extern void ecommunity_free (struct ecommunity **);
+extern struct ecommunity *ecommunity_free (struct ecommunity *);
 extern struct ecommunity *ecommunity_parse (u_int8_t *, u_short);
 extern struct ecommunity *ecommunity_dup (struct ecommunity *);
-extern struct ecommunity *ecommunity_merge (struct ecommunity *, struct ecommunity *);
+extern struct ecommunity *ecommunity_merge (struct ecommunity *,
+                                                           struct ecommunity *);
 extern struct ecommunity *ecommunity_intern (struct ecommunity *);
 extern int ecommunity_cmp (const void *, const void *);
-extern void ecommunity_unintern (struct ecommunity **);
+extern struct ecommunity *ecommunity_unintern (struct ecommunity **);
 extern unsigned int ecommunity_hash_make (void *);
 extern struct ecommunity *ecommunity_str2com (const char *, int, int);
 extern char *ecommunity_ecom2str (struct ecommunity *, int);
-extern int ecommunity_match (const struct ecommunity *, const struct ecommunity *);
+extern int ecommunity_match (const struct ecommunity *,
+                                                     const struct ecommunity *);
 extern char *ecommunity_str (struct ecommunity *);
 
 #endif /* _QUAGGA_BGP_ECOMMUNITY_H */
