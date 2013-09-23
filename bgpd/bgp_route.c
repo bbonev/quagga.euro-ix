@@ -1956,9 +1956,9 @@ bgp_process_rsclient (struct work_queue *wq, work_queue_item item)
   struct bgp_info *new_select;
   struct bgp_info *old_select;
   struct bgp_info_pair old_and_new;
-  struct listnode *node, *nnode;
   struct bgp_table *table ;
   struct peer *rsclient ;
+  bool change_select, announce ;
 
   assert(wq->spec.data == item) ;
 
@@ -1990,42 +1990,63 @@ bgp_process_rsclient (struct work_queue *wq, work_queue_item item)
   new_select = old_and_new.new;
   old_select = old_and_new.old;
 
-  if (rsclient->sflags & PEER_STATUS_GROUP)
-    {
-      if (rsclient->group)
-        for (ALL_LIST_ELEMENTS (rsclient->group->peer, node, nnode, rsclient))
-          {
-            /* Nothing to do. */
-            if (old_select && old_select == new_select)
-              if (!(old_select->flags & BGP_INFO_ATTR_CHANGED))
-                continue;
+  announce       = true ;
+  change_select = (new_select != NULL) ;
 
-            if (old_select)
-              bgp_info_unset_flag (rn, old_select, BGP_INFO_SELECTED);
-            if (new_select)
-              {
-                bgp_info_set_flag (rn, new_select, BGP_INFO_SELECTED);
-                bgp_info_unset_flag (rn, new_select, BGP_INFO_ATTR_CHANGED);
-              }
-
-            bgp_process_announce_selected (rsclient, new_select, rn,
-                                           afi, safi);
-          }
-    }
-  else
+  if (old_select != NULL)
     {
-      if (old_select)
-        bgp_info_unset_flag (rn, old_select, BGP_INFO_SELECTED);
-      if (new_select)
+      if (new_select == old_select)
         {
-          bgp_info_set_flag (rn, new_select, BGP_INFO_SELECTED);
-          bgp_info_unset_flag (rn, new_select, BGP_INFO_ATTR_CHANGED);
-        }
-      bgp_process_announce_selected (rsclient, new_select, rn, afi, safi);
-    }
+          /* The selection has not changed.  But the attributes may have.
+           */
+          if (new_select->flags & BGP_INFO_ATTR_CHANGED)
+            bgp_info_unset_flag (rn, new_select, BGP_INFO_ATTR_CHANGED) ;
+          else
+            announce = false ;
 
-  if (old_select && (old_select->flags & BGP_INFO_REMOVED))
-    bgp_info_reap (rn, old_select);
+          change_select = false ;
+        }
+      else
+        {
+          if (old_select->flags & BGP_INFO_REMOVED)
+            bgp_info_reap (rn, old_select);
+          else
+            {
+              bgp_info_unset_flag (rn, old_select, BGP_INFO_SELECTED) ;
+              bgp_info_unset_flag (rn, old_select, BGP_INFO_ATTR_CHANGED) ;
+            } ;
+        } ;
+    } ;
+
+  if (change_select)
+    {
+      bgp_info_set_flag (rn, new_select, BGP_INFO_SELECTED);
+      bgp_info_unset_flag (rn, new_select, BGP_INFO_ATTR_CHANGED);
+    } ;
+
+  if (announce)
+    {
+      if (CHECK_FLAG (rsclient->sflags, PEER_STATUS_GROUP))
+        {
+          struct peer_group *group ;
+
+          group = rsclient->group ;
+
+          if (group != NULL)
+            {
+              struct listnode *node, *nnode;
+
+              for (ALL_LIST_ELEMENTS (group->peer, node, nnode, rsclient))
+                {
+                  if (rsclient->af_group[afi][safi])
+                    bgp_process_announce_selected (rsclient, new_select, rn,
+                                                                    afi, safi) ;
+                } ;
+            }
+        }
+      else
+        bgp_process_announce_selected (rsclient, new_select, rn, afi, safi) ;
+    } ;
 
   bgp_unlock_node (rn);
   bgp_table_unlock (table);     /* NB: *after* node, in case table is deleted */
