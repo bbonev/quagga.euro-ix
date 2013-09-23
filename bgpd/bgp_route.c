@@ -2482,14 +2482,18 @@ bgp_rib_withdraw (struct bgp_node *rn, struct bgp_info *ri, struct peer *peer,
  * Then export and import route-maps for the peer and the rsclient respectively.
  */
 static void
-bgp_update_rsclient (struct peer *rsclient, struct rs_route* rt)
+bgp_update_rsclient (struct peer *rsclient, struct rs_route* rt,
+                                                             bool soft_reconfig)
 {
   struct attr* client_attr ;
   struct bgp *bgp;
   struct bgp_node *rn;
   struct bgp_info *ri;
   const char *reason;
+  const char* how_recv ;
   char buf[SU_ADDRSTRLEN];
+
+  how_recv = soft_reconfig ? "soft-reconfig" : "recv" ;
 
   /* Do not insert announces from a rsclient into its own 'bgp_table'.
    */
@@ -2601,13 +2605,16 @@ bgp_update_rsclient (struct peer *rsclient, struct rs_route* rt)
         {
           bgp_info_unset_flag (rn, ri, BGP_INFO_ATTR_CHANGED);
 
-          if (BGP_DEBUG (update, UPDATE_IN))
-            zlog (rt->peer->log, LOG_DEBUG,
-                    "%s rcvd %s/%d for RS-client %s...duplicate ignored",
-                    rt->peer->host,
+          if (!soft_reconfig)
+            {
+              if (BGP_DEBUG (update, UPDATE_IN))
+                zlog (rt->peer->log, LOG_DEBUG,
+                    "%s %s %s/%d for RS-client %s...duplicate ignored",
+                    rt->peer->host, how_recv,
                     inet_ntop(rt->p->family, &rt->p->u.prefix,
                                                             buf, SU_ADDRSTRLEN),
                     rt->p->prefixlen, rsclient->host);
+            } ;
 
           /* Discard the duplicate interned attributes
            *
@@ -2680,8 +2687,8 @@ bgp_update_rsclient (struct peer *rsclient, struct rs_route* rt)
   /* Received Logging.
    */
   if (BGP_DEBUG (update, UPDATE_IN))
-    zlog (rt->peer->log, LOG_DEBUG, "%s rcvd %s/%d for RS-client %s",
-            rt->peer->host,
+    zlog (rt->peer->log, LOG_DEBUG, "%s %s %s/%d for RS-client %s",
+            rt->peer->host, how_recv,
             inet_ntop(rt->p->family, &rt->p->u.prefix, buf, SU_ADDRSTRLEN),
             rt->p->prefixlen, rsclient->host);
 
@@ -2707,8 +2714,8 @@ filtered:
    */
   if (BGP_DEBUG (update, UPDATE_IN))
         zlog (rt->peer->log, LOG_DEBUG,
-        "%s rcvd UPDATE about %s/%d -- DENIED for RS-client %s due to: %s",
-        rt->peer->host,
+        "%s %s UPDATE about %s/%d -- DENIED for RS-client %s due to: %s",
+        rt->peer->host, how_recv,
         inet_ntop (rt->p->family, &rt->p->u.prefix, buf, SU_ADDRSTRLEN),
         rt->p->prefixlen, rsclient->host, reason);
 
@@ -2776,6 +2783,7 @@ bgp_update_main (struct peer *peer, struct prefix *p, struct attr *attr,
   struct bgp_info *ri;
   struct bgp_info *new;
   const char *reason;
+  const char *how_recv;
   char buf[SU_ADDRSTRLEN];
   bgp_peer_sort_t sort ;
 
@@ -2787,6 +2795,8 @@ bgp_update_main (struct peer *peer, struct prefix *p, struct attr *attr,
   rn = bgp_afi_node_get (bgp->rib[afi][safi], afi, safi, p, prd);
 
   sort = peer_sort(peer) ;
+
+  how_recv = soft_reconfig ? "soft-reconfig" : "recv" ;
 
   /* When peer's soft reconfiguration enabled.  Record input packet in
    * Adj-RIBs-In.
@@ -2926,42 +2936,49 @@ bgp_update_main (struct peer *peer, struct prefix *p, struct attr *attr,
         {
           bgp_info_unset_flag (rn, ri, BGP_INFO_ATTR_CHANGED);
 
-          if ((bgp->af_flags[afi][safi] & BGP_CONFIG_DAMPENING)
-              && (sort == BGP_PEER_EBGP)
-              && (ri->flags & BGP_INFO_HISTORY))
+          if (!soft_reconfig)
             {
-              if (BGP_DEBUG (update, UPDATE_IN))
-                  zlog (peer->log, LOG_DEBUG, "%s rcvd %s/%d",
-                  peer->host,
-                  inet_ntop(p->family, &p->u.prefix, buf, SU_ADDRSTRLEN),
-                  p->prefixlen);
-
-              if (bgp_damp_update (ri, rn, afi, safi) != BGP_DAMP_SUPPRESSED)
+              if ((bgp->af_flags[afi][safi] & BGP_CONFIG_DAMPENING)
+                     && (sort == BGP_PEER_EBGP)
+                     && (ri->flags & BGP_INFO_HISTORY))
                 {
-                  bgp_aggregate_increment (bgp, p, ri, afi, safi);
-                  bgp_process (bgp, rn, afi, safi);
-                }
-            }
-          else /* Duplicate - odd */
-            {
-              if (BGP_DEBUG (update, UPDATE_IN))
-                zlog (peer->log, LOG_DEBUG,
-                "%s rcvd %s/%d...duplicate ignored",
-                peer->host,
-                inet_ntop(p->family, &p->u.prefix, buf, SU_ADDRSTRLEN),
-                p->prefixlen);
+                  if (BGP_DEBUG (update, UPDATE_IN))
+                    zlog (peer->log, LOG_DEBUG, "%s %s %s/%d",
+                          peer->host, how_recv,
+                        inet_ntop(p->family, &p->u.prefix, buf, SU_ADDRSTRLEN),
+                        p->prefixlen);
 
-              /* graceful restart STALE flag unset.
-               */
-              if (ri->flags & BGP_INFO_STALE)
-                {
-                  bgp_info_unset_flag (rn, ri, BGP_INFO_STALE);
-                  bgp_process (bgp, rn, afi, safi);
+                  if (bgp_damp_update (ri, rn, afi, safi)
+                                                        != BGP_DAMP_SUPPRESSED)
+                    {
+                      bgp_aggregate_increment (bgp, p, ri, afi, safi);
+                      bgp_process (bgp, rn, afi, safi);
+                    }
                 }
-            }
+              else /* Duplicate - OK for gr, odd otherwise      */
+                {
+                  bool gr ;
+
+                  /* graceful restart STALE flag unset.
+                   */
+                  gr = (ri->flags & BGP_INFO_STALE) ;
+                  if (gr)
+                    {
+                      bgp_info_unset_flag (rn, ri, BGP_INFO_STALE);
+                      bgp_process (bgp, rn, afi, safi);
+                    }
+
+                  if (BGP_DEBUG (update, UPDATE_IN))
+                    zlog (peer->log, LOG_DEBUG, "%s %s %s/%d, %s",
+                        peer->host, how_recv,
+                        inet_ntop(p->family, &p->u.prefix, buf, SU_ADDRSTRLEN),
+                        p->prefixlen,
+                        gr ? "was stale -- restored as was"
+                           : "repeated route -- odd") ;
+                } ;
+            } ;
 
           bgp_attr_unintern (use_attr);
-
           bgp_unlock_node (rn);
           return 0;
         }
@@ -2971,19 +2988,16 @@ bgp_update_main (struct peer *peer, struct prefix *p, struct attr *attr,
       if (ri->flags & BGP_INFO_REMOVED)
         {
           if (BGP_DEBUG (update, UPDATE_IN))
-            zlog (peer->log, LOG_DEBUG, "%s rcvd %s/%d, "
+            zlog (peer->log, LOG_DEBUG, "%s %s %s/%d, "
                                               "flapped quicker than processing",
-            peer->host,
-            inet_ntop(p->family, &p->u.prefix, buf, SU_ADDRSTRLEN),
-            p->prefixlen);
+                    peer->host, how_recv,
+                    inet_ntop(p->family, &p->u.prefix, buf, SU_ADDRSTRLEN),
+                                                                  p->prefixlen);
           bgp_info_restore (rn, ri);
         }
-
-      /* Received Logging.
-       */
-      if (BGP_DEBUG (update, UPDATE_IN))
-        zlog (peer->log, LOG_DEBUG, "%s rcvd %s/%d",
-              peer->host,
+      else if (BGP_DEBUG (update, UPDATE_IN))
+        zlog (peer->log, LOG_DEBUG, "%s %s %s/%d",
+              peer->host, how_recv,
               inet_ntop(p->family, &p->u.prefix, buf, SU_ADDRSTRLEN),
               p->prefixlen);
 
@@ -3079,10 +3093,10 @@ bgp_update_main (struct peer *peer, struct prefix *p, struct attr *attr,
    */
   if (BGP_DEBUG (update, UPDATE_IN))
     {
-      zlog (peer->log, LOG_DEBUG, "%s rcvd %s/%d",
-            peer->host,
-            inet_ntop(p->family, &p->u.prefix, buf, SU_ADDRSTRLEN),
-            p->prefixlen);
+      zlog (peer->log, LOG_DEBUG, "%s %s %s/%d",
+              peer->host, how_recv,
+              inet_ntop(p->family, &p->u.prefix, buf, SU_ADDRSTRLEN),
+              p->prefixlen);
     }
 
   /* Make new BGP info.
@@ -3145,8 +3159,8 @@ bgp_update_main (struct peer *peer, struct prefix *p, struct attr *attr,
  filtered:
   if (BGP_DEBUG (update, UPDATE_IN))
     zlog (peer->log, LOG_DEBUG,
-          "%s rcvd UPDATE about %s/%d -- DENIED due to: %s",
-          peer->host,
+          "%s %s UPDATE about %s/%d -- DENIED due to: %s",
+          peer->host, how_recv,
           inet_ntop (p->family, &p->u.prefix, buf, SU_ADDRSTRLEN),
           p->prefixlen, reason);
 
@@ -3203,7 +3217,7 @@ bgp_update (struct peer *peer, struct prefix *p, struct attr *attr,
        */
       for (ALL_LIST_ELEMENTS (bgp->rsclient, node, nnode, rsclient))
         if (rsclient->af_flags[afi][safi] & PEER_FLAG_RSERVER_CLIENT)
-          bgp_update_rsclient (rsclient, &rt_s) ;
+          bgp_update_rsclient (rsclient, &rt_s, soft_reconfig) ;
 
       /* Reset the rs_route object -- in particular discard any interned
        * rs_in_attr which may have been created.
@@ -3497,7 +3511,7 @@ bgp_soft_reconfig_table_rsclient (struct peer *rsclient, afi_t afi,
         rt_s.peer      = ain->peer ;
         rt_s.p         = &rn->p ;
 
-        bgp_update_rsclient (rsclient, &rt_s) ;
+        bgp_update_rsclient (rsclient, &rt_s, true /* soft_reconfig */) ;
 
         /* Reset the rs_route object -- which discards any interned rs_in_attr
          * which may have been created and clears the rs_in_applied flag.
