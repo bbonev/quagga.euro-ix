@@ -2603,7 +2603,12 @@ bgp_update_rsclient (struct peer *rsclient, struct rs_route* rt,
                      == (                   BGP_INFO_VALID))
                                         && attrhash_cmp (ri->attr, client_attr))
         {
+#if 0
+          /* BUG: just 'cos we've received the same attr again, does not
+           *      mean there hasn't been a change in the past.
+           */
           bgp_info_unset_flag (rn, ri, BGP_INFO_ATTR_CHANGED);
+#endif
 
           if (!soft_reconfig)
             {
@@ -2934,7 +2939,12 @@ bgp_update_main (struct peer *peer, struct prefix *p, struct attr *attr,
        */
       if (!(ri->flags & BGP_INFO_REMOVED) && attrhash_cmp (ri->attr, use_attr))
         {
+#if 0
+          /* BUG: just 'cos we've received the same attr again, does not
+           *      mean there hasn't been a change in the past.
+           */
           bgp_info_unset_flag (rn, ri, BGP_INFO_ATTR_CHANGED);
+#endif
 
           if (!soft_reconfig)
             {
