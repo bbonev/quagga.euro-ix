@@ -1889,10 +1889,6 @@ bgp_process_announce_selected (struct peer *peer, struct bgp_info *selected,
   struct attr* attr ;
   bool rsclient ;
 
-  rsclient = (peer->af_flags[afi][safi] & PEER_FLAG_RSERVER_CLIENT) ;
-
-  p = &rn->p;
-
   /* Announce route to Established peer.
    */
   if (peer->state != bgp_peer_pEstablished)
@@ -1907,6 +1903,12 @@ bgp_process_announce_selected (struct peer *peer, struct bgp_info *selected,
    */
   if (peer->af_sflags[afi][safi] & PEER_STATUS_ORF_WAIT_REFRESH)
     return ;
+
+  /* Check that can announce this route, run the 'out' filters and
+   * route-maps, then set or unset the addj-out for this peer and prefix.
+   */
+  rsclient = (peer->af_flags[afi][safi] & PEER_FLAG_RSERVER_CLIENT) ;
+  p = &rn->p;
 
   if (selected == NULL)
     attr = NULL ;
@@ -2125,11 +2127,12 @@ bgp_process_main (struct work_queue *wq, work_queue_item item)
       bgp_info_unset_flag (rn, new_select, BGP_INFO_ATTR_CHANGED);
     }
 
-  /* Check each BGP peer.
+  /* Announce to each BGP peer, excluding RS-Clients in this afi/safi.
    */
   for (ALL_LIST_ELEMENTS (bgp->peer, node, nnode, peer))
     {
-      bgp_process_announce_selected (peer, new_select, rn, afi, safi);
+      if (!(peer->af_flags[afi][safi] & PEER_FLAG_RSERVER_CLIENT))
+        bgp_process_announce_selected (peer, new_select, rn, afi, safi);
     }
 
   /* FIB update.
