@@ -835,17 +835,17 @@ bgp_attr_intern_temp(struct attr *attr)
 
 /* Make network statement's attribute.
  *
- * All elements are interned, but not the attribute set itself.
+ * Sub-attr are interned if required.  But the body of the attr is not.
  */
-struct attr *
-bgp_attr_default_set (struct attr *attr, u_char origin)
+extern struct attr *
+bgp_attr_default_set (struct attr *attr, u_char origin, bool intern)
 {
   memset (attr, 0, sizeof (struct attr));
   bgp_attr_extra_get (attr);
 
   attr->origin = origin;
   attr->flag |= ATTR_FLAG_BIT (BGP_ATTR_ORIGIN);
-  attr->aspath = aspath_empty (true /* intern */);
+  attr->aspath = aspath_empty (intern) ;
   attr->flag |= ATTR_FLAG_BIT (BGP_ATTR_AS_PATH);
   attr->extra->weight = BGP_ATTR_DEFAULT_WEIGHT;
   attr->flag |= ATTR_FLAG_BIT (BGP_ATTR_NEXT_HOP);
@@ -862,18 +862,10 @@ struct attr *
 bgp_attr_default_intern (u_char origin)
 {
   struct attr attr;
-  struct attr *new;
 
-  memset (&attr, 0, sizeof (struct attr));
-  bgp_attr_extra_get (&attr);
+  bgp_attr_default_set(&attr, origin, false /* !intern */) ;
 
-  bgp_attr_default_set(&attr, origin);
-
-  new = bgp_attr_intern (&attr);
-  bgp_attr_extra_free (&attr);
-
-  aspath_unintern (&new->aspath);
-  return new;
+  return bgp_attr_intern_temp(&attr);
 }
 
 struct attr *
@@ -882,8 +874,10 @@ bgp_attr_aggregate_intern (struct bgp *bgp, u_char origin,
                            struct community *community, int as_set)
 {
   struct attr attr;
-  struct attr *new;
   struct attr_extra *attre;
+
+  qassert((aspath    == NULL) || (aspath->refcnt    == 0)) ;
+  qassert((community == NULL) || (community->refcnt == 0)) ;
 
   memset (&attr, 0, sizeof (struct attr));
   attre = bgp_attr_extra_get (&attr);
@@ -894,9 +888,9 @@ bgp_attr_aggregate_intern (struct bgp *bgp, u_char origin,
 
   /* AS path attribute. */
   if (aspath)
-    attr.aspath = aspath_intern (aspath);
+    attr.aspath = aspath ;
   else
-    attr.aspath = aspath_empty (true /* intern */);
+    attr.aspath = aspath_empty (false /* !intern */);
   attr.flag |= ATTR_FLAG_BIT (BGP_ATTR_AS_PATH);
 
   /* Next hop attribute.  */
@@ -921,12 +915,8 @@ bgp_attr_aggregate_intern (struct bgp *bgp, u_char origin,
     attre->aggregator_as = bgp->as;
   attre->aggregator_addr = bgp->router_id;
 
-  new = bgp_attr_intern (&attr);
-  bgp_attr_extra_free (&attr);
-
-  aspath_unintern (&new->aspath);
-  return new;
-}
+  return bgp_attr_intern_temp(&attr);
+} ;
 
 /*------------------------------------------------------------------------------
  * Free bgp attribute.

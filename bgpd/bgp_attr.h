@@ -187,7 +187,7 @@ extern struct attr *bgp_attr_intern (struct attr *attr);
 extern struct attr *bgp_attr_intern_temp(struct attr *attr) ;
 extern struct attr *bgp_attr_unintern (struct attr *);
 extern struct attr *bgp_attr_flush (struct attr * attr);
-extern struct attr *bgp_attr_default_set (struct attr *attr, u_char);
+extern struct attr *bgp_attr_default_set (struct attr *attr, u_char, bool);
 extern struct attr *bgp_attr_default_intern (u_char);
 extern struct attr *bgp_attr_aggregate_intern (struct bgp *, u_char,
                                         struct aspath *,

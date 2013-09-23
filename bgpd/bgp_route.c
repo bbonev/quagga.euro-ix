@@ -3181,8 +3181,8 @@ extern void
 bgp_default_originate (struct peer *peer, afi_t afi, safi_t safi, bool withdraw)
 {
   struct bgp *bgp;
-  struct attr attr = { 0 };
-  struct aspath *aspath = { 0 };
+  struct attr  attr_s ;
+  struct attr* attr ;
   struct prefix p;
   struct peer *from;
 
@@ -3192,10 +3192,11 @@ bgp_default_originate (struct peer *peer, afi_t afi, safi_t safi, bool withdraw)
   bgp = peer->bgp;
   from = bgp->peer_self;
 
-  bgp_attr_default_set (&attr, BGP_ORIGIN_IGP);
-  aspath = attr.aspath;
-  attr.local_pref = bgp->default_local_pref;
-  memcpy (&attr.nexthop, &peer->nexthop.v4, IPV4_MAX_BYTELEN);
+  /* We create a temporary set of attributes, with no interned sub-attr.
+   */
+  attr = bgp_attr_default_set (&attr_s, BGP_ORIGIN_IGP, false /* !intern */);
+  attr->local_pref = bgp->default_local_pref;
+  memcpy (&attr->nexthop, &peer->nexthop.v4, IPV4_MAX_BYTELEN);
 
   if (afi == AFI_IP)
     str2prefix ("0.0.0.0/0", &p);
@@ -3203,10 +3204,8 @@ bgp_default_originate (struct peer *peer, afi_t afi, safi_t safi, bool withdraw)
   else if (afi == AFI_IP6)
     {
       struct attr_extra *ae;
-      attr.extra = NULL;
 
-      ae = bgp_attr_extra_get (&attr);
-      attr.extra = ae;
+      ae = bgp_attr_extra_get (attr);
 
       str2prefix ("::/0", &p);
 
@@ -3229,26 +3228,24 @@ bgp_default_originate (struct peer *peer, afi_t afi, safi_t safi, bool withdraw)
     }
 #endif /* HAVE_IPV6 */
 
-  if (peer->default_rmap[afi][safi].name)
+  if ((peer->default_rmap[afi][safi].name != NULL) && !withdraw)
     {
+      /* The attr contains only uninterned sub-attr.
+       *
+       * So can give it directly to the route-map stuff, which will discard
+       * any uninterned sub-attr and replace with uninterned sub-attr if
+       * any sub-attr is changed.
+       */
       struct bgp_info info_s = { 0 } ;
       route_map_result_t ret;
 
       info_s.peer = bgp->peer_self ;
-      info_s.attr = &attr;
-
-      SET_FLAG (bgp->peer_self->rmap_type, PEER_RMAP_TYPE_DEFAULT);
-
+      info_s.attr = attr;
+      info_s.peer->rmap_type = PEER_RMAP_TYPE_DEFAULT ;
       ret = route_map_apply (peer->default_rmap[afi][safi].map, &p,
-                             RMAP_BGP, &info_s);
+                                                            RMAP_BGP, &info_s);
 
-      bgp->peer_self->rmap_type = 0;
-
-      if (ret == RMAP_DENYMATCH)
-        {
-          bgp_attr_flush (&attr);
-          withdraw = 1;
-        }
+      withdraw = (ret == RMAP_DENYMATCH) ;
     }
 
   if (withdraw)
@@ -3259,13 +3256,15 @@ bgp_default_originate (struct peer *peer, afi_t afi, safi_t safi, bool withdraw)
     }
   else
     {
+      /* The attributes are uninterned, and all sub-attributes are.  That
+       * does not matter to bgp_default_update_send().
+       */
       SET_FLAG (peer->af_sflags[afi][safi], PEER_STATUS_DEFAULT_ORIGINATE);
-      bgp_default_update_send (peer, &attr, afi, safi, from);
-    }
+      bgp_default_update_send (peer, attr, afi, safi, from);
+    } ;
 
-  bgp_attr_extra_free (&attr);
-  aspath_unintern (&aspath);
-}
+  bgp_attr_flush(attr) ;
+} ;
 
 /*------------------------------------------------------------------------------
  * For the given table and afi/safi, announce all routes for the given peer.
@@ -4259,7 +4258,6 @@ bgp_static_update_rsclient (struct peer *rsclient, struct prefix *p,
   struct bgp_info *ri;
   struct attr static_attr_s ;
   struct attr* static_attr ;
-  struct attr* client_attr ;
   struct rs_route rt_s ;
   struct bgp *bgp;
   char buf[SU_ADDRSTRLEN];
@@ -4274,11 +4272,11 @@ bgp_static_update_rsclient (struct peer *rsclient, struct prefix *p,
 
   /* Construct the static route attributes.
    *
-   * Starts with an empty aspath, which is interned.  No other elements are
-   * interned and the object itself is not interned.
+   * The static_attr contains no interned sub-attr, so can be passed through
+   * the route-map directly.
    */
-  static_attr = &static_attr_s ;
-  bgp_attr_default_set (static_attr, BGP_ORIGIN_IGP);
+  static_attr = bgp_attr_default_set (&static_attr_s, BGP_ORIGIN_IGP,
+                                                          false /* !intern */) ;
 
   static_attr->nexthop = bgp_static->igpnexthop;
   static_attr->med     = bgp_static->igpmetric;
@@ -4295,56 +4293,41 @@ bgp_static_update_rsclient (struct peer *rsclient, struct prefix *p,
   if (bgp_static->rmap.name)
     {
       struct bgp_info info_s = { 0 } ;
-      struct attr  rmap_attr_s ;
-      struct attr* rmap_attr ;
       route_map_result_t ret;
-
-      rmap_attr = &rmap_attr_s ;
-      bgp_attr_dup(rmap_attr, static_attr) ;
 
       info_s.peer = rsclient ;
       info_s.attr = static_attr ;
-
       info_s.peer->rmap_type = PEER_RMAP_TYPE_EXPORT | PEER_RMAP_TYPE_NETWORK ;
       ret = route_map_apply (bgp_static->rmap.map, p, RMAP_BGP, &info_s);
 
       if (ret == RMAP_DENYMATCH)
         {
-          /* Free uninterned attribute.
+          /* Discard the manufactured static_attr, and anything which the
+           * route-map has added.
+           *
+           * Note that we start with an interned aspath.
+           *
+           * NB: if anything else were to be added
            */
-          bgp_attr_flush (rmap_attr) ;
-          bgp_attr_extra_free (rmap_attr);
-
-          /* Unintern original.
-           */
-          aspath_unintern (&static_attr->aspath);
-          bgp_attr_extra_free (static_attr);
+          bgp_attr_flush (static_attr);
 
           bgp_static_withdraw_rsclient (bgp, rsclient, p, afi, safi);
 
           return;
         } ;
+    } ;
 
-      client_attr = bgp_attr_intern(rmap_attr) ;
-      bgp_attr_extra_free (rmap_attr) ;
-    }
-  else
-    client_attr = bgp_attr_intern (static_attr) ;
-
-  /* Have now finished with the static_attr
-   */
-  aspath_unintern (&static_attr->aspath);
-  bgp_attr_extra_free (static_attr);
+  static_attr = bgp_attr_intern_temp(static_attr) ;
 
   /* run the import route-map for the rsclient.
    */
   bgp_rs_route_init(&rt_s, afi, safi, NULL, bgp->peer_self, p,
                                 ZEBRA_ROUTE_BGP, BGP_ROUTE_NORMAL, NULL, NULL) ;
 
-  client_attr = bgp_import_modifier (rsclient, &rt_s, client_attr,
+  static_attr = bgp_import_modifier (rsclient, &rt_s, static_attr,
                                                        PEER_RMAP_TYPE_NETWORK) ;
 
-  if (client_attr == NULL)
+  if (static_attr == NULL)
     {
       /* This BGP update is filtered.  Log the reason then update BGP entry.
        */
@@ -4369,12 +4352,12 @@ bgp_static_update_rsclient (struct peer *rsclient, struct prefix *p,
 
   if (ri)
     {
-      if (attrhash_cmp (ri->attr, client_attr) &&
+      if (attrhash_cmp (ri->attr, static_attr) &&
                                                !(ri->flags & BGP_INFO_REMOVED))
         {
           /* No point duplicating
            */
-          bgp_attr_unintern (client_attr);
+          bgp_attr_unintern (static_attr);
         }
       else
         {
@@ -4388,7 +4371,7 @@ bgp_static_update_rsclient (struct peer *rsclient, struct prefix *p,
             bgp_info_restore(rn, ri);
 
           bgp_attr_unintern (ri->attr);
-          ri->attr   = client_attr ;
+          ri->attr   = static_attr ;
           ri->uptime = bgp_clock ();
 
           /* Process change.
@@ -4406,7 +4389,7 @@ bgp_static_update_rsclient (struct peer *rsclient, struct prefix *p,
   ri->type     = rt_s.type ;
   ri->sub_type = rt_s.sub_type ;
   ri->peer     = rt_s.peer ;
-  ri->attr     = client_attr ;
+  ri->attr     = static_attr ;
   ri->uptime   = bgp_clock ();
 
   SET_FLAG (ri->flags, BGP_INFO_VALID);
@@ -4431,8 +4414,8 @@ bgp_static_update_main (struct bgp *bgp, struct prefix *p,
   struct bgp_node *rn;
   struct bgp_info *ri;
   struct bgp_info *new;
-  struct attr attr = { 0 };
-  struct attr *attr_new;
+  struct attr static_attr_s ;
+  struct attr* static_attr ;
 
   assert (bgp_static);
   if (!bgp_static)
@@ -4440,46 +4423,41 @@ bgp_static_update_main (struct bgp *bgp, struct prefix *p,
 
   rn = bgp_afi_node_get (bgp->rib[afi][safi], afi, safi, p, NULL);
 
-  bgp_attr_default_set (&attr, BGP_ORIGIN_IGP);
+  static_attr = bgp_attr_default_set (&static_attr_s, BGP_ORIGIN_IGP,
+                                                          false /* !intern */) ;
 
-  attr.nexthop = bgp_static->igpnexthop;
-  attr.med = bgp_static->igpmetric;
-  attr.flag |= ATTR_FLAG_BIT (BGP_ATTR_MULTI_EXIT_DISC);
+  static_attr->nexthop = bgp_static->igpnexthop;
+  static_attr->med = bgp_static->igpmetric;
+  static_attr->flag |= ATTR_FLAG_BIT (BGP_ATTR_MULTI_EXIT_DISC);
 
   if (bgp_static->atomic)
-    attr.flag |= ATTR_FLAG_BIT (BGP_ATTR_ATOMIC_AGGREGATE);
+    static_attr->flag |= ATTR_FLAG_BIT (BGP_ATTR_ATOMIC_AGGREGATE);
 
   /* Apply route-map.
    */
   if (bgp_static->rmap.name)
     {
-      struct attr attr_tmp = attr;
       struct bgp_info info_s = { 0 } ;
       route_map_result_t ret;
 
       info_s.peer = bgp->peer_self;
-      info_s.attr = &attr_tmp ;
+      info_s.attr = static_attr ;
 
       info_s.peer->rmap_type = PEER_RMAP_TYPE_NETWORK ;
       ret = route_map_apply (bgp_static->rmap.map, p, RMAP_BGP, &info_s);
 
       if (ret == RMAP_DENYMATCH)
         {
-          /* Free uninterned attribute.
+          /* Discard temporary attributes
            */
-          bgp_attr_flush (&attr_tmp);
+          bgp_attr_flush (static_attr);
 
-          /* Unintern original.
-           */
-          aspath_unintern (&attr.aspath);
-          bgp_attr_extra_free (&attr);
           bgp_static_withdraw (bgp, p, afi, safi);
           return;
-        }
-      attr_new = bgp_attr_intern (&attr_tmp);
-    }
-  else
-    attr_new = bgp_attr_intern (&attr);
+        } ;
+    } ;
+
+  static_attr = bgp_attr_intern_temp(static_attr);
 
   for (ri = rn->info; ri; ri = ri->info_next)
     if ((ri->peer == bgp->peer_self) && (ri->type == ZEBRA_ROUTE_BGP)
@@ -4488,12 +4466,11 @@ bgp_static_update_main (struct bgp *bgp, struct prefix *p,
 
   if (ri)
     {
-      if (attrhash_cmp (ri->attr, attr_new) && !(ri->flags & BGP_INFO_REMOVED))
+      if (attrhash_cmp (ri->attr, static_attr) &&
+                                                !(ri->flags & BGP_INFO_REMOVED))
         {
           bgp_unlock_node (rn);
-          bgp_attr_unintern (attr_new);
-          aspath_unintern (&attr.aspath);
-          bgp_attr_extra_free (&attr);
+          bgp_attr_unintern (static_attr);
           return;
         }
       else
@@ -4509,7 +4486,7 @@ bgp_static_update_main (struct bgp *bgp, struct prefix *p,
           else
             bgp_aggregate_decrement (bgp, p, ri, afi, safi);
           bgp_attr_unintern (ri->attr);
-          ri->attr = attr_new;
+          ri->attr = static_attr;
           ri->uptime = bgp_clock ();
 
           /* Process change.
@@ -4517,8 +4494,6 @@ bgp_static_update_main (struct bgp *bgp, struct prefix *p,
           bgp_aggregate_increment (bgp, p, ri, afi, safi);
           bgp_process (bgp, rn, afi, safi);
           bgp_unlock_node (rn);
-          aspath_unintern (&attr.aspath);
-          bgp_attr_extra_free (&attr);
           return;
         }
     }
@@ -4530,7 +4505,7 @@ bgp_static_update_main (struct bgp *bgp, struct prefix *p,
   new->sub_type = BGP_ROUTE_STATIC;
   new->peer = bgp->peer_self;
   SET_FLAG (new->flags, BGP_INFO_VALID);
-  new->attr = attr_new;
+  new->attr = static_attr;
   new->uptime = bgp_clock ();
 
   /* Aggregate address increment.
@@ -4548,11 +4523,6 @@ bgp_static_update_main (struct bgp *bgp, struct prefix *p,
   /* Process change.
    */
   bgp_process (bgp, rn, afi, safi);
-
-  /* Unintern original.
-   */
-  aspath_unintern (&attr.aspath);
-  bgp_attr_extra_free (&attr);
 }
 
 void
@@ -5780,7 +5750,8 @@ bgp_aggregate_decrement (struct bgp *bgp, struct prefix *p,
 
   child = bgp_node_get (bgp->aggregate[afi][safi], p);
 
-  /* Aggregate address configuration check. */
+  /* Aggregate address configuration check.
+   */
   for (rn = child; rn; rn = rn->parent)
     if ((aggregate = rn->info) != NULL && rn->p.prefixlen < p->prefixlen)
       {
@@ -5885,7 +5856,8 @@ bgp_aggregate_add (struct bgp *bgp, struct prefix *p, afi_t afi, safi_t safi,
       new->sub_type = BGP_ROUTE_AGGREGATE;
       new->peer = bgp->peer_self;
       SET_FLAG (new->flags, BGP_INFO_VALID);
-      new->attr = bgp_attr_aggregate_intern (bgp, origin, aspath, community, aggregate->as_set);
+      new->attr = bgp_attr_aggregate_intern (bgp, origin, aspath, community,
+                                                             aggregate->as_set);
       new->uptime = bgp_clock ();
 
       bgp_info_add (rn, new);
@@ -6408,7 +6380,8 @@ ALIAS (no_ipv6_aggregate_address_summary_only,
        "Filter more specific routes from updates\n")
 #endif /* HAVE_IPV6 */
 
-/* Redistribute route treatment. */
+/* Redistribute route treatment.
+ */
 void
 bgp_redistribute_add (struct prefix *p, const struct in_addr *nexthop,
                       const struct in6_addr *nexthop6,
@@ -6416,30 +6389,35 @@ bgp_redistribute_add (struct prefix *p, const struct in_addr *nexthop,
 {
   struct bgp *bgp;
   struct listnode *node, *nnode;
-  struct bgp_info *new;
   struct bgp_info *bi;
   struct bgp_node *bn;
-  struct attr attr = { 0 };
-  struct attr attr_new = { 0 };
-  struct attr *new_attr;
+  struct attr  attr_s;
+  struct attr* attr ;
+  struct attr  attr_new_s ;
+  struct attr* attr_new ;
   afi_t afi;
 
-  /* Make default attribute. */
-  bgp_attr_default_set (&attr, BGP_ORIGIN_INCOMPLETE);
+  /* Make default attribute.
+   *
+   * NB: the attr itself is not interned, but all sub-attr are.  So, when
+   *     we are finished with the attr, we can uninterm same.
+   */
+  attr = bgp_attr_default_set (&attr_s, BGP_ORIGIN_INCOMPLETE,
+                                                           true /* !intern */) ;
   if (nexthop)
-    attr.nexthop = *nexthop;
+    attr->nexthop = *nexthop;
 
 #ifdef HAVE_IPV6
   if (nexthop6)
     {
-      struct attr_extra *extra = bgp_attr_extra_get(&attr);
+      struct attr_extra *extra = bgp_attr_extra_get(attr);
       extra->mp_nexthop_global = *nexthop6;
       extra->mp_nexthop_len = 16;
     }
 #endif
 
-  attr.med = metric;
-  attr.flag |= ATTR_FLAG_BIT (BGP_ATTR_MULTI_EXIT_DISC);
+  attr->med = metric;
+  attr->flag |= ATTR_FLAG_BIT (BGP_ATTR_MULTI_EXIT_DISC);
 
   for (ALL_LIST_ELEMENTS (bm->bgp, node, nnode, bgp))
     {
@@ -6447,43 +6425,41 @@ bgp_redistribute_add (struct prefix *p, const struct in_addr *nexthop,
 
       if (bgp->redist[afi][type])
         {
-          /* Copy attribute for modification. */
-          bgp_attr_dup (&attr_new, &attr);
+          /* Copy attribute for modification.
+           */
+          attr_new = bgp_attr_dup (&attr_new_s, attr);
 
           if (bgp->redist_metric_flag[afi][type])
-            attr_new.med = bgp->redist_metric[afi][type];
+            attr_new->med = bgp->redist_metric[afi][type];
 
-          /* Apply route-map. */
+          /* Apply route-map.
+           */
           if (bgp->rmap[afi][type].map)
             {
               struct bgp_info info_s = { 0 } ;
               route_map_result_t ret;
 
               info_s.peer = bgp->peer_self;
-              info_s.attr = &attr_new;
+              info_s.attr = attr_new;
               info_s.peer->rmap_type = PEER_RMAP_TYPE_REDISTRIBUTE ;
               ret = route_map_apply (bgp->rmap[afi][type].map, p, RMAP_BGP,
                                                                        &info_s);
 
               if (ret == RMAP_DENYMATCH)
                 {
-                  /* Free uninterned attribute. */
-                  bgp_attr_flush (&attr_new);
-                  bgp_attr_extra_free (&attr_new);
+                  /* Free temporary attribute.
+                   */
+                  bgp_attr_flush (attr_new);
 
-                  /* Unintern original. */
-                  aspath_unintern (&attr.aspath);
-                  bgp_attr_extra_free (&attr);
                   bgp_redistribute_delete (p, type);
-                  return;
+                  continue ;
                 }
             }
 
+          attr_new = bgp_attr_intern_temp(attr_new);
+
           bn = bgp_afi_node_get (bgp->rib[afi][SAFI_UNICAST],
                                  afi, SAFI_UNICAST, p, NULL);
-
-          new_attr = bgp_attr_intern (&attr_new);
-          bgp_attr_extra_free (&attr_new);
 
           for (bi = bn->info; bi; bi = bi->info_next)
             if (bi->peer == bgp->peer_self
@@ -6492,58 +6468,59 @@ bgp_redistribute_add (struct prefix *p, const struct in_addr *nexthop,
 
           if (bi)
             {
-              if (attrhash_cmp (bi->attr, new_attr) &&
+              if (attrhash_cmp (bi->attr, attr_new) &&
                   !CHECK_FLAG(bi->flags, BGP_INFO_REMOVED))
                 {
-                  bgp_attr_unintern (new_attr);
-                  aspath_unintern (&attr.aspath);
-                  bgp_attr_extra_free (&attr);
-                  bgp_unlock_node (bn);
-                  return;
+                  bgp_attr_unintern (attr_new);
                 }
               else
                 {
-                  /* The attribute is changed. */
+                  /* The attribute is changed.
+                   */
                   bgp_info_set_flag (bn, bi, BGP_INFO_ATTR_CHANGED);
 
-                  /* Rewrite BGP route information. */
+                  /* Rewrite BGP route information.
+                   */
                   if (CHECK_FLAG(bi->flags, BGP_INFO_REMOVED))
                     bgp_info_restore(bn, bi);
                   else
                     bgp_aggregate_decrement (bgp, p, bi, afi, SAFI_UNICAST);
                   bgp_attr_unintern (bi->attr);
-                  bi->attr = new_attr;
+                  bi->attr = attr_new;
                   bi->uptime = bgp_clock ();
 
-                  /* Process change. */
+                  /* Process change.
+                   */
                   bgp_aggregate_increment (bgp, p, bi, afi, SAFI_UNICAST);
                   bgp_process (bgp, bn, afi, SAFI_UNICAST);
-                  bgp_unlock_node (bn);
-                  aspath_unintern (&attr.aspath);
-                  bgp_attr_extra_free (&attr);
-                  return;
                 }
             }
+          else
+            {
+              struct bgp_info *new;
 
-          new = bgp_info_new ();
-          new->type = type;
-          new->sub_type = BGP_ROUTE_REDISTRIBUTE;
-          new->peer = bgp->peer_self;
-          SET_FLAG (new->flags, BGP_INFO_VALID);
-          new->attr = new_attr;
-          new->uptime = bgp_clock ();
+              new = bgp_info_new ();
+              new->type = type;
+              new->sub_type = BGP_ROUTE_REDISTRIBUTE;
+              new->peer = bgp->peer_self;
+              SET_FLAG (new->flags, BGP_INFO_VALID);
+              new->attr = attr_new;
+              new->uptime = bgp_clock ();
 
-          bgp_aggregate_increment (bgp, p, new, afi, SAFI_UNICAST);
-          bgp_info_add (bn, new);
+              bgp_aggregate_increment (bgp, p, new, afi, SAFI_UNICAST);
+              bgp_info_add (bn, new);
+              bgp_process (bgp, bn, afi, SAFI_UNICAST);
+            } ;
+
           bgp_unlock_node (bn);
-          bgp_process (bgp, bn, afi, SAFI_UNICAST);
         }
     }
 
   /* Unintern original.
    */
-  aspath_unintern (&attr.aspath);
-  bgp_attr_extra_free (&attr);
+  qassert(attr->refcnt == 0) ;
+  attr->refcnt = 0 ;                    /* belt-and-braces      */
+  bgp_attr_unintern(attr) ;
 }
 
 void
