@@ -80,6 +80,8 @@ struct bgp_info
 #define BGP_INFO_REMOVED        (1 << 9)
 #define BGP_INFO_COUNTED        (1 << 10)
 
+#define BGP_INFO_REAPED         (1 << 15)
+
   /* BGP route type.  This can be static, RIP, OSPF, BGP etc.  */
   u_char type;
 

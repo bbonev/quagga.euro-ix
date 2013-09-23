@@ -223,8 +223,10 @@ extern void bgp_adj_in_set (struct bgp_node *, struct peer *, struct attr *);
 extern void bgp_adj_in_unset (struct bgp_node *, struct peer *);
 extern void bgp_adj_in_remove (struct bgp_node *, struct bgp_adj_in *);
 
-extern struct bgp_advertise *
-bgp_advertise_clean (struct peer *, struct bgp_adj_out *, afi_t, safi_t);
+extern struct bgp_advertise* bgp_advertise_unset(struct bgp_advertise * adv,
+                     struct peer *peer, afi_t afi, safi_t safi, bool free_adv) ;
+extern struct bgp_advertise* bgp_advertise_redux(struct bgp_advertise * adv,
+                                    struct peer *peer, afi_t afi, safi_t safi) ;
 
 extern void bgp_sync_init (struct peer *);
 extern void bgp_sync_delete (struct peer *);

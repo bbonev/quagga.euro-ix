@@ -42,19 +42,35 @@ Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
  *
  * The bgp_advertise (adv) object belongs to its related bgp_adj_out.  The adv
  * object lives on the peer's sync[afi][safi]->update or ->withdraw queue,
- * and represents the need to advertise a new state for the prefix.  Whenever
- * the bgp_adj_out changes, any related adv is dismantled and recreated as
- * necessary.
+ * and represents the need to advertise a new state for the prefix.
  *
  * The bgp_advertise_attr (baa) belongs to the current set of adv objects
  * which share the same attr to be advertised.  The baa holds the pointer to
  * the interned attr, but does not itself hold a refcnt -- each adv which is
  * a member of the set owns their own refcnt.
+ *
+ * The baa also lives in a hash attached to the peer for the relevant afi/safi.
+ *
+ * The adv bgp_advertise (adv) structure owns a lock on:
+ *
+ *   * the bgp_node  -- so can get at the prefix and any route distinguisher.
+ *
+ *   * the bgp_info  -- so that cannot suddenly disappear, BUT it may be
+ *                      cleared down between now and when the adv is actually
+ *                      executed.
+ *
+ * NB: the bgp_advertise (adv) structure only exists while there is a related
+ *     adj-out entry.
+ *
+ *     If the adj-out is changed (set or unset) the adv is removed from any
+ *     advertisement scheduling.
+ *
+ *     When an advertisement is executed, it is discarded and unpicked from its
+ *     adj-out.
+ *
+ *     So, there can be no dangling references.
  */
 
-/* BGP advertise attribute is used for pack same attribute update into
-   one packet.  To do that we maintain attribute hash in struct
-   peer.  */
 static struct bgp_advertise_attr *
 baa_new (void)
 {
@@ -96,23 +112,42 @@ baa_hash_cmp (const void *p1, const void *p2)
   return attrhash_cmp (baa1->attr, baa2->attr);
 }
 
-/* BGP update and withdraw information is stored in BGP advertise
-   structure.  This structure is referred from BGP adjacency
-   information.  */
+/*------------------------------------------------------------------------------
+ * Set adv structure (creating if required).
+ *
+ * If given an existing adv structure, that MUST be attached to the adj,
+ * already.
+ *
+ * Takes a lock on the bgp_node and any bgp_info.
+ *
+ * Returns:  given or new bgp_advertise structure.
+ *
+ * NB: adv->baa == NULL.
+ */
 static struct bgp_advertise *
-bgp_advertise_new (void)
+bgp_advertise_set (struct bgp_advertise * adv, struct bgp_node* rn,
+                                   struct bgp_adj_out* adj, struct bgp_info* ri)
 {
-  return (struct bgp_advertise *)
-    XCALLOC (MTYPE_BGP_ADVERTISE, sizeof (struct bgp_advertise));
-}
+  if (adv != NULL)
+    {
+      assert((adv->adj == adj) && (adj->adv == adv)) ;
+      memset(adv, 0, sizeof(struct bgp_advertise)) ;
+    }
+  else
+    {
+      adv = XCALLOC (MTYPE_BGP_ADVERTISE, sizeof (struct bgp_advertise)) ;
+    } ;
 
-static void
-bgp_advertise_free (struct bgp_advertise *adv)
-{
-  if (adv->binfo)
-    bgp_info_unlock (adv->binfo); /* bgp_advertise bgp_info reference */
-  XFREE (MTYPE_BGP_ADVERTISE, adv);
-}
+  adv->adj = adj ;
+  adj->adv = adv ;
+
+  adv->rn = bgp_lock_node(rn) ;
+
+  if (ri != NULL)
+    adv->binfo = bgp_info_lock (ri) ;
+
+  return adv ;
+} ;
 
 static void
 bgp_advertise_add (struct bgp_advertise_attr *baa,
@@ -210,39 +245,142 @@ bgp_advertise_unintern (struct hash *hash, struct bgp_advertise_attr *baa)
     bgp_attr_unintern(attr) ;
 } ;
 
-struct bgp_advertise *
-bgp_advertise_clean (struct peer *peer, struct bgp_adj_out *adj,
-                     afi_t afi, safi_t safi)
+/*------------------------------------------------------------------------------
+ * Annul the given adv:
+ *
+ *   - remove from the fifo it is on.
+ *
+ *   - clear pointer to bpp_info and lock on same, if any
+ *
+ *   - clear bgp_advertise_attr, if any
+ *
+ * The result is, effectively, an adv that can be scheduled as a withdraw.
+ *
+ * Still has:
+ *
+ *   * adv->rn and lock on same
+ *
+ *   * adv>adj and adj->adv still in place.
+ *
+ * Returns:  the (new) current head of the baa list of adv which share the
+ *           same attr.  NULL if none (or no baa !).
+ */
+static struct bgp_advertise *
+bgp_advertise_annul(struct bgp_advertise* adv, struct peer *peer, afi_t afi,
+                                                                   safi_t safi)
 {
-  struct bgp_advertise *adv;
   struct bgp_advertise_attr *baa;
   struct bgp_advertise *next;
 
-  adv = adj->adv;
-  baa = adv->baa;
-  next = NULL;
-
-  if (baa)
-    {
-      /* Unlink myself from advertise attribute FIFO.  */
-      bgp_advertise_delete (baa, adv);
-
-      /* Fetch next advertise candidate. */
-      next = baa->base.head ;
-
-      /* Unintern BGP advertise attribute.  */
-      bgp_advertise_unintern (peer->hash[afi][safi], baa);
-    }
-
-  /* Unlink myself from advertisement FIFO.  */
+  /* Unlink myself from advertisement FIFO.
+   */
   bgp_advertise_fifo_del(adv);
 
-  /* Free memory.  */
-  bgp_advertise_free (adj->adv);
-  adj->adv = NULL;
+  if (adv->binfo != NULL)
+    {
+      bgp_info_unlock(adv->binfo) ;
+      adv->binfo = NULL ;
+    } ;
+
+  if ((baa = adv->baa) == NULL)
+    next = NULL;
+  else
+    {
+      /* Unlink myself from advertise attribute FIFO.
+       */
+      bgp_advertise_delete (baa, adv) ;
+      adv->baa = NULL ;
+
+      /* Fetch next advertise candidate.
+       */
+      next = baa->base.head ;
+
+      /* Unintern BGP advertise attribute.
+       */
+      bgp_advertise_unintern (peer->hash[afi][safi], baa) ;
+    } ;
+
+  return next ;
+}
+
+/*------------------------------------------------------------------------------
+ * Discard the bgp_advertise (adv) object currently associated with
+ *                                                  the given bgp_adj_out (adj).
+ *
+ * If there is a bgp_advertise_attr (baa) object associated with the adv object,
+ * unpick it from there first.  If the baa becomes empty, that will be freed
+ * automagically.
+ *
+ * If there is another adv associated with the baa (if any) return that (for
+ * the benefit of the sending of updates).
+ *
+ * Release lock on the bgp_info (if any) and clear pointer to it.
+ *
+ * Release lock on the bgp_node, and clear pointer to it.
+ *
+ * If required, free the adv object, and set adj->adv NULL.  Otherwise, leave
+ * the adv->adj and the adj->adv pointing at each other.
+ *
+ * Note: removes the adv from the fifo it is attached to.  So, if is about to
+ *       advertise in a new way, that's a new advertisement, scheduled anew.
+ *
+ * Note: this has no effect on the adj->attr, which are not considered here.
+ *
+ * Returns:  the (new) current head of the baa list of adv which share the
+ *           same attr.  NULL if none (or no baa !).
+ */
+extern struct bgp_advertise *
+bgp_advertise_unset(struct bgp_advertise * adv, struct peer *peer,
+                                          afi_t afi, safi_t safi, bool free_adv)
+{
+  struct bgp_adj_out *adj;
+  struct bgp_advertise *next;
+
+  adj = adv->adj ;
+  assert(adj->adv == adv) ;
+
+  next = bgp_advertise_annul(adv, peer, afi, safi) ;
+
+  if (adv->rn != NULL)          /* should be there, but cope    */
+    bgp_unlock_node(adv->rn) ;
+
+  /* Free memory if required.
+   */
+  if (free_adv)
+    {
+      XFREE (MTYPE_BGP_ADVERTISE, adv);
+      adj->adv = NULL ;
+    } ;
 
   return next;
-}
+} ;
+
+/*------------------------------------------------------------------------------
+ * Take update adv and reinvent as a (real) withdraw.
+ *
+ * This takes the given adv off the update fifo, discards the bgp_info and the
+ * the bgp_advertise_attr, and reschedules as a withdraw.
+ *
+ * Returns:  the (new) current head of the baa list of adv which share the
+ *           same attr.  NULL if none (or no baa !).
+ */
+extern struct bgp_advertise*
+bgp_advertise_redux(struct bgp_advertise * adv,
+                                      struct peer *peer, afi_t afi, safi_t safi)
+{
+  struct bgp_advertise *next;
+
+  qassert(adv->adj->adv == adv) ;
+  qassert(adv->rn    != NULL) ;
+  qassert(adv->baa   != NULL) ;
+  qassert(adv->binfo != NULL) ;
+
+  next = bgp_advertise_annul(adv, peer, afi, safi) ;
+
+  bgp_advertise_fifo_add(&peer->sync[afi][safi]->withdraw, adv) ;
+
+  return next ;
+} ;
 
 /*==============================================================================
  * Adj-Out Handling
@@ -298,7 +436,7 @@ bgp_adj_out_set (struct bgp_node *rn, struct peer *peer, struct prefix *p,
                  struct attr *attr, afi_t afi, safi_t safi,
                  struct bgp_info *binfo)
 {
-  struct bgp_adj_out*   adj = NULL;
+  struct bgp_adj_out*   adj;
   struct bgp_adj_out**  adj_out_head ;
   struct bgp_advertise *adv;
 
@@ -310,7 +448,6 @@ bgp_adj_out_set (struct bgp_node *rn, struct peer *peer, struct prefix *p,
     {
       bool rsclient ;
 
-      qassert(attr != NULL) ;
       qassert(bgp_attr_is_interned(attr)) ;
 
       rsclient = (peer->af_flags[afi][safi] & PEER_FLAG_RSERVER_CLIENT) ;
@@ -332,15 +469,20 @@ bgp_adj_out_set (struct bgp_node *rn, struct peer *peer, struct prefix *p,
     } ;
 
   if (DISABLE_BGP_ANNOUNCE)
-    return;
+    {
+      bgp_attr_unintern(attr) ;
+      return;
+    } ;
 
   /* Look for adjacency information.
    */
   for (adj = rn->adj_out; adj; adj = adj->adj_next)
     if (adj->peer == peer)
-          break;
+      break;
 
-  if (adj == NULL)
+  if (adj != NULL)
+    adv = adj->adv ;
+  else
     {
       adj = XCALLOC (MTYPE_BGP_ADJ_OUT, sizeof (struct bgp_adj_out));
 
@@ -365,6 +507,8 @@ bgp_adj_out_set (struct bgp_node *rn, struct peer *peer, struct prefix *p,
       if (rn->adj_out != NULL)
         rn->adj_out->adj_prev = adj ;
       rn->adj_out = adj ;
+
+      adv = NULL ;
     } ;
 
   /* The adj_out contains:  pointer to owner peer, and list pointers for same
@@ -378,25 +522,17 @@ bgp_adj_out_set (struct bgp_node *rn, struct peer *peer, struct prefix *p,
    * The adj->attr are those actually sent to the peer, so we don't care about
    * those here.
    */
-  if (adj->adv)
-    bgp_advertise_clean (peer, adj, afi, safi);
+  if (adv != NULL)
+    {
+      assert(adv->adj == adj) ;
+      bgp_advertise_unset (adv, peer, afi, safi, false /* !free_adv */);
+    } ;
 
-  adj->adv = bgp_advertise_new ();
+  adv = bgp_advertise_set (adv, rn, adj, binfo) ;
 
-  adv = adj->adv;
-  adv->rn = rn;
-
-  assert (adv->binfo == NULL);
-  adv->binfo = bgp_info_lock (binfo); /* bgp_info adj_out reference */
-
-  if (attr)
-    adv->baa = bgp_advertise_intern (peer->hash[afi][safi], attr);
-  else
-    adv->baa = baa_new ();
-  adv->adj = adj;
-
-  /* Add new advertisement to advertisement attribute list.
+  /* Add new advertisement's attributes to advertisement attribute list.
    */
+  adv->baa = bgp_advertise_intern (peer->hash[afi][safi], attr);
   bgp_advertise_add (adv->baa, adv);
 
   /* Finally, add new advertisement to the peer's update list
@@ -404,12 +540,15 @@ bgp_adj_out_set (struct bgp_node *rn, struct peer *peer, struct prefix *p,
   bgp_advertise_fifo_add(&peer->sync[afi][safi]->update, adv);
 }
 
-void
+/*------------------------------------------------------------------------------
+ * If there is an adj-out for this prefix for this peer, either schedule a
+ *                                           withdraw, or remove it immediately.
+ */
+extern void
 bgp_adj_out_unset (struct bgp_node *rn, struct peer *peer, struct prefix *p,
                    afi_t afi, safi_t safi)
 {
   struct bgp_adj_out *adj;
-  struct bgp_advertise *adv;
 
   if (qdebug)
     {
@@ -447,19 +586,32 @@ bgp_adj_out_unset (struct bgp_node *rn, struct peer *peer, struct prefix *p,
 
   assert(rn == adj->rn) ;
 
-  /* Clear up previous advertisement.
+  /* Clear up previous advertisement, if any.
    */
-  if (adj->adv != NULL)
-    bgp_advertise_clean (peer, adj, afi, safi);
-
-  if (adj->attr != NULL)
+  if (adj->attr == NULL)
     {
-      /* We need advertisement structure.
+      /* Nothing actually advertised to the peer, so can simply discard the
+       * adj-out -- discarding any pending advertisement.
        */
-      adj->adv = bgp_advertise_new ();
-      adv = adj->adv;
-      adv->rn = rn;
-      adv->adj = adj;
+      bgp_adj_out_remove(rn, adj, peer, afi, safi) ;
+    }
+  else
+    {
+      /* We need to advertise a withdraw.
+       *
+       * Note that we don't change the adj->attr -- that's done when the
+       * withdraw is actually sent.
+       */
+      struct bgp_advertise *adv;
+
+      adv = (adj->adv) ;
+      if (adv != NULL)
+        {
+          assert(adv->adj == adj) ;
+          bgp_advertise_unset (adv, peer, afi, safi, false /* !free_adv */);
+        } ;
+
+      adv = bgp_advertise_set (adv, rn, adj, NULL) ;
 
       /* Add to synchronization entry for withdraw announcement
        *
@@ -472,22 +624,32 @@ bgp_adj_out_unset (struct bgp_node *rn, struct peer *peer, struct prefix *p,
        */
       bgp_withdraw_schedule(peer) ;
     }
-  else
-    bgp_adj_out_remove(rn, adj, peer, afi, safi) ;
 }
 
-void
+/*------------------------------------------------------------------------------
+ * Remove the given adj-out from the bgp_node and its peer.
+ *
+ * Discard any attributes known to have been sent to the peer.
+ *
+ * Discard and advertisement which may be scheduled for the prefix for the peer.
+ */
+extern void
 bgp_adj_out_remove (struct bgp_node *rn, struct bgp_adj_out *adj,
                     struct peer *peer, afi_t afi, safi_t safi)
 {
+  struct bgp_advertise *adv;
+
   assert((rn == adj->rn) && (peer == adj->peer)) ;
 
   if (adj->attr)
     bgp_attr_unintern (adj->attr) ;     /* about to discard the adj, so
                                          * don't care about ->attr      */
-
-  if (adj->adv)
-    bgp_advertise_clean (peer, adj, afi, safi);
+  adv = adj->adv;
+  if (adv != NULL)
+    {
+      assert(adv->adj == adj) ;
+      bgp_advertise_unset (adv, peer, afi, safi, true /* free_adv */) ;
+    } ;
 
   /* Unhook from peer
    */
@@ -516,11 +678,22 @@ bgp_adj_out_remove (struct bgp_node *rn, struct bgp_adj_out *adj,
   XFREE (MTYPE_BGP_ADJ_OUT, adj);
 }
 
-void
+/*==============================================================================
+ * Adj-In Stuff
+ */
+
+/*------------------------------------------------------------------------------
+ * Add given attributes to the adj-in for the given bgp_node.
+ *
+ * The attributes are interned into the adj-in -- unless there is no change.
+ */
+extern void
 bgp_adj_in_set (struct bgp_node *rn, struct peer *peer, struct attr *attr)
 {
   struct bgp_adj_in *adj;
   struct bgp_adj_in**  adj_in_head ;
+
+  qassert(bgp_sub_attr_are_interned(attr)) ;
 
   for (adj = rn->adj_in; adj; adj = adj->adj_next)
     {
@@ -536,14 +709,16 @@ bgp_adj_in_set (struct bgp_node *rn, struct peer *peer, struct attr *attr)
         }
     }
 
-  /* Need to create a brand new bgp_adj_in                      */
-
+  /* Need to create a brand new bgp_adj_in
+   */
   adj = XCALLOC (MTYPE_BGP_ADJ_IN, sizeof (struct bgp_adj_in));
 
-  /* Set the interned attributes                                */
+  /* Set the interned attributes
+   */
   adj->attr = bgp_attr_intern (attr);
 
-  /* Add to list of adj in stuff for the peer                   */
+  /* Add to list of adj in stuff for the peer
+   */
   adj->peer = bgp_peer_lock (peer);
 
   adj_in_head = &(peer->adj_in_head[rn->table->afi][rn->table->safi]) ;
@@ -554,7 +729,8 @@ bgp_adj_in_set (struct bgp_node *rn, struct peer *peer, struct attr *attr)
     (*adj_in_head)->route_prev = adj ;
   *adj_in_head = adj ;
 
-  /* Add to list of adj in stuff for the bgp_node               */
+  /* Add to list of adj in stuff for the bgp_node
+   */
   adj->rn = bgp_lock_node (rn);
 
   adj->adj_next = rn->adj_in ;

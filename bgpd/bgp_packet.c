@@ -54,9 +54,11 @@ Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
 
 /* Prototypes
  */
-static bgp_advertise bgp_updated(bgp_peer peer, bgp_advertise adv,
+static bgp_advertise bgp_updated(bgp_advertise adv, bgp_peer peer,
                                      afi_t afi, safi_t safi, qstring updates,
                                                               bool suppressed) ;
+static struct stream * bgp_withdraw_packet (struct peer *peer, afi_t afi,
+                                                                  safi_t safi) ;
 
 /*------------------------------------------------------------------------------
  * Construct an update from the given bgp_advertise object.
@@ -70,7 +72,7 @@ static bgp_advertise bgp_updated(bgp_peer peer, bgp_advertise adv,
  *     issues a withdraw for the affected prefixes if required.
  */
 static struct stream *
-bgp_update_packet (bgp_peer peer, bgp_advertise adv, afi_t afi, safi_t safi)
+bgp_update_packet (bgp_advertise adv, bgp_peer peer, afi_t afi, safi_t safi)
 {
   struct stream *s;
   struct bgp_node *rn ;
@@ -86,6 +88,90 @@ bgp_update_packet (bgp_peer peer, bgp_advertise adv, afi_t afi, safi_t safi)
 
   qassert(adv != NULL) ;
 
+  /* The adv for an update refers to:
+   *
+   *   * adv->rn      -- for the prefix and any route distinguisher
+   *
+   *   * adv->adj     -- the related adj-out entry
+   *
+   *   * adv->baa     -- the related bgp_advertise_attr
+   *
+   *   * adv->binfo   -- the related bgp_info.
+   *
+   * The adv owns a lock on the rn and the binfo.  The adj and the baa and the
+   * adv are tied closely together -- so given that the adv exists, so do
+   * the adj and the baa.
+   *
+   * The only tricky bit is that we wish to guard against binfo having been
+   * "reaped" since the adv was scheduled, but (for some reason) the adv
+   * not having been cancelled or changed into a withdraw.
+   */
+  assert(adv->rn    != NULL) ;
+  assert(adv->adj   != NULL) ;
+  assert(adv->baa   != NULL) ;
+  assert(adv->binfo != NULL) ;
+
+  binfo = adv->binfo ;
+  if (binfo->flags & BGP_INFO_REAPED)
+    {
+      /* This should not happen.  Reaping a binfo which has been advertised
+       * *should* immediately unset all advertisements, and issue new ones
+       * as required.
+       *
+       * Turn this update into a withdraw (if required) and pack together any
+       * further updates we can immediately find in the same sorry state.
+       *
+       * bgp_advertise_redux() returns the next adv which refers to the same
+       * set of attributes -- which could also have lost its binfo.  If we
+       * run out of possibilities there, trie the (new) head of the update
+       * fifo.
+       */
+      updates = qs_new(100) ;
+      count   = 0 ;
+
+      while (1)
+        {
+          count += 1 ;
+          qs_append_str(updates, " ") ;
+          qs_append_str(updates, spfxtoa(&adv->rn->p).str) ;
+
+          if (adv->adj->attr == NULL)
+            adv = bgp_updated(adv, peer, afi, safi, NULL, false) ;
+          else
+            adv = bgp_advertise_redux(adv, peer, afi, safi) ;
+
+          if (adv != NULL)
+            {
+              binfo = adv->binfo ;
+              if (binfo->flags & BGP_INFO_REAPED)
+                continue ;      /* another with the same attributes     */
+            } ;
+
+          adv = bgp_advertise_fifo_head(&peer->sync[afi][safi]->update) ;
+          if (adv != NULL)
+            {
+              binfo = adv->binfo ;
+              if (binfo->flags & BGP_INFO_REAPED)
+                continue ;      /* another with the same attributes     */
+            } ;
+
+          break ;
+        } ;
+
+      zlog_err("%s BUG: %u reaped adv->binfo %s/%s:%s",
+                                  peer->host, count,
+                                  map_direct(bgp_afi_name_map, afi).str,
+                                  map_direct(bgp_safi_name_map, safi).str,
+                                                           qs_string(updates)) ;
+      qs_free(updates) ;
+
+      /* Empty out the withdraw(s) we have just scheduled.
+       */
+      return bgp_withdraw_packet (peer, afi, safi) ;
+    } ;
+
+  /* Prepare
+   */
   ipv4_unicast = (afi == AFI_IP) && (safi == SAFI_UNICAST) ;
 
   s = peer->work;
@@ -104,21 +190,18 @@ bgp_update_packet (bgp_peer peer, bgp_advertise adv, afi_t afi, safi_t safi)
    *
    * NB: this sends only one prefix per message if is not AFI_IP/SAFI_UNICAST.
    */
-  prd = NULL;
-  rn  = adv->rn ;
-  assert(rn != NULL) ;
-  if (rn->prn != NULL)
+  rn = adv->rn ;
+  if (rn->prn == NULL)
+    prd = NULL;
+  else
     prd = (struct prefix_rd *) &rn->prn->p ;
 
-  tag   = NULL;
-  from  = NULL;
-  binfo = adv->binfo ;
-  if (binfo != NULL)
-    {
-      from = binfo->peer;
-      if (binfo->extra)
-        tag = binfo->extra->tag;
-    } ;
+  from = binfo->peer;
+
+  if (binfo->extra == NULL)
+    tag = NULL ;
+  else
+    tag = binfo->extra->tag;
 
   bgp_packet_set_marker (s, BGP_MSG_UPDATE);
   stream_putw (s, 0);   /* No AFI_IP/SAFI_UNICAST withdrawn     */
@@ -166,11 +249,15 @@ bgp_update_packet (bgp_peer peer, bgp_advertise adv, afi_t afi, safi_t safi)
             {
               ulen   len_was ;
 
-              adv = bgp_updated(peer, adv, afi, safi, updates,
+              adv = bgp_updated(adv, peer, afi, safi, updates,
                                                    false /* not suppressed */) ;
               ++count ;
 
               if (adv == NULL)
+                break ;
+
+              binfo = adv->binfo ;
+              if (binfo->flags & BGP_INFO_REAPED)
                 break ;
 
               rn = adv->rn ;
@@ -189,7 +276,7 @@ bgp_update_packet (bgp_peer peer, bgp_advertise adv, afi_t afi, safi_t safi)
         }
       else
         {
-          bgp_updated(peer, adv, afi, safi, updates,
+          bgp_updated(adv, peer, afi, safi, updates,
                                                    false /* not suppressed */) ;
           ++count ;
         } ;
@@ -258,7 +345,7 @@ bgp_update_packet (bgp_peer peer, bgp_advertise adv, afi_t afi, safi_t safi)
 
               attr_lp = stream_get_endp(s) ;
 
-              adv = bgp_updated(peer, adv, afi, safi, updates,
+              adv = bgp_updated(adv, peer, afi, safi, updates,
                                                          true /*suppressed */) ;
               ++count ;
 
@@ -283,7 +370,7 @@ bgp_update_packet (bgp_peer peer, bgp_advertise adv, afi_t afi, safi_t safi)
               ++withdrawn ;
             } ;
 
-          bgp_updated(peer, adv, afi, safi, updates, true /*suppressed */) ;
+          bgp_updated(adv, peer, afi, safi, updates, true /*suppressed */) ;
           ++count ;
         } ;
 
@@ -319,9 +406,11 @@ bgp_update_packet (bgp_peer peer, bgp_advertise adv, afi_t afi, safi_t safi)
  *
  * Then remove the bgp_advertise object from the lists it lives on, and
  * return the next (which will have the same attributes), if any.
+ *
+ * Note that the adj->attr owns a ref-count on the attributes.
  */
 static bgp_advertise
-bgp_updated(bgp_peer peer, bgp_advertise adv, afi_t afi, safi_t safi,
+bgp_updated(bgp_advertise adv, bgp_peer peer, afi_t afi, safi_t safi,
                                                qstring updates, bool suppressed)
 {
   struct bgp_adj_out *adj;
@@ -333,13 +422,16 @@ bgp_updated(bgp_peer peer, bgp_advertise adv, afi_t afi, safi_t safi,
     } ;
 
   adj = adv->adj ;
+  assert(adj->adv == adv) ;
+
+  if (adj->attr != NULL)
+    qassert(bgp_attr_is_interned(adj->attr)) ;
 
   if (suppressed)
     {
       if (adj->attr != NULL)
         {
-          bgp_attr_unintern (adj->attr);
-          adj->attr = NULL ;
+          adj->attr = bgp_attr_unintern (adj->attr);
           peer->scount[afi][safi]--;
         } ;
     }
@@ -350,10 +442,12 @@ bgp_updated(bgp_peer peer, bgp_advertise adv, afi_t afi, safi_t safi,
       else
         peer->scount[afi][safi]++;
 
+      qassert(bgp_attr_is_interned(adv->baa->attr)) ;
+
       adj->attr = bgp_attr_intern (adv->baa->attr);
     } ;
 
-  return bgp_advertise_clean (peer, adj, afi, safi) ;
+  return bgp_advertise_unset (adv, peer, afi, safi, true /* free_adv */) ;
 } ;
 
 #if 0                           // Replaced by the above
@@ -885,7 +979,7 @@ bgp_write_packet (struct peer *peer)
              * any previous announcements, then will return NULL -- and we can
              * go on to the next advertisement.
              */
-            s = bgp_update_packet (peer, adv, afi, safi);
+            s = bgp_update_packet (adv, peer, afi, safi);
 
             if (s != NULL)
               return s;

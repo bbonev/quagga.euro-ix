@@ -59,6 +59,12 @@ Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
 #include "bgpd/bgp_vty.h"
 #include "bgpd/bgp_names.h"
 
+/*------------------------------------------------------------------------------
+ * For given table and prefix: find or add node --
+ *
+ * Once a node has been created, the prefix and any prn are stable, until the
+ * lock expires.
+ */
 static struct bgp_node *
 bgp_afi_node_get (struct bgp_table *table, afi_t afi, safi_t safi, struct prefix *p,
                   struct prefix_rd *prd)
@@ -78,6 +84,7 @@ bgp_afi_node_get (struct bgp_table *table, afi_t afi, safi_t safi, struct prefix
         prn->info = bgp_table_init (afi, safi);
       else
         bgp_unlock_node (prn);
+
       table = prn->info;
     }
 
@@ -132,14 +139,24 @@ bgp_info_new (void)
   return XCALLOC (MTYPE_BGP_ROUTE, sizeof (struct bgp_info));
 }
 
-/* Free bgp route information. */
+/*------------------------------------------------------------------------------
+ * Free bgp route information.
+ *
+ * By the time we get to here MUST have been through bgp_info_reap(), which
+ * discards the contents of the bgp_info and does all the necessary unlocks.
+ */
 static void
 bgp_info_free (struct bgp_info *binfo)
 {
-  if (binfo->attr)
-    bgp_attr_unintern (binfo->attr);
+  qassert(binfo->attr  == NULL) ;
+  qassert(binfo->extra == NULL) ;
+  qassert(binfo->peer  == NULL) ;
+  qassert(binfo->rn    == NULL) ;
 
-  bgp_info_extra_free (&binfo->extra);
+  if (binfo->attr)
+    bgp_attr_unintern (binfo->attr);    /* belt-and-braces              */
+
+  bgp_info_extra_free (&binfo->extra);  /* ditto                        */
 
   XFREE (MTYPE_BGP_ROUTE, binfo);
 }
@@ -178,13 +195,19 @@ bgp_info_unlock (struct bgp_info *binfo)
   return binfo;
 }
 
-void
+/*------------------------------------------------------------------------------
+ * Add the given (new) bgp_info to the given bgp_node, and add to peer's list.
+ *
+ * Takes a lock on: bgp_node, the peer and itself.
+ */
+extern void
 bgp_info_add (struct bgp_node *rn, struct bgp_info *ri)
 {
   bgp_peer          peer = ri->peer ;
   struct bgp_info** routes_head ;
 
-  /* add to list of routes for this bgp_node            */
+  /* add to list of routes for this bgp_node
+   */
   ri->rn = rn ;
   ri->info_next = rn->info;
   ri->info_prev = NULL;
@@ -192,7 +215,8 @@ bgp_info_add (struct bgp_node *rn, struct bgp_info *ri)
     ((struct bgp_info*)rn->info)->info_prev = ri;
   rn->info = ri;
 
-  /* add to list of routes for this peer                */
+  /* add to list of routes for this peer
+   */
   routes_head = &(peer->routes_head[rn->table->afi][rn->table->safi]) ;
   ri->routes_next = *routes_head ;
   ri->routes_prev = NULL ;
@@ -200,13 +224,56 @@ bgp_info_add (struct bgp_node *rn, struct bgp_info *ri)
     (*routes_head)->routes_prev = ri ;
   *routes_head = ri ;
 
-  bgp_info_lock (ri);
-  bgp_lock_node (rn);
-  bgp_peer_lock (peer);     /* bgp_info peer reference */
+  bgp_info_lock (ri);           /* rn->info                     */
+  bgp_peer_lock (peer);         /* ri->peer                     */
+  bgp_lock_node (rn);           /* ri->rn                       */
 }
 
-/* Do the actual removal of info from RIB, for use by bgp_process
-   completion callback *only* */
+/*------------------------------------------------------------------------------
+ * Do the actual removal of info from RIB, for use by bgp_process
+ * completion callback *only*
+ *
+ * The bgp_info is hung off the bgp_node and represents an available route
+ * for that prefix from the peer.
+ *
+ * It is also referred to by all currently active bgp_advertise objects,
+ * one per being-updated peer.
+ *
+ * So, when a route becomes unavailable, the bgp_info remains, until the
+ * bgp_process mechanism selects a new route for the prefix, and cleans up
+ * all advertisements for the prefix -- across all peers.
+ *
+ * Between changing the state of a route and getting to bgp_process, it is
+ * possible (one assumes) that currently pending advertisements may be
+ * sent... so a route which was selected and announced will be dispatched,
+ * even if it has been withdrawn or changed in the meantime.  Such is life.
+ *
+ * More serious would be any failure to clean up all bgp_advertise (adv)
+ * objects referring to a *reaped* bgp_info...
+ *
+ * ...so, what this does is remove the bgp_info from the routes known to the
+ * bgp_node and the owning peer.  It is possible that are then a number of
+ * adv objects pointing to this bgp_info -- each owning a lock on the bgp_info.
+ * It is expected that following the reap, all adv objects will be killed
+ * off, before the adv is processed into an update.  However, in case that
+ * does not happen the binfo is left in a cleared down:
+ *
+ *   * NULL rn pointer
+ *
+ *   * NULL peer pointer
+ *
+ *   * no attributes
+ *
+ *   * flags = BGP_INFO_REAPED
+ *
+ *   * no uptime.
+ *
+ * But:
+ *
+ *   * the type and subtype of the route are preserved.
+ *
+ * Any adv found in this state are turned into withdraws.
+ */
 static void
 bgp_info_reap (struct bgp_node *rn, struct bgp_info *ri)
 {
@@ -232,12 +299,37 @@ bgp_info_reap (struct bgp_node *rn, struct bgp_info *ri)
   else
     *routes_head = ri->routes_next ;
 
-  bgp_info_unlock (ri);         /* fewer references to bgp_info */
-  bgp_unlock_node (rn);         /* fewer references to bgp_node */
-  bgp_peer_unlock (peer);       /* fewer references to peer     */
-}
+  /* Unlock everything and dismantle pretty much everything -- leaves:
+   *
+   *   * type and subtype of route
+   */
+  if (ri->attr)
+    ri->attr = bgp_attr_unintern (ri->attr);
 
-void
+  bgp_info_extra_free (&ri->extra);
+
+  bgp_peer_unlock (ri->peer) ;          /* fewer references to peer     */
+  ri->peer = NULL ;
+
+  bgp_unlock_node (ri->rn) ;            /* fewer references to bgp_node */
+  ri->rn   = NULL ;
+
+  ri->flags = BGP_INFO_REAPED ;         /* no longer anything           */
+
+  ri->uptime = 0 ;                      /* not up !                     */
+
+  /* Finally, unlock self which may (well) free the object.
+   */
+  bgp_info_unlock (ri);
+} ;
+
+/*------------------------------------------------------------------------------
+ * "Delete" route
+ *
+ * Sets BGP_INFO_REMOVED and clears BGP_INFO_VALID and then leaves it up to the
+ * processing logic to actually flush the route away.
+ */
+extern void
 bgp_info_delete (struct bgp_node *rn, struct bgp_info *ri)
 {
   bgp_info_set_flag (rn, ri, BGP_INFO_REMOVED);
@@ -245,9 +337,11 @@ bgp_info_delete (struct bgp_node *rn, struct bgp_info *ri)
   UNSET_FLAG (ri->flags, BGP_INFO_VALID);
 }
 
-/* undo the effects of a previous call to bgp_info_delete; typically
-   called when a route is deleted and then quickly re-added before the
-   deletion has been processed */
+/*------------------------------------------------------------------------------
+ * undo the effects of a previous call to bgp_info_delete; typically
+ * called when a route is deleted and then quickly re-added before the
+ * deletion has been processed
+ */
 static void
 bgp_info_restore (struct bgp_node *rn, struct bgp_info *ri)
 {
