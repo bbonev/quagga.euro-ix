@@ -2741,7 +2741,7 @@ peer_default_originate_set (struct peer *peer, afi_t afi, safi_t safi,
   if (! peer->afc[afi][safi])
     return BGP_ERR_PEER_INACTIVE;
 
-  /* Default originate can't be used for peer group memeber.
+  /* Default originate can't be used for peer group member.
    */
   if (peer_is_group_member (peer, afi, safi))
     return BGP_ERR_INVALID_FOR_PEER_GROUP_MEMBER;

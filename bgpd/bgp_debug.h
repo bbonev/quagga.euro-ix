@@ -122,7 +122,7 @@ extern unsigned long term_bgp_debug_zebra;
 #define BGP_DEBUG(a, b)         (term_bgp_debug_ ## a & BGP_DEBUG_ ## b)
 #define CONF_BGP_DEBUG(a, b)    (conf_bgp_debug_ ## a & BGP_DEBUG_ ## b)
 
-extern int bgp_dump_attr (struct peer *, struct attr *, char *, size_t);
+extern int bgp_dump_attr (struct peer *, const struct attr *, char *, size_t);
 extern void bgp_notify_print (struct peer* peer, bgp_notify notification);
 
 #endif /* _QUAGGA_BGP_DEBUG_H */

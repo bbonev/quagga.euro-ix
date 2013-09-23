@@ -69,9 +69,13 @@ unsigned long term_bgp_debug_zebra;
 
 /*------------------------------------------------------------------------------
  * Dump attribute to given buffer in human readable form.
+ *
+ * Note that it does not matter whether the given attributes are interned or
+ * not !  They are not changed by this function.
  */
-int
-bgp_dump_attr (struct peer *peer, struct attr *attr, char *buf, size_t size)
+extern int
+bgp_dump_attr (struct peer *peer, const struct attr *attr, char *buf,
+                                                                    size_t size)
 {
   if (! attr)
     return 0;

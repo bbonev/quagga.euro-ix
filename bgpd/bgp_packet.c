@@ -658,9 +658,12 @@ bgp_withdraw_packet (struct peer *peer, afi_t afi, safi_t safi)
  *
  * Uses peer->work stream structure, but copies result to new stream, which is
  * pushed onto the obuf queue.
+ *
+ * Does not matter whether the given attributes are interned or not, and does
+ * not change the attributes.
  */
-void
-bgp_default_update_send (struct peer *peer, struct attr *attr,
+extern void
+bgp_default_update_send (struct peer *peer, const struct attr *attr,
                          afi_t afi, safi_t safi, struct peer *from)
 {
   struct stream *s;

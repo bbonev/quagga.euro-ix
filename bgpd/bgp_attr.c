@@ -2673,10 +2673,16 @@ bgp_attr_check (struct peer *peer, struct attr *attr, bool with_next_hop)
   return BGP_ATTR_PARSE_ERROR ;
 }
 
-/* Make attribute packet. */
+/*------------------------------------------------------------------------------
+ * Make attribute packet.
+ *
+ * Note that it does not matter whether the given attributes are interned or
+ * not !  They are not changed by this function.
+ */
 bgp_size_t
 bgp_packet_attribute (struct bgp *bgp, struct peer *peer,
-                      struct stream *s, struct attr *attr, struct prefix *p,
+                      struct stream *s, const struct attr *attr,
+                      struct prefix *p,
                       afi_t afi, safi_t safi, struct peer *from,
                       struct prefix_rd *prd, u_char *tag)
 {
