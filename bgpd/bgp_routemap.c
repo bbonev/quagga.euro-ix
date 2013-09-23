@@ -1277,9 +1277,11 @@ struct route_map_rule_cmd route_set_metric_cmd =
 
 /* `set as-path prepend ASPATH' */
 
-/* For AS path prepend mechanism. */
+/* For AS path prepend mechanism.
+ */
 static route_map_result_t
-route_set_aspath_prepend (void *rule, struct prefix *prefix, route_map_object_t type, void *object)
+route_set_aspath_prepend (void *rule, struct prefix *prefix,
+                                         route_map_object_t type, void *object)
 {
   struct aspath *aspath;
   struct aspath *new;
@@ -1290,7 +1292,18 @@ route_set_aspath_prepend (void *rule, struct prefix *prefix, route_map_object_t 
       aspath = rule;
       binfo = object;
 
-      if (binfo->attr->aspath->refcnt)
+      /* If there is no aspath (unlikely), make a new, uninterned empty one.
+       *
+       * If there is an interned aspath, make an uninterned copy.
+       *
+       * If there is an uninterned aspath, use that.
+       */
+      if (binfo->attr->aspath == NULL)
+        {
+          binfo->attr->flag |= ATTR_FLAG_BIT (BGP_ATTR_AS_PATH);
+          new = aspath_empty(false /* !intern */) ;
+        }
+      else if (binfo->attr->aspath->refcnt != 0)
         new = aspath_dup (binfo->attr->aspath);
       else
         new = binfo->attr->aspath;
@@ -1338,21 +1351,25 @@ struct route_map_rule_cmd route_set_aspath_prepend_cmd =
  * Make a deep copy of existing AS_PATH, but for the first ASn only.
  */
 static route_map_result_t
-route_set_aspath_exclude (void *rule, struct prefix *dummy, route_map_object_t type, void *object)
+route_set_aspath_exclude (void *rule, struct prefix *dummy,
+                                          route_map_object_t type, void *object)
 {
   struct aspath * new_path, * exclude_path;
   struct bgp_info *binfo;
 
   if (type == RMAP_BGP)
-  {
-    exclude_path = rule;
-    binfo = object;
-    if (binfo->attr->aspath->refcnt)
-      new_path = aspath_dup (binfo->attr->aspath);
-    else
-      new_path = binfo->attr->aspath;
-    binfo->attr->aspath = aspath_filter_exclude (new_path, exclude_path);
-  }
+    {
+      exclude_path = rule;
+      binfo = object;
+
+      if ((binfo->attr->aspath != NULL) && (binfo->attr->aspath->refcnt != 0))
+        new_path = aspath_dup (binfo->attr->aspath);
+      else
+        new_path = binfo->attr->aspath;
+
+      if (new_path != NULL)
+        binfo->attr->aspath = aspath_filter_exclude (new_path, exclude_path);
+    }
   return RMAP_OKAY;
 }
 
@@ -1397,7 +1414,8 @@ struct rmap_com_set
   int none;
 };
 
-/* For community set mechanism. */
+/* For community set mechanism.
+ */
 static route_map_result_t
 route_set_community (void *rule, struct prefix *prefix,
                      route_map_object_t type, void *object)
@@ -1407,7 +1425,6 @@ route_set_community (void *rule, struct prefix *prefix,
   struct attr *attr;
   struct community *new = NULL;
   struct community *old;
-  struct community *merge;
 
   if (type == RMAP_BGP)
     {
@@ -1416,36 +1433,61 @@ route_set_community (void *rule, struct prefix *prefix,
       attr = binfo->attr;
       old = attr->community;
 
-      /* "none" case.  */
       if (rcs->none)
         {
-          attr->flag &= ~(ATTR_FLAG_BIT (BGP_ATTR_COMMUNITIES));
-          attr->community = NULL;
-          return RMAP_OKAY;
-        }
-
-      /* "additive" case.  */
-      if (rcs->additive && old)
-        {
-          merge = community_merge (community_dup (old), rcs->com);
-
-          /* HACK: if the old community is not intern'd,
-           * we should free it here, or all reference to it may be lost.
-           * Really need to cleanup attribute caching sometime.
+          /* "none" case.
            */
-          if (old->refcnt == 0)
-            community_free (old);
-          new = community_uniq_sort (merge);
-          community_free (merge);
+          new = NULL;
+
+          if ((old != NULL) && (old->refcnt != 0))
+            old = NULL ;                /* forget interned old  */
+        }
+      else if (rcs->additive && (old != NULL))
+        {
+          /* "additive" case.
+           *
+           * If the ref-count is not zero, we have an interned 'old', which
+           * we need to make an uninterned copy of, and which will later
+           * simply overwrite -- the interned copy is dealt with elsewhere.
+           *
+           * If the ref-count is zero, this is uninterned, and we can simply
+           * work with that.
+           *
+           * In either case, the uninterned value we work with needs to be
+           * freed after we create the new value.
+           */
+          if (old->refcnt != 0)
+            old = community_dup (old) ;
+
+          community_merge (old, rcs->com);
+
+          new = community_uniq_sort (old);
         }
       else
-        new = community_dup (rcs->com);
+        {
+          /* replace case, or "additive", but nothing to add to
+           */
+          new = community_dup (rcs->com);
 
-      /* will be interned by caller if required */
+          if ((old != NULL) && (old->refcnt == 0))
+            old = NULL ;                /* forget interned old  */
+        } ;
+
+      /* Discard old uninterned value, or copy of interned value made in
+       * "additive" case.
+       */
+      if (old != NULL)
+        community_free (old);
+
+      /* will be interned by caller if required
+       */
       attr->community = new;
 
-      attr->flag |= ATTR_FLAG_BIT (BGP_ATTR_COMMUNITIES);
-    }
+      if (new == NULL)
+        attr->flag &= ~(ATTR_FLAG_BIT (BGP_ATTR_COMMUNITIES));
+      else
+        attr->flag |= ATTR_FLAG_BIT (BGP_ATTR_COMMUNITIES);
+    } ;
 
   return RMAP_OKAY;
 }
@@ -1512,13 +1554,13 @@ struct route_map_rule_cmd route_set_community_cmd =
 
 /* `set comm-list (<1-99>|<100-500>|WORD) delete' */
 
-/* For community set mechanism. */
+/* For community set mechanism.
+ */
 static route_map_result_t
 route_set_community_delete (void *rule, struct prefix *prefix,
                             route_map_object_t type, void *object)
 {
   struct community_list *list;
-  struct community *merge;
   struct community *new;
   struct community *old;
   struct bgp_info *binfo;
@@ -1532,30 +1574,37 @@ route_set_community_delete (void *rule, struct prefix *prefix,
       list = community_list_lookup (bgp_clist, rule, COMMUNITY_LIST_MASTER);
       old = binfo->attr->community;
 
-      if (list && old)
+      if ((list != NULL) && (old != NULL))
         {
-          merge = community_list_match_delete (community_dup (old), list);
-          new = community_uniq_sort (merge);
-          community_free (merge);
-
-          /* HACK: if the old community is not intern'd,
-           * we should free it here, or all references to it may be lost.
-           * Really need to clean up attribute caching sometime.
+          /* If the ref-count is not zero, we have an interned 'old', which
+           * we need to make an uninterned copy of, and which will later
+           * simply overwrite -- the interned copy is dealt with elsewhere.
+           *
+           * If the ref-count is zero, this is uninterned, and we can simply
+           * work with that.
            */
-          if (old->refcnt == 0)
-            community_free(old) ;
+          if (old->refcnt != 0)
+            old = community_dup (old) ;
+
+          /* community_list_match_delete() operates directly on the old
+           * or the copy we made of same.
+           *
+           * community_uniq_sort() makes another community object, so we
+           * need to discard the merge once that's complete.
+           */
+          community_list_match_delete (old, list);
+          new = community_uniq_sort (old);
+          community_free(old) ;
 
           if (new->size == 0)
-            {
-              binfo->attr->community = NULL;
-              binfo->attr->flag &= ~ATTR_FLAG_BIT (BGP_ATTR_COMMUNITIES);
-              community_free (new);
-            }
+            new = community_free(new) ;
+
+          binfo->attr->community = new ;
+
+          if (new == NULL)
+            binfo->attr->flag &= ~(ATTR_FLAG_BIT (BGP_ATTR_COMMUNITIES));
           else
-            {
-              binfo->attr->community = new;
-              binfo->attr->flag |= ATTR_FLAG_BIT (BGP_ATTR_COMMUNITIES);
-            }
+            binfo->attr->flag |=   ATTR_FLAG_BIT (BGP_ATTR_COMMUNITIES);
         }
     }
 
@@ -1601,7 +1650,8 @@ struct route_map_rule_cmd route_set_community_delete_cmd =
 
 /* `set extcommunity rt COMMUNITY' */
 
-/* For community set mechanism. */
+/* For community set mechanism.
+ */
 static route_map_result_t
 route_set_ecommunity_rt (void *rule, struct prefix *prefix,
                          route_map_object_t type, void *object)
@@ -1619,19 +1669,28 @@ route_set_ecommunity_rt (void *rule, struct prefix *prefix,
       if (! ecom)
         return RMAP_OKAY;
 
-      /* We assume additive for Extended Community. */
+      /* We assume additive for Extended Community.
+       */
       old_ecom = (bgp_attr_extra_get (bgp_info->attr))->ecommunity;
 
-      if (old_ecom)
-        new_ecom = ecommunity_merge (ecommunity_dup (old_ecom), ecom);
-      else
+      if (old_ecom == NULL)
         new_ecom = ecommunity_dup (ecom);
+      else
+        {
+          /* If the existing ecom is interned, then we make a copy of it
+           * before merging stuff in.  Other mechanics deal with replacing
+           * the interned by the uninterned.
+           *
+           * If the existing ecom is uninterned, then we merge straight into
+           * it.
+           */
+          if (old_ecom->refcnt != 0)
+            old_ecom = ecommunity_dup (old_ecom) ;
 
-      bgp_info->attr->extra->ecommunity = ecommunity_intern (new_ecom);
+          new_ecom = ecommunity_merge (old_ecom, ecom);
+        } ;
 
-      if (old_ecom)
-        ecommunity_unintern (&old_ecom);
-
+      bgp_info->attr->extra->ecommunity = new_ecom ;
       bgp_info->attr->flag |= ATTR_FLAG_BIT (BGP_ATTR_EXT_COMMUNITIES);
     }
   return RMAP_OKAY;
@@ -1668,7 +1727,8 @@ struct route_map_rule_cmd route_set_ecommunity_rt_cmd =
 
 /* `set extcommunity soo COMMUNITY' */
 
-/* For community set mechanism. */
+/* For community set mechanism.
+ */
 static route_map_result_t
 route_set_ecommunity_soo (void *rule, struct prefix *prefix,
                          route_map_object_t type, void *object)
@@ -1686,16 +1746,24 @@ route_set_ecommunity_soo (void *rule, struct prefix *prefix,
 
       old_ecom = (bgp_attr_extra_get (bgp_info->attr))->ecommunity;
 
-      if (old_ecom)
-        new_ecom = ecommunity_merge (ecommunity_dup (old_ecom), ecom);
-      else
+      if (old_ecom == NULL)
         new_ecom = ecommunity_dup (ecom);
+      else
+        {
+          /* If the existing ecom is interned, then we make a copy of it
+           * before merging stuff in.  Other mechanics deal with replacing
+           * the interned by the uninterned.
+           *
+           * If the existing ecom is uninterned, then we merge straight into
+           * it.
+           */
+          if (old_ecom->refcnt != 0)
+            old_ecom = ecommunity_dup (old_ecom) ;
 
-      bgp_info->attr->extra->ecommunity = ecommunity_intern (new_ecom);
+          new_ecom = ecommunity_merge (old_ecom, ecom);
+        } ;
 
-      if (old_ecom)
-        ecommunity_unintern (&old_ecom);
-
+      bgp_info->attr->extra->ecommunity = new_ecom ;
       bgp_info->attr->flag |= ATTR_FLAG_BIT (BGP_ATTR_EXT_COMMUNITIES);
     }
   return RMAP_OKAY;
