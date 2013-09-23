@@ -1216,6 +1216,7 @@ bgp_announce_check (struct bgp_info *ri, struct peer *peer, struct prefix *p,
   bgp_peer_sort_t sort, from_sort ;
   struct attr  attr_s ;
   struct attr* attr ;
+  struct attr* attr_reflect ;
 
   from = ri->peer;
   filter = &peer->filter[afi][safi];
@@ -1500,47 +1501,55 @@ bgp_announce_check (struct bgp_info *ri, struct peer *peer, struct prefix *p,
 
   /* Route map & unsuppress-map apply.
    */
+  attr_reflect = NULL ;
+
   if (ROUTE_MAP_OUT_NAME (filter) || (ri->extra && ri->extra->suppress))
     {
       struct bgp_info info_s = { 0 } ;
-      struct attr  dummy_attr_s ;
-      struct attr* dummy_attr ;
       route_map_result_t ret;
-
-      info_s.peer = peer;
-      info_s.peer->rmap_type = PEER_RMAP_TYPE_OUT ;
 
       /* The route reflector is not allowed to modify the attributes
        * of the reflected IBGP routes.
+       *
+       * So we intern what we have so far, which we will need, unless the
+       * route-map denies the route.  Then make a new copy of those for the
+       * route-map to work on.
        */
-      if ((from_sort == BGP_PEER_IBGP) && (sort == BGP_PEER_IBGP))
+      if (reflect)
         {
-          dummy_attr = &dummy_attr_s ;
-          bgp_attr_dup (dummy_attr, attr);
-          info_s.attr = dummy_attr;
-        }
-      else
-        {
-          dummy_attr  = NULL ;
-          info_s.attr = attr;
+          attr_reflect = bgp_attr_intern_temp(attr) ;
+          attr = bgp_attr_dup (&attr_s, attr_reflect);
         } ;
+
+      info_s.peer = peer;
+      info_s.attr = attr;
+      info_s.peer->rmap_type = PEER_RMAP_TYPE_OUT ;
 
       if (ri->extra && ri->extra->suppress)
         ret = route_map_apply (UNSUPPRESS_MAP (filter), p, RMAP_BGP, &info_s);
       else
         ret = route_map_apply (ROUTE_MAP_OUT (filter), p, RMAP_BGP, &info_s);
 
-      if (dummy_attr != NULL)
-        {
-          bgp_attr_flush (dummy_attr) ;
-          bgp_attr_extra_free (dummy_attr) ;
-        } ;
-
       if (ret == RMAP_DENYMATCH)
-        return bgp_attr_flush (attr);
+        {
+          if (attr_reflect != NULL)
+            attr_reflect = bgp_attr_unintern(attr_reflect) ;
+
+          return bgp_attr_flush (attr);
+        } ;
     } ;
 
-  return bgp_attr_intern_temp(attr) ;
+  if (attr_reflect == NULL)
+    return bgp_attr_intern_temp(attr) ;
+  else
+    {
+      /* For route-reflector we interned the attributes earlier, so can now
+       * discard any changes made by the route-map to the (now) dummy attr,
+       * and return the interned set.
+       */
+      bgp_attr_flush (attr);
+      return attr_reflect ;
+    } ;
 }
 
 /*------------------------------------------------------------------------------
