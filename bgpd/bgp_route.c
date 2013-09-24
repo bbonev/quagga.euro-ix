@@ -3723,26 +3723,35 @@ bgp_soft_reconfig_in (struct peer *peer, afi_t afi, safi_t safi)
  */
 
 /*------------------------------------------------------------------------------
- * Normal clearing of a a given peer's routes.
+ * Normal clearing of a a given peer's routes -- for Main Peers and RS-Clients.
  *
  * The following lists are processed:
  *
  *   * struct bgp_info* routes_head
  *
- *     Walks this and clears each route.
+ *     This removes/sets stale the route from/in all RIBs it appears in -- so
+ *     this affects all routes contributed to all RIBs by this peer.
  *
  *   * struct bgp_adj_in* adj_in_head
+ *
+ *     This forgets the route as learned from the peer.  There is one copy of
+ *     this, which lives in the Main RIB -- whether this is an RS-Client or not.
+ *
  *   * struct bgp_adj_out* adj_out_head
  *
- *     These two are simply emptied out.
+ *     This forgets all routes announced to the peer, and dismantles any
+ *     pending advertisements.  For Main RIB peers that should affect the Main
+ *     RIB only.  For RS-Clients that should affect the RS-RIB only.
  *
  * NB: in the latest scheme of things this is completed immediately...
  *
  *     ...however, retain the ability for this to kick off background or other
  *     activity.
  *
- * Returns:  true <=> clearing has completed
+ * NB: doesn't check the state of the peer.  Expect that if there is nothing
+ *     hung from peer->xxx_head[afi][safi], then there is nothing to do !
  *
+ * Returns:  true <=> clearing has completed
  */
 extern bool
 bgp_clear_routes(struct peer *peer, afi_t afi, safi_t safi, bool nsf)
@@ -3754,8 +3763,6 @@ bgp_clear_routes(struct peer *peer, afi_t afi, safi_t safi, bool nsf)
   struct bgp_adj_in**  adj_in_head ;
   struct bgp_adj_out** adj_out_head ;
 
-  next_ri = peer->routes_head[afi][safi] ;
-
   /* If NSF requested and nsf configured for this afi/safi, do nsf and
    * set flag to indicate that at least one afi/safi may have stale routes.
    */
@@ -3763,13 +3770,24 @@ bgp_clear_routes(struct peer *peer, afi_t afi, safi_t safi, bool nsf)
   if (nsf)
     SET_FLAG (peer->sflags, PEER_STATUS_NSF_WAIT) ;
 
-  /* TODO: fix bgp_clear_route_normal() so can clear an MPLS VPN table....  */
+  /* For both Main Peer and RS-Clients there may be bgp_info entries in all
+   * RIBs -- the main RIB and all RS Client RIBs.
+   *
+   * TODO: fix bgp_clear_route_normal() so can clear an MPLS VPN table....
+   */
+  next_ri = peer->routes_head[afi][safi] ;
+
   if (next_ri != NULL)
     assert(safi != SAFI_MPLS_VPN) ;
 
   while (next_ri != NULL)
     {
-      /* The current bgp_info object may vanish, so bank the next       */
+      /* Note that the final clear-up does not happen until the processing
+       * runs and that reaps the bgp_info.
+       *
+       * Note that we don't expect the bgp_rib_remove() to actually change
+       * the list, but we step along it as if it does.
+       */
       ri = next_ri ;
       next_ri = ri->routes_next ;
 
@@ -3781,7 +3799,10 @@ bgp_clear_routes(struct peer *peer, afi_t afi, safi_t safi, bool nsf)
         bgp_rib_remove (ri->rn, ri, peer, afi, safi);
     } ;
 
-  /* Empty out all adjacencies
+  /* Clear out the adj-in entries for this peer.
+   *
+   * Note that for both Main Peers and RS-Clients, all adj-in entries are in
+   * the main table.
    */
   adj_in_head = &(peer->adj_in_head[afi][safi]) ;
   while ((adj_in = *adj_in_head) != NULL)
@@ -3791,6 +3812,13 @@ bgp_clear_routes(struct peer *peer, afi_t afi, safi_t safi, bool nsf)
       assert(adj_in != *adj_in_head) ;
     } ;
 
+  /* Clear out the adj-out entries for this peer and unset any pending
+   * announcements.
+   *
+   * For a Main RIB peer, all its adj-out entries are in the main table.
+   *
+   * For an RS Client, all its adj-out entries are in the RS RIB.
+   */
   adj_out_head = &(peer->adj_out_head[afi][safi]) ;
   while ((adj_out = *adj_out_head) != NULL)
     {
@@ -3915,26 +3943,29 @@ bgp_finish_rsclient_rib(struct peer* rsclient, afi_t afi, safi_t safi)
 }
 
 /*------------------------------------------------------------------------------
- * Walk main RIB and remove any adj_in for given peer.
+ * Remove any adj_in for given peer in given afi/safi.
  *
- * TODO: walk peer->bgp_adj_in_head[afi][safi] -- but check which table ?
+ * Note that for both Main Peers and RS-Clients, all adj-in entries are in
+ * the main table.
  */
-void
+extern void
 bgp_clear_adj_in (struct peer *peer, afi_t afi, safi_t safi)
 {
   struct bgp_table *table;
-  struct bgp_node *rn;
-  struct bgp_adj_in *ain;
+  struct bgp_adj_in*   adj_in ;
+  struct bgp_adj_in**  adj_in_head ;
 
   table = peer->bgp->rib[afi][safi];
 
-  for (rn = bgp_table_top (table); rn; rn = bgp_route_next (rn))
-    for (ain = rn->adj_in; ain ; ain = ain->adj_next)
-      if (ain->peer == peer)
-        {
-          bgp_adj_in_remove (rn, ain);
-          break;
-        }
+  adj_in_head = &(peer->adj_in_head[afi][safi]) ;
+  while ((adj_in = *adj_in_head) != NULL)
+    {
+      qassert(adj_in->rn->table == table) ;
+
+      assert(adj_in->route_prev == NULL) ;
+      bgp_adj_in_remove (adj_in->rn, adj_in) ;
+      assert(adj_in != *adj_in_head) ;
+    } ;
 } ;
 
 /*------------------------------------------------------------------------------
