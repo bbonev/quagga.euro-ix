@@ -3834,19 +3834,22 @@ bgp_clear_all_routes (struct peer *peer, bool nsf)
 } ;
 
 /*------------------------------------------------------------------------------
- * Clear Route Server RIB for given AFI/SAFI -- unconditionally
+ * Finish off Route Server RIB for given AFI/SAFI -- unconditionally
  *
  * This is used to dismantle a Route Server Client's RIB -- this is removing
  * all the routes from all *other* Route Server Clients that have been placed
  * in this Clients RIB.
  *
  * Walks all the nodes in the table and discards all routes, all adj_in and
- * all adj_out.
+ * all adj_out -- there should be no adj-in or adj-out at this stage, but
+ * this is tidy.
+ *
+ * Finishes off the table and clears rsclient->rib[afi][safi].
  *
  * Does nothing if there is no RIB for that AFI/SAFI.
  */
 extern void
-bgp_clear_rsclient_rib(struct peer* rsclient, afi_t afi, safi_t safi)
+bgp_finish_rsclient_rib(struct peer* rsclient, afi_t afi, safi_t safi)
 {
   struct bgp_node *rn ;
   struct bgp_table* table ;
@@ -3856,7 +3859,8 @@ bgp_clear_rsclient_rib(struct peer* rsclient, afi_t afi, safi_t safi)
   if (table == NULL)
     return ;            /* Ignore unconfigured afi/safi or similar      */
 
-  /* TODO: fix bgp_clear_rsclient_rib() so that will clear an MPLS VPN table. */
+  /* TODO: fix bgp_finish_rsclient_rib() so that will clear an MPLS VPN table.
+   */
   passert(table->safi != SAFI_MPLS_VPN) ;
 
   for (rn = bgp_table_top (table); rn; rn = bgp_route_next (rn))
@@ -3869,14 +3873,26 @@ bgp_clear_rsclient_rib(struct peer* rsclient, afi_t afi, safi_t safi)
       next_ri = rn->info ;
       while(next_ri != NULL)
         {
+          /* Clear all the candidate routes.
+           *
+           * Note that the final clear-up does not happen until the processing
+           * runs and that reaps the bgp_info, and in turn the rn lock
+           * count drops to zero !
+           *
+           * Note that we don't expect the bgp_rib_remove() to actually change
+           * the list, but we step along it as if it does.
+           */
           ri = next_ri ;
           next_ri = ri->info_next ;     /* bank this    */
 
-          bgp_rib_remove (rn, ri, rsclient, table->afi, table->safi);
+          bgp_rib_remove (rn, ri, ri->peer, table->afi, table->safi);
         } ;
 
       while ((ain = rn->adj_in) != NULL)
         {
+          /* We don't expect to find any adj-in, but we clear out what there
+           * is.
+           */
           assert(ain->adj_prev == NULL) ;
           bgp_adj_in_remove (rn, ain);
           assert(ain != rn->adj_in) ;
@@ -3884,11 +3900,17 @@ bgp_clear_rsclient_rib(struct peer* rsclient, afi_t afi, safi_t safi)
 
       while ((aout = rn->adj_out) != NULL)
         {
+          /* We don't expect to find any adj-out, but we clear out what there
+           * is.
+           */
           assert(aout->adj_prev == NULL) ;
           bgp_adj_out_remove (rn, aout, aout->peer, table->afi, table->safi) ;
           assert(aout != rn->adj_out) ;
         } ;
     }
+
+  bgp_table_finish (&rsclient->rib[afi][safi]) ;
+
   return ;
 }
 

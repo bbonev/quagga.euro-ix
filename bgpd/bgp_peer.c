@@ -870,8 +870,9 @@ bgp_peer_delete (struct peer *peer)
    */
   assert (peer->state != bgp_peer_pDeleting);
 
-  /* If the peer is active, then need to shut it down now.  If there are any
-   * stale routes, flush them now.
+  /* If the peer is active, then need to shut it down now, clearing out
+   * any and all routes -- PEER_DOWN_NEIGHBOR_DELETE does not allow for
+   * Graceful Restart, so *everything* is cleared out.
    *
    * If the peer ends up in pClearing state, that implies that some background
    * work is required to completely clear this peer.  So increment the
@@ -902,7 +903,9 @@ bgp_peer_delete (struct peer *peer)
    */
   bm->peer_linger_count++ ;
 
-  /* If is an rsclient in its own right, remove from rsclient list      */
+  /* If is an rsclient in its own right in any afi/safi, remove from rsclient
+   * list
+   */
   if (peer_rsclient_active (peer))
     {
       struct listnode *pn;
@@ -912,7 +915,8 @@ bgp_peer_delete (struct peer *peer)
       list_delete_node (bgp->rsclient, pn);
     } ;
 
-  /* If this peer belongs to peer group, clear up the relationship.     */
+  /* If this peer belongs to peer group, clear up the relationship.
+   */
   if (peer->group != NULL)
     {
       struct listnode *pn;
@@ -926,15 +930,17 @@ bgp_peer_delete (struct peer *peer)
       peer->group = NULL;
     } ;
 
-  /* Password configuration */
+  /* Password configuration
+   */
   if (peer->password)
     {
       XFREE (MTYPE_PEER_PASSWORD, peer->password);
       peer->password = NULL;
     }
 
-  /* Delete from bgp->peer list, if required.                           */
-  if (CHECK_FLAG (peer->sflags, PEER_STATUS_REAL_PEER))
+  /* Delete from bgp->peer list, if required.
+   */
+  if (peer->sflags & PEER_STATUS_REAL_PEER)
     {
       struct listnode *pn;
       pn = listnode_lookup (bgp->peer, peer) ;
@@ -945,38 +951,48 @@ bgp_peer_delete (struct peer *peer)
       list_delete_node (bgp->peer, pn);
     } ;
 
-  /* Discard rsclient ribs which are owned by group
-   * and cross-check rib pointer and PEER_FLAG_RSERVER_CLIENT.
+  /* Clear out RS-Client RIB (unless owned by Group), clear reference to RS-RIB
+   * and forget PEER_FLAG_RSERVER_CLIENT state.
+   *
+   * As noted above, all (a) bgp_info, (b) adj-in and (c) adj-out for this
+   * RS-Client have been removed from (a) all other RS-Client RIBs, (b) the
+   * Main RIB and (c) the RS-Client RIB.
+   *
+   * If this is a member of an RS-Client Group, then the RIB belongs to the
+   * Group, and nothing more is required here.  Otherwise, this RS-Client
+   * owns the RIB, and it is time to dismantle it.
+   *
+   * NB: it seems that PEER_FLAG_RSERVER_CLIENT state is not significant
+   *     (or not really true) once the peer->rib[afi][safi] has been
+   *     discarded.
    */
   for (afi = AFI_IP; afi < AFI_MAX; afi++)
     for (safi = SAFI_UNICAST; safi < SAFI_MAX; safi++)
-      if (CHECK_FLAG(peer->af_flags[afi][safi], PEER_FLAG_RSERVER_CLIENT))
-        {
-          assert(peer->rib[afi][safi] != NULL) ;
-          if (peer->af_group[afi][safi])
-            {
-              peer->rib[afi][safi] = NULL ;
-              UNSET_FLAG(peer->af_flags[afi][safi], PEER_FLAG_RSERVER_CLIENT) ;
-            } ;
-        }
-      else
-        assert(peer->rib[afi][safi] == NULL) ;
+      {
+        if (!(peer->af_flags[afi][safi] & PEER_FLAG_RSERVER_CLIENT))
+          assert(peer->rib[afi][safi] == NULL) ;
+        else
+          {
+            /* This peer is an RS-Client in this afi/safi.
+             *
+             * We have already cleared out all its routes, but now we need
+             * deal with the RIB if is owned by the RS-Client.
+             */
+            assert(peer->rib[afi][safi] != NULL) ;
+            if (!peer->af_group[afi][safi])
+              {
+                /* This RS-Client has an RS RIB of its own in this afi/safi.
+                 */
+                bgp_finish_rsclient_rib(peer, afi, safi) ;
+              } ;
 
-  /* Can now clear any rsclient ribs.                                   */
-  for (afi = AFI_IP; afi < AFI_MAX; afi++)
-    for (safi = SAFI_UNICAST; safi < SAFI_MAX; safi++)
-      if (peer->rib[afi][safi] != NULL)
-        {
-          bgp_clear_rsclient_rib(peer, afi, safi) ;
-          UNSET_FLAG(peer->af_flags[afi][safi], PEER_FLAG_RSERVER_CLIENT) ;
-        } ;
+            peer->rib[afi][safi] = NULL ;
+            UNSET_FLAG(peer->af_flags[afi][safi], PEER_FLAG_RSERVER_CLIENT) ;
+          } ;
+      } ;
 
-  /* Have now finished with any rsclient ribs                           */
-  for (afi = AFI_IP; afi < AFI_MAX; afi++)
-    for (safi = SAFI_UNICAST; safi < SAFI_MAX; safi++)
-      bgp_table_finish (&peer->rib[afi][safi]) ;
-
-  /* Buffers.  */
+  /* Buffers.
+   */
   if (peer->ibuf)
     stream_free (peer->ibuf);
   if (peer->obuf)
@@ -986,14 +1002,16 @@ bgp_peer_delete (struct peer *peer)
   peer->obuf = NULL;
   peer->work = peer->ibuf = NULL;
 
-  /* Local and remote addresses. */
+  /* Local and remote addresses.
+   */
   if (peer->su_local)
     sockunion_free (peer->su_local);
   if (peer->su_remote)
     sockunion_free (peer->su_remote);
   peer->su_local = peer->su_remote = NULL;
 
-  /* Free filter related memory.  */
+  /* Free filter related memory.
+   */
   for (afi = AFI_IP; afi < AFI_MAX; afi++)
     for (safi = SAFI_UNICAST; safi < SAFI_MAX; safi++)
       {
@@ -1038,7 +1056,8 @@ bgp_peer_delete (struct peer *peer)
   if (peer->index_entry != NULL)
     bgp_peer_index_deregister(peer, &peer->su);
 
-  /* Tear down session, if any and if possible.                         */
+  /* Tear down session, if any and if possible.
+   */
   bgp_session_delete(peer) ;
 
   /* Finally: count down the initial reference, which will delete the peer

@@ -187,7 +187,7 @@ extern void bgp_check_local_routes_rsclient (struct peer *rsclient,
                                                         afi_t afi, safi_t safi);
 extern bool bgp_clear_routes(struct peer *peer, afi_t afi, safi_t safi,
                                                                      bool nsf) ;
-extern void bgp_clear_rsclient_rib(struct peer* rsclient,
+extern void bgp_finish_rsclient_rib(struct peer* rsclient,
                                                        afi_t afi, safi_t safi) ;
 extern bool bgp_clear_all_routes (struct peer *, bool nsf);
 extern void bgp_clear_adj_in (struct peer *, afi_t, safi_t);

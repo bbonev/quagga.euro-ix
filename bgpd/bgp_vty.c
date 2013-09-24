@@ -2263,8 +2263,7 @@ peer_rsclient_unset(struct peer* peer, int afi, int safi, bool keep_export)
     }
 
   /* Discard the rsclient rib                                           */
-  bgp_clear_rsclient_rib (peer, afi, safi);
-  bgp_table_finish (&peer->rib[afi][safi]);
+  bgp_finish_rsclient_rib (peer, afi, safi);
 
   /* Discard import policy unconditionally                              */
   if (peer->filter[afi][safi].map[RMAP_IMPORT].name)
