@@ -85,14 +85,23 @@ bgp_afi_node_get (struct bgp_table *table, afi_t afi, safi_t safi, struct prefix
       /* The prn points to a sub-table, and owns a lock on itself and on the
        * sub-table.
        *
-       * The sub-table and the parent table have the same afi/safi.
+       * The sub-table and the parent table have the same afi/safi, and the
+       * same type.
        */
-      if (prn->info == NULL)
-        prn->info = bgp_table_init (afi, safi);
+      if (prn->info != NULL)
+        {
+          bgp_unlock_node (prn);  /* extra lock gained in bgp_node_get()  */
+          table = prn->info;
+        }
       else
-        bgp_unlock_node (prn);  /* extra lock gained in bgp_node_get()  */
+        {
+          bgp_table_t type;
 
-      table = prn->info;
+          type = table->type ;
+
+          table = prn->info = bgp_table_init (afi, safi);
+          table->type = type ;
+        } ;
     }
 
   rn = bgp_node_get (table, p);
@@ -3467,19 +3476,36 @@ bgp_default_originate (struct peer *peer, afi_t afi, safi_t safi, bool withdraw)
 
 /*------------------------------------------------------------------------------
  * For the given table and afi/safi, announce all routes for the given peer.
+ *
+ * NB: for an RS-Client the given table MUST be the relevant RS-Client Table !
  */
 static void
-bgp_announce_table (struct peer *peer, afi_t afi, safi_t safi,
-                   struct bgp_table *table, int rsclient)
+bgp_announce_route_table (struct peer *peer, afi_t afi, safi_t safi,
+                                                       struct bgp_table *table)
 {
   struct bgp_node *rn;
+  bool is_rsclient ;
 
-  if (! table)
-    table = (rsclient) ? peer->rib[afi][safi] : peer->bgp->rib[afi][safi];
+  is_rsclient = (peer->af_flags[afi][safi] & PEER_FLAG_RSERVER_CLIENT) ;
+
+  switch (table->type)
+    {
+      case BGP_TABLE_MAIN:
+        qassert(!is_rsclient) ;
+        break ;
+
+      case BGP_TABLE_RSCLIENT:
+        qassert(is_rsclient) ;
+        break;
+
+      default:
+        qassert(false) ;
+        return ;
+    } ;
 
   if ((safi != SAFI_MPLS_VPN)
-      && (peer->af_flags[afi][safi] & PEER_FLAG_DEFAULT_ORIGINATE))
-    bgp_default_originate (peer, afi, safi, false);
+                  && (peer->af_flags[afi][safi] & PEER_FLAG_DEFAULT_ORIGINATE))
+    bgp_default_originate (peer, afi, safi, false /* !withdraw */);
 
   for (rn = bgp_table_top (table); rn; rn = bgp_route_next(rn))
     {
@@ -3514,7 +3540,7 @@ bgp_announce_table (struct peer *peer, afi_t afi, safi_t safi,
           if (!(ri->flags & BGP_INFO_SELECTED))
             continue ;
 
-          if (!rsclient)
+          if (!is_rsclient)
             attr = bgp_announce_check (ri, peer, &rn->p, afi, safi) ;
           else
             attr = bgp_announce_check_rsclient (ri, peer, &rn->p, afi, safi) ;
@@ -3527,36 +3553,56 @@ bgp_announce_table (struct peer *peer, afi_t afi, safi_t safi,
     } ;
 } ;
 
-void
+/*------------------------------------------------------------------------------
+ * For the given afi/safi, announce all routes for the given peer.
+ */
+extern void
 bgp_announce_route (struct peer *peer, afi_t afi, safi_t safi)
 {
-  struct bgp_node *rn;
   struct bgp_table *table;
 
   if (peer->state != bgp_peer_pEstablished)
-    return;
+    return ;
 
   if (! peer->afc_nego[afi][safi])
-    return;
+    return ;
 
-  /* First update is deferred until ORF or ROUTE-REFRESH is received
+  /* First update may be deferred until EoR is received.
    */
   if (peer->af_sflags[afi][safi] & PEER_STATUS_ORF_WAIT_REFRESH)
     return;
 
-  if (safi != SAFI_MPLS_VPN)
-    bgp_announce_table (peer, afi, safi, NULL, 0);
-  else
-    for (rn = bgp_table_top (peer->bgp->rib[afi][safi]); rn;
-         rn = bgp_route_next(rn))
-      if ((table = (rn->info)) != NULL)
-       bgp_announce_table (peer, afi, safi, table, 0);
-
+  /* If not MPLS, announce the appropriate table to the peer.
+   *
+   * If MPLS walk the RD table and announce all the sub-tables.
+   */
   if (peer->af_flags[afi][safi] & PEER_FLAG_RSERVER_CLIENT)
-    bgp_announce_table (peer, afi, safi, NULL, 1);
+    table = peer->rib[afi][safi] ;
+  else
+    table = peer->bgp->rib[afi][safi];
+
+  if (safi != SAFI_MPLS_VPN)
+    bgp_announce_route_table (peer, afi, safi, table) ;
+  else
+    {
+      struct bgp_node *prn;
+
+      for (prn = bgp_table_top (table); prn; prn = bgp_route_next (prn))
+        {
+          struct bgp_table *prn_table;
+
+          prn_table = prn->info ;
+          if (prn_table != NULL)
+            bgp_announce_route_table (peer, afi, safi, prn_table) ;
+        } ;
+    } ;
 }
 
-void
+/*------------------------------------------------------------------------------
+ * Announce all routes we can for all afi/safi available for the given peer,
+ *                                                        if it is pEstablished.
+ */
+extern void
 bgp_announce_route_all (struct peer *peer)
 {
   afi_t afi;
@@ -4043,19 +4089,19 @@ bgp_finish_rsclient_rib(struct peer* rsclient, afi_t afi, safi_t safi)
 
       for (prn = bgp_table_top (*p_table); prn; prn = bgp_route_next (prn))
         {
-          struct bgp_table** p_sub_table ;
+          struct bgp_table** p_prn_table ;
 
-          p_sub_table = (struct bgp_table**)(&prn->info) ;
+          p_prn_table = (struct bgp_table**)(&prn->info) ;
 
-          if (prn->info != NULL)
+          if (*p_prn_table != NULL)
             {
-              bgp_finish_rsclient_rib_table(rsclient, afi, safi, *p_sub_table);
+              bgp_finish_rsclient_rib_table(rsclient, afi, safi, *p_prn_table);
 
               /* The prn owns the initial lock on the sub-table and on itself.
                *
                * Can now finish off the sub-table and then unlock the prn.
                */
-              bgp_table_finish (p_sub_table) ;
+              bgp_table_finish (p_prn_table) ;
               bgp_unlock_node (prn) ;
             } ;
         } ;
