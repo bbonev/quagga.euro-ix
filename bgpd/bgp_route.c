@@ -64,6 +64,8 @@ Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
  *
  * Once a node has been created, the prefix and any prn are stable, until the
  * lock expires.
+ *
+ * Returns with a lock on the node.
  */
 static struct bgp_node *
 bgp_afi_node_get (struct bgp_table *table, afi_t afi, safi_t safi, struct prefix *p,
@@ -80,10 +82,15 @@ bgp_afi_node_get (struct bgp_table *table, afi_t afi, safi_t safi, struct prefix
     {
       prn = bgp_node_get (table, (struct prefix *) prd);
 
+      /* The prn points to a sub-table, and owns a lock on itself and on the
+       * sub-table.
+       *
+       * The sub-table and the parent table have the same afi/safi.
+       */
       if (prn->info == NULL)
         prn->info = bgp_table_init (afi, safi);
       else
-        bgp_unlock_node (prn);
+        bgp_unlock_node (prn);  /* extra lock gained in bgp_node_get()  */
 
       table = prn->info;
     }
@@ -2517,6 +2524,12 @@ bgp_update_rsclient (struct peer *rsclient, struct rs_route* rt,
   const char* how_recv ;
   char buf[SU_ADDRSTRLEN];
 
+  qassert(bgp_sub_attr_are_interned(rt->orig_attr)) ;
+  if (rt->safi == SAFI_MPLS_VPN)
+    qassert((rt->prd != NULL) && (rt->tag != NULL)) ;
+  else
+    qassert((rt->prd == NULL) && (rt->tag == NULL)) ;
+
   how_recv = soft_reconfig ? "soft-reconfig" : "recv" ;
 
   /* Do not insert announces from a rsclient into its own 'bgp_table'.
@@ -2621,12 +2634,35 @@ bgp_update_rsclient (struct peer *rsclient, struct rs_route* rt,
     {
       ri->uptime = bgp_clock ();
 
-      /* Same attribute comes in.
-       */
-      if (((ri->flags & (BGP_INFO_REMOVED | BGP_INFO_VALID))
-                     == (                   BGP_INFO_VALID))
-                                        && attrhash_cmp (ri->attr, client_attr))
+      if (ri->flags & BGP_INFO_REMOVED)
         {
+          /* Withdraw/Announce before we fully processed the withdraw
+           *
+           * May or may not be the same attributes.
+           */
+          /* Route removed and now restored, before processing caught up with
+           * the removal !
+           */
+          if (BGP_DEBUG (update, UPDATE_IN))
+            zlog (rsclient->log, LOG_DEBUG, "%s %s %s/%d, "
+                                              "flapped quicker than processing",
+                rsclient->host, how_recv,
+                inet_ntop(rt->p->family, &rt->p->u.prefix, buf, SU_ADDRSTRLEN),
+                                                             rt->p->prefixlen) ;
+          bgp_info_restore (rn, ri);
+        }
+      else
+        {
+          bool tag_changed ;
+
+          tag_changed = (rt->safi == SAFI_MPLS_VPN) ;
+          if (tag_changed && (ri->extra != NULL))
+            tag_changed = (memcmp(ri->extra->tag, rt->tag, 3) != 0) ;
+
+          if (!tag_changed && attrhash_cmp (ri->attr, client_attr))
+            {
+              /* Same attribute and tag -- which may happen with soft_reconfig !
+               */
 #if 0
           /* BUG: just 'cos we've received the same attr again, does not
            *      mean there hasn't been a change in the past.
@@ -2634,37 +2670,31 @@ bgp_update_rsclient (struct peer *rsclient, struct rs_route* rt,
           bgp_info_unset_flag (rn, ri, BGP_INFO_ATTR_CHANGED);
 #endif
 
-          if (!soft_reconfig)
-            {
-              if (BGP_DEBUG (update, UPDATE_IN))
-                zlog (rt->peer->log, LOG_DEBUG,
-                    "%s %s %s/%d for RS-client %s...duplicate ignored",
-                    rt->peer->host, how_recv,
-                    inet_ntop(rt->p->family, &rt->p->u.prefix,
-                                                            buf, SU_ADDRSTRLEN),
-                    rt->p->prefixlen, rsclient->host);
-            } ;
+              if (!soft_reconfig)
+                {
+                  if (BGP_DEBUG (update, UPDATE_IN))
+                    zlog (rt->peer->log, LOG_DEBUG,
+                            "%s %s %s/%d for RS-client %s...duplicate ignored",
+                            rt->peer->host, how_recv,
+                            inet_ntop(rt->p->family, &rt->p->u.prefix,
+                                                           buf, SU_ADDRSTRLEN),
+                                             rt->p->prefixlen, rsclient->host) ;
+                } ;
 
-          /* Discard the duplicate interned attributes
-           *
-           * We don't need to do anything else.  'cos state is unchanging.
-           */
-          bgp_attr_unintern (client_attr);
+              /* Discard the duplicate interned attributes
+               *
+               * We don't need to do anything else.  'cos state is unchanging.
+               */
+              bgp_attr_unintern (client_attr);
 
-          /* Unlock node -- locked in bgp_afi_node_get()
-           */
-          bgp_unlock_node (rn);
-          return;               /* FIN <-<-<-<-<-<-<-<-<-<      */
-        }
+              /* Unlock node -- locked in bgp_afi_node_get()
+               */
+              bgp_unlock_node (rn);
+              return;           /* FIN <-<-<-<-<-<-<-<-<-<      */
+            }
+        } ;
 
-      /* Withdraw/Announce before we fully processed the withdraw
-       *
-       * May or may not be the same attributes.
-       */
-      if (ri->flags & BGP_INFO_REMOVED)
-        bgp_info_restore (rn, ri);
-
-      /* The attribute is changed.
+      /* The attribute or tag have changed or been restored.
        *
        * NB: if the route was withdrawn, and has now been restored to its
        *     original value, that will still be treated as an attribute
@@ -2687,12 +2717,6 @@ bgp_update_rsclient (struct peer *rsclient, struct rs_route* rt,
       ri->sub_type = rt->sub_type;
       ri->peer     = rt->peer;
       ri->uptime   = bgp_clock ();
-#if 0                               /* TODO: do we need this ?? */
-      /* Update MPLS tag.
-       */
-      if (safi == SAFI_MPLS_VPN)
-        memcpy ((bgp_info_extra_get (ri))->tag, tag, 3);
-#endif
 
       /* Register new BGP information.
        */
@@ -2817,6 +2841,10 @@ bgp_update_main (struct peer *peer, struct prefix *p, struct attr *attr,
   bgp_peer_sort_t sort ;
 
   qassert(bgp_sub_attr_are_interned(attr)) ;
+  if (safi == SAFI_MPLS_VPN)
+    qassert((prd != NULL) && (tag != NULL)) ;
+  else
+    qassert((prd == NULL) && (tag == NULL)) ;
 
   use_attr = NULL ;             /* nothing to use, yet          */
 
@@ -2839,7 +2867,7 @@ bgp_update_main (struct peer *peer, struct prefix *p, struct attr *attr,
    */
   if ((peer->af_flags[afi][safi] & PEER_FLAG_SOFT_RECONFIG)
                                 && (peer != bgp->peer_self) && ! soft_reconfig)
-    bgp_adj_in_set (rn, peer, attr);
+    bgp_adj_in_set (rn, peer, attr, tag) ;
 
   /* Check previously received route.
    */
@@ -2959,68 +2987,11 @@ bgp_update_main (struct peer *peer, struct prefix *p, struct attr *attr,
     {
       ri->uptime = bgp_clock ();
 
-      /* Same attribute comes in -- which may happen with soft_reconfig !
-       */
-      if (!(ri->flags & BGP_INFO_REMOVED) && attrhash_cmp (ri->attr, use_attr))
-        {
-#if 0
-          /* BUG: just 'cos we've received the same attr again, does not
-           *      mean there hasn't been a change in the past.
-           */
-          bgp_info_unset_flag (rn, ri, BGP_INFO_ATTR_CHANGED);
-#endif
-
-          if (!soft_reconfig)
-            {
-              if ((bgp->af_flags[afi][safi] & BGP_CONFIG_DAMPENING)
-                     && (sort == BGP_PEER_EBGP)
-                     && (ri->flags & BGP_INFO_HISTORY))
-                {
-                  if (BGP_DEBUG (update, UPDATE_IN))
-                    zlog (peer->log, LOG_DEBUG, "%s %s %s/%d",
-                          peer->host, how_recv,
-                        inet_ntop(p->family, &p->u.prefix, buf, SU_ADDRSTRLEN),
-                        p->prefixlen);
-
-                  if (bgp_damp_update (ri, rn, afi, safi)
-                                                        != BGP_DAMP_SUPPRESSED)
-                    {
-                      bgp_aggregate_increment (bgp, p, ri, afi, safi);
-                      bgp_process (bgp, rn, afi, safi);
-                    }
-                }
-              else /* Duplicate - OK for gr, odd otherwise      */
-                {
-                  bool gr ;
-
-                  /* graceful restart STALE flag unset.
-                   */
-                  gr = (ri->flags & BGP_INFO_STALE) ;
-                  if (gr)
-                    {
-                      bgp_info_unset_flag (rn, ri, BGP_INFO_STALE);
-                      bgp_process (bgp, rn, afi, safi);
-                    }
-
-                  if (BGP_DEBUG (update, UPDATE_IN))
-                    zlog (peer->log, LOG_DEBUG, "%s %s %s/%d, %s",
-                        peer->host, how_recv,
-                        inet_ntop(p->family, &p->u.prefix, buf, SU_ADDRSTRLEN),
-                        p->prefixlen,
-                        gr ? "was stale -- restored as was"
-                           : "repeated route -- odd") ;
-                } ;
-            } ;
-
-          bgp_attr_unintern (use_attr);
-          bgp_unlock_node (rn);
-          return 0;
-        }
-
-      /* Withdraw/Announce before we fully processed the withdraw
-       */
       if (ri->flags & BGP_INFO_REMOVED)
         {
+          /* Route removed and now restored, before processing caught up with
+           * the removal !
+           */
           if (BGP_DEBUG (update, UPDATE_IN))
             zlog (peer->log, LOG_DEBUG, "%s %s %s/%d, "
                                               "flapped quicker than processing",
@@ -3029,11 +3000,84 @@ bgp_update_main (struct peer *peer, struct prefix *p, struct attr *attr,
                                                                   p->prefixlen);
           bgp_info_restore (rn, ri);
         }
-      else if (BGP_DEBUG (update, UPDATE_IN))
-        zlog (peer->log, LOG_DEBUG, "%s %s %s/%d",
-              peer->host, how_recv,
-              inet_ntop(p->family, &p->u.prefix, buf, SU_ADDRSTRLEN),
-              p->prefixlen);
+      else
+        {
+          bool tag_changed ;
+
+          tag_changed = (safi == SAFI_MPLS_VPN) ;
+          if (tag_changed && (ri->extra != NULL))
+            tag_changed = (memcmp(ri->extra->tag, tag, 3) != 0) ;
+
+          if (!tag_changed && attrhash_cmp (ri->attr, use_attr))
+            {
+              /* Same attribute and tag -- which may happen with soft_reconfig !
+               */
+#if 0
+          /* BUG: just 'cos we've received the same attr again, does not
+           *      mean there hasn't been a change in the past.
+           */
+          bgp_info_unset_flag (rn, ri, BGP_INFO_ATTR_CHANGED);
+#endif
+
+              if (!soft_reconfig)
+                {
+                  if ((bgp->af_flags[afi][safi] & BGP_CONFIG_DAMPENING)
+                          && (sort == BGP_PEER_EBGP)
+                          && (ri->flags & BGP_INFO_HISTORY))
+                    {
+                      if (BGP_DEBUG (update, UPDATE_IN))
+                        zlog (peer->log, LOG_DEBUG, "%s %s %s/%d",
+                          peer->host, how_recv,
+                         inet_ntop(p->family, &p->u.prefix, buf, SU_ADDRSTRLEN),
+                                                                  p->prefixlen);
+
+                      if (bgp_damp_update (ri, rn, afi, safi)
+                                                       != BGP_DAMP_SUPPRESSED)
+                        {
+                          bgp_aggregate_increment (bgp, p, ri, afi, safi);
+                          bgp_process (bgp, rn, afi, safi);
+                        }
+                    }
+                  else /* Duplicate - OK for gr, odd otherwise      */
+                    {
+                      bool gr ;
+
+                      /* graceful restart STALE flag unset.
+                       */
+                      gr = (ri->flags & BGP_INFO_STALE) ;
+                      if (gr)
+                        {
+                          bgp_info_unset_flag (rn, ri, BGP_INFO_STALE);
+                          bgp_process (bgp, rn, afi, safi);
+                        }
+
+                      if (BGP_DEBUG (update, UPDATE_IN))
+                        zlog (peer->log, LOG_DEBUG, "%s %s %s/%d, %s",
+                            peer->host, how_recv,
+                         inet_ntop(p->family, &p->u.prefix, buf, SU_ADDRSTRLEN),
+                                    p->prefixlen,
+                                        gr ? "was stale -- restored as was"
+                                           : "repeated route -- odd") ;
+                    } ;
+                } ;
+
+              /* Neither the attributes nor the tag have changed, so we have
+               * no use for the carefully constructed attributes, and no
+               * need to process the bgp_node.
+               */
+              bgp_attr_unintern (use_attr);
+              bgp_unlock_node (rn);
+              return 0;
+            } ;
+
+          /* Either the attributes or the tag (or both) have changed.
+           */
+          if (BGP_DEBUG (update, UPDATE_IN))
+                zlog (peer->log, LOG_DEBUG, "%s %s %s/%d",
+                      peer->host, how_recv,
+                      inet_ntop(p->family, &p->u.prefix, buf, SU_ADDRSTRLEN),
+                      p->prefixlen);
+        } ;
 
       /* graceful restart STALE flag unset.
        */
@@ -3142,7 +3186,7 @@ bgp_update_main (struct peer *peer, struct prefix *p, struct attr *attr,
   new->attr = use_attr;
   new->uptime = bgp_clock ();
 
-  /* Update MPLS tag.
+  /* Set MPLS tag.
    */
   if (safi == SAFI_MPLS_VPN)
     memcpy ((bgp_info_extra_get (new))->tag, tag, 3);
@@ -3227,6 +3271,10 @@ bgp_update (struct peer *peer, struct prefix *p, struct attr *attr,
   int ret;
 
   qassert(bgp_sub_attr_are_interned(attr)) ;
+  if (safi == SAFI_MPLS_VPN)
+    qassert((prd != NULL) && (tag != NULL)) ;
+  else
+    qassert((prd == NULL) && (tag == NULL)) ;
 
   /* For all neighbors, update the main RIB
    */
@@ -3519,24 +3567,49 @@ bgp_announce_route_all (struct peer *peer)
       bgp_announce_route (peer, afi, safi);
 }
 
+/*------------------------------------------------------------------------------
+ * Populate or re-populate the given RS-Client's routes, by re-updating from
+ *                         all Main RIB adj-in, in the given afi/safi and table.
+ */
 static void
-bgp_soft_reconfig_table_rsclient (struct peer *rsclient, afi_t afi,
-        safi_t safi, struct bgp_table *table)
+bgp_soft_reconfig_rsclient_table(struct peer *rsclient, afi_t afi, safi_t safi,
+                                 struct bgp_table *table, struct prefix_rd* prd)
 {
   struct bgp_node *rn;
   struct bgp_adj_in *ain;
   struct rs_route rt_s ;
 
-  if (! table)
-    table = rsclient->bgp->rib[afi][safi];
+  if (safi == SAFI_MPLS_VPN)
+    qassert(prd != NULL) ;
+  else
+    qassert(prd == NULL) ;
 
   /* Prepare the rs_route object, setting all the parts common to all routes
    * which are about to announce to the rs client.
+   *
+   *   * rs_in_applied  -- false        -- cleared in bgp_rs_route_reset()
+   *   * rs_in_deny     -- false        -- ditto
+   *
+   *   * orig_attr      -- NULL         -- set at top of loop
+   *   * rs_in_attr     -- NULL         -- cleared in bgp_rs_route_reset()
+   *
+   *   * peer           -- NULL         -- set at top of loop
+   *
+   *   * afi            -- set and unchanging
+   *   * safi           -- set and unchanging
+   *
+   *   * p              -- NULL         -- set at top of loop
+   *
+   *   * type           -- set and unchanging
+   *   * sub_type       -- set and unchanging
+   *
+   *   * prd            -- set and unchanging
+   *   * tag            -- NULL         -- set at top of loop, if required.
    */
   bgp_rs_route_init(&rt_s, afi, safi, NULL, NULL, NULL,
-                                ZEBRA_ROUTE_BGP, BGP_ROUTE_NORMAL, NULL, NULL) ;
+                                ZEBRA_ROUTE_BGP, BGP_ROUTE_NORMAL, prd, NULL) ;
 
-  /* Announce everything in the table.
+  /* Announce everything in the table's adj-in.
    */
   for (rn = bgp_table_top (table); rn; rn = bgp_route_next (rn))
     for (ain = rn->adj_in; ain; ain = ain->adj_next)
@@ -3544,6 +3617,9 @@ bgp_soft_reconfig_table_rsclient (struct peer *rsclient, afi_t afi,
         rt_s.orig_attr = ain->attr ;
         rt_s.peer      = ain->peer ;
         rt_s.p         = &rn->p ;
+
+        if (safi == SAFI_MPLS_VPN)
+          rt_s.tag = &ain->tag[0] ;
 
         bgp_update_rsclient (rsclient, &rt_s, true /* soft_reconfig */) ;
 
@@ -3554,69 +3630,86 @@ bgp_soft_reconfig_table_rsclient (struct peer *rsclient, afi_t afi,
          */
         bgp_rs_route_reset(&rt_s) ;
       } ;
-}
+} ;
 
-void
+/*------------------------------------------------------------------------------
+ * Populate or re-populate the given RS-Client's routes, by re-updating from
+ *                                   all Main RIB adj-in, in the given afi/safi.
+ *
+ * This is used when an RS-Client is started, and for explicit soft reconfig.
+ */
+extern void
 bgp_soft_reconfig_rsclient (struct peer *rsclient, afi_t afi, safi_t safi)
 {
   struct bgp_table *table;
-  struct bgp_node *rn;
+
+  /* Populate the RS-Client RIB from the adj-in of the Main-RIB.
+   */
+  table = rsclient->bgp->rib[afi][safi];
+  if (table == NULL)
+    return ;                    /* belt-and-braces      */
 
   if (safi != SAFI_MPLS_VPN)
-    bgp_soft_reconfig_table_rsclient (rsclient, afi, safi, NULL);
-
+    bgp_soft_reconfig_rsclient_table(rsclient, afi, safi, table, NULL);
   else
-    for (rn = bgp_table_top (rsclient->bgp->rib[afi][safi]); rn;
-            rn = bgp_route_next (rn))
-      if ((table = rn->info) != NULL)
-        bgp_soft_reconfig_table_rsclient (rsclient, afi, safi, table);
+    {
+      struct bgp_node *prn;
+
+      for (prn = bgp_table_top (table); prn; prn = bgp_route_next (prn))
+        {
+          struct bgp_table *prn_table;
+
+          prn_table = prn->info ;
+          if (prn_table != NULL)
+            bgp_soft_reconfig_rsclient_table(rsclient, afi, safi, prn_table,
+                                                   (struct prefix_rd*)&prn->p) ;
+        } ;
+    } ;
 }
 
-static void
-bgp_soft_reconfig_table (struct peer *peer, afi_t afi, safi_t safi,
-                         struct bgp_table *table)
-{
-  int ret;
-  struct bgp_node *rn;
-  struct bgp_adj_in *ain;
-
-  if (! table)
-    table = peer->bgp->rib[afi][safi];
-
-  for (rn = bgp_table_top (table); rn; rn = bgp_route_next (rn))
-    for (ain = rn->adj_in; ain; ain = ain->adj_next)
-      {
-        if (ain->peer == peer)
-          {
-            ret = bgp_update (peer, &rn->p, ain->attr, afi, safi,
-                              ZEBRA_ROUTE_BGP, BGP_ROUTE_NORMAL,
-                              NULL, NULL, true /* soft_reconfig */);
-            if (ret < 0)
-              {
-                bgp_unlock_node (rn);
-                return;
-              }
-            continue;
-          }
-      }
-}
-
-void
+/*------------------------------------------------------------------------------
+ * Walk the given peer's adj-in entries for the given afi/safi, and re-update
+ *                                                         same, 'soft_reconfig'
+ *
+ * All the adj-in are in the Main RIB -- even for RS-Clients.
+ */
+extern void
 bgp_soft_reconfig_in (struct peer *peer, afi_t afi, safi_t safi)
 {
-  struct bgp_node *rn;
   struct bgp_table *table;
+  struct bgp_adj_in*   adj_in_next ;
+  struct prefix_rd *prd ;
+  uchar* p_tag ;
 
-  if (peer->state != bgp_peer_pEstablished)
-    return;
+  table = peer->bgp->rib[afi][safi];
 
-  if (safi != SAFI_MPLS_VPN)
-    bgp_soft_reconfig_table (peer, afi, safi, NULL);
-  else
-    for (rn = bgp_table_top (peer->bgp->rib[afi][safi]); rn;
-         rn = bgp_route_next (rn))
-      if ((table = rn->info) != NULL)
-        bgp_soft_reconfig_table (peer, afi, safi, table);
+  prd   = NULL ;
+  p_tag = NULL ;
+
+  adj_in_next = peer->adj_in_head[afi][safi] ;
+  while (adj_in_next != NULL)
+    {
+      struct bgp_adj_in*  adj_in ;
+      struct bgp_node* rn ;
+
+      adj_in      = adj_in_next ;
+      adj_in_next = adj_in->route_next ;
+
+      rn = adj_in->rn ;
+
+      if (safi != SAFI_MPLS_VPN)
+        qassert(rn->table == table) ;
+      else
+        {
+          qassert(rn->prn->table == table) ;
+          prd   = (struct prefix_rd*)(&rn->prn->p) ;
+          p_tag = &adj_in->tag[0] ;
+        } ;
+
+      bgp_update (peer, &rn->p, adj_in->attr, afi, safi,
+                                      ZEBRA_ROUTE_BGP, BGP_ROUTE_NORMAL,
+                                          prd, p_tag, true /* soft_reconfig */);
+    } ;
 }
 
 /*==============================================================================
@@ -3862,34 +3955,13 @@ bgp_clear_all_routes (struct peer *peer, bool nsf)
 } ;
 
 /*------------------------------------------------------------------------------
- * Finish off Route Server RIB for given AFI/SAFI -- unconditionally
- *
- * This is used to dismantle a Route Server Client's RIB -- this is removing
- * all the routes from all *other* Route Server Clients that have been placed
- * in this Clients RIB.
- *
- * Walks all the nodes in the table and discards all routes, all adj_in and
- * all adj_out -- there should be no adj-in or adj-out at this stage, but
- * this is tidy.
- *
- * Finishes off the table and clears rsclient->rib[afi][safi].
- *
- * Does nothing if there is no RIB for that AFI/SAFI.
+ * Finish off Route Server Table for given AFI/SAFI
  */
-extern void
-bgp_finish_rsclient_rib(struct peer* rsclient, afi_t afi, safi_t safi)
+static void
+bgp_finish_rsclient_rib_table(struct peer* rsclient, afi_t afi, safi_t safi,
+                                                        struct bgp_table* table)
 {
   struct bgp_node *rn ;
-  struct bgp_table* table ;
-
-  table = rsclient->rib[afi][safi] ;
-
-  if (table == NULL)
-    return ;            /* Ignore unconfigured afi/safi or similar      */
-
-  /* TODO: fix bgp_finish_rsclient_rib() so that will clear an MPLS VPN table.
-   */
-  passert(table->safi != SAFI_MPLS_VPN) ;
 
   for (rn = bgp_table_top (table); rn; rn = bgp_route_next (rn))
     {
@@ -3911,9 +3983,9 @@ bgp_finish_rsclient_rib(struct peer* rsclient, afi_t afi, safi_t safi)
            * the list, but we step along it as if it does.
            */
           ri = next_ri ;
-          next_ri = ri->info_next ;     /* bank this    */
+          next_ri = ri->info_next ;
 
-          bgp_rib_remove (rn, ri, ri->peer, table->afi, table->safi);
+          bgp_rib_remove (rn, ri, ri->peer, afi, safi);
         } ;
 
       while ((ain = rn->adj_in) != NULL)
@@ -3932,14 +4004,64 @@ bgp_finish_rsclient_rib(struct peer* rsclient, afi_t afi, safi_t safi)
            * is.
            */
           assert(aout->adj_prev == NULL) ;
-          bgp_adj_out_remove (rn, aout, aout->peer, table->afi, table->safi) ;
+          bgp_adj_out_remove (rn, aout, aout->peer, afi, safi) ;
           assert(aout != rn->adj_out) ;
         } ;
     }
+}
 
-  bgp_table_finish (&rsclient->rib[afi][safi]) ;
+/*------------------------------------------------------------------------------
+ * Finish off Route Server RIB for given AFI/SAFI -- unconditionally
+ *
+ * This is used to dismantle a Route Server Client's RIB -- this is removing
+ * all the routes from all *other* Route Server Clients that have been placed
+ * in this Clients RIB.
+ *
+ * Walks all the nodes in the table and discards all routes, all adj_in and
+ * all adj_out -- there should be no adj-in or adj-out at this stage, but
+ * this is tidy.
+ *
+ * Finishes off the table and clears rsclient->rib[afi][safi].
+ *
+ * Does nothing if there is no RIB for that AFI/SAFI.
+ */
+extern void
+bgp_finish_rsclient_rib(struct peer* rsclient, afi_t afi, safi_t safi)
+{
+  struct bgp_table** p_table ;
 
-  return ;
+  p_table = &rsclient->rib[afi][safi] ;
+
+  if (*p_table == NULL)
+    return ;            /* Ignore unconfigured afi/safi or similar      */
+
+  if (safi != SAFI_MPLS_VPN)
+    bgp_finish_rsclient_rib_table(rsclient, afi, safi, *p_table) ;
+  else
+    {
+      struct bgp_node *prn;
+
+      for (prn = bgp_table_top (*p_table); prn; prn = bgp_route_next (prn))
+        {
+          struct bgp_table** p_sub_table ;
+
+          p_sub_table = (struct bgp_table**)(&prn->info) ;
+
+          if (prn->info != NULL)
+            {
+              bgp_finish_rsclient_rib_table(rsclient, afi, safi, *p_sub_table);
+
+              /* The prn owns the initial lock on the sub-table and on itself.
+               *
+               * Can now finish off the sub-table and then unlock the prn.
+               */
+              bgp_table_finish (p_sub_table) ;
+              bgp_unlock_node (prn) ;
+            } ;
+        } ;
+    } ;
+
+  bgp_table_finish (p_table) ;
 }
 
 /*------------------------------------------------------------------------------

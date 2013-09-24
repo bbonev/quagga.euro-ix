@@ -63,10 +63,10 @@ struct bgp_node
 
   struct bgp_node *prn;
 
-  int lock;
+  uint lock;
 
-  struct bgp_node*  wq_next ;
   bool on_wq ;
+  struct bgp_node*  wq_next ;
 };
 
 extern struct bgp_table *bgp_table_init (afi_t, safi_t);

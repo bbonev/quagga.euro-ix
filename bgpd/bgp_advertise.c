@@ -688,7 +688,8 @@ bgp_adj_out_remove (struct bgp_node *rn, struct bgp_adj_out *adj,
  * The attributes are interned into the adj-in -- unless there is no change.
  */
 extern void
-bgp_adj_in_set (struct bgp_node *rn, struct peer *peer, struct attr *attr)
+bgp_adj_in_set (struct bgp_node *rn, struct peer *peer, struct attr *attr,
+                                                               const uchar* tag)
 {
   struct bgp_adj_in *adj;
   struct bgp_adj_in**  adj_in_head ;
@@ -705,6 +706,12 @@ bgp_adj_in_set (struct bgp_node *rn, struct peer *peer, struct attr *attr)
                 bgp_attr_unintern (adj->attr);
               adj->attr = bgp_attr_intern (attr);
             }
+
+          if (tag == NULL)
+            memset(&adj->tag[0], 0, sizeof(adj->tag)) ;
+          else
+            memcpy(&adj->tag[0], tag, sizeof(adj->tag)) ;
+
           return;
         }
     }
@@ -713,9 +720,11 @@ bgp_adj_in_set (struct bgp_node *rn, struct peer *peer, struct attr *attr)
    */
   adj = XCALLOC (MTYPE_BGP_ADJ_IN, sizeof (struct bgp_adj_in));
 
-  /* Set the interned attributes
+  /* Set the interned attributes and tag, if any.
    */
   adj->attr = bgp_attr_intern (attr);
+  if (tag != NULL)
+    memcpy(&adj->tag[0], tag, sizeof(adj->tag)) ;
 
   /* Add to list of adj in stuff for the peer
    */

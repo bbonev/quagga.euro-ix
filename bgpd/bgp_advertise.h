@@ -111,6 +111,9 @@ struct bgp_adj_in
 
   /* Received attribute.        */
   struct attr *attr;
+
+  /* Received Tag, if any       */
+  uchar tag[3];
 };
 
 /* BGP advertisement list.  */
@@ -219,7 +222,8 @@ extern void bgp_adj_out_remove (struct bgp_node *, struct bgp_adj_out *,
 extern int bgp_adj_out_lookup (struct peer *, struct prefix *, afi_t, safi_t,
                         struct bgp_node *);
 
-extern void bgp_adj_in_set (struct bgp_node *, struct peer *, struct attr *);
+extern void bgp_adj_in_set (struct bgp_node *, struct peer *, struct attr *,
+                                                                  const uchar*);
 extern void bgp_adj_in_unset (struct bgp_node *, struct peer *);
 extern void bgp_adj_in_remove (struct bgp_node *, struct bgp_adj_in *);
 

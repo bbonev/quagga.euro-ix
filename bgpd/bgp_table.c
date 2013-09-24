@@ -99,7 +99,7 @@ bgp_node_set (struct bgp_table *table, struct prefix *prefix)
 static void
 bgp_node_free (struct bgp_node *node)
 {
-  node->lock = -54321 ;
+  node->lock = 0 ;
   XFREE (MTYPE_BGP_NODE, node);
 }
 
@@ -136,7 +136,7 @@ bgp_table_free (struct bgp_table *rt)
       qassert(  (node->info     == NULL)
              && (node->adj_out  == NULL)
              && (node->adj_in   == NULL)
-             && (node->on_wq    == false) ) ;
+             && (!node->on_wq) ) ;
 
       tmp_node = node;
       node = node->parent;
@@ -320,6 +320,8 @@ bgp_node_lookup (const struct bgp_table *table, struct prefix *p)
  * For given table and prefix: find or add node.
  *
  * Once a node has been created, the prefix is stable, until the lock expires.
+ *
+ * Returns with a lock on the node.
  */
 struct bgp_node *
 bgp_node_get (struct bgp_table *const table, struct prefix *p)
@@ -386,7 +388,7 @@ bgp_node_delete (struct bgp_node *node)
 
   assert (node->lock == 0);
   assert (node->info == NULL);
-  assert (node->on_wq == 0) ;
+  assert (!node->on_wq) ;
 
   if (node->l_left && node->l_right)
     return;
