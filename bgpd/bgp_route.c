@@ -2822,7 +2822,7 @@ bgp_withdraw_rsclient (struct peer *rsclient, afi_t afi, safi_t safi,
 {
   struct bgp_node *rn;
   struct bgp_info *ri;
-  char buf[SU_ADDRSTRLEN];
+  char buf[SU_ADDRSTRLEN]  Unused ;
 
   if (rsclient == peer)
     return;

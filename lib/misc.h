@@ -29,7 +29,7 @@
 #include "zconfig.h"
 
 /*------------------------------------------------------------------------------
- * Get compiler specific issues deal with ASAP
+ * Get compiler specific issues dealt with ASAP
  */
 
 /* __attribute__((always_inline)) -- where available !
@@ -50,7 +50,7 @@
 #warning __attribute__((noreturn)) not available ??
 #endif
 
-/* __attribute__((unused) -- where available
+/* __attribute__((unused)) -- where available
  */
 #ifdef __GNUC__
 #define Unused __attribute__((unused))

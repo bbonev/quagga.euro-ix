@@ -427,7 +427,7 @@ static void
 if_dump (const struct interface *ifp)
 {
   struct listnode *node;
-  struct connected *c Unused ;
+  struct connected *c  Unused ;
 
   for (ALL_LIST_ELEMENTS_RO (ifp->connected, node, c))
     zlog_info ("Interface %s index %d metric %d mtu %d "

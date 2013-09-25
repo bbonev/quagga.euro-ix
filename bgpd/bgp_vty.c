@@ -596,7 +596,7 @@ DEFUN (no_bgp_confederation_identifier,
        "AS number\n")
 {
   struct bgp *bgp;
-  as_t as Unused ;
+  as_t as  Unused ;
 
   bgp = vty->index;
 
@@ -3047,7 +3047,7 @@ static int
 peer_weight_set_vty (struct vty *vty, const char *ip_str,
                      const char *weight_str)
 {
-  int ret Unused ;
+  int ret  Unused ;
   struct peer *peer;
   unsigned long weight;
 
@@ -3057,7 +3057,7 @@ peer_weight_set_vty (struct vty *vty, const char *ip_str,
 
   VTY_GET_INTEGER_RANGE("weight", weight, weight_str, 0, 65535);
 
-  ret = peer_weight_set (peer, weight);
+  ret = peer_weight_set (peer, weight);         /* TODO: use ret ??     */
 
   return CMD_SUCCESS;
 }
@@ -3213,7 +3213,7 @@ static int
 peer_timers_connect_set_vty (struct vty *vty, const char *ip_str,
                              const char *time_str)
 {
-  int ret Unused ;
+  int ret  Unused ;
   struct peer *peer;
   u_int32_t connect;
 
@@ -3223,7 +3223,7 @@ peer_timers_connect_set_vty (struct vty *vty, const char *ip_str,
 
   VTY_GET_INTEGER_RANGE ("Connect time", connect, time_str, 0, 65535);
 
-  ret = peer_timers_connect_set (peer, connect);
+  ret = peer_timers_connect_set (peer, connect);        /* TODO use ret ?? */
 
   return CMD_SUCCESS;
 }
@@ -3231,14 +3231,14 @@ peer_timers_connect_set_vty (struct vty *vty, const char *ip_str,
 static int
 peer_timers_connect_unset_vty (struct vty *vty, const char *ip_str)
 {
-  int ret Unused ;
+  int ret  Unused ;
   struct peer *peer;
 
   peer = peer_and_group_lookup_vty (vty, ip_str);
   if (! peer)
     return CMD_WARNING;
 
-  ret = peer_timers_connect_unset (peer);
+  ret = peer_timers_connect_unset (peer);       /* TODO use ret ??      */
 
   return CMD_SUCCESS;
 }
@@ -3281,7 +3281,7 @@ static int
 peer_advertise_interval_vty (struct vty *vty, const char *ip_str,
                              const char *time_str, int set)
 {
-  int ret Unused ;
+  int ret  Unused ;
   struct peer *peer;
   u_int32_t routeadv = 0;
 
@@ -3293,9 +3293,9 @@ peer_advertise_interval_vty (struct vty *vty, const char *ip_str,
     VTY_GET_INTEGER_RANGE ("advertise interval", routeadv, time_str, 0, 600);
 
   if (set)
-    ret = peer_advertise_interval_set (peer, routeadv);
+    ret = peer_advertise_interval_set (peer, routeadv); /* TODO use ret ?? */
   else
-    ret = peer_advertise_interval_unset (peer);
+    ret = peer_advertise_interval_unset (peer);         /* TODO use ret ?? */
 
   return CMD_SUCCESS;
 }
@@ -3335,7 +3335,7 @@ ALIAS (no_neighbor_advertise_interval,
 static int
 peer_interface_vty (struct vty *vty, const char *ip_str, const char *str)
 {
-  int ret Unused ;
+  int ret  Unused ;
   struct peer *peer;
 
   peer = peer_lookup_vty (vty, ip_str);
@@ -3343,9 +3343,9 @@ peer_interface_vty (struct vty *vty, const char *ip_str, const char *str)
     return CMD_WARNING;
 
   if (str)
-    ret = peer_interface_set (peer, str);
+    ret = peer_interface_set (peer, str);       /* TODO use ret ??      */
   else
-    ret = peer_interface_unset (peer);
+    ret = peer_interface_unset (peer);          /* TODO use ret ??      */
 
   return CMD_SUCCESS;
 }
