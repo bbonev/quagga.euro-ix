@@ -698,12 +698,9 @@ bgp_info_cmp (struct bgp *bgp, struct bgp_info *new, struct bgp_info *exist)
 
 static enum filter_type
 bgp_input_filter (struct peer *peer, struct prefix *p, struct attr *attr,
-                  afi_t afi, safi_t safi)
+                                                      struct bgp_filter *filter)
 {
-  struct bgp_filter *filter ;
   struct prefix_list* plist ;
-
-  filter = &peer->filter[afi][safi];
 
 #define FILTER_EXIST_WARNING(F,f,filter) \
   plog_warn (peer->log, "%s: Could not find configured input %s-list %s!", \
@@ -749,12 +746,9 @@ bgp_input_filter (struct peer *peer, struct prefix *p, struct attr *attr,
 
 static enum filter_type
 bgp_output_filter (struct peer *peer, struct prefix *p, struct attr *attr,
-                   afi_t afi, safi_t safi)
+                                                      struct bgp_filter *filter)
 {
-  struct bgp_filter *filter;
   struct prefix_list* plist ;
-
-  filter = &peer->filter[afi][safi];
 
 #define FILTER_EXIST_WARNING(F,f,filter) \
   plog_warn (peer->log, "%s: Could not find configured output %s-list %s!", \
@@ -863,9 +857,8 @@ bgp_cluster_filter (struct peer *peer, struct attr *attr)
  */
 static struct attr*
 bgp_input_modifier (struct peer *peer, struct prefix *p, struct attr *attr,
-                    afi_t afi, safi_t safi)
+                                                      struct bgp_filter *filter)
 {
-  struct bgp_filter *filter;
   struct attr        rmap_attr_s ;
   struct attr*       rmap_attr ;
 
@@ -884,8 +877,6 @@ bgp_input_modifier (struct peer *peer, struct prefix *p, struct attr *attr,
 
   /* Route map apply.
    */
-  filter = &peer->filter[afi][safi];
-
   if (ROUTE_MAP_IN_NAME (filter))
     {
       struct bgp_info info_s = { 0 } ;
@@ -1351,7 +1342,8 @@ bgp_announce_check (struct bgp_info *ri, struct peer *peer, struct prefix *p,
 
   /* Output filter check.
    */
-  if (bgp_output_filter (peer, p, ri->attr, afi, safi) == FILTER_DENY)
+  if (bgp_output_filter (peer, p, ri->attr, &peer->filter[afi][safi])
+                                                                 == FILTER_DENY)
     {
       if (BGP_DEBUG (filter, FILTER))
         zlog (peer->log, LOG_DEBUG,
@@ -1685,7 +1677,8 @@ bgp_announce_check_rsclient (struct bgp_info *ri, struct peer *rsclient,
 
   /* Output filter check.
    */
-  if (bgp_output_filter (rsclient, p, ri->attr, afi, safi) == FILTER_DENY)
+  if (bgp_output_filter (rsclient, p, ri->attr, &rsclient->filter[afi][safi])
+                                                                 == FILTER_DENY)
     {
       if (BGP_DEBUG (filter, FILTER))
        zlog (rsclient->log, LOG_DEBUG,
@@ -2834,7 +2827,18 @@ bgp_withdraw_rsclient (struct peer *rsclient, afi_t afi, safi_t safi,
   if (rsclient == peer)
     return;
 
-  rn = bgp_afi_node_get (rsclient->rib[afi][safi], p, prd);
+  /* Lookup node.
+   *
+   * TODO ... the old logging, below, is incorrect.
+   *
+   *          It complains if the route cannot be found, but is looking at the
+   *          route after all inbounf filtering.  If is going to complain,
+   *          should do so if is PEER_FLAG_SOFT_RECONFIG, and cannot find
+   *          an adj-in entry.
+   */
+  rn = bgp_afi_node_lookup(rsclient->rib[afi][safi], p, prd);
+  if (rn == NULL)
+    return ;
 
   /* Lookup withdrawn route.
    */
@@ -2846,11 +2850,13 @@ bgp_withdraw_rsclient (struct peer *rsclient, afi_t afi, safi_t safi,
    */
   if ((ri != NULL) && !(ri->flags & BGP_INFO_HISTORY))
     bgp_rib_withdraw (rn, ri, peer, afi, safi);
+#if 0
   else if (BGP_DEBUG (update, UPDATE_IN))
     zlog (peer->log, LOG_DEBUG,
           "%s Can't find the route %s/%d", peer->host,
           inet_ntop (p->family, &p->u.prefix, buf, SU_ADDRSTRLEN),
           p->prefixlen);
+#endif
 
   /* Unlock bgp_node_get() lock.
    */
@@ -2973,7 +2979,7 @@ bgp_update_main (struct peer *peer, struct prefix *p, struct attr *attr,
 
   /* Apply incoming filter.
    */
-  if (bgp_input_filter (peer, p, attr, afi, safi) == FILTER_DENY)
+  if (bgp_input_filter (peer, p, attr, &peer->filter[afi][safi]) == FILTER_DENY)
     {
       reason = "filter;";
       goto filtered;
@@ -2988,7 +2994,7 @@ bgp_update_main (struct peer *peer, struct prefix *p, struct attr *attr,
    */
   qassert(bgp_sub_attr_are_interned(attr)) ;
 
-  use_attr = bgp_input_modifier(peer, p, attr, afi, safi) ;
+  use_attr = bgp_input_modifier(peer, p, attr, &peer->filter[afi][safi]) ;
   if (use_attr == NULL)
     {
       reason = "route-map;";
@@ -3384,8 +3390,17 @@ bgp_withdraw (struct peer *peer, struct prefix *p, struct attr *attr,
           p->prefixlen);
 
   /* Lookup node.
+   *
+   * TODO ... the old logging, below, is incorrect.
+   *
+   *          It complains if the route cannot be found, but is looking at the
+   *          route after all inbounf filtering.  If is going to complain,
+   *          should do so if is PEER_FLAG_SOFT_RECONFIG, and cannot find
+   *          an adj-in entry.
    */
-  rn = bgp_afi_node_get (bgp->rib[afi][safi], p, prd);
+  rn = bgp_afi_node_lookup(bgp->rib[afi][safi], p, prd);
+  if (rn == NULL)
+    return 0 ;
 
   /* If peer is soft reconfiguration enabled remove recorded route, if any.
    */
@@ -3403,11 +3418,13 @@ bgp_withdraw (struct peer *peer, struct prefix *p, struct attr *attr,
    */
   if ((ri != NULL) && !(ri->flags & BGP_INFO_HISTORY))
     bgp_rib_withdraw (rn, ri, peer, afi, safi);
+#if 0
   else if (BGP_DEBUG (update, UPDATE_IN))
     zlog (peer->log, LOG_DEBUG,
           "%s Can't find the route %s/%d", peer->host,
           inet_ntop (p->family, &p->u.prefix, buf, SU_ADDRSTRLEN),
           p->prefixlen);
+#endif
 
   /* Unlock bgp_node_get() lock.
    */
@@ -3566,7 +3583,8 @@ bgp_announce_route_table (struct peer *peer, afi_t afi, safi_t safi,
            * happen is that the route will be announced, and at some
            * future date (soon, one hopes) withdrawn or replaced !
            *
-           * What is a way to force an update for a subset of all peers.
+           * What is needed is a way to force an update for a subset of all
+           * peers.
            */
           if (!(ri->flags & BGP_INFO_SELECTED))
             continue ;
