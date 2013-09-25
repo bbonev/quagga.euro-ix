@@ -321,14 +321,22 @@ bgp_node_lookup (const struct bgp_table *table, struct prefix *p)
  *
  * Once a node has been created, the prefix is stable, until the lock expires.
  *
+ * If creates a new node, sets the node->prn as given.  (If does not create
+ * node, should find the prn same as given.)
+ *
+ * NB: prn must be NULL unless table is safi == SAFI_MPLS_VPN.
+ *
  * Returns with a lock on the node.
  */
-struct bgp_node *
-bgp_node_get (struct bgp_table *const table, struct prefix *p)
+extern struct bgp_node *
+bgp_node_get (struct bgp_table *const table, struct prefix *p,
+                                                           struct bgp_node *prn)
 {
   struct bgp_node *new;
   struct bgp_node *node;
   struct bgp_node *match;
+
+  qassert((prn == NULL) || (table->safi == SAFI_MPLS_VPN)) ;
 
   match = NULL;
   node = table->top;
@@ -337,8 +345,8 @@ bgp_node_get (struct bgp_table *const table, struct prefix *p)
     {
       if (node->p.prefixlen == p->prefixlen)
         {
-          bgp_lock_node (node);
-          return node;
+          qassert(node->prn == prn) ;
+          return bgp_lock_node (node);
         }
       match = node;
       node = node->link[prefix_bit(&p->u.prefix, node->p.prefixlen)];
@@ -372,7 +380,10 @@ bgp_node_get (struct bgp_table *const table, struct prefix *p)
           set_link (match, new);
           table->count++;
         }
-    }
+    } ;
+
+  new->prn = prn ;
+
   table->count++;
   bgp_lock_node (new);
 

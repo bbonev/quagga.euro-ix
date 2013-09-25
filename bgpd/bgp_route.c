@@ -60,7 +60,7 @@ Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
 #include "bgpd/bgp_names.h"
 
 /*------------------------------------------------------------------------------
- * For given table and prefix: find or add node --
+ * For given table and prefix: find or add node -- with/without RD.
  *
  * Once a node has been created, the prefix and any prn are stable, until the
  * lock expires.
@@ -68,19 +68,20 @@ Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
  * Returns with a lock on the node.
  */
 static struct bgp_node *
-bgp_afi_node_get (struct bgp_table *table, afi_t afi, safi_t safi, struct prefix *p,
-                  struct prefix_rd *prd)
+bgp_afi_node_get (struct bgp_table *table, struct prefix *p,
+                                                          struct prefix_rd *prd)
 {
-  struct bgp_node *rn;
   struct bgp_node *prn = NULL;
 
   assert (table);
-  if (!table)
-    return NULL;
 
-  if (safi == SAFI_MPLS_VPN)
+  if (table->safi != SAFI_MPLS_VPN)
+    qassert(prd == NULL) ;
+  else
     {
-      prn = bgp_node_get (table, (struct prefix *) prd);
+      qassert(prd != NULL) ;
+
+      prn = bgp_node_get (table, (struct prefix *) prd, NULL);
 
       /* The prn points to a sub-table, and owns a lock on itself and on the
        * sub-table.
@@ -99,17 +100,48 @@ bgp_afi_node_get (struct bgp_table *table, afi_t afi, safi_t safi, struct prefix
 
           type = table->type ;
 
-          table = prn->info = bgp_table_init (afi, safi);
+          table = prn->info = bgp_table_init (table->afi, table->safi);
           table->type = type ;
         } ;
     }
 
-  rn = bgp_node_get (table, p);
+  return bgp_node_get (table, p, prn);
+} ;
 
-  if (safi == SAFI_MPLS_VPN)
-    rn->prn = prn;
+/*------------------------------------------------------------------------------
+ * For given table and prefix: lookup, but do not add node -- with/without RD
+ *
+ * Returns with a lock on the node, if found.
+ */
+static struct bgp_node *
+bgp_afi_node_lookup(struct bgp_table *table, struct prefix *p,
+                                                          struct prefix_rd *prd)
+{
+  if (table == NULL)
+    return NULL ;               /* cannot find !        */
 
-  return rn;
+  if (table->safi != SAFI_MPLS_VPN)
+    qassert(prd == NULL) ;
+  else
+    {
+      struct bgp_node *prn ;
+
+      qassert(prd != NULL) ;
+
+      prn = bgp_node_lookup(table, (struct prefix *) prd);
+
+      if (prn == NULL)
+        return NULL ;           /* not found RD         */
+
+      table = prn->info;
+
+      bgp_unlock_node (prn);    /* extra lock gained in bgp_node_lookup() */
+
+      if (table == NULL)
+        return NULL ;
+    }
+
+  return bgp_node_lookup(table, p);
 }
 
 /* Allocate bgp_info_extra */
@@ -2551,8 +2583,7 @@ bgp_update_rsclient (struct peer *rsclient, struct rs_route* rt,
   /* Find node for this route
    */
   bgp = rt->peer->bgp;
-  rn = bgp_afi_node_get (rsclient->rib[rt->afi][rt->safi], rt->afi, rt->safi,
-                                                               rt->p, rt->prd);
+  rn = bgp_afi_node_get (rsclient->rib[rt->afi][rt->safi], rt->p, rt->prd);
 
   /* Find any previously received route.
    */
@@ -2803,7 +2834,7 @@ bgp_withdraw_rsclient (struct peer *rsclient, afi_t afi, safi_t safi,
   if (rsclient == peer)
     return;
 
-  rn = bgp_afi_node_get (rsclient->rib[afi][safi], afi, safi, p, prd);
+  rn = bgp_afi_node_get (rsclient->rib[afi][safi], p, prd);
 
   /* Lookup withdrawn route.
    */
@@ -2858,7 +2889,7 @@ bgp_update_main (struct peer *peer, struct prefix *p, struct attr *attr,
   use_attr = NULL ;             /* nothing to use, yet          */
 
   bgp = peer->bgp;
-  rn = bgp_afi_node_get (bgp->rib[afi][safi], afi, safi, p, prd);
+  rn = bgp_afi_node_get (bgp->rib[afi][safi], p, prd);
 
   sort = peer_sort(peer) ;
 
@@ -3354,7 +3385,7 @@ bgp_withdraw (struct peer *peer, struct prefix *p, struct attr *attr,
 
   /* Lookup node.
    */
-  rn = bgp_afi_node_get (bgp->rib[afi][safi], afi, safi, p, prd);
+  rn = bgp_afi_node_get (bgp->rib[afi][safi], p, prd);
 
   /* If peer is soft reconfiguration enabled remove recorded route, if any.
    */
@@ -4599,7 +4630,7 @@ bgp_static_withdraw_rsclient (struct bgp *bgp, struct peer *rsclient,
   struct bgp_node *rn;
   struct bgp_info *ri;
 
-  rn = bgp_afi_node_get (rsclient->rib[afi][safi], afi, safi, p, NULL);
+  rn = bgp_afi_node_get (rsclient->rib[afi][safi], p, NULL);
 
   /* Check selected route and self inserted route.
    */
@@ -4640,7 +4671,7 @@ bgp_static_update_rsclient (struct peer *rsclient, struct prefix *p,
   if (!bgp_static)
     return;
 
-  rn = bgp_afi_node_get (rsclient->rib[afi][safi], afi, safi, p, NULL);
+  rn = bgp_afi_node_get (rsclient->rib[afi][safi], p, NULL);
 
   /* Construct the static route attributes.
    *
@@ -4793,7 +4824,7 @@ bgp_static_update_main (struct bgp *bgp, struct prefix *p,
   if (!bgp_static)
     return;
 
-  rn = bgp_afi_node_get (bgp->rib[afi][safi], afi, safi, p, NULL);
+  rn = bgp_afi_node_get (bgp->rib[afi][safi], p, NULL);
 
   static_attr = bgp_attr_default_set (&static_attr_s, BGP_ORIGIN_IGP,
                                                           false /* !intern */) ;
@@ -4920,7 +4951,7 @@ bgp_static_update_vpnv4 (struct bgp *bgp, struct prefix *p, afi_t afi,
   struct bgp_node *rn;
   struct bgp_info *new;
 
-  rn = bgp_afi_node_get (bgp->rib[afi][safi], afi, safi, p, prd);
+  rn = bgp_afi_node_get (bgp->rib[afi][safi], p, prd);
 
   /* Make new BGP info.
    */
@@ -4958,7 +4989,7 @@ bgp_static_withdraw (struct bgp *bgp, struct prefix *p, afi_t afi,
   struct bgp_node *rn;
   struct bgp_info *ri;
 
-  rn = bgp_afi_node_get (bgp->rib[afi][safi], afi, safi, p, NULL);
+  rn = bgp_afi_node_get (bgp->rib[afi][safi], p, NULL);
 
   /* Check selected route and self inserted route.
    */
@@ -5007,7 +5038,7 @@ bgp_static_withdraw_vpnv4 (struct bgp *bgp, struct prefix *p, afi_t afi,
   struct bgp_node *rn;
   struct bgp_info *ri;
 
-  rn = bgp_afi_node_get (bgp->rib[afi][safi], afi, safi, p, prd);
+  rn = bgp_afi_node_get (bgp->rib[afi][safi], p, prd);
 
   /* Check selected route and self inserted route.
    */
@@ -5043,6 +5074,8 @@ bgp_static_set (struct vty *vty, struct bgp *bgp, const char *ip_str,
   struct bgp_node *rn;
   u_char need_update = 0;
 
+  qassert(safi != SAFI_MPLS_VPN) ;
+
   /* Convert IP prefix string to struct prefix.
    */
   ret = str2prefix (ip_str, &p);
@@ -5064,7 +5097,7 @@ bgp_static_set (struct vty *vty, struct bgp *bgp, const char *ip_str,
 
   /* Set BGP static route configuration.
    */
-  rn = bgp_node_get (bgp->route[afi][safi], &p);
+  rn = bgp_afi_node_get (bgp->route[afi][safi], &p, NULL);
 
   if (rn->info)
     {
@@ -5143,6 +5176,8 @@ bgp_static_unset (struct vty *vty, struct bgp *bgp, const char *ip_str,
   struct bgp_static *bgp_static;
   struct bgp_node *rn;
 
+  qassert(safi != SAFI_MPLS_VPN) ;
+
   /* Convert IP prefix string to struct prefix.
    */
   ret = str2prefix (ip_str, &p);
@@ -5162,7 +5197,7 @@ bgp_static_unset (struct vty *vty, struct bgp *bgp, const char *ip_str,
 
   apply_mask (&p);
 
-  rn = bgp_node_lookup (bgp->route[afi][safi], &p);
+  rn = bgp_afi_node_lookup(bgp->route[afi][safi], &p, NULL);
   if (! rn)
     {
       vty_out (vty, "%% Can't find specified static route configuration.%s",
@@ -5240,9 +5275,7 @@ bgp_static_set_vpnv4 (struct vty *vty, const char *ip_str, const char *rd_str,
   struct prefix p;
   struct prefix_rd prd;
   struct bgp *bgp;
-  struct bgp_node *prn;
   struct bgp_node *rn;
-  struct bgp_table *table;
   struct bgp_static *bgp_static;
   u_char tag[3];
 
@@ -5270,15 +5303,7 @@ bgp_static_set_vpnv4 (struct vty *vty, const char *ip_str, const char *rd_str,
       return CMD_WARNING;
     }
 
-  prn = bgp_node_get (bgp->route[AFI_IP][SAFI_MPLS_VPN],
-                        (struct prefix *)&prd);
-  if (prn->info == NULL)
-    prn->info = bgp_table_init (AFI_IP, SAFI_MPLS_VPN);
-  else
-    bgp_unlock_node (prn);
-  table = prn->info;
-
-  rn = bgp_node_get (table, &p);
+  rn = bgp_afi_node_get (bgp->route[AFI_IP][SAFI_MPLS_VPN], &p, &prd);
 
   if (rn->info)
     {
@@ -5310,9 +5335,7 @@ bgp_static_unset_vpnv4 (struct vty *vty, const char *ip_str,
   struct bgp *bgp;
   struct prefix p;
   struct prefix_rd prd;
-  struct bgp_node *prn;
   struct bgp_node *rn;
-  struct bgp_table *table;
   struct bgp_static *bgp_static;
   u_char tag[3];
 
@@ -5342,15 +5365,7 @@ bgp_static_unset_vpnv4 (struct vty *vty, const char *ip_str,
       return CMD_WARNING;
     }
 
-  prn = bgp_node_get (bgp->route[AFI_IP][SAFI_MPLS_VPN],
-                        (struct prefix *)&prd);
-  if (prn->info == NULL)
-    prn->info = bgp_table_init (AFI_IP, SAFI_MPLS_VPN);
-  else
-    bgp_unlock_node (prn);
-  table = prn->info;
-
-  rn = bgp_node_lookup (table, &p);
+  rn = bgp_afi_node_lookup(bgp->route[AFI_IP][SAFI_MPLS_VPN], &p, &prd) ;
 
   if (rn)
     {
@@ -5899,6 +5914,8 @@ bgp_aggregate_route (struct bgp *bgp, struct prefix *p, struct bgp_info *rinew,
   int first = 1;
   unsigned long match = 0;
 
+  qassert(safi != SAFI_MPLS_VPN) ;
+
   /* Record adding route's nexthop and med. */
   if (rinew)
     {
@@ -5918,8 +5935,9 @@ bgp_aggregate_route (struct bgp *bgp, struct prefix *p, struct bgp_info *rinew,
 
   table = bgp->rib[afi][safi];
 
-  top = bgp_node_get (table, p);
-  for (rn = bgp_node_get (table, p); rn; rn = bgp_route_next_until (rn, top))
+  top = bgp_node_get (table, p, NULL);
+  for (rn = bgp_node_get (table, p, NULL); rn;
+                                           rn = bgp_route_next_until (rn, top))
     if (rn->p.prefixlen > p->prefixlen)
       {
         match = 0;
@@ -6046,7 +6064,7 @@ enum
 
   if (aggregate->count > 0)
     {
-      rn = bgp_node_get (table, p);
+      rn = bgp_node_get (table, p, NULL);
       new = bgp_info_new ();
       new->type = ZEBRA_ROUTE_BGP;
       new->sub_type = BGP_ROUTE_AGGREGATE;
@@ -6091,7 +6109,7 @@ bgp_aggregate_increment (struct bgp *bgp, struct prefix *p,
   if (BGP_INFO_HOLDDOWN (ri))
     return;
 
-  child = bgp_node_get (bgp->aggregate[afi][safi], p);
+  child = bgp_node_get (bgp->aggregate[afi][safi], p, NULL);
 
   /* Aggregate address configuration check.
    */
@@ -6120,7 +6138,7 @@ bgp_aggregate_decrement (struct bgp *bgp, struct prefix *p,
   if (p->prefixlen == 0)
     return;
 
-  child = bgp_node_get (bgp->aggregate[afi][safi], p);
+  child = bgp_node_get (bgp->aggregate[afi][safi], p, NULL);
 
   /* Aggregate address configuration check.
    */
@@ -6149,6 +6167,8 @@ bgp_aggregate_add (struct bgp *bgp, struct prefix *p, afi_t afi, safi_t safi,
   struct community *community = NULL;
   struct community *commerge = NULL;
 
+  qassert(safi != SAFI_MPLS_VPN) ;
+
   table = bgp->rib[afi][safi];
 
   /* Sanity check. */
@@ -6158,8 +6178,9 @@ bgp_aggregate_add (struct bgp *bgp, struct prefix *p, afi_t afi, safi_t safi,
     return;
 
   /* If routes exists below this node, generate aggregate routes. */
-  top = bgp_node_get (table, p);
-  for (rn = bgp_node_get (table, p); rn; rn = bgp_route_next_until (rn, top))
+  top = bgp_node_get (table, p, NULL);
+  for (rn = bgp_node_get (table, p, NULL); rn;
+                                           rn = bgp_route_next_until (rn, top))
     if (rn->p.prefixlen > p->prefixlen)
       {
         match = 0;
@@ -6221,7 +6242,7 @@ bgp_aggregate_add (struct bgp *bgp, struct prefix *p, afi_t afi, safi_t safi,
   /* Add aggregate route to BGP table. */
   if (aggregate->count)
     {
-      rn = bgp_node_get (table, p);
+      rn = bgp_node_get (table, p, NULL);
 
       new = bgp_info_new ();
       new->type = ZEBRA_ROUTE_BGP;
@@ -6250,6 +6271,8 @@ bgp_aggregate_delete (struct bgp *bgp, struct prefix *p, afi_t afi,
   struct bgp_info *ri;
   unsigned long match;
 
+  qassert(safi != SAFI_MPLS_VPN) ;
+
   table = bgp->rib[afi][safi];
 
   if (afi == AFI_IP && p->prefixlen == IPV4_MAX_BITLEN)
@@ -6258,8 +6281,9 @@ bgp_aggregate_delete (struct bgp *bgp, struct prefix *p, afi_t afi,
     return;
 
   /* If routes exists below this node, generate aggregate routes. */
-  top = bgp_node_get (table, p);
-  for (rn = bgp_node_get (table, p); rn; rn = bgp_route_next_until (rn, top))
+  top = bgp_node_get (table, p, NULL);
+  for (rn = bgp_node_get (table, p, NULL); rn;
+                                           rn = bgp_route_next_until (rn, top))
     if (rn->p.prefixlen > p->prefixlen)
       {
         match = 0;
@@ -6292,7 +6316,7 @@ bgp_aggregate_delete (struct bgp *bgp, struct prefix *p, afi_t afi,
   bgp_unlock_node (top);
 
   /* Delete aggregate route from BGP table. */
-  rn = bgp_node_get (table, p);
+  rn = bgp_node_get (table, p, NULL);
 
   for (ri = rn->info; ri; ri = ri->info_next)
     if (ri->peer == bgp->peer_self
@@ -6325,6 +6349,8 @@ bgp_aggregate_unset (struct vty *vty, const char *prefix_str,
   struct bgp *bgp;
   struct bgp_aggregate *aggregate;
 
+  qassert(safi != SAFI_MPLS_VPN) ;
+
   /* Convert string to prefix structure. */
   ret = str2prefix (prefix_str, &p);
   if (!ret)
@@ -6338,7 +6364,7 @@ bgp_aggregate_unset (struct vty *vty, const char *prefix_str,
   bgp = vty->index;
 
   /* Old configuration check. */
-  rn = bgp_node_lookup (bgp->aggregate[afi][safi], &p);
+  rn = bgp_afi_node_lookup (bgp->aggregate[afi][safi], &p, NULL);
   if (! rn)
     {
       vty_out (vty, "%% There is no aggregate-address configuration.%s",
@@ -6372,6 +6398,8 @@ bgp_aggregate_set (struct vty *vty, const char *prefix_str,
   struct bgp *bgp;
   struct bgp_aggregate *aggregate;
 
+  qassert(safi != SAFI_MPLS_VPN) ;
+
   /* Convert string to prefix structure. */
   ret = str2prefix (prefix_str, &p);
   if (!ret)
@@ -6385,7 +6413,7 @@ bgp_aggregate_set (struct vty *vty, const char *prefix_str,
   bgp = vty->index;
 
   /* Old configuration check. */
-  rn = bgp_node_get (bgp->aggregate[afi][safi], &p);
+  rn = bgp_node_get (bgp->aggregate[afi][safi], &p, NULL);
 
   if (rn->info)
     {
@@ -6830,8 +6858,7 @@ bgp_redistribute_add (struct prefix *p, const struct in_addr *nexthop,
 
           attr_new = bgp_attr_intern_temp(attr_new);
 
-          bn = bgp_afi_node_get (bgp->rib[afi][SAFI_UNICAST],
-                                 afi, SAFI_UNICAST, p, NULL);
+          bn = bgp_afi_node_get (bgp->rib[afi][SAFI_UNICAST], p, NULL);
 
           for (bi = bn->info; bi; bi = bi->info_next)
             if (bi->peer == bgp->peer_self
@@ -6910,7 +6937,7 @@ bgp_redistribute_delete (struct prefix *p, u_char type)
 
       if (bgp->redist[afi][type])
         {
-         rn = bgp_afi_node_get (bgp->rib[afi][SAFI_UNICAST], afi, SAFI_UNICAST, p, NULL);
+         rn = bgp_afi_node_get (bgp->rib[afi][SAFI_UNICAST], p, NULL);
 
           for (ri = rn->info; ri; ri = ri->info_next)
             if (ri->peer == bgp->peer_self
@@ -13159,6 +13186,9 @@ bgp_distance_set (struct vty *vty, const char *distance_str,
   struct bgp_node *rn;
   struct bgp_distance *bdistance;
 
+  qassert((bgp_distance_table->afi == AFI_IP) &&
+          (bgp_distance_table->safi == SAFI_UNICAST)) ;
+
   ret = str2prefix_ipv4 (ip_str, &p);
   if (ret == 0)
     {
@@ -13169,7 +13199,7 @@ bgp_distance_set (struct vty *vty, const char *distance_str,
   distance = atoi (distance_str);
 
   /* Get BGP distance node. */
-  rn = bgp_node_get (bgp_distance_table, (struct prefix *) &p);
+  rn = bgp_node_get (bgp_distance_table, (struct prefix *) &p, NULL);
   if (rn->info)
     {
       bdistance = rn->info;

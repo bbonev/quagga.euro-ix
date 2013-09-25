@@ -245,7 +245,8 @@ bgp_nexthop_lookup_ipv6 (struct peer *peer, struct bgp_info *ri, int *changed,
   p.u.prefix6 = attr->extra->mp_nexthop_global;
 
   /* IBGP or ebgp-multihop */
-  rn = bgp_node_get (bgp_nexthop_cache_table[AFI_IP6], &p);
+  qassert(bgp_nexthop_cache_table[AFI_IP6]->safi == SAFI_UNICAST) ;
+  rn = bgp_node_get (bgp_nexthop_cache_table[AFI_IP6], &p, NULL);
 
   if (rn->info)
     {
@@ -331,7 +332,8 @@ bgp_nexthop_lookup (afi_t afi, struct peer *peer, struct bgp_info *ri,
   p.u.prefix4 = addr;
 
   /* IBGP or ebgp-multihop */
-  rn = bgp_node_get (bgp_nexthop_cache_table[AFI_IP], &p);
+  qassert(bgp_nexthop_cache_table[AFI_IP]->safi == SAFI_UNICAST) ;
+  rn = bgp_node_get (bgp_nexthop_cache_table[AFI_IP], &p, NULL);
 
   if (rn->info)
     {
@@ -354,6 +356,7 @@ bgp_nexthop_lookup (afi_t afi, struct peer *peer, struct bgp_info *ri,
               else
                 old = cache1_table[AFI_IP];
 
+              qassert(old->safi == SAFI_UNICAST) ;
               oldrn = bgp_node_lookup (old, &p);
               if (oldrn)
                 {
@@ -560,7 +563,9 @@ bgp_connected_add (struct connected *ifc)
       if (prefix_ipv4_any ((struct prefix_ipv4 *) &p))
         return;
 
-      rn = bgp_node_get (bgp_connected_table[AFI_IP], (struct prefix *) &p);
+      qassert(bgp_connected_table[AFI_IP]->safi == SAFI_UNICAST) ;
+      rn = bgp_node_get (bgp_connected_table[AFI_IP], (struct prefix *) &p,
+                                                                          NULL);
       if (rn->info)
         {
           bc = rn->info;
@@ -585,7 +590,9 @@ bgp_connected_add (struct connected *ifc)
       if (IN6_IS_ADDR_LINKLOCAL (&p.u.prefix6))
         return;
 
-      rn = bgp_node_get (bgp_connected_table[AFI_IP6], (struct prefix *) &p);
+      qassert(bgp_connected_table[AFI_IP6]->safi == SAFI_UNICAST) ;
+      rn = bgp_node_get (bgp_connected_table[AFI_IP6], (struct prefix *) &p,
+                                                                          NULL);
       if (rn->info)
         {
           bc = rn->info;
