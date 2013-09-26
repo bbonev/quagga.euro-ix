@@ -123,6 +123,7 @@ test_pfifo_item_head_many_periods(void) {
   return;
 }
 
+
 // Add a single item to a single period. Delete the item, then
 // call head to verify the pfifo is indeed empty.
 static void
