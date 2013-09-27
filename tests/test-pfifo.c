@@ -37,7 +37,7 @@ test_pfifo_item_head_empty(void) {
 
   if (unsafe != NULL) {
     fprintf(stderr, "Failed\n");
-    fprintf(stderr, "[ERROR] Made a call to pfifo_item_head on an empty pfifo. Did not return NULL.\n");
+    fprintf(stderr, "Made a call to pfifo_item_head on an empty pfifo. Did not return NULL.\n");
   } else {
     fprintf(stderr, "OK\n");
   }
@@ -149,7 +149,7 @@ test_pfifo_item_del(void) {
 
   if (unsafe != NULL) {
     fprintf(stderr, "Failed\n");
-    fprintf(stderr, "[ERROR] Made a call to pfifo_item_head on an empty pfifo. Did not return NULL.\n");
+    fprintf(stderr, "Made a call to pfifo_item_head on an empty pfifo. Did not return NULL.\n");
   } else {
     fprintf(stderr, "OK\n");
   }
@@ -189,7 +189,7 @@ test_pfifo_item_move_fwd(void) {
   period_of_b = pfifo_period_get(p, loc_b);
   if (period_of_b != period + 2) {
     fprintf(stderr, "Failed\n");
-    fprintf(stderr, "[ERROR] Item was not moved to the correct period. Expected %d, but got %d\n", (int)(period + 2), (int)period_of_b);
+    fprintf(stderr, "Item was not moved to the correct period. Expected %d, but got %d\n", (int)(period + 2), (int)period_of_b);
   } else {
     fprintf(stderr, "OK\n");
   }
@@ -229,7 +229,7 @@ test_pfifo_item_move_bwd(void) {
   period_of_b = pfifo_period_get(p, loc_b);
   if (period_of_b != period) {
     fprintf(stderr, "Failed\n");
-    fprintf(stderr, "[ERROR] Item was not moved to the correct period. Expected %d, but got %d\n", (int)period, (int)period_of_b);
+    fprintf(stderr, "Item was not moved to the correct period. Expected %d, but got %d\n", (int)period, (int)period_of_b);
   } else {
     fprintf(stderr, "OK\n");
   }
@@ -251,7 +251,7 @@ test_pfifo_item_next_empty(void) {
 
   if (unsafe != NULL) {
     fprintf(stderr, "Failed\n");
-    fprintf(stderr, "[ERROR] Made a call to pfifo_item_head on an empty pfifo. Did not return NULL.\n");
+    fprintf(stderr, "Made a call to pfifo_item_head on an empty pfifo. Did not return NULL.\n");
   } else {
     fprintf(stderr, "OK\n");
   }
@@ -440,6 +440,37 @@ test_pfifo_flush_zero(void) {
 
 static void
 test_pfifo_flush_empty(void) {
+  fprintf(stderr, "test_pfifo_flush_empty... \t\t");
+  pfifo p;
+  p = new_pfifo();
+
+  pfifo_period_t ptime;
+  ptime = 10;
+
+  /* Add items to the first period in the pfifo. */
+  datum item_a;
+  item_a.junk = "tires";
+  pfifo_item_add(p, &item_a, ptime);
+
+  datum* res;
+  res = pfifo_flush_empty(p);
+  if (&item_a != res) {
+    fprintf(stderr, "Failed\n");
+    fprintf(stderr, "Expected pointer returned by pfifo_flush_empty to be equal to the address of item_a\n");
+    pfifo_free(p);
+    return;
+  }
+
+  datum* head;
+  head = pfifo_item_head(p);
+  if (head != NULL) {
+    fprintf(stderr, "Failed\n");
+    fprintf(stderr, "Expected pointer returned by pfifo_head to be NULL\n");
+  } else {
+    fprintf(stderr, "OK\n");
+  }
+
+  pfifo_free(p);
   return;
 }
 
@@ -472,8 +503,10 @@ main(int argc, char* argv[]) {
   test_pfifo_item_next_many_periods();
 
   test_pfifo_take();
+
   test_pfifo_flush();
   test_pfifo_flush_zero();
+
   test_pfifo_flush_empty();
   test_pfifo_first_period();
   test_pfifo_first_not_ex_period();
