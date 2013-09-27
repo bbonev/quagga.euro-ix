@@ -379,8 +379,61 @@ test_pfifo_take(void) {
 }
 
 
+// Move items to the 'ex' period. pfifo_flush should return the
+// address of the first item in 'ex' period.
 static void
 test_pfifo_flush(void) {
+  fprintf(stderr, "test_pfifo_flush... \t\t\t");
+  pfifo p;
+  p = new_pfifo();
+
+  pfifo_period_t ptime;
+  ptime = 10;
+
+  /* Add items to the first period in the pfifo. */
+  datum item_a;
+  item_a.junk = "tires";
+  pfifo_item_add(p, &item_a, ptime);
+
+  datum* res;
+  res = pfifo_flush(p);
+  if (&item_a != res) {
+    fprintf(stderr, "Failed\n");
+    fprintf(stderr, "Expected pointer returned by pfifo_flush to be equal to the address of item_a\n");
+    pfifo_free(p);
+    return;
+  }
+
+  datum* head;
+  head = pfifo_item_head(p);
+  if (&item_a != head) {
+    fprintf(stderr, "Failed\n");
+    fprintf(stderr, "Expected pointer returned by pfifo_head to be equal to the address of item_a\n");
+  } else {
+    fprintf(stderr, "OK\n");
+  }
+
+  pfifo_free(p);
+  return;
+}
+
+
+static void
+test_pfifo_flush_zero(void) {
+  fprintf(stderr, "test_pfifo_flush... \t\t\t");
+  pfifo p;
+  p = new_pfifo();
+
+  datum* res;
+  res = pfifo_flush(p);
+  if (&item_a != NULL) {
+    fprintf(stderr, "Failed\n");
+    fprintf(stderr, "Expected pointer returned by pfifo_flush to be NULL\n");
+  } else {
+    fprintf(stderr, "OK\n");
+  }
+
+  pfifo_free(p);
   return;
 }
 
