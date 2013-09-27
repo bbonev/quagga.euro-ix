@@ -3,7 +3,7 @@
 #include <stdlib.h>
 #include <assert.h>
 #include "pfifo.h"
-
+#include "qtime.h"
 
 typedef struct
 {
@@ -475,9 +475,11 @@ test_pfifo_flush_empty(void) {
 }
 
 
+// Get period of the first item in the pfifo. If nothing in the
+// 'ex' list expect pn.
 static void
-test_pfifo_first_period(void) {
-  fprintf(stderr, "test_pfifo_first_period... \t\t");
+test_pfifo_first_period_pn(void) {
+  fprintf(stderr, "test_pfifo_first_period_pn... \t\t");
   pfifo p;
   p = new_pfifo();
 
@@ -503,8 +505,126 @@ test_pfifo_first_period(void) {
 }
 
 
+// Get period of the first item in the pfifo. If item exists in
+// the 'ex' list expect pn - 1 .
+static void
+test_pfifo_first_period_pn_m_one(void) {
+  fprintf(stderr, "test_pfifo_first_period_pn_m_one... \t");
+  pfifo p;
+  p = new_pfifo();
+
+  pfifo_period_t ptime;
+  ptime = 10;
+
+  datum item_a;
+  item_a.junk = "tires";
+  pfifo_item_add(p, &item_a, ptime);
+
+  datum item_b;
+  item_b.junk = "roller blades";
+  pfifo_item_add(p, &item_b, ptime+10);
+
+  pfifo_take(p, ptime+10, true);
+
+  pfifo_period_t restime;
+  restime = pfifo_first_period(p);
+
+  if (restime != ptime) {
+    fprintf(stderr, "Failed\n");
+    fprintf(stderr, "Expected period %d, but received %d.\n", (int)ptime, (int)restime);
+  } else {
+    fprintf(stderr, "OK\n");
+  }
+
+  pfifo_free(p);
+  return;
+}
+
+
+// Get first__period of an empty pfifo. Expecting to
+// receive PFIFO_PERIOD_MAX or QTIME_PERIOD_MAX.
+static void
+test_pfifo_first_period_nobody(void) {
+  fprintf(stderr, "test_pfifo_first_period_nobody... \t");
+  pfifo p;
+  p = new_pfifo();
+
+  pfifo_period_t ptime;
+  ptime = 10;
+
+  pfifo_period_t restime;
+  restime = pfifo_first_period(p);
+
+  if (restime != QTIME_PERIOD_MAX) {
+    fprintf(stderr, "Failed\n");
+    fprintf(stderr, "Expected period %d, but received %d.\n", (int)ptime, (int)restime);
+  } else {
+    fprintf(stderr, "OK\n");
+  }
+
+  pfifo_free(p);
+  return;
+}
+
+
+// Get period of the first item in the pfifo. Items in the 'ex'
+// list are not considered.
 static void
 test_pfifo_first_not_ex_period(void) {
+  fprintf(stderr, "test_pfifo_first_not_ex_period... \t");
+  pfifo p;
+  p = new_pfifo();
+
+  pfifo_period_t ptime;
+  ptime = 10;
+
+  datum item_a;
+  item_a.junk = "tires";
+  pfifo_item_add(p, &item_a, ptime);
+
+  datum item_b;
+  item_b.junk = "roller blades";
+  pfifo_item_add(p, &item_b, ptime+10);
+
+  pfifo_take(p, ptime+10, true);
+
+  pfifo_period_t restime;
+  restime = pfifo_first_not_ex_period(p);
+
+  if (restime != ptime+10) {
+    fprintf(stderr, "Failed\n");
+    fprintf(stderr, "Expected period %d, but received %d.\n", (int)(ptime+10), (int)restime);
+  } else {
+    fprintf(stderr, "OK\n");
+  }
+
+  pfifo_free(p);
+  return;
+}
+
+
+// Get first_not_ex_period of an empty pfifo. Expecting to
+// receive PFIFO_PERIOD_MAX or QTIME_PERIOD_MAX.
+static void
+test_pfifo_first_not_ex_period_nobody(void) {
+  fprintf(stderr, "test_pfifo_first_not_ex_period_nobody...");
+  pfifo p;
+  p = new_pfifo();
+
+  pfifo_period_t ptime;
+  ptime = 10;
+
+  pfifo_period_t restime;
+  restime = pfifo_first_not_ex_period(p);
+
+  if (restime != QTIME_PERIOD_MAX) {
+    fprintf(stderr, "Failed\n");
+    fprintf(stderr, "Expected period %d, but received %d.\n", (int)(QTIME_PERIOD_MAX), (int)restime);
+  } else {
+    fprintf(stderr, "OK\n");
+  }
+
+  pfifo_free(p);
   return;
 }
 
@@ -531,6 +651,10 @@ main(int argc, char* argv[]) {
 
   test_pfifo_flush_empty();
 
-  test_pfifo_first_period();
+  test_pfifo_first_period_pn();
+  test_pfifo_first_period_pn_m_one();
+  test_pfifo_first_period_nobody();
+
   test_pfifo_first_not_ex_period();
+  test_pfifo_first_not_ex_period_nobody();
 }
