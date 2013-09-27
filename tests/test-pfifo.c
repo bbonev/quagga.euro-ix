@@ -420,13 +420,13 @@ test_pfifo_flush(void) {
 
 static void
 test_pfifo_flush_zero(void) {
-  fprintf(stderr, "test_pfifo_flush... \t\t\t");
+  fprintf(stderr, "test_pfifo_flush_zero... \t\t");
   pfifo p;
   p = new_pfifo();
 
   datum* res;
   res = pfifo_flush(p);
-  if (&item_a != NULL) {
+  if (res != NULL) {
     fprintf(stderr, "Failed\n");
     fprintf(stderr, "Expected pointer returned by pfifo_flush to be NULL\n");
   } else {
@@ -473,6 +473,7 @@ main(int argc, char* argv[]) {
 
   test_pfifo_take();
   test_pfifo_flush();
+  test_pfifo_flush_zero();
   test_pfifo_flush_empty();
   test_pfifo_first_period();
   test_pfifo_first_not_ex_period();
