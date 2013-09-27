@@ -477,6 +477,28 @@ test_pfifo_flush_empty(void) {
 
 static void
 test_pfifo_first_period(void) {
+  fprintf(stderr, "test_pfifo_first_period... \t\t");
+  pfifo p;
+  p = new_pfifo();
+
+  pfifo_period_t ptime;
+  ptime = 10;
+
+  datum item_a;
+  item_a.junk = "tires";
+  pfifo_item_add(p, &item_a, ptime);
+
+  pfifo_period_t restime;
+  restime = pfifo_first_period(p);
+
+  if (restime != ptime) {
+    fprintf(stderr, "Failed\n");
+    fprintf(stderr, "Expected period %d, but received %d.\n", (int)ptime, (int)restime);
+  } else {
+    fprintf(stderr, "OK\n");
+  }
+
+  pfifo_free(p);
   return;
 }
 
@@ -508,6 +530,7 @@ main(int argc, char* argv[]) {
   test_pfifo_flush_zero();
 
   test_pfifo_flush_empty();
+
   test_pfifo_first_period();
   test_pfifo_first_not_ex_period();
 }
