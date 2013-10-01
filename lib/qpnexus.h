@@ -122,7 +122,7 @@ struct qpn_nexus
    */
   qpt_thread    qpth ;
 
-  /* Signal mask for pselect
+  /* Signal mask for pselect and the signal used to interrupt pselect.
    */
   sigset_t      pselect_mask[1] ;
   int           pselect_signal ;
@@ -138,7 +138,6 @@ struct qpn_nexus
   /* message queue
    */
   mqueue_queue queue;
-  mqueue_thread_signal mts;
 
   /* qpthread routine, can override
    */
@@ -193,18 +192,19 @@ struct qpn_nexus
    *
    * NB: not valid until "started"
    */
-  qpt_spin_t    stats_slk ;
+  qpt_spin_t    slk ;
 
   qpn_stats_t   raw ;           /* belongs to thread                    */
   qpn_stats_t   stats ;         /* set, under spin lock, once per cycle */
   qpn_stats_t   prev_stats ;    /* set, under spin lock, each time stats
                                  * are fetched.                         */
 
-  /* For watch-dog -- also read/written under stats_slk
+  /* For signal and for watch-dog -- read/written under slk
    *
    * NB: not valid until "started"
    */
-  uint          idleness ;      /* 0 => active,
+  bool          signal ;        /* a signal is pending                  */
+  uint8_t       idleness ;      /* 0 => active,
                                  * 1 => idle, waiting for timer
                                  * 2 => idle, and seen by watch-dog
                                  * 3 => idle, and seen a second time !
@@ -232,6 +232,7 @@ extern void qpn_add_hook_function(qpn_hook_list list, void* hook) ;
 extern void qpn_main_start(qpn_nexus qpn) ;
 extern void qpn_exec(qpn_nexus qpn);
 extern void qpn_terminate(qpn_nexus qpn);
+extern void qpn_signal(qpn_nexus qpn) ;
 extern qpn_nexus qpn_reset(qpn_nexus qpn, free_keep_b free_structure);
 
 extern void qpn_get_stats(qpn_nexus qpn, qpn_stats curr, qpn_stats prev) ;

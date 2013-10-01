@@ -817,6 +817,8 @@ rb_do_get_step(ring_buffer rb, ptr_t start, ptr_t end)
 /*------------------------------------------------------------------------------
  * Set up the given sucker according to the last segment got.
  *
+ * Returns:  type of segment
+ *
  * NB: rb->get_last belongs to the getter -- so no lock is required.
  */
 extern uint
@@ -836,38 +838,47 @@ rb_set_sucker(sucker sr, ring_buffer rb)
 
 /*------------------------------------------------------------------------------
  * Update overrun, if required, forcing sr->ptr to sr->end + 1.
+ * If has overrun, sets sr->failed.
  *
- * Returns: sr->overrun   -- up to date  -- -ve
+ * Returns:   0 <=> not overrun
+ *          > 0 <=> extent of overrun, beyond sr->end.
  */
-Private int
+Private uint
 suck_overrun(sucker sr)
 {
-  ptr_t limit ;
+  int over ;
 
-  limit = sr->end + 1 ;
+  over = sr->ptr - sr->end ;
+  if (over <= 0)
+    return 0 ;                  /* no overrun   */
 
-  if (sr->ptr >= limit)
-    {
-      if (sr->overrun == 0)
-        sr->overrun = -1 ;
+  /* Sum the "over"s in br->overrun.
+   *
+   * After overrun we leave sr->ptr = sr->end + 1, so even though we've pulled
+   * the sr->ptr back, it is still overrun.
+   *
+   * So after the first overrun, the extra amount we have gone over is one less
+   * than it appears.
+   */
+  sr->ptr      = sr->end + 1 ;      /* NB: remains over by 1        */
+  sr->failed   = true ;
 
-      sr->overrun -= (sr->ptr - limit) ;
-      sr->ptr      = limit ;
-    } ;
+  if (sr->overrun != 0)
+    over = sr->overrun + (over - 1) ;
 
-  return sr->overrun ;
+  return sr->overrun = over ;
 } ;
 
 /*------------------------------------------------------------------------------
- * Update overrun, if required, forcing sr->ptr to sr->end + 1.
+ * Has overrun: reset ptr, update overrun, set failed and return -overrun.
  *
- * Returns:  true <=> is OK -- has NOT overrun
- *          false <=> *bad* -- has overrun
+ * Returns:    0 <=> not overrun
+ *           < 0 <=> -(extent of overrun)
  */
-Private bool
-suck_not_overrun(sucker sr)
+Private int
+suck_P_left_overrun(sucker sr)
 {
-  return (suck_overrun(sr) < 0) ;
+  return -suck_overrun(sr) ;
 } ;
 
 /*==============================================================================
@@ -882,7 +893,7 @@ suck_not_overrun(sucker sr)
 extern void
 rb_set_blower(blower br, ring_buffer rb)
 {
-  memset(br, 0, sizeof(*br)) ;
+  memset(br, 0, sizeof(*br)) ;          /* see below    */
 
   if (rb->put_ptr != NULL)
     {
@@ -892,110 +903,201 @@ rb_set_blower(blower br, ring_buffer rb)
 } ;
 
 /*------------------------------------------------------------------------------
+ * Set blower to given address and length
+ */
+extern void
+blow_init(blower br, void* start, uint length)
+{
+  /* Zeroizing sets:
+   *
+   *   * p_len          -- NULL     -- none, yet
+   *   * overrun        -- 0        -- none, yet
+   *   * failed         -- false    -- so far, so good
+   */
+  memset(br, 0, sizeof(*br)) ;
+
+  br->start   = (ptr_t)start ;
+  br->ptr     = (ptr_t)start ;
+  br->end     = (ptr_t)start + length ;
+} ;
+
+/*------------------------------------------------------------------------------
  * Start a sub-section blower.
  *
- * sets:  sbr->start  = br->ptr + ll + off
- *        sbr->ptr    = br->ptr + ll -- and plants zeros
- *        sbr->end    = sbr->start + max
+ * sets:  sbr->p_len  = br->ptr
+ *        br->ptr     = br->ptr + ll -- and plants zeros
+ *
+ *        check for parent overrun.
+ *
+ *        sbr->start  = br->ptr + off           ) using the br->ptr after
+ *        sbr->ptr    = br->ptr                 ) planting ll length bytes and
+ *        sbr->end    = br->ptr + off + max     ) checking overrun.
+ *
+ * NB: it is the *callers* responsibility to ensure that 'll' bytes can be
+ *     written at the current br->ptr -- that may already have overrun,
+ *     but if even so there MUST be 'll' bytes of slack left.
  *
  * Assumes that the sr->ptr points to where the length of the sub-section will
  * be written, when it is known.  ll is the length of that length, so we step
  * past that immediately.  May set ll = 0 if there is no length for this
  * subsection.
  *
- * It is assumed that the length will count bytes from immediately after the
+ * It is assumed that the length will count bytes from immediately *after* the
  * length entry -- but if not, then 'off' may be used to adjust that...
  * so for a sub-section sbr->start is the origin for counting the length.
- * (Generally 'off' == 0.)
+ * (Generally 'off' == 0.  Could be -ve, if the length to be planted includes
+ * some or all of the preceding "red-tape".)
  *
- * The max length is used to set the sbr->end, so we can detect overflow.
+ * The 'max' length is used to set the sbr->end, so we can detect overrun.
+ * Note that the 'off' is included in this.
  *
  * The sbr->end is clamped at the br->end -- so an overrun of the parent
  * is definitely an overrun of the sub-section !
  *
- * NB: checks for parent overrun *after* having written 'll' zeros at the then
- *     current br->ptr AND sets br->len to write there later !  So, the
- *     sub section will all be based off br->end + 1.
+ * NB: the check for parent overrun *after* planting any ll length bytes, and
+ *     *before* setting it up.  So at the start of a sub-section, have the full
+ *     slack.  Also, if the parent has already overrun, the sub-section stuff
+ *     is still set so that can calculate the length of the sub-section.
  *
- *     checks for sub-section overrun *after* setting it up, will return
- *     overrun if the parent has already overrun.
+ * Returns: true <=> ok, so far.
+ *
  */
-extern void
+extern bool
 blow_sub_init(blower sbr, blower br, uint ll, int off, uint max)
 {
-  sbr->len     = br->ptr ;
+  ptr_t ptr, start, end ;
+  bool  ok ;
+
+  memset(sbr, 0, sizeof(*sbr)) ;
+
+  sbr->p_len   = br->ptr ;
   blow_b_n(br, 0, ll) ;
 
-  blow_has_not_overrun(br) ;
+  ok = blow_overrun_check(br) ;
 
-  sbr->start   = br->ptr    + off ;
-  sbr->ptr     = br->ptr ;
-  sbr->end     = sbr->start + max ;
+  ptr   = br->ptr ;
+  start = ptr   + off ;
+  end   = start + max ;
 
-  if (sbr->end > br->end)
-    sbr->end = br->end ;
+  if (end > br->end)
+    end = br->end ;
 
-  sbr->overrun = 0 ;
-  sbr->ok      = true ;
-  blow_has_not_overrun(sbr) ;
+  sbr->start = start ;
+  sbr->ptr   = ptr ;
+  sbr->end   = end ;
+
+  return ok ;
 } ;
 
 /*------------------------------------------------------------------------------
  * End a sub-section blower -- with NO length setting
  *
- * NB: if the sub-section has overrun, the br->ptr is set to what it would be
- *     if the sub-section had been allowed to grow to the size it tried to
- *     achieve.  The parent is then checked for overrun.
+ * If the sub-section has not overrun:
  *
- * NB: the sub-section overrun clears the 'ok' flag, and that is copied back
- *     to the parent.
+ *   * cannot have overrun the parent, since: sbr->end <= br->end
  *
- *     So even if the parent does not, now, show overrun the 'ok' flag is
- *     false.
+ *   * the length returned is: sbr->ptr - sbr->start -- see blow_sub_init()
  *
- * Returns:  length: sbr->ptr - sbr->start
+ * If the sub-section has overrun:
+ *
+ *   * the br->ptr is set to:
+ *
+ *       a) the sbr->end iff that is less than br->end.
+ *
+ *          In this case, had the sub-section behaved, it would not have
+ *          overrun the parent, so we clamp to the sub-section end.
+ *
+ *       b) the "true" br->ptr and then blow_overrun().
+ *
+ *          In this case the sub-section has overrun both itself and the
+ *          parent, so the parent also overflows.
+ *
+ *   * the br->failed flag is set, in any event.
+ *
+ *     So, when finishing off a section comprising one or more sub-sections,
+ *     should check blow_ok() to check for any sub-section overruns.
+ *
+ *   * the length returned is what would have been if the sub-section had been
+ *     of indefinite size.
+ *
+ *     This assumes that the ptr has not been moved backwards, explicitly or
+ *     implicitly by sub-sub-section overruns.
+ *
+ * Returns:  sub-section length
  */
-extern int
+extern uint
 blow_sub_end(blower br, blower sbr)
 {
-  int len ;
+  ptr_t ptr, end ;
 
-  len = sbr->ptr - sbr->start ;
+  ptr = sbr->ptr ;
+  end = sbr->end ;
 
-  if (sbr->ptr > sbr->end)
-    blowP_sub_end_overflow(br, sbr) ;
+  qassert(end <= br->end) ;     /* sub-section ends within parent       */
+
+  if (ptr <= end)
+    {
+      /* Looks like success -- but if a sub-sub-section failed, could have
+       * sbr->failed... so we will copy that up.
+       */
+      br->ptr = ptr ;
+    }
   else
     {
-      br->ptr = sbr->ptr ;
-      if (!sbr->ok)
-        br->ok = false ;
+      /* We are closing the given sub-section, but that has overrun :-(
+       *
+       * Sets the br->ptr to the sbr->end
+       *
+       * NB: does NOT transfer the overrun count from the sub-section to the
+       *     parent -- except where that also would have overrun the parent.
+       *
+       *     But *does* set the 'failed' flag on parent, whether or not *that* has
+       *     overrun.
+       */
+      ptr = end + blow_overrun(sbr) ;   /* "true" sbr->ptr      */
+
+      if (br->end > end)
+        {
+          /* The limit on the sub-section is within the limit of the parent,
+           * so... had the sub-section behaved, would not have overrun the
+           * parent... so we can clamp to the sub-section limit.
+           *
+           * NB: the length returned for the sub-section does not take this
+           *     clamping into account -- so will exceed the maximum !
+           */
+          br->ptr = end ;                   /* clamp                */
+        }
+      else
+        {
+          /* The sub-section has overrun itself and the parent.  So, force
+           * a parent overrun.
+           */
+          br->ptr = ptr ;
+          blow_overrun(br) ;
+        } ;
     } ;
 
-  return len ;
+  if (sbr->failed)
+    br->failed = true ;
+
+  return ptr - sbr->start ;
 } ;
 
 /*------------------------------------------------------------------------------
  * End a sub-section blower -- for a byte length, which can now be set
  *
  * See blow_sub_end() above
+ *
+ * NB: the length stored takes no notice of overruns... and under most
+ *     conditions will be the length of stuff actually written.
  */
-extern int
+extern uint
 blow_sub_end_b(blower br, blower sbr)
 {
-  int len ;
+  uint len ;
 
-  len = sbr->ptr - sbr->start ;
-
-  if (sbr->ptr > sbr->end)
-    blowP_sub_end_overflow(br, sbr) ;
-  else
-    {
-      store_b(sbr->len, len) ;
-
-      br->ptr = sbr->ptr ;
-      if (!sbr->ok)
-        br->ok = false ;
-    } ;
+  len = blow_sub_end(br, sbr) ;
+  store_b(sbr->p_len, len) ;
 
   return len ;
 } ;
@@ -1004,84 +1106,102 @@ blow_sub_end_b(blower br, blower sbr)
  * End a sub-section blower -- for a word length, which can now be set
  *
  * See blow_sub_end() above
+ *
+ * NB: the length stored takes no notice of overruns... and under most
+ *     conditions will be the length of stuff actually written.
  */
-extern int
+extern uint
 blow_sub_end_w(blower br, blower sbr)
 {
-  int len ;
+  uint len ;
 
-  len = sbr->ptr - sbr->start ;
-
-  if (sbr->ptr > sbr->end)
-    blowP_sub_end_overflow(br, sbr) ;
-  else
-    {
-      store_ns(sbr->len, len) ;
-
-      br->ptr = sbr->ptr ;
-      if (!sbr->ok)
-        br->ok = false ;
-    } ;
+  len = blow_sub_end(br, sbr) ;
+  store_ns(sbr->p_len, len) ;
 
   return len ;
 } ;
 
 /*------------------------------------------------------------------------------
- * Update overrun, if required, forcing br->ptr to br->end + 1.
+ * Has overrun: reset ptr, update overrun, set failed and return -overrun.
  *
- * Returns:  br->overrun   -- up to date -- -ve !!
+ * Returns:    0 <=> not overrun
+ *           < 0 <=> -(extent of overrun)
  */
 Private int
-blowP_get_overrun(blower br)
+blow_P_left_overrun(blower br)
 {
-  ptr_t limit ;
-
-  limit = br->end + 1 ;
-
-  if (br->ptr >= limit)
-    {
-      if (br->overrun == 0)
-        br->overrun = -1 ;
-
-      br->overrun -= (br->ptr - limit) ;
-      br->ptr      = limit ;
-    } ;
-
-  return br->overrun ;
+  return -blow_overrun(br) ;
 } ;
 
 /*------------------------------------------------------------------------------
- * Update overrun, if required, forcing br->ptr to br->end + 1.
+ * Has overrun: reset ptr, update overrun, set failed and return end + overrun.
  *
- * Returns:  true <=> is OK -- has NOT overrun
- *          false <=> *bad* -- has overrun
+ * NB: this is completely foxed if the pointer has been moved backwards at
+ *     any time.
+ *
+ *     If a sub-section has overrun, but did not overrun the end of the parent,
+ *     then that implicitly moves the pointer backwards -- the effect is to
+ *     truncate the sub-section to its maximum size.
  */
-Private bool
-blowP_not_overrun(blower br)
+Private ptr_t
+blow_P_ptr_inc_overrun(blower br)
 {
-  return (blowP_get_overrun(br) != 0) ;
+  return br->end + blow_overrun(br) ;
 } ;
 
 /*------------------------------------------------------------------------------
- * We are closing the given sub-section, but that has overflowed :-(
+ * If has overrun: reset ptr, update overrun, set failed and return overrun.
  *
- * Sets the br->ptr as if the sub-section had been allowed to grow to the size
- * it tried to achieve, then checks that for overrun in the parent !
+ * The br->overrun keeps track of the number of bytes simple writing would
+ * have exceeded br->end by.
  *
- * NB: does NOT transfer the overrun count from the sub-section to the
- *     parent -- except where that also would have overrun the parent.
+ * If has overrun, sets br->failed.
  *
- *     But *does* clear the 'ok' flag on parent, whether or not that has
- *     overrun.
+ * Returns:   0 <=> not overrun
+ *          > 0 <=> extent of overrun, beyond br->end.
+ */
+Private uint
+blow_overrun(blower br)
+{
+  int over ;
+
+  over = br->ptr - br->end ;
+  if (over <= 0)
+    return 0 ;                  /* no overrun   */
+
+  /* Sum the "over"s in br->overrun.
+   *
+   * After overrun we leave br->ptr = br->end + 1, so even though we've pulled
+   * the br->ptr back, it is still overrun.
+   *
+   * So after the first overrun, the extra amount we have gone over is one less
+   * than it appears.
+   */
+  br->ptr      = br->end + 1 ;      /* NB: remains over by 1        */
+  br->failed   = true ;
+
+  if (br->overrun != 0)
+    over = br->overrun + (over - 1) ;
+
+  return br->overrun = over ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Trying to put 'n' bytes, but that overruns.
  */
 Private void
-blowP_sub_end_overflow(blower br, blower sbr)
+blow_P_n_overrun(blower br, const void* p, uint n, ptr_t over_end)
 {
-  qassert((sbr->ptr > sbr->end)) ;
+  qassert(n != 0) ;
 
-  br->ptr = sbr->ptr - blowP_get_overrun(sbr) ;
-  br->ok  = false ;
-  blowP_get_overrun(br) ;    /* make sure parent overrun is up to date  */
+  if (br->ptr < br->end)
+    {
+      qassert((br->end - br->ptr) < n) ;
+      memcpy(br->ptr, p, (br->end - br->ptr)) ;
+    } ;
+
+  br->ptr = over_end ;
+  blow_overrun(br) ;
 } ;
 
 /*==============================================================================
@@ -1112,17 +1232,17 @@ blowP_sub_end_overflow(blower br, blower sbr)
  * If succeeds, clears the rb->put_waiting.  If not enough room, sets
  * rb->put_waiting to the given set_waiting.
  *
- * Returns:  address for segment body == rb->put_ptr
- *                                       rb->put_len = the given length
+ * Returns:  address of segment body == rb->put_ptr + rbrt_off_body
+ *                                      rb->put_len = the given length
  *
  *           NULL => not enough room  -- rb->put_ptr  *unchanged*
  *                                       rb->put_len  *unchanged*
  *
  * NB: does not set rb->wrap_end -- that is done when rb_put_close() is called.
  *
- *   rb->put_ptr is: rb->end      + rbrt_off_body && rb->wrap_end == NULL
- *               or: rb->buffer   + rbrt_off_body && rb->wrap_end == NULL
- *               or: rb->wrap_end + rbrt_off_body && rb->wrap_end > rb->buffer
+ *   rb->put_ptr is: rb->end       && rb->wrap_end == NULL
+ *               or: rb->buffer    && rb->wrap_end == NULL
+ *               or: rb->wrap_end  && rb->wrap_end > rb->buffer
  *
  *   rb->wrap_end may NOT be rb->buffer.
  *
@@ -1262,7 +1382,7 @@ rb_put_open(ring_buffer rb, uint len, bool set_waiting)
 /*------------------------------------------------------------------------------
  * Get address of current putting segment (if any).
  *
- * Returns:  address of body of segment
+ * Returns:  address of body of segment -- pointing *after* the red-tape
  *           NULL <=> no segment actually open !
  *
  * NB: rb->put_ptr and put_len belong to the putter -- so no lock is required.
@@ -1281,7 +1401,7 @@ rb_put_ptr(ring_buffer rb)
  * Sets the length and type as given, clears the rb->put_ptr and updates the
  * rb->end or rb->wrap_end to step past the segment.
  *
- * Returns:  address of body of segment
+ * Returns:  address of segment -- pointing at its red-tape
  *           NULL <=> no segment actually open !
  *
  * NB: it is a (VERY) sad mistake to set a length greater than the last
@@ -1435,9 +1555,60 @@ rb_put_copy(ring_buffer dst, ring_buffer src)
   return ok ;
 } ;
 
+/*------------------------------------------------------------------------------
+ * How much space is available for putter.
+ *
+ * NB: MUST be locked
+ */
+inline static uint
+rb_put_available(ring_buffer rb)
+{
+  if (rb->wrap_end == NULL)
+    {
+      /* No wrap... so everything above 'start' and below 'end'
+       */
+      return (rb->start - rb->buffer) + (rb->limit - rb->end) ;
+    }
+  else
+    {
+      /* Wrapped... so everything between 'wrap_end' and 'start'
+       *
+       * NB: we ignore the issue of ring_buffer_slack here !
+       */
+      return (rb->start - rb->wrap_end) ;
+    } ;
+} ;
+
 /*==============================================================================
  * Prompting support.
  */
+
+/*------------------------------------------------------------------------------
+ * Wish to prompt the getter unless there is a prompt in flight already.
+ *
+ * If rb == NULL, clearly not !
+ *
+ * Return:  true <=> a prompt MUST now be sent.
+ */
+extern bool
+rb_get_kick(ring_buffer rb)
+{
+  bool prompt ;
+
+  if (rb == NULL)
+    return false ;
+
+  RB_SPIN_LOCK(rb) ;            /*<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-*/
+
+  prompt = !rb->get_prompted ;
+
+  if (prompt)
+    rb->get_prompted = true ;
+
+  RB_SPIN_UNLOCK(rb) ;          /*->->->->->->->->->->->->->->->->->->->*/
+
+  return prompt ;
+} ;
 
 /*------------------------------------------------------------------------------
  * Does the getter need a prompt ?
@@ -1445,7 +1616,7 @@ rb_put_copy(ring_buffer dst, ring_buffer src)
  * If rb == NULL, clearly not !
  *
  * If the getter has signalled that it is waiting AND a prompt is not
- * "in-flight"...
+ * "in-flight" AND either the buffer is not empty or we want to prompt anyway
  *
  * ...then a prompt is required, and we assume that one will be sent (so sets
  *    set "in-flight" here and now).
@@ -1463,7 +1634,7 @@ rb_put_copy(ring_buffer dst, ring_buffer src)
  * Return:  true <=> a prompt MUST now be sent.
  */
 extern bool
-rb_get_prompt(ring_buffer rb)
+rb_get_prompt(ring_buffer rb, bool anyway)
 {
   bool prompt ;
 
@@ -1472,7 +1643,8 @@ rb_get_prompt(ring_buffer rb)
 
   RB_SPIN_LOCK(rb) ;            /*<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-*/
 
-  prompt = rb->get_waiting && !rb->get_prompted ;
+  prompt = rb->get_waiting && !rb->get_prompted
+                           && ((rb->start < rb->end) || anyway) ;
 
   if (prompt)
     rb->get_prompted = true ;
@@ -1507,12 +1679,39 @@ rb_get_prompt_clear(ring_buffer rb)
 } ;
 
 /*------------------------------------------------------------------------------
+ * Wish to prompt the putter unless there is a prompt in flight already.
+ *
+ * If rb == NULL, clearly not !
+ *
+ * Return:  true <=> a prompt MUST now be sent.
+ */
+extern bool
+rb_put_kick(ring_buffer rb)
+{
+  bool prompt ;
+
+  if (rb == NULL)
+    return false ;
+
+  RB_SPIN_LOCK(rb) ;            /*<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-*/
+
+  prompt = !rb->put_prompted ;
+
+  if (prompt)
+    rb->put_prompted = true ;
+
+  RB_SPIN_UNLOCK(rb) ;          /*->->->->->->->->->->->->->->->->->->->*/
+
+  return prompt ;
+} ;
+
+/*------------------------------------------------------------------------------
  * Does the putter need a prompt ?
  *
  * If rb == NULL, clearly not !
  *
  * If the putter has signalled that it is waiting AND a prompt is not
- * "in-flight"...
+ * "in-flight" AND there is at least threshold bytes available
  *
  * ...then a prompt is required, and we assume that one will be sent (so sets
  *    set "in-flight" here and now).
@@ -1530,7 +1729,7 @@ rb_get_prompt_clear(ring_buffer rb)
  * Return:  true <=> a prompt MUST now be sent.
  */
 extern bool
-rb_put_prompt(ring_buffer rb)
+rb_put_prompt(ring_buffer rb, uint threshold)
 {
   bool prompt ;
 
@@ -1539,8 +1738,8 @@ rb_put_prompt(ring_buffer rb)
 
   RB_SPIN_LOCK(rb) ;            /*<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-*/
 
-  prompt = rb->put_waiting && (rb->start < rb->end) && !rb->put_prompted ;
-
+  prompt = rb->put_waiting && !rb->put_prompted
+                           && (rb_put_available(rb) >= threshold) ;
   if (prompt)
     rb->put_prompted = true ;
 

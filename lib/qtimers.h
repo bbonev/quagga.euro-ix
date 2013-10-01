@@ -109,7 +109,7 @@ struct qtimer
 
 struct qtimer_pile
 {
-  struct heap timers ;
+  heap_t      timers ;
 
   bool        ok ;              /* for pile verification                */
 
@@ -134,9 +134,12 @@ extern void qtimer_set_pile(qtimer qtr, qtimer_pile qtp) ;
 Inline void qtimer_set_action(qtimer qtr, qtimer_action* action) ;
 Inline void qtimer_set_info(qtimer qtr, void* timer_info) ;
 
-extern qtimer qtimer_free(qtimer qtr) ;
 extern void qtimer_set(qtimer qtr, qtime_mono_t when, qtimer_action* action) ;
+extern qtime_t qtimer_has_left(qtimer qtr) ;
 extern void qtimer_unset(qtimer qtr) ;
+extern qtimer qtimer_free(qtimer qtr) ;
+
+Inline bool qtimer_is_active(qtimer qtr) ;
 
 Inline void qtimer_add(qtimer qtr, qtime_t interval, qtimer_action* action) ;
 Inline qtime_mono_t qtimer_get(qtimer qtr) ;
@@ -153,6 +156,8 @@ extern void qtimer_pile_verify(qtimer_pile qtp) ;
 
 /*------------------------------------------------------------------------------
  * Set given timer to given time later than *its* current time.
+ *
+ * NB: if the timer is not active, new time is wrt the last time set.
  */
 Inline void
 qtimer_add(qtimer qtr, qtime_t interval, qtimer_action* action)
@@ -161,7 +166,9 @@ qtimer_add(qtimer qtr, qtime_t interval, qtimer_action* action)
 } ;
 
 /*------------------------------------------------------------------------------
- * Get the given timer's time.
+ * Get the given timer's time
+ *
+ * NB: if the timer is not active, returns the last time set.
  */
 Inline qtime_mono_t
 qtimer_get(qtimer qtr)

@@ -177,6 +177,9 @@ struct map_bit_ords
  * Functions
  */
 extern name_str_t map_direct(const map_direct_t map, int val) ;
+extern name_str_t map_name_str(const char* name) ;
+extern name_str_t map_name_str_val(const char* name, int val) ;
+
 extern name_str_t map_direct_with_value(const map_direct_t map, int val) ;
 extern const char* map_direct_known(const map_direct_t map, int val) ;
 

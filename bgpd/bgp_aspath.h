@@ -369,7 +369,9 @@ extern as_path as_path_empty_asp ;
 
 /* For SNMP BGP4PATHATTRASPATHSEGMENT
  */
+#if 0
 extern byte* as_path_snmp_pathseg (as_path asp, size_t* p_size);
+#endif
 
 /*------------------------------------------------------------------------------
  * Functions to increase the reference count and to release an as_path.

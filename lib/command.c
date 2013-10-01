@@ -604,8 +604,8 @@ cmd_daemon_name(daemon_set_t daemons, bool forge)
  *
  * Names include "TERM".
  */
-static const char*
-cmd_daemon_bit_name(daemon_set_t daemons, bool forge) __attribute__((unused)) ;
+static const char* cmd_daemon_bit_name(daemon_set_t daemons, bool forge)
+                                                                        Unused ;
 static const char*
 cmd_daemon_bit_name(daemon_set_t daemons, bool forge)
 {
@@ -4734,7 +4734,8 @@ host_init(const char* arg0)
   memcpy(p, arg0, cl) ;
 
   host.full_progname = full_progname ;
-  host.progname = ((p = strrchr (full_progname, '/')) ? ++p : full_progname) ;
+  p = strrchr(full_progname, '/') ;
+  host.progname = (p != NULL) ? p + 1 : full_progname ;
 
   /* Pointer to the default motd string cannot be set statically.
    */

@@ -21,6 +21,7 @@ Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
 #include <zebra.h>
 
 #include "bgpd/bgp_dump.h"
+#include "bgpd/bgp_mrt.h"
 #include "bgpd/bgpd.h"
 #include "bgpd/bgp_peer.h"
 #include "bgpd/bgp_table.h"
@@ -46,8 +47,7 @@ Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
 #include "qiovec.h"
 
 /*==============================================================================
- * This will bd BGP state in MRT ("Multi-threaded Routing Toolkit") form.
- * See draft-ietf-grow-mrt.
+ * This will dump BGP state in MRT ("Multi-threaded Routing Toolkit") form.
  *
  * Three, independent, dumps are supported (simultaneously):
  *
@@ -64,107 +64,6 @@ Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
  * opening of new files is done in the Routing Engine and the result passed to
  * the BGP Engine.
  */
-
-/* MRT message types
- */
-enum MRT_MT_TYPES {
-   MRT_MT_NULL              =  0,       /* deprecated   */
-   MRT_MT_START             =  1,       /* deprecated   */
-   MRT_MT_DIE               =  2,       /* deprecated   */
-   MRT_MT_I_AM_DEAD         =  3,       /* deprecated   */
-   MRT_MT_PEER_DOWN         =  4,       /* deprecated   */
-   MRT_MT_BGP               =  5,       /* deprecated   */
-   MRT_MT_RIP               =  6,       /* deprecated   */
-   MRT_MT_IDRP              =  7,       /* deprecated   */
-   MRT_MT_RIPNG             =  8,       /* deprecated   */
-   MRT_MT_BGP4PLUS          =  9,       /* deprecated   */
-   MRT_MT_BGP4PLUS_01       = 10,       /* deprecated   */
-
-   MRT_MT_OSPFv2            = 11,
-   MRT_MT_TABLE_DUMP        = 12,       /* BGP routing table dump       */
-   MRT_MT_TABLE_DUMP_V2     = 13,       /* BGP routing table dump, v2   */
-   MRT_MT_BGP4MP            = 16,       /* BGP4 with MP extensions      */
-   MRT_MT_BGP4MP_ET         = 17,       /* as above with Extended Times */
-   MRT_MT_ISIS              = 32,
-   MRT_MT_ISIS_ET           = 33,       /* as above with Extended Times */
-   MRT_MT_OSPFv3            = 48,
-   MRT_MT_OSPFv3_ET         = 49,       /* as above with Extended Times */
-
-} ;
-
-/* MRT Common Header and other sizes
- */
-enum
-{
-  MRT_COMMON_HEADER_SIZE  = 12,         /* Timestamp(4), Type(2), Subtype(2)
-                                         * Length(4)
-                                         * NB: length excludes header   */
-  MRT_BGP4MP_HEADER_SIZE  = 44          /* Peer AS(4), Local AS(4),
-                                         * Interface Index(2),
-                                         * Address Family(2),
-                                         * Peer IP(16), Local IP(16)    */
-} ;
-
-/* MRT subtypes of MRT_MT_BGP4MP
- */
-enum MRT_MT_BGP4MP_SUBTYPES
-{
-  MRT_MST_BGP4MP_STATE_CHANGE      = 0,
-  MRT_MST_BGP4MP_MESSAGE           = 1,
-
-  MRT_MST_BGP4MP_ENTRY             = 2, /* deprecated   */
-  MRT_MST_BGP4MP_SNAPSHOT          = 3, /* deprecated   */
-
-  MRT_MST_BGP4MP_MESSAGE_AS4       = 4,
-  MRT_MST_BGP4MP_STATE_CHANGE_AS4  = 5,
-
-  MRT_MST_BGP4MP_MESSAGE_LOCAL     = 6,
-  MRT_MST_BGP4MP_MESSAGE_AS4_LOCAL = 7,
-} ;
-
-/* MRT subtypes of MRT_MT_TABLE_DUMP_V2
- */
-enum MRT_MT_TABLE_DUMP_V2_SUBTYPES
-{
-  MRT_MST_TDV2_PEER_INDEX_TABLE    = 1,
-  MRT_MST_TDV2_RIB_IPV4_UNICAST    = 2,
-  MRT_MST_TDV2_RIB_IPV4_MULTICAST  = 3,
-  MRT_MST_TDV2_RIB_IPV6_UNICAST    = 4,
-  MRT_MST_TDV2_RIB_IPV6_MULTICAST  = 5,
-  MRT_MST_TDV2_RIB_GENERIC         = 6,
-} ;
-
-/* Values for MRT_MST_TDV2_PEER_INDEX_TABLE message
- */
-enum
-{
-  MRT_TDV2_PEER_INDEX_TABLE_IPV4   = 0,
-  MRT_TDV2_PEER_INDEX_TABLE_IPV6   = 1,
-  MRT_TDV2_PEER_INDEX_TABLE_AS2    = 0,
-  MRT_TDV2_PEER_INDEX_TABLE_AS4    = 2,
-} ;
-
-/* Values for FSM states
- */
-enum
-{
-  MRT_FSM_UNDEF        = 0,     /* Not defined in the standard  */
-
-  MRT_FSM_Idle         = 1,
-  MRT_FSM_Connect      = 2,
-  MRT_FSM_Active       = 3,
-  MRT_FSM_OpenSent     = 4,
-  MRT_FSM_OpenConfirm  = 5,
-  MRT_FSM_Established  = 6,
-} ;
-
-/* Values for AFI in BGP4MP messages
- */
-enum
-{
-  MRT_AFI_IPv4         = 1,
-  MRT_AFI_IPv6         = 2,
-} ;
 
 /*------------------------------------------------------------------------------
  * Dump control definitions, structures etc.
@@ -207,7 +106,7 @@ struct bgp_dump
   char* filename ;      /* complete path, as opened             */
   int   fd ;            /* < 0 if not open                      */
 
-  struct stream* obuf ; /* set up when file is opened           */
+  stream obuf ;         /* set up when file is opened           */
 
   uint  seq ;           /* for TABLE (and TABLE_NOW) dumps      */
 
@@ -418,7 +317,7 @@ bgp_dump_set_timer(bgp_dump_control bdc)
         }
 
       if (bdc->qtr == NULL)
-        bdc->qtr = qtimer_init_new(NULL, routing_nexus->pile,
+        bdc->qtr = qtimer_init_new(NULL, re_nexus->pile,
                                                  bgp_dump_timer_expired, bdc) ;
       qtimer_set(bdc->qtr, qt_add_monotonic(QTIME(interval)), NULL) ;
     }
@@ -539,8 +438,8 @@ bgp_dump_free(bgp_dump bd)
 /*==============================================================================
  * TABLE (and TABLE_NOW) dumps
  */
-static bgp_dump bgp_dump_routes_index_table(bgp_dump bd, struct bgp *bgp) ;
-static bgp_dump bgp_dump_routes_family(bgp_dump bd, struct bgp *bgp,
+static bgp_dump bgp_dump_routes_index_table(bgp_dump bd, bgp_inst bgp) ;
+static bgp_dump bgp_dump_routes_family(bgp_dump bd, bgp_inst bgp,
                                                                   qAFI_t q_afi);
 
 static stream bgp_dump_header (bgp_dump bd, int type, int subtype) ;
@@ -554,7 +453,7 @@ static void bgp_dump_set_size (stream s, uint plus) ;
 static void
 bgp_dump_table(bgp_dump_control bdc)
 {
-  struct bgp *bgp ;
+  bgp_inst bgp ;
   bgp_dump bd ;
 
   if (qdebug)
@@ -601,10 +500,10 @@ bgp_dump_table(bgp_dump_control bdc)
  * Returns:  bd if OK, or NULL if failed (or was NULL already).
  */
 static bgp_dump
-bgp_dump_routes_index_table(bgp_dump bd, struct bgp *bgp)
+bgp_dump_routes_index_table(bgp_dump bd, bgp_inst bgp)
 {
   struct stream* s ;
-  struct peer *peer ;
+  bgp_peer peer ;
   struct listnode *node ;
   uint16_t peerno, len ;
 
@@ -687,7 +586,7 @@ bgp_dump_routes_index_table(bgp_dump bd, struct bgp *bgp)
  * NB: assumes that th afi is known !
  */
 static bgp_dump
-bgp_dump_routes_family(bgp_dump bd, struct bgp *bgp, qAFI_t q_afi)
+bgp_dump_routes_family(bgp_dump bd, bgp_inst bgp, qAFI_t q_afi)
 {
   vector         rv ;
   vector_index_t i ;
@@ -716,21 +615,21 @@ bgp_dump_routes_family(bgp_dump bd, struct bgp *bgp, qAFI_t q_afi)
 
   /* Get the required table -- gets empty vector, if none
    */
-  rv = bgp_rib_extract(bgp->rib[qafx_from_q(q_afi, qSAFI_Unicast)][rib_main],
+  rv = bgp_rib_extract(bgp->rib[qafx_from_q(q_afi, qSAFI_Unicast)], lc_view_id,
                                                                          NULL) ;
   /* Walk down each BGP route
    */
   for (i = 0 ; i < vector_length(rv) ; ++i)
     {
-      struct stream* s;
+      stream        s;
       bgp_rib_node  rn;
       route_info    ri;
       prefix        pfx ;
-      int sizep ;
-      uint16_t entry_count ;
+      int           sizep ;
+      uint16_t      entry_count ;
 
       rn = vector_get_item(rv, i) ;
-      ri = ddl_head(rn->routes) ;
+      ri = svs_head(rn->aroutes[lc_view_id].base, rn->avail) ;
 
       if (ri == NULL)
         continue ;              /* ignore if no routes available        */
@@ -750,26 +649,45 @@ bgp_dump_routes_family(bgp_dump bd, struct bgp *bgp, qAFI_t q_afi)
       entry_count = 0;
       stream_putw(s, entry_count);              /* entry count, so far  */
 
-      /* Cycle through the known attributes for this prefix             */
+      /* Cycle through the known attributes for this prefix
+       *
+       * TODO .... this all goes bosom vertical if overruns the buffer !!
+       */
       do
         {
+          blower_t br[1] ;
+          uint     step ;
+          size_t   left ;
+
           entry_count++;
 
-          /* Peer index */
+          /* Peer index
+           */
           stream_putw(s, ri->prib->peer->table_dump_index);
 
-          /* Originated */
+          /* Originated
+           */
           stream_putl (s, bgp_wall_clock(ri->uptime));
 
-          /* Dump attribute.                                            */
-          /* Skip prefix & AFI/SAFI for MP_NLRI                         */
-          bgp_dump_routes_attr (s, ri->attr, pfx);
+          /* Dump attribute.
+           *
+           * Skip prefix & AFI/SAFI for MP_NLRI
+           */
+          left = stream_get_write_left(s) - blow_buffer_slack ;
+          if (left < 0)
+            break ;
 
-          ri = ddl_next(ri, route_list) ;
+          blow_init(br, stream_get_end(s), left) ;
+          step = bgp_dump_routes_attr(br, ri->iroutes[0].attr, pfx) ;
+
+          stream_forward_endp (s, step) ;
+
+          ri = svs_next(ri->iroutes[0].list, rn->avail) ;
         }
       while (ri != NULL) ;
 
-      /* Overwrite the entry count, now that we know the right number */
+      /* Overwrite the entry count, now that we know the right number
+       */
       stream_putw_at (s, sizep, entry_count);
 
       bgp_dump_set_size(s, 0) ;
@@ -1522,7 +1440,8 @@ bgp_dump_engine_set(bgp_dump bd, bgp_dump_type_t type)
   args->type = type ;
   args->bd   = bd ;
 
-  bgp_to_bgp_engine(mqb, mqb_priority) ;        /* change file ASAP     */
+  bgp_to_bgp_engine(mqb, mqb_priority, bgp_engine_log_event) ;
+                                                /* change file ASAP     */
 } ;
 
 /*------------------------------------------------------------------------------

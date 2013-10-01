@@ -137,12 +137,14 @@ extern ptr_t rb_put_ptr(ring_buffer rb) ;
 extern ptr_t rb_put_close(ring_buffer rb, uint final_len, uint type) ;
 extern void rb_put_drop(ring_buffer rb) ;
 extern bool rb_put_copy(ring_buffer dst, ring_buffer src) ;
-
-extern bool rb_get_prompt(ring_buffer rb) ;
-extern void rb_get_prompt_clear(ring_buffer rb) ;
-extern bool rb_put_prompt(ring_buffer rb) ;
-extern void rb_put_prompt_clear(ring_buffer rb) ;
 extern void rb_set_blower(blower br, ring_buffer rb) ;
+
+extern bool rb_get_kick(ring_buffer rb) ;
+extern bool rb_get_prompt(ring_buffer rb, bool anyway) ;
+extern void rb_get_prompt_clear(ring_buffer rb) ;
+extern bool rb_put_kick(ring_buffer rb) ;
+extern bool rb_put_prompt(ring_buffer rb, uint threshold) ;
+extern void rb_put_prompt_clear(ring_buffer rb) ;
 
 /*------------------------------------------------------------------------------
  * From address of segment, get address of body, length of same and type.
@@ -180,11 +182,12 @@ typedef struct sucker  sucker_t ;
 
 struct sucker
 {
-  ptr_t  start ;        /* current known start  */
-  ptr_t  ptr ;          /* current read pointer */
-  ptr_t  end ;          /* current known end    */
+  ptr_t  start ;        /* current known start                  */
+  ptr_t  ptr ;          /* current read pointer                 */
+  ptr_t  end ;          /* current known end                    */
 
-  int    overrun ;      /* total overrun (-ve)  */
+  uint   overrun ;      /* total overrun                        */
+  bool   failed ;       /* overrun here or in sub-section       */
 } ;
 
 /* Sucker Functions.
@@ -192,12 +195,11 @@ struct sucker
 Inline void suck_init(sucker sr, void* start, uint length) ;
 Inline int suck_left(sucker sr) ;
 Inline bool suck_check_read(sucker sr, uint n) ;
-Inline bool suck_check_not_overrun(sucker sr) ;
+Inline bool suck_overrun_check(sucker sr) ;
 Inline bool suck_check_complete(sucker sr) ;
-Private int suck_overrun(sucker sr) ;
-Private bool suck_not_overrun(sucker sr) ;
 Inline int suck_total(sucker sr) ;
 Inline ptr_t suck_start(sucker sr) ;
+Inline ptr_t suck_ptr(sucker sr) ;
 Inline ptr_t suck_step(sucker sr, int n) ;
 
 Inline void suck_sub_init(sucker ssr, sucker sr, uint n) ;
@@ -211,6 +213,9 @@ Inline uint32_t  suck_l(sucker sr) ;
 Inline in_addr_t suck_ipv4(sucker sr) ;
 Inline uint64_t  suck_q(sucker sr) ;
 
+Private uint suck_overrun(sucker sr) ;
+Private int suck_P_left_overrun(sucker sr) ;
+
 /*------------------------------------------------------------------------------
  * Set sucker to given address and length
  */
@@ -221,6 +226,7 @@ suck_init(sucker sr, void* start, uint length)
   sr->ptr     = (ptr_t)start ;
   sr->end     = (ptr_t)start + length ;
   sr->overrun = 0 ;
+  sr->failed  = false ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -239,7 +245,7 @@ suck_left(sucker sr)
 
   left = (sr->end - sr->ptr) ;
 
-  return (left >= 0) ? left : suck_overrun(sr) ;
+  return (left >= 0) ? left : suck_P_left_overrun(sr) ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -252,12 +258,19 @@ suck_check_read(sucker sr, uint n)
 } ;
 
 /*------------------------------------------------------------------------------
- * Check that we not overrun.
+ * Check we have not overrun, but if have: pull ptr back to end + 1.
+ *
+ * Returns:  true <=> OK, not overrun
+ *           false => has overrun, and ptr pulled back to end + 1
  */
 Inline bool
-suck_check_not_overrun(sucker sr)
+suck_overrun_check(sucker sr)
 {
-  return (sr->ptr <= sr->end) ? true : suck_not_overrun(sr) ;
+  if (sr->ptr <= sr->end)
+    return true ;
+
+  suck_overrun(sr) ;
+  return false ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -288,7 +301,18 @@ suck_start(sucker sr)
 } ;
 
 /*------------------------------------------------------------------------------
+ * Get current ptr
+ */
+Inline ptr_t
+suck_ptr(sucker sr)
+{
+  return sr->ptr ;
+} ;
+
+/*------------------------------------------------------------------------------
  * Get current ptr and step past 'n' bytes -- which may be -ve
+ *
+ * Returns:  pointer before step.
  *
  * NB: does NOT check if 'n' is reasonable !
  */
@@ -431,45 +455,58 @@ suck_q(sucker sr)
 /*==============================================================================
  * Buffer blowing -- lightweight writing of things to a protocol buffer.
  *
- * Does NOTHING in the way of bound-checking.  The ring-buffer allows for
- * the pointer to overrun the end by 'blow_buffer_slack' bytes.  The
- * blow_left() function will pull the sr->ptr back to the sr->end, and keep
- * track of the overrun.
+ * Does VERY LITTLE in the way of bound-checking.  The ring-buffer allows for
+ * the pointer to overrun the end by 'blow_buffer_slack' bytes, so for many
+ * things can write object(s) using a blower, and check for overrun afterwards.
+ * The following check for overrun:
  *
- * Buffer blower structure...
+ *   * blow_left()
+ *   * blow_want()
+ *   * blow_overrun_check()
+ *   * blow_ptr_inc_overrun()
+ *   * blow_n_check()
+ *
+ *   * blow_sub_init()
+ *   * blow_sub_end_b()
+ *   * blow_sub_end_w()
+ *
+ *   * blow_overrun()
+ *
+ * Buffer blower structure.
  */
 typedef struct blower  blower_t ;
 
 struct blower
 {
-  ptr_t  start ;        /* current known start          */
-  ptr_t  ptr ;          /* current read pointer         */
-  ptr_t  end ;          /* current known end            */
+  ptr_t  start ;        /* current known start                          */
+  ptr_t  ptr ;          /* current read pointer                         */
+  ptr_t  end ;          /* current known end                            */
 
-  ptr_t  len ;          /* current sub-section length   */
+  uint   overrun ;      /* total overrun                                */
+  bool   failed ;       /* set on overrun, copied from sub-section      */
 
-  int    overrun ;      /* total overrun (-ve)          */
-  bool   ok ;           /* cleared if fails of overruns */
+  ptr_t  p_len ;        /* pointer to sub-section length field          */
 } ;
 
 /* Blower Functions.
  */
-Inline void blow_init(blower br, void* start, uint length) ;
+extern void blow_init(blower br, void* start, uint length) ;
 Inline int blow_left(blower br) ;
+Inline int blow_length(blower br) ;
 Inline bool blow_has_written(blower br, uint n) ;
-Inline bool blow_has_not_overrun(blower br) ;
+Inline bool blow_overrun_check(blower br) ;
 Inline bool blow_is_complete(blower br) ;
 Inline bool blow_is_ok(blower br) ;
-Inline int blow_length(blower br) ;
+Inline int blow_total(blower br) ;
 Inline ptr_t blow_start(blower br) ;
 Inline ptr_t blow_ptr(blower br) ;
+Inline ptr_t blow_ptr_inc_overrun(blower br) ;
+Inline ptr_t blow_set_ptr(blower br, ptr_t ptr) ;
+
 Inline ptr_t blow_step(blower br, int n) ;
+Inline ptr_t blow_want(blower br, uint n) ;
 
-extern void blow_sub_init(blower sbr, blower br, uint ll, int off, uint max) ;
-extern int blow_sub_end(blower br, blower sbr) ;
-extern int blow_sub_end_b(blower br, blower sbr) ;
-extern int blow_sub_end_w(blower br, blower sbr) ;
-
+Inline void blow_n_check(blower br, const void* p, uint n) ;
 Inline void blow_n(blower br, const void* p, uint n) ;
 Inline void blow_b(blower br, uint8_t b) ;
 Inline void blow_b_n(blower br, uint8_t b, uint n) ;
@@ -478,32 +515,24 @@ Inline void blow_l(blower br, uint32_t l) ;
 Inline void blow_ipv4(blower br, in_addr_t ip) ;
 Inline void blow_q(blower br, uint64_t q) ;
 
-Private int blowP_get_overrun(blower br) ;
-Private bool blowP_not_overrun(blower br) ;
-Private void blowP_sub_end_overflow(blower br, blower sbr) ;
+extern bool blow_sub_init(blower sbr, blower br, uint ll, int off, uint max) ;
+extern uint blow_sub_end(blower br, blower sbr) ;
+extern uint blow_sub_end_b(blower br, blower sbr) ;
+extern uint blow_sub_end_w(blower br, blower sbr) ;
 
-/*------------------------------------------------------------------------------
- * Set blower to given address and length
- */
-Inline void
-blow_init(blower br, void* start, uint length)
-{
-  br->start   = (ptr_t)start ;
-  br->ptr     = (ptr_t)start ;
-  br->end     = (ptr_t)start + length ;
-  br->len     = NULL ;
-  br->overrun = 0 ;
-  br->ok      = true ;
-} ;
+Private uint blow_overrun(blower br) ;
+Private int blow_P_left_overrun(blower br) ;
+Private ptr_t blow_P_ptr_inc_overrun(blower br) ;
+Private void blow_P_n_overrun(blower br, const void* p, uint n, ptr_t over_end);
 
 /*------------------------------------------------------------------------------
  * Get blower number of bytes between ptr and end (could be negative !)
  *
  * NB: if is -ve that implies that has overrun the current end, in which
- *     case will have reset the br->end and updated the br->overrun.
+ *     case will have reset the br->ptr and updated the br->overrun.
  *
- *     When overrun is reset, br->ptr is clamped to br->end + 1, and the
- *     br->overrun is updated.
+ *     When reset, br->ptr is clamped to br->end + 1, so the full
+ *     blow_buffer_safe space is available.
  */
 Inline int
 blow_left(blower br)
@@ -512,11 +541,22 @@ blow_left(blower br)
 
   left = (br->end - br->ptr) ;
 
-  return (left >= 0) ? left : blowP_get_overrun(br) ;
+  return (left >= 0) ? left : blow_P_left_overrun(br) ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Get number of bytes between start and ptr
+ */
+Inline int
+blow_length(blower br)
+{
+  return br->ptr - br->start ;
 } ;
 
 /*------------------------------------------------------------------------------
  * Check that we have written 'n' bytes.
+ *
+ * NB: this ignores the possibility of overrun(s) having messed things up !
  */
 Inline bool
 blow_has_written(blower br, uint n)
@@ -525,15 +565,21 @@ blow_has_written(blower br, uint n)
 } ;
 
 /*------------------------------------------------------------------------------
- * Check that we have not overrun.
+ * Check whether have overrun, and deal with same.
+ *
+ * NB: this does not check for overruns in sub-sections -- for which
+ *     blow_is_ok() should be used.
+ *
+ * Returns:  true <=> has NOT overrun -- so far, so good :-)
  */
 Inline bool
-blow_has_not_overrun(blower br)
+blow_overrun_check(blower br)
 {
   if (br->ptr <= br->end)
-    return true ;               /* OK           */
-  else
-    return blowP_not_overrun(br) ;
+    return true ;
+
+  blow_overrun(br) ;
+  return false ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -551,14 +597,14 @@ blow_is_complete(blower br)
 Inline bool
 blow_is_ok(blower br)
 {
-  return br->ok ;
+  return !br->failed ;
 }
 
 /*------------------------------------------------------------------------------
  * Get number of bytes between start and end
  */
 Inline int
-blow_length(blower br)
+blow_total(blower br)
 {
   return br->end - br->start ;
 } ;
@@ -582,9 +628,46 @@ blow_ptr(blower br)
 } ;
 
 /*------------------------------------------------------------------------------
+ * Get current ptr, but if has overrun add on the total known overrun.
+ *
+ * This is provided so that (under normal circumstances) can calculate how
+ * much would have written, had the buffer been bigger !
+ *
+ * NB: this is completely foxed if the pointer has been moved backwards at
+ *     any time.
+ *
+ * NB: if a sub-section overruns...
+ */
+Inline ptr_t
+blow_ptr_inc_overrun(blower br)
+{
+  if (br->ptr <= br->end)
+    return br->ptr ;
+  else
+    return blow_P_ptr_inc_overrun(br) ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Set the given ptr.
+ *
+ * NB: does NOT check the new ptr -- may overrun etc !
+ *
+ * NB: if the blower has overrun, confusion may result.
+ *
+ * Returns:  the new ptr.
+ */
+Inline ptr_t
+blow_set_ptr(blower br, ptr_t ptr)
+{
+  return br->ptr = ptr ;
+} ;
+
+/*------------------------------------------------------------------------------
  * Get current ptr and step past 'n' bytes -- which may be -ve
  *
- * NB: does NOT check if 'n' is reasonable !
+ * NB: does NOT check if 'n' is reasonable -- may overrun etc !
+ *
+ * NB: if 'n' is -ve, and the blower has overrun, confusion may result.
  *
  * Returns: ptr *before* the step.
  */
@@ -599,7 +682,52 @@ blow_step(blower br, int n)
 } ;
 
 /*------------------------------------------------------------------------------
- * Blow 'n' bytes -- assumes 'n' != 0
+ * Want 'n' bytes at the current ptr: get address and step pointer.
+ *
+ * Checks for overrun *before*, but not after.
+ *
+ * NB: qasserts that 'n' <= blow_buffer_safe.
+ *
+ * Returns: ptr *before* the step.
+ */
+Inline ptr_t
+blow_want(blower br, uint n)
+{
+  ptr_t ptr ;
+
+  qassert(n <= blow_buffer_safe) ;
+
+  if (br->ptr > br->end)
+    blow_overrun(br) ;
+
+  ptr = br->ptr ;
+  br->ptr = ptr + n ;
+  return ptr ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Blow 'n' bytes, checking for overrun (before and after)
+ */
+Inline void
+blow_n_check(blower br, const void* p, uint n)
+{
+  ptr_t end ; ;
+
+  if (n == 0)
+    return ;
+
+  end = (br->ptr + n) ;
+  if (br->end < end)
+    blow_P_n_overrun(br, p, n, end) ;
+  else
+    {
+      memcpy(br->ptr, p, n) ;
+      br->ptr = end ;
+    } ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Blow 'n' bytes
  *
  * NB: does not check for over-run.
  */

@@ -59,9 +59,9 @@ struct bgp_master *bm;
 
 /* BGP process wide nexus.
  */
-qpn_nexus cli_nexus     = NULL;
-qpn_nexus bgp_nexus     = NULL;
-qpn_nexus routing_nexus = NULL;
+qpn_nexus cli_nexus = NULL;
+qpn_nexus be_nexus  = NULL;
+qpn_nexus re_nexus  = NULL;
 
 /* BGP community-list.
  */
@@ -813,7 +813,7 @@ bgp_confederation_peers_remove (bgp_inst bgp, as_t asn)
 extern bgp_ret_t
 bgp_confederation_peers_scan(bgp_inst bgp)
 {
-  struct peer *peer;
+  bgp_peer peer;
   struct listnode *node, *nnode;
 
   if (bgp == NULL)
@@ -1008,8 +1008,7 @@ static bgp_inst bgp_free(bgp_inst bgp) ;
  *
  *
  */
-extern struct bgp *
-bgp_get_default (void)
+extern bgp_inst bgp_get_default (void)
 {
   if (bm->bgp->head)
     return (listgetdata (listhead (bm->bgp)));
@@ -1019,10 +1018,9 @@ bgp_get_default (void)
 /*------------------------------------------------------------------------------
  * Lookup BGP entry -- by ASN and Name
  */
-extern struct bgp *
-bgp_lookup (as_t as, const char *name)
+extern bgp_inst bgp_lookup (as_t as, const char *name)
 {
-  struct bgp *bgp;
+  bgp_inst bgp;
   struct listnode *node, *nnode;
 
   for (ALL_LIST_ELEMENTS (bm->bgp, node, nnode, bgp))
@@ -1036,10 +1034,9 @@ bgp_lookup (as_t as, const char *name)
 /*------------------------------------------------------------------------------
  * Lookup BGP structure by view name.
  */
-extern struct bgp *
-bgp_lookup_by_name (const char *name)
+extern bgp_inst bgp_lookup_by_name (const char *name)
 {
-  struct bgp *bgp;
+  bgp_inst bgp;
   struct listnode *node, *nnode;
 
   for (ALL_LIST_ELEMENTS (bm->bgp, node, nnode, bgp))
@@ -1252,6 +1249,9 @@ bgp_create (as_t as, const char *name)
   bgp_open_hold_time_unset(bgp) ;
   bgp_mrai_unset(bgp) ;
 
+  bgp->default_idle_hold_min_secs = BGP_DEFAULT_IDLE_HOLD_MIN_SECS ;
+  bgp->default_idle_hold_max_secs = BGP_DEFAULT_IDLE_HOLD_MAX_SECS ;
+
   bgp->restart_time       = BGP_DEFAULT_RESTART_TIME ;
   bgp->stalepath_time     = BGP_DEFAULT_STALEPATH_TIME ;
 
@@ -1264,8 +1264,8 @@ bgp_create (as_t as, const char *name)
 extern bgp_ret_t
 bgp_delete (bgp_inst bgp)
 {
-  struct peer *peer;
-  struct peer_group *group;
+  bgp_peer peer;
+  bgp_peer_group group;
   struct listnode *node;
   struct listnode *next;
   qAFI_t q_afi;
@@ -1341,10 +1341,9 @@ bgp_free(bgp_inst bgp)
 
   for (qafx = qafx_first ; qafx <= qafx_last ; qafx++)
     {
-      bgp->rib[qafx][rib_main] = bgp_rib_destroy(bgp->rib[qafx][rib_main]);
-      bgp->rib[qafx][rib_rs]   = bgp_rib_destroy(bgp->rib[qafx][rib_rs]);
-      bgp->route[qafx]         = bgp_table_finish (bgp->route[qafx]);
-      bgp->aggregate[qafx]     = bgp_table_finish (bgp->aggregate[qafx]);
+      bgp->rib[qafx]        = bgp_rib_destroy(bgp->rib[qafx]);
+      bgp->route[qafx]      = bgp_table_finish (bgp->route[qafx]);
+      bgp->aggregate[qafx]  = bgp_table_finish (bgp->aggregate[qafx]);
     } ;
 
   XFREE (MTYPE_BGP, bgp);
@@ -1407,11 +1406,11 @@ bgp_config_write_family_header (struct vty *vty, qafx_t qafx, int* p_write)
  * Address family based peer configuration display.
  */
 static int
-bgp_config_write_family (struct vty *vty, struct bgp *bgp, qafx_t qafx)
+bgp_config_write_family (struct vty *vty, bgp_inst bgp, qafx_t qafx)
 {
   int write = 0;
-  struct peer *peer;
-  struct peer_group *group;
+  bgp_peer peer;
+  bgp_peer_group group;
   struct listnode *node, *nnode;
 
   bgp_config_write_network (vty, bgp, qafx, &write);
@@ -1455,9 +1454,9 @@ int
 bgp_config_write (struct vty *vty)
 {
   int write = 0;
-  struct bgp *bgp;
-  struct peer_group *group;
-  struct peer *peer;
+  bgp_inst bgp;
+  bgp_peer_group group;
+  bgp_peer peer;
   struct listnode *node, *nnode;
   struct listnode *mnode, *mnnode;
   uint n ;
@@ -1762,8 +1761,8 @@ bgp_init (void)
 void
 bgp_terminate (bool terminating, bool retain_mode)
 {
-  struct bgp *bgp;
-  struct peer *peer;
+  bgp_inst bgp;
+  bgp_peer peer;
   struct listnode *node, *nnode;
   struct listnode *mnode, *mnnode;
 

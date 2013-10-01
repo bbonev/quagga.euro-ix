@@ -67,43 +67,45 @@ enum
 
 enum
 {
-  bgp_engine_debug_to_bgp      = 0,
-  bgp_engine_debug_to_routeing = 1,
+  bgp_engine_log_to_bgp      = 0,
+  bgp_engine_log_to_routeing = 1,
+  bgp_engine_log_count       = 2,
 
-  bgp_engine_debug_count       = 2,
+  bgp_engine_log_event       = 0,
+  bgp_engine_log_xon         = 1,
+  bgp_engine_log_type_count  = 2,
 } ;
 
 /*==============================================================================
  * Functions
  */
-Inline void bgp_to_bgp_engine(mqueue_block mqb, mqb_rank_b priority) ;
-Inline void bgp_to_routing_engine(mqueue_block mqb, mqb_rank_b priority) ;
+Inline void bgp_to_bgp_engine(mqueue_block mqb, mqb_rank_b priority,
+                                                                    uint what) ;
+Inline void bgp_to_routing_engine(mqueue_block mqb, mqb_rank_b priority,
+                                                                    uint what) ;
 
-extern void bgp_engine_cops_change() ;
-extern void bgp_engine_() ;
-
-Private void bgp_queue_logging(mqueue_queue mq, uint which) ;
+Private void bgp_queue_logging(mqueue_queue mq, uint which, uint what) ;
 
 /*------------------------------------------------------------------------------
  * Send given message to the BGP Engine -- priority/ordinary
  */
 Inline void
-bgp_to_bgp_engine(mqueue_block mqb, mqb_rank_b priority)
+bgp_to_bgp_engine(mqueue_block mqb, mqb_rank_b priority, uint what)
 {
-  mqueue_enqueue(bgp_nexus->queue, mqb, priority) ;
+  mqueue_enqueue(be_nexus->queue, mqb, priority) ;
   if (bgp_engine_debug)
-    bgp_queue_logging(bgp_nexus->queue, bgp_engine_debug_to_bgp) ;
+    bgp_queue_logging(be_nexus->queue, bgp_engine_log_to_bgp, what) ;
 } ;
 
 /*------------------------------------------------------------------------------
  * Send given message to the Routing Engine -- priority/ordinary
  */
 Inline void
-bgp_to_routing_engine(mqueue_block mqb, mqb_rank_b priority)
+bgp_to_routing_engine(mqueue_block mqb, mqb_rank_b priority, uint what)
 {
-  mqueue_enqueue(routing_nexus->queue, mqb, priority) ;
+  mqueue_enqueue(re_nexus->queue, mqb, priority) ;
   if (bgp_engine_debug)
-    bgp_queue_logging(bgp_nexus->queue, bgp_engine_debug_to_routeing) ;
+    bgp_queue_logging(be_nexus->queue, bgp_engine_log_to_routeing, what) ;
 } ;
 
 #endif /* QUAGGA_BGP_ENGINE_H */

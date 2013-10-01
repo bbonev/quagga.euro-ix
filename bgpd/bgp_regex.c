@@ -34,7 +34,7 @@ Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
  *   (^|[,{}() ]|$)
  */
 
-regex_t *
+extern regex_t *
 bgp_regcomp (const char *regstr)
 {
   /* Convert _ character to generic regular expression. */
@@ -80,13 +80,13 @@ bgp_regcomp (const char *regstr)
   return regex;
 }
 
-int
+extern reg_errcode_t
 bgp_regexec_asp (regex_t *regex, as_path asp)
 {
   return regexec (regex, as_path_str(asp), 0, NULL, 0);
 }
 
-void
+extern void
 bgp_regex_free (regex_t *regex)
 {
   regfree (regex);

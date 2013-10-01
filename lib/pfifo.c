@@ -2151,6 +2151,32 @@ pfifo_item_next(pfifo pf)
 } ;
 
 /*------------------------------------------------------------------------------
+ * Pull the next item from the pf->ex list of the given pfifo.
+ *
+ * Returns:  address of next item.  NULL if none left.
+ */
+extern pfifo_item
+pfifo_item_next_ex(pfifo pf)
+{
+  pfifo_item  item ;
+
+  item = pf->ex.head ;
+
+  if (item != NULL)
+    {
+      pfifo_item  next ;
+
+      next = pfifo_pair_get(pf, item)->next ;
+
+      pf->ex.head = next ;
+      if (next == NULL)
+        pf->ex.tail = NULL ;
+    } ;
+
+  return item ;
+} ;
+
+/*------------------------------------------------------------------------------
  * Transfer contents of all periods upto but excluding 'p' to the ex list.
  *
  * This is provided so that a pfifo may be used to schedule items which have

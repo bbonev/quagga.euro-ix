@@ -77,6 +77,9 @@ extern void qatomic_finish(void) ;
 
 /*==============================================================================
  * All atomic operations are (currently) implemented using a (single) spin-lock.
+ *
+ * This may be used simply as a general purpose spin-lock, for low traffic
+ * objects.
  */
 
 Private qpt_spin_t qatomic_lock ;
@@ -133,6 +136,17 @@ qa_get_uint(uint* p_uint)
   return val ;
 } ;
 
+/*------------------------------------------------------------------------------
+ * Get bool
+ */
+Inline bool
+qa_get_bool(bool* p_bool)
+{
+  bool val ;
+  qa_wrap(val = *p_bool) ;
+  return val ;
+} ;
+
 /*==============================================================================
  * Atomic set operations
  */
@@ -153,6 +167,15 @@ Inline void
 qa_set_uint(uint* p_uint, uint val)
 {
   qa_wrap(*p_uint = val) ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Set bool
+ */
+Inline void
+qa_set_bool(bool* p_bool, bool val)
+{
+  qa_wrap(*p_bool = val) ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -253,6 +276,71 @@ qa_memset(void* dst, byte val, size_t size)
 
 /*==============================================================================
  * Atomic List Operations
+ *
+ * Clearly it is impossible to hold on to a pointer to any item while it is
+ * on an atomic list.  So the only possible atomic operations are adding and
+ * deleting items at the head or tail.
+ *
+ *   * single base, single link - assl_xxx
+ *
+ *     can push/pop at the head.
+ *
+ *   * double base, single link - adsl_xxx
+ *
+ *     can push/pop at the head and append.
+ *
+ *   * double base, double link - addl_xxx
+ *
+ *     can push/pop at the head and append/crop at the tail
  */
+#define adsl_append(base, item, next) \
+  _adsl_append((dl_base_pair_v)&(base), item, (void**)&(item)->next)
+
+#define adsl_pop(base, next) \
+  _adsl_pop((dl_base_pair_v)&(base), (void**)&(base)->head->next)
+
+#define adsl_push(base, item, next) \
+  _adsl_push((dl_base_pair_v)&(base), item, , (void**)&(item)->next)
+
+/*------------------------------------------------------------------------------
+ * Append given item to dsl.
+ *
+ * Call as:  p = _adsl_pop(base, item, (void**)&base->head->list)
+ */
+Inline void*
+_adsl_append(dl_base_pair_v base, void* item, void** item_p)
+{
+  qa_wrap(_adsl_append(base, item, item_p)) ;
+
+  return item ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Pop item from head of dsl.
+ *
+ * Call as:  p = _adsl_pop(base, (void**)&base->head->list)
+ */
+Inline void*
+_adsl_pop(dl_base_pair_v base, void** item_p)
+{
+  void* item ;
+
+  qa_wrap(item = _adsl_pop(base, item_p)) ;
+
+  return item ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Push item onto head of dsl.
+ *
+ * Call as:  p = _adsl_push(base, item, (void**)&base->head->list)
+ */
+Inline void*
+_adsl_push(dl_base_pair_v base, void* item, void** item_p)
+{
+  qa_wrap(_adsl_push(base, item, item_p)) ;
+
+  return item ;
+} ;
 
 #endif /* _ZEBRA_QATOMIC_H */

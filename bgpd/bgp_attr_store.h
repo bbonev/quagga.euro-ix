@@ -83,7 +83,6 @@ typedef struct attr_next_hop* attr_next_hop ;
 struct attr_next_hop
 {
   nh_type_t       type ;
-
   union ip_union ip;
 } ;
 

@@ -22,6 +22,7 @@ Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
 #define _QUAGGA_BGP_NAMES_H
 
 #include "name_map.h"
+#include "bgp_peer.h"
 
 /*------------------------------------------------------------------------------
  * Mapping various BGP protocol items to their names
@@ -31,6 +32,8 @@ Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
 extern const map_direct_t bgp_fsm_state_map ;
 extern const map_direct_t bgp_fsm_event_map ;
 extern const map_direct_t bgp_peer_status_map ;
+extern name_str_t bgp_peer_idle_state_str(bgp_peer_state_t state,
+                                                   bgp_peer_idle_state_t idle) ;
 extern const map_direct_t bgp_message_type_map ;
 
 extern const map_direct_t bgp_notify_msg_map ;
@@ -50,5 +53,7 @@ extern const map_direct_t bgp_attr_name_map ;
 extern const map_direct_t bgp_afi_name_map ;
 extern const map_direct_t bgp_safi_name_map ;
 extern const map_direct_t bgp_capcode_name_map ;
+
+extern const map_direct_t bgp_peer_down_map ;
 
 #endif /* _QUAGGA_BGP_NAMES_H */

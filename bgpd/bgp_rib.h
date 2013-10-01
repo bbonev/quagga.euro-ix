@@ -20,14 +20,18 @@
 #ifndef _QUAGGA_BGP_RIB_H
 #define _QUAGGA_BGP_RIB_H
 
+#include "misc.h"
+
 #include "bgpd/bgp_common.h"
 #include "bgpd/bgp_attr_store.h"
 #include "bgpd/bgp_filter.h"
+#include "bgpd/bgp_rcontext.h"
 
 #include "list_util.h"
 #include "prefix_id.h"
 #include "ihash.h"
 #include "vhash.h"
+#include "svector.h"
 #include "pfifo.h"
 #include "qtime.h"
 #include "qtimers.h"
@@ -37,19 +41,31 @@
 #include "routemap.h"
 
 /*==============================================================================
- * For each AFI/SAFI in a given bgp instance (view) there will be a bgp_rib,
- * if there are any neighbors in that view which are configured for that
- * AFI/SAFI.
+ * The RIB, the Peer-RIBs, Route-Contexts, RIB_Walkers etc.
  *
- * Each prefix in the AFI/SAFI has a "pnode", pointed at by an ihash by
- * prefix_id -- while there are any routes for that prefix.
+ * For each bgp instance (view), for each AFI/SAFI, there will be a bgp_rib,
+ * aka the RIB -- if there are any neighbors in that view which are configured
+ * for that AFI/SAFI.  Each prefix in the RIB has a "rib-node", in an ihash by
+ * prefix_id.
  *
- * Each route for a given prefix is represented by an "rnode".  Each pnode has
- * a list of rnodes hung from it.
+ * For each peer, for each AFI/SAFI, there will be a peer_rib.  The peer-rib
+ * contains (inter alia) the adj-in and adj-out for the peer.  The adj-in
+ * the adj-in is an ihash by prefix-id of "route-info" objects, comprising the
+ * routes received from that peer.  The adj-out is also an ihash by prefix-id,
+ * comprising all routes announced to that peer.
  *
+ * For each route-context, for each AFI/SAFI, there will be a bgp_rcontext.
+ * The route-context has some incoming filters associated with it.  Each
+ * route-context has a global-id -- by which it is known to the next-hop and
+ * in particular to the next-hop metric stuff.  Within a given RIB there is
+ * a local-id (the local-context) -- so that the tables of things by context
+ * in the rib-node and the route-info can be as dense as possible.
  *
- *
- *
+ * Each route-info has a table, by local-context of "iroute"s, which contain
+ * the attributes and merit for each route available from the peer in that
+ * context.  Each rib-node has a table of lists, by local-context, of the
+ * available iroutes, in that context, from all peers -- the first iroute on
+ * the list is the current selection.
  */
 
 /*------------------------------------------------------------------------------
@@ -71,31 +87,156 @@ enum
 CONFIRM(bgp_binary_second    == 1073741824) ;
 CONFIRM(bgp_period_nano_secs ==  268435456) ;
 
-/*------------------------------------------------------------------------------
- * RIB types...
+/*==============================================================================
+ * The bgp-rib -- RIB.
+ *
+ * For each address family which has at least one active peer in it, there
+ * is a bgp_rib.
  */
-typedef enum rib_type rib_type_t ;
+typedef struct bgp_rib bgp_rib_t ;
 
-enum rib_type
+struct bgp_rib
 {
-  rib_main    = 0,
-  rib_rs      = 1,
+  bgp_inst      bgp ;                   /* parent bgp instance          */
 
-  rib_type_count
+  /* State of the RIB and various flags which we have here for convenience
+   */
+  qafx_t        qafx ;
+  bool          real_rib ;
+
+  bool          always_compare_med ;    /* BGP_FLAG_ALWAYS_COMPARE_MED  */
+  bool          deterministic_med ;     /* BGP_FLAG_DETERMINISTIC_MED
+                                           and ! always_compare_med     */
+  bool          confed_compare_med ;    /* BGP_FLAG_MED_CONFED          */
+  bool          aspath_ignore ;         /* BGP_FLAG_ASPATH_IGNORE       */
+  bool          aspath_confed ;         /* BGP_FLAG_ASPATH_CONFED       */
+
+  uint32_t      default_local_pref ;    /* copy of bgp entry            */
+  uint          lock;
+
+  /* Each RIB has a number of local contexts, which are aliases for the sub-set
+   * of global route-contexts which the RIB uses.
+   *
+   * The 'view' always has a local context, lc_view_id == 0.  That is set up
+   * when the rib is created, and may later be associated with a route-context.
+   * All peers are, by default associated with lc_view_id.
+   *
+   * All other local contexts are mapped to the respective global route-context
+   * by the rc_map.  All active local contexts are hung off the rc_map->base
+   * list.
+   */
+  uint          peer_count ;            /* Number of activated peers    */
+  uint          local_context_count ;   /* Number of route-contexts     */
+
+  bgp_lcontext  lc_view ;               /* The "view" lcontext          */
+  svec4_t       lc_map[1] ;             /* lc-id -> lcontext            */
+
+  /* The pribs known to this RIB.
+   */
+  struct dl_base_pair(bgp_prib) known_pribs ;
+
+  /* The nodes_table is an ihash by prefix_id_t, for all the prefixes in this
+   * RIB.  Each prefix has a bgp_rib_node.
+   *
+   * Note that nodes (generally) only exist where there is at least one usable
+   * route for the prefix.  The presence of a node in the Main RIB is no
+   * guarantee of a corresponding node in the corresponding RS RIB -- or vice
+   * versa.
+   */
+  ihash_table   nodes_table ;
+
+  /* For MPLS IPVN RIBs, each prefix has an associated Route Distinguisher.
+   *
+   * The rds_table is an ihash by prefix_rd_id_t, with one entry for each
+   * Route Distinguisher for which there is at least one prefix in the
+   * nodes_table.  This is kept to provide the RDs to be used when searching
+   * for routes in all RDs.
+   */
+  ihash_table   rds_table ;
+
+  /* The queue runs through all bgp_rib_nodes, and any active "walkers".
+   *
+   * When the routes available for a given prefix change such that the full
+   * route selection must be re-run, the bgp_rib_node is moved to the end
+   * of the queue.
+   */
+  struct dl_base_pair(bgp_rib_item) queue_base ;
+
+  /* The processing of changed prefixes is done by this dedicated "update" rib-
+   * walker, which lives on rib's queue -- at the end when there is no work
+   * to be done.
+   */
+  bgp_rib_walker walker ;               /* Walker for "update" walk     */
+
+  /* The peer-ribs to update, per local context -- this excludes the peers
+   * which are in "refresh" state, which are attached to a refresh walker.
+   *
+   * The "view" local context is special !
+   */
+  bgp_prib      update_view_peers ;
+  svec4_t       update_peers[1] ;
 } ;
 
 /*------------------------------------------------------------------------------
- * Peer RIB states...
+ * Local Context -- these are the contexts within a bgp-rib.
+ *
+ * Local Context 0 is the "view"s context, which has special properties:
+ *
+ *   * incoming routes are filtered by the 'in' route-map and all the other
+ *     neighbor incoming filters.
+ *
+ *   * for standard BGP, this is the only context in the RIB, and for the
+ *     "unnamed" view is the one which feeds into Zebra and hence the Kernel.
+ *
+ *   * for Route-Server, this collects routes from all neighbors, including
+ *     non-Route-Server-Clients, and behaves as standard BGP.
+ *
+ *     This is the default behaviour... preserved for compatibility TODO ....
+ *
+ *   * for SDN, this collects all routes which are acceptable to at least the
+ *     general filtering, prior to being fed to the real route contexts.
+ *
+ * The bgp-rib maps local contexts to the global contexts and to filters and
+ * such using svec "small vectors", so the number of local contexts is
+ * "limited".
+ *
+ * Note that Local Context 0 is not a usable svec_index (since those start at
+ * '1'), so the special properties of this context include the fact that it
+ * cannot be mapped to anything via any svec -- so requires special treatment.
+ * (One hopes not to come to regret this.)
+ *
+ * Note that in rib-node and route-info objects, the local context is used
+ * as an index into the 'aroutes', 'iroutes' and 'zroutes' arrays.  Those are
+ * simple C arrays, where '0' is a perfectly ordinary index.
  */
-typedef enum prib_state prib_state_t ;
-
-enum prib_state
+enum
 {
-  prib_initial = 0,
-  prib_update  = 1,
+  lc_view_id    = 0,
 
-  prib_state_count
+  lc_first_id   = 1,            /* first ordinary local context         */
+  lc_last_id    = 4094,         /* last ordinary local context          */
+
+  lc_end_id     = 4095,         /* alternative list end marker          */
+
+  lc_id_mask    = MASK(12),     /* mask to extract local context        */
+
+  /* For lists which use local-context as the "pointer", we use these values.
+   *
+   * Where such a list does not include lc_view, can use lc_null as an end
+   * marker.  Where a list can contain lc_view, can use lc_end.
+   *
+   * The list of changed contexts uses lc_end to signal the end of a list, and
+   * lc_null to signal that route is not on the list.
+   */
+  lc_id_null    = 0,
+
+  /* Note that have space for 4 flags at the top of a bgp_lc_t value.
+   */
 } ;
+CONFIRM(lc_view_id  == (uint)SVEC_NULL) ;
+CONFIRM(lc_first_id == (uint)SVEC_FIRST) ;
+CONFIRM(lc_last_id  <= (uint)SVEC_LAST) ;
+CONFIRM(lc_end_id   == lc_id_mask) ;
 
 /*------------------------------------------------------------------------------
  * RIB Item Header.
@@ -130,6 +271,8 @@ enum rib_item_flags
   /* For rib_it_walker
    */
   rib_itf_wq_queue    = BIT(1), /* work queue item is on the work queue */
+
+  rib_itf_update      = BIT(2), /* this is the rib's update walker      */
 } ;
 
 struct bgp_rib_item
@@ -138,13 +281,20 @@ struct bgp_rib_item
 
   struct dl_list_pair(bgp_rib_item) queue ;
 
-  byte          type ;          /* bgp_rib_item_t               */
-  byte          flags ;         /* bgp_rib_item_flags_t         */
+  rib_item_type_t       type ;
+  rib_item_flags_t      flags ;
 } ;
 
-/*------------------------------------------------------------------------------
+/*==============================================================================
+ * The rib-node and rib-walker.
+ *
  * There is one bgp_rib_node in a bgp_rib for each active prefix.
+ *
+ * The rib-nodes and rib-walkers are both rib-items, and share a common header
+ * so that they can both live on the rib's processing list.
  */
+typedef enum bgp_rib_node_flags bgp_rib_node_flags_t ;
+
 enum bgp_rib_node_flags
 {
   rnf_selected           = BIT(0),      /* something has been selected  */
@@ -153,288 +303,101 @@ enum bgp_rib_node_flags
   rnf_processed          = BIT(7),      /* update process completed     */
 };
 
-typedef byte bgp_rib_node_flags_t ;     /* NB: 8 bits   */
+/* Each local context known to the rib-node has an 'aroute' entry, where:
+ *
+ *   * base    -- is the base of the list of available routes in the
+ *                local context.
+ *
+ *                The first entry on this list is the currently selected
+ *                route (or the soon to be anointed route).
+ *
+ *   * next    -- is used to link all local contexts for which a rib-node
+ *                processing run is required, and may contain other flags.
+ *
+ *                Values:  lc_null    -- not scheduled for rib-node processing
+ *                         <lc>       -- scheduled, and <lc> is next on list
+ *                         lc_end     -- scheduled, and is last on list
+ */
+typedef struct aroute  aroute_t ;
+struct aroute
+{
+  svs_base_t    base[1] ;
+  bgp_lc_id_t      next ;
+} ;
 
 typedef struct bgp_rib_node  bgp_rib_node_t ;
 typedef const struct bgp_rib_node* bgp_rib_node_c ;
 
 struct bgp_rib_node
 {
+  /* Each rib-node is a rib-item, so that rib-nodes and rib-walkers have the
+   * same "header":
+   *
+   * The rib-node lives on queue of rib-nodes to be processed by rib-walker(s).
+   */
   bgp_rib_item_t  it ;
-
-  struct dl_list_pair(bgp_rib_node) list ;
-
-  struct dl_base_pair(route_info) routes ;      /* all available routes */
-
-  route_info    candidates ;    /* candidate routes                     */
-  route_info    selected ;      /* currently selected route             */
-
-  route_zebra   zebra ;         /* route as announced to zebra          */
 
   prefix_id_t   pfx_id ;
 
   bgp_rib_node_flags_t flags ;
+
+  /* Temporarily, during route selection the current selection for the
+   * current local_context,
+   */
+
+  /* All of the routes available for the prefix are kept in an svec, so that
+   * the lists of those per context use svec_index references.
+   */
+  svec4_t       avail[1] ;
+
+  /* For each Local Context we have a list of 'iroute', where the first
+   * entry on each list is the current selection.
+   *
+   * For 'real_rib' ribs we also have a 'zroute'.  Space for the array of
+   * 'zroute' is allocated after the 'iroute_bases', and pointed to by the
+   * zroutes entry.
+   *
+   * We allocate rib-nodes as a single unit, expecting that the number of
+   * times the number of contexts will change are strictly limited.  We have
+   * one or two vectors of stuff by context-id:
+   *
+   *   iroute_bases[]
+   *   zroutes[]
+   *
+   * NB: when extending a rib-node, we copy upto but excluding the
+   *     local_context_count, and then copy the iroute_bases and any following
+   *     zroutes, separately.
+   *
+   *     So: NOTHING other than iroute_bases and zroutes can follow
+   *         the local_context_count !
+   */
+  bgp_lc_id_t      local_context_count ;
+  svl_base_t    changed[1] ;
+
+  zroute        zroutes ;
+
+  aroute_t      aroutes[] ;
 } ;
 
 CONFIRM(offsetof(bgp_rib_node_t, it) == 0) ;
 
 /*------------------------------------------------------------------------------
- * The "merit" of a route combines the first 5 steps of the route comparison
- * into a single 64-bit value:
- *
- *       16           32        1   13   2
- *   +--------+----------------+-+------+-+
- *   | ~Weight|   Local Pref   |L| ~ASP |O|
- *   +--------+----------------+-+------+-+
- *
- * We select for greater merit.
- *
- * So we have, from the MS end:
- *
- *   1. ~Weight
- *
- *      The 1's complement of the weight -- lower weight has greater merit.
- *
- *   2. Local Preference
- *
- *      Greater local preference has greater merit.
- *
- *      Note that this value may (well) be set to the default for the bgp
- *      instance.
- *
- *   3. Local Route
- *
- *      Any form of local route is deemed to have greater merit than any
- *      normal (learned from peer) route.
- *
- *      So: 1 <=> local, 0 <=> normal.
- *
- *   4. ~AS-PATH Length
- *
- *      The 1's complement of the effective AS-PATH Length -- shorter path
- *      has greater merit.
- *
- *      This is the effective AS-PATH length because:
- *
- *        a) for Local Routes this field is set to 0 (path length == 0x1FFF).
- *
- *        b) if bgp->flags & BGP_FLAG_ASPATH_IGNORE then this field is set to 0
- *
- *        c) if bgp->flags & BGP_FLAG_ASPATH_CONFED then this includes any
- *           confederation segments.
- *
- *        d) otherwise it is the simple path length.
- *
- *      Note that the maximum path length is "limited" to 8191 !
- *
- *   5. ~ORIGIN
- *
- *      The valid origin values are IGP (0), EGP (1) and INCOMPLETE (2).
- *      The smaller origin value has greater merit.
- *
- *      Serendipity has left value 3 unused.
- *
- *      This field is set to 0 (origin == 3) for Local Routes and for
- *      no merit at all.
- *
- * Happily we can encode merit_none as 0 (which is maximum weight, minimum
- * local preference, ordinary route, maximum AS-PATH, *unused* origin type).
- * Routes which should not be considered at all have merit_none.
- *
- * See bgp_route_merit()
+ * When a route is installed we store its state.
  */
-typedef uint64_t route_merit_t ;
+typedef struct zroute  zroute_t ;
 
-enum route_merit
+struct zroute
 {
-  route_merit_none  = 0,
+  iSAFI_t     i_safi ;                  /* iSAFI value  */
+  byte        flags ;
 
-  route_merit_weight_bits       = 16,
-  route_merit_local_pref_bits   = 32,
-  route_merit_local_bits        =  1,
-  route_merit_as_path_bits      = 13,
-  route_merit_origin_bits       =  2,
+  uint32_t    med ;
 
-  route_merit_weight_shift      = 2 + 13 + 1 + 32,
-  route_merit_local_pref_shift  = 2 + 13 + 1,
-  route_merit_local_shift       = 2 + 13,
-  route_merit_as_path_shift     = 2,
-  route_merit_origin_shift      = 0,
-};
-
-/*------------------------------------------------------------------------------
- * There is one route_info for each route received from a peer.
- *
- * The route_info lives in the peer's adj_in.
- *
- * It will also live on the relevant bgp_rib_node's list of routes -- unless
- * the route has been filtered out.
- */
-enum route_info_flags
-{
-  RINFO_IGP_CHANGED    = BIT( 0),
-  RINFO_ATTR_CHANGED   = BIT( 1),
-
-  RINFO_DAMPED         = BIT( 2),
-  RINFO_HISTORY        = BIT( 3),
-//RINFO_SELECTED       = BIT( 3),
-
-  RINFO_VALID          = BIT( 4),
-
-  RINFO_STALE          = BIT( 8),
-  RINFO_REMOVED        = BIT( 9),
-  RINFO_COUNTED        = BIT(10),
-
-
-  RINFO_TREAT_AS_WITHDRAW = BIT(14),
-
-  RINFO_RS_DENIED      = BIT(15),
-} ;
-typedef uint16_t rinfo_flags_t ;        /* <= 16 flag bits      */
-
-typedef struct route_info route_info_t ;
-
-struct route_info
-{
-  /* The parent peer rib -- will be in the prib->adj_in[rib_type_t].
-   */
-  peer_rib      prib ;
-
-  /* The bgp_rib_node (if any) to which the route is attached, and the list
-   * pointers for the list of routes available for that prefix.
-   */
-  bgp_rib_node  rn ;
-  struct dl_list_pair(route_info) route_list ;
-
-  /* The current candidates list -- if the route_info is on the route_list
-   * for the bgp_rib_node, may also be amongst the current candidates for
-   * selection.
-   */
-  route_info    candidate_list ;
-
-  /* The list pointers for the list of stale routes.  Only rib_main route_info
-   * can be stale.  When refreshing an adj-in, we hope that the vast majority
-   * of routes will be re-instated, so only a few (if any) will remain on this
-   * list.
-   */
-  struct dl_list_pair(route_info) stale_list ;
-
-  /* The prefix_id for this route, and the related MPLS tag set.
-   *
-   * Each route_info entry holds a clock on the related
-   */
-  prefix_id_t   pfx_id ;
-  mpls_tags_t   tag ;           /* For MPLS VPN                 */
-
-  /* The attributes "received" and the attributes to be used.
-   *
-   * For a Main RIB route_info these are:
-   *
-   *   * attr_rcv     -- the attributes as received from the peer.
-   *
-   *   * attr         -- the attributes after all incoming filters have been
-   *                     run, including the 'in' route-map.
-   *
-   * For an RS RIB route_info these are:
-   *
-   *   * attr_rcv     -- the attributes received *after* they are processed
-   *                     through the 'rs-in' route-map.
-   *
-   *   * attr         -- the attributes after the last run of 'export' and
-   *                     'import' filters -- where that
-   */
-  attr_set      attr_rcv ;
-  attr_set      attr ;
-
-  route_merit_t merit ;
-
-  as_t          med_as ;
-  uint32_t      igp_metric ;
-
-  route_extra   extra ;
-
-  time_t        uptime ;
-
-  uint          lock ;
-
-  rinfo_flags_t flags ;
-
-  byte          rib_type ;
-  byte          qafx ;
-  byte          route_type ;
-
-
-  byte          type ;          /* static, RIP, OSPF, BGP etc.  */
-  byte          sub_type ;      /* normal, static, etc.         */
+  ip_union_t  next_hop ;
+  uint        ifindex;
 } ;
 
-/*------------------------------------------------------------------------------
- * Route Incoming "Parcel".
- *
- * Routes as they arrive are bundled up in a parcel, which collects all the
- * properties in one place, and can be queued for processing.
- */
-typedef enum route_in_action  route_in_action_t ;
-enum route_in_action
-{
-  ra_in_withdraw  = BIT(0),
-  ra_in_update    = BIT(1),
-
-  ra_in_treat_as_withdraw = ra_in_update | ra_in_withdraw,
-};
-
-typedef struct route_in_parcel  route_in_parcel_t ;
-
-typedef struct dl_base_pair(route_in_parcel) route_in_parcel_base_t ;
-typedef route_in_parcel_base_t* route_in_parcel_base ;
-
-struct route_in_parcel
-{
-  struct dl_list_pair(route_in_parcel) list ;
-
-  attr_set      attr ;
-
-  prefix_id_t   pfx_id ;
-  mpls_tags_t   tag ;
-
-  byte          qafx ;
-  byte          action ;
-
-  bgp_route_type_t route_type ;
-} ;
-
-/*------------------------------------------------------------------------------
- * Route Outgoing "Parcel".
- *
- * Routes as they sent are bundled up in a parcel, which collects all the
- * properties in one place, and can be queued for output.
- */
-typedef enum route_out_action  route_out_action_t ;
-enum route_out_action
-{
-  ra_out_initial   = 0,         /* update from nothing                     */
-  ra_out_withdraw  = 1,         /* update from something to nothing        */
-  ra_out_update    = 2,         /* update from something to something else */
-  ra_out_eor       = 3,
-};
-
-typedef struct route_out_parcel  route_out_parcel_t ;
-
-typedef struct dl_base_pair(route_out_parcel) route_out_parcel_base_t ;
-typedef route_out_parcel_base_t* route_out_parcel_base ;
-
-struct route_out_parcel
-{
-  struct dl_list_pair(route_out_parcel) list ;
-
-  attr_set       attr ;
-
-  prefix_id_t    pfx_id ;
-  mpls_tags_t    tag ;
-
-  byte           qafx ;
-  byte           action ;
-} ;
+Need_alignof(zroute_t) ;
 
 /*------------------------------------------------------------------------------
  * RIB Walker.
@@ -446,9 +409,8 @@ struct route_out_parcel
  * When a RIB Walker is active there is also a work queue item, which may be
  * sitting on the bgp_master work queue.
  *
- * An "initial" walker processes only the walker's peers list.
- *
- * An "update" walker processes the bgp_rib's and the walker's peers list.
+ * There is one "update" walker per bgp-rib, which processes changes to the
+ * rib and dispatches updates to the rib's .
  *
  * When a walker hits the end of the bgp_rib queue, all entries on the walker's
  * peers list are scanned and may be sent EoR.  For an "update" all entries on
@@ -468,9 +430,6 @@ struct route_out_parcel
  * "spent" one, and it steps over the "spent" one (which will be collected by
  * the active "update" walker in due course).
  */
-typedef struct dl_base_pair(peer_rib) peer_rib_base_pair_t ;
-typedef peer_rib_base_pair_t* peer_rib_base_pair ;
-
 typedef struct bgp_rib_walker  bgp_rib_walker_t ;
 struct bgp_rib_walker
 {
@@ -478,92 +437,398 @@ struct bgp_rib_walker
 
   wq_item         wqi ;
 
-  peer_rib_base_pair_t peers[prib_state_count] ;
+  struct dl_base_pair(bgp_prib) refresh_peers ;
 } ;
 
 CONFIRM(offsetof(bgp_rib_walker_t, it) == 0) ;
 
-/*------------------------------------------------------------------------------
- * For each address family which has at least one active peer in it, there
- * is a bgp_rib for the Main RIB and (if there are any RS Clients), a second
- * bgp_rib for the RS RIB.
+/*==============================================================================
+ * The route-info
+ *
+ * There is one route-info in a peer-rib's adj-in for each prefix for which
+ * there is a route.
  */
-typedef struct bgp_rib bgp_rib_t ;
 
-struct bgp_rib
+/*------------------------------------------------------------------------------
+ * The "merit" of a route combines the first 5 steps of the route comparison
+ * into a single, signed 64-bit value:
+ *
+ *        16           32          10     2    4
+ *   +---....---+---........---+--....--+---+-...-+
+ *   |  Weight  |  Local Pref  |  ~ASP  | o |flags|
+ *   +---....---+---........---+--....--+---+-...-+
+ *
+ * along with some flags for other route handling.
+ *
+ * We select for greater merit.
+ *
+ * So we have, from the MS end:
+ *
+ *   a. Weight
+ *
+ *      Greater weight has greater merit.
+ *
+ *   b. Local Preference
+ *
+ *      Greater local preference has greater merit.
+ *
+ *      Note that this value may (well) be set to the default for the bgp
+ *      instance.
+ *
+ *   c. ~(AS-PATH Length + 1) or Local Routes (0x3FF)
+ *
+ *      Local Routes are preferred over Neighbor Routes, so the largest
+ *      possible value of this field is reserved for such routes.
+ *
+ *      For routes learned from neighbors this is the 1's complement of the
+ *      effective AS-PATH Length + 1 -- shorter path has greater merit.
+ *
+ *      This is the effective AS-PATH length because:
+ *
+ *        * if bgp->flags & BGP_FLAG_ASPATH_IGNORE then the length is zero
+ *          (so the field is 0x3FE).
+ *
+ *        * if bgp->flags & BGP_FLAG_ASPATH_CONFED then this includes any
+ *          confederation segments.
+ *
+ *        * otherwise it is the simple path length.
+ *
+ *      Note that the maximum path length is "limited" to 1022 !
+ *
+ *   d. ~ORIGIN
+ *
+ *      The valid origin values are IGP (0), EGP (1) and INCOMPLETE (2).
+ *      The smaller origin value has greater merit.
+ *
+ *      Serendipity has left value 3 unused.
+ *
+ *      For Local Routes this field is set to 0 (unused origin).
+ *
+ *   e. flags -- ignored for merit comparison
+ *
+ * Happily we can encode merit_none as 0 (which is minimum weight, minimum
+ * local preference, ordinary route, maximum AS-PATH, *unused* origin type).
+ * Routes which should not be considered at all have merit_none.
+ *
+ * See bgp_route_merit()
+ */
+typedef uint64_t route_merit_t ;
+
+enum route_merit
 {
-  bgp_inst      bgp ;                   /* parent bgp instance          */
+  route_merit_none  = 0,
 
-  /* State of the RIB
+  route_merit_weight_bits       = 16,
+  route_merit_local_pref_bits   = 32,
+  route_merit_as_path_bits      = 10,
+  route_merit_origin_bits       =  2,
+  route_merit_flag_bits         =  4,
+
+  route_merit_weight_shift      = route_merit_local_pref_bits
+                                + route_merit_as_path_bits
+                                + route_merit_origin_bits
+                                + route_merit_flag_bits,
+  route_merit_local_pref_shift  = route_merit_as_path_bits
+                                + route_merit_origin_bits
+                                + route_merit_flag_bits,
+  route_merit_as_path_shift     = route_merit_origin_bits
+                                + route_merit_flag_bits,
+  route_merit_origin_shift      = route_merit_flag_bits,
+  route_merit_flags_shift       = 0,
+
+  /* The as-path field is set to the maximum value for the field for Local
+   * Routes.
    */
-  qafx_t        qafx ;
-  rib_type_t    rib_type ;              /* Main or RS                   */
+  route_merit_as_path_max       = BIT(route_merit_as_path_bits) - 1,
 
-  uint          peer_count ;            /* Number of activated peers    */
+  /* The mask for the flag bits.
+   */
+  route_merit_flags_mask        = BIT(route_merit_flag_bits) - 1,
+} ;
 
-  uint          lock;
+#define route_merit_mask (~(route_merit_t)route_merit_flags_mask)
 
-  /* The nodes_table is an ihash by prefix_id_t, for all the prefixes in this
-   * RIB.  Each prefix has a bgp_rib_node.
+CONFIRM(route_merit_mask == (UINT64_MAX ^ route_merit_flags_mask)) ;
+
+/*------------------------------------------------------------------------------
+ * Each routeing context has its own attributes and merit, held in the
+ * route_info.
+ *
+ * Each of those is held on the relevant rib node's candidate list, which is
+ * arranged in descending order of merit.  For items with equal merit, later
+ * ones are added after earlier ones, except where we have deterministic MEDs
+ * and items with equal med-as: in that case, new items are added after the
+ * last one with equal med-as.
+ *
+ * NB: there is an assumption here that there are relatively few routes
+ *     per prefix -- so simple insertion sort is acceptable.
+ *
+ *     When new routes arrive, they do not disturb the main RIB unless the
+ *     selected route changes.  But when that does change, selecting the
+ *     next best route is straightforward.
+ *
+ *     It is not, in fact, essential to fully sort the list... that could be
+ *     done either or demand, or later.
+ *
+ * NB: in deterministic MED, adding a new route must scan for its med-as
+ *     buddies, will the same merit.
+ */
+typedef struct iroute iroute_t ;
+typedef const struct iroute* iroute_c ;
+
+struct iroute
+{
+  svs_list_t    list[1] ;
+
+  attr_set      attr ;
+  route_merit_t merit ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * There is one route_info for each route received from a peer.
+ *
+ * The route_info lives in the peer's adj_in.
+ *
+ * It will also live on the relevant bgp_rib_node's list of routes -- unless
+ * the route has been filtered out.
+ */
+enum route_merit_flags
+{
+  /* The perfect arrangement of routes would be:
    *
-   * Note that nodes (generally) only exist where there is at least one usable
-   * route for the prefix.  The presence of a node in the Main RIB is no
-   * guarantee of a corresponding node in the corresponding RS RIB -- or vice
-   * versa.
-   */
-  ihash_table   nodes_table ;
-
-  /* For MPLS IPVN RIBs, each prefix has an associated Route Distinguisher.
+   *   * current selection first
    *
-   * The rds_table is an ihash by prefix_rd_id_t, with one entry for each
-   * Route Distinguisher for which there is at least one prefix in the
-   * nodes_table.  This is kept to provide the RDs to be used when searching
-   * for routes in all RDs.
-   */
-  ihash_table   rds_table ;
-
-  /* The queue runs through all bgp_rib_nodes, and any active "walkers".
+   *   * followed by other routes with the same merit (clustered by med_as)
    *
-   * When the routes available for a given prefix change such that the full
-   * route selection must be re-run, the bgp_rib_node is moved to the end
-   * of the queue.
+   *   * followed by other routes of less merit in descending order of
+   *     same (clustered by med_as, where the merit is equal).
+   *
+   * However, a full sort could be expensive, and generally routes are stable,
+   * so when we process a rib-node we need to find:
+   *
+   *   * all routes with the greatest merit (clustered by med_as)
+   *
+   *   * the best route amongst those candidates
+   *
+   *   * a means to record the current selection, because that figures in the
+   *     tie break.
+   *
+   * So, our compromise arrangement of routes is:
+   *
+   *   * the current selection first
+   *
+   *   * other routes, possibly completely unsorted.
+   *
+   * We have an UNSORTED flag for each route, and we have the rule that:
+   *
+   *   * a sorted route is >= all following routes, sorted or not.
+   *
+   *   * conversely, all routes (sorted or not) are <= any preceding
+   *                                                               sorted routes
+   *
+   * This means that when finding all routes with the greatest merit, the scan
+   * can stop as soon as it finds a sorted route of less merit.
    */
-  struct dl_base_pair(bgp_rib_item) queue ;
+  RMERIT_UNSORTED     = BIT(0),
 
-  /* The processing of changed prefixes is done by a "walker", which lives on
-   * the "queue" while it is active.
+  RMERIT_SELECTED     = BIT(1),
+} ;
+
+typedef enum route_info_flags route_info_flags_t ;
+
+enum route_info_flags
+{
+  RINFO_NULL            = 0,            /* Nothing of interest  */
+
+  /* In the current iroute_state_t:
+   *
+   *   * RINFO_STALE   <=> route-info is sitting on the prib->stale_queue
+   *
+   *                       is not RINFO_REFUSED | RINFO_WITHDRAWN
+   *                       so there must be current.attr, and will be
+   *                       attached to a rib-node.
+   *
+   *                       Cannot also be RINFO_PENDING !
+   *
+   * In the pending iroute_state_t:
+   *
+   *   * RINFO_PENDING <=> route-info is sitting on the prib->pending_queue.
+   *
+   *                       may be RINFO_REFUSED | RINFO_WITHDRAWN
+   *
+   *                       Cannot also be RINFO_STALE !
+   *
    */
-  bgp_rib_walker walker ;               /* Walker for "update" walk     */
+  RINFO_STALE           = BIT( 0),
+  RINFO_PENDING         = BIT( 0),
+
+  /* Various degrees of "not-a-route"
+   *
+   *   * RINFO_DENIED    -- denied by filtering
+   *
+   *   * RINFO_REFUSED   -- broken attributes received, but session not dropped
+   *
+   *   * RINFO_WITHDRAWN -- neighbor withdrew the route
+   */
+  RINFO_DENIED          = BIT(13),
+  RINFO_REFUSED         = BIT(14),
+  RINFO_WITHDRAWN       = BIT(15),
+
+
+
+
+
+
+
+  RINFO_IGP_CHANGED     = BIT( 0),
+  RINFO_ATTR_CHANGED    = BIT( 1),
+
+  RINFO_DAMPED          = BIT( 2),
+  RINFO_HISTORY         = BIT( 3),
+//RINFO_SELECTED        = BIT( 3),
+
+  RINFO_VALID           = BIT( 4),
+
+//RINFO_STALE           = BIT( 8),
+  RINFO_REMOVED         = BIT( 9),
+  RINFO_COUNTED         = BIT(10),
+
+
+  RINFO_RS_DENIED      = BIT(15),
+
+  route_info_t_max     = UINT16_MAX,
+} ;
+
+typedef struct iroute_state  iroute_state_t ;
+typedef struct iroute_state* iroute_state ;
+typedef const struct iroute_state* iroute_state_c ;
+
+struct iroute_state
+{
+  attr_set          attr ;
+  mpls_tags_t       tags ;
+
+  route_info_flags_t flags : 16 ;
+
+  qafx_t            qafx       : 8;
+  bgp_route_type_t  route_type : 8 ;
+} ;
+
+CONFIRM(route_info_t_max     <= UINT16_MAX) ;
+CONFIRM(qafx_t_max           <= UINT8_MAX) ;
+CONFIRM(bgp_route_type_t_max <= UINT8_MAX) ;
+
+typedef enum route_info_flags rinfo_flags_t ;
+
+
+
+
+typedef struct route_info route_info_t ;
+typedef const struct route_info* route_info_c ;
+
+struct route_info
+{
+  /* The parent peer rib -- will be in the prib->adj_in[rib_type_t].
+   */
+  bgp_prib      prib ;
+
+  /* When the route-info is attached to a rib-node, we have:
+   *
+   *   rn      -- points to the rib-node in question
+   *   rlist   -- list "pointer"s for route-infos known to the rib-node
+   *   rindex  -- index of this route-info in the rib-node's svec of known
+   *              route-infos
+   */
+  bgp_rib_node  rn ;
+  svl_list_t    rlist[1] ;
+
+  svec_index_t  rindex ;
+
+  /* The prefix_id for this route
+   */
+  prefix_id_t   pfx_id ;
+
+  /* The current and pending state of the route.
+   */
+  iroute_state_t current ;
+  iroute_state_t pending ;
+
+  uint32_t      igp_metric ;            // TODO !!!!
+
+  /* The 'plist' (pending) is used:
+   *
+   *   1) when a new route has arrived and is waiting to be processed.
+   *
+   *   2) when a route is 'stale' -- moves to 'plist' when new route arrives
+   */
+  struct dl_list_pair(route_info) plist ;
+
+  /* Other current state of the route
+   */
+  as_t          med_as ;
+
+  route_extra   extra ;
+
+  time_t        uptime ;
+
+  /* For each Routing Context we may have a route which is a candidate for
+   * selection.  Each one has its attr and merit.  Where this is a candidate
+   * in a given context, it will live on that context's selection list.
+   */
+  uint          local_context_count ;
+  iroute_t      iroutes[] ;
 } ;
 
 /*==============================================================================
  * Functions
  */
-extern bgp_rib bgp_rib_new(bgp_inst bgp, qafx_t qafx, rib_type_t rib_type) ;
+extern bgp_rib bgp_rib_new(bgp_inst bgp, qafx_t qafx) ;
 extern bgp_rib bgp_rib_destroy(bgp_rib rib) ;
 
 extern bgp_rib_node bgp_rib_node_get(bgp_rib rib, prefix_id_entry pie) ;
+extern bgp_rib_node bgp_rib_node_extend(bgp_rib_node rn) ;
+
 
 extern bgp_rib_walker bgp_rib_walker_new(bgp_rib rib) ;
 extern bgp_rib_walker bgp_rib_walker_discard(bgp_rib_walker rw) ;
 extern bgp_rib_walker bgp_rib_walker_free(bgp_rib_walker rw) ;
-extern bgp_rib_walker bgp_rib_walker_detach(peer_rib prib) ;
-extern bgp_rib_walker bgp_rib_walker_start_initial(peer_rib prib,
+extern bgp_rib_walker bgp_rib_walker_detach(bgp_prib prib) ;
+extern bgp_rib_walker bgp_rib_walker_start_refresh(bgp_prib prib,
                                                              wq_function func) ;
 extern bgp_rib_walker bgp_rib_walker_start(bgp_rib_walker rw,
                                                              wq_function func) ;
 
 extern uint bgp_rib_count(bgp_rib rib) ;
 
-extern vector bgp_rib_extract(bgp_rib rib, prefix_rd prd) ;
+extern vector bgp_rib_extract(bgp_rib rib, bgp_lc_id_t lc, prefix_rd prd) ;
 extern vector bgp_rib_rd_extract(bgp_rib rib) ;
 extern prefix_rd_id_entry bgp_rib_rd_seek(bgp_rib rib, prefix_rd prd) ;
 extern int bgp_rib_node_cmp(const bgp_rib_node_c* p_a,
                             const bgp_rib_node_c* p_b) ;
 
-extern peer_rib peer_rib_new(bgp_peer peer, qafx_t qafx) ;
-extern peer_rib peer_rib_free(peer_rib prib) ;
-extern peer_rib peer_rib_set_rs(bgp_peer peer, qafx_t qafx) ;
-extern peer_rib peer_rib_unset_rs(bgp_peer peer, qafx_t qafx) ;
+extern bgp_prib peer_rib_new(bgp_peer peer, qafx_t qafx) ;
+extern bgp_prib peer_rib_free(bgp_prib prib) ;
+extern bgp_prib peer_rib_set_rs(bgp_peer peer, qafx_t qafx) ;
+extern bgp_prib peer_rib_unset_rs(bgp_peer peer, qafx_t qafx) ;
+
+
+Inline bgp_lcontext bgp_lcontext_get(bgp_rib rib, bgp_lc_id_t lc_id) ;
+
+
+/*==============================================================================
+ * The inlines
+ */
+
+/*------------------------------------------------------------------------------
+ * Get the lcontext associated with the given lc-id, in the given rib.
+ */
+Inline bgp_lcontext
+bgp_lcontext_get(bgp_rib rib, bgp_lc_id_t lc_id)
+{
+  if (lc_id == lc_view_id)
+    return rib->lc_view ;
+  else
+    return svec_get(rib->lc_map, lc_id) ;
+}
 
 #endif /* _QUAGGA_BGP_RIB_H */

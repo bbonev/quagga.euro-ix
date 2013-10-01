@@ -40,6 +40,12 @@ typedef struct mqueue_block* mqueue_block ;
 
 typedef enum
 {
+  mqb_priority  = true,
+  mqb_ordinary  = false
+} mqb_rank_b ;
+
+typedef enum
+{
   mqb_destroy   = 0,
   mqb_action    = 1
 } mqb_flag_t ;
@@ -79,50 +85,15 @@ CONFIRM(offsetof(mqueue_block_t, args) == 0) ;
 /*==============================================================================
  * The Message Queue itself
  */
-typedef struct mqueue_thread_signal  mqueue_thread_signal_t ;
-typedef struct mqueue_thread_signal* mqueue_thread_signal ;
-
-struct mqueue_thread_signal {
-  mqueue_thread_signal  next ;  /* NULL => last on list                 */
-  mqueue_thread_signal  prev ;  /* NULL => NOT on list -- vital !       */
-
-  qpt_thread    qpth ;          /* qpt_thread to kick                   */
-  int           signum ;        /* signal to kick with                  */
-} ;
-
-typedef enum {
-  mqt_cond_unicast,     /* use qpt_cond_signal to kick the queue        */
-  mqt_cond_broadcast,   /* use qpt_cond_broadcast to kick the queue     */
-  mqt_signal_unicast,   /* use single qpt_signal to kick the queue      */
-  mqt_signal_broadcast, /* use multiple qpt_signal to kick the queue    */
-} mqueue_queue_type_t ;
-
-#ifndef  MQUEUE_DEFAULT_INTERVAL
-# define MQUEUE_DEFAULT_INTERVAL QTIME(5)
-#endif
-
-typedef struct mqueue_queue_cond  mqueue_queue_cond_t ;
-typedef struct mqueue_queue_cond* mqueue_queue_cond ;
-
-struct mqueue_queue_cond {
-  qpt_cond_t   wait_here ;
-  qtime_mono_t timeout ;
-  qtime_t      interval ;
-} ;
-
-typedef struct mqueue_queue_signal  mqueue_queue_signal_t ;
-typedef struct mqueue_queue_signal* mqueue_queue_signal ;
-
-struct mqueue_queue_signal {
-  mqueue_thread_signal head ;   /* NULL => list is empty        */
-  mqueue_thread_signal tail ;
-};
-
 typedef struct mqueue_queue  mqueue_queue_t ; /* Forward reference    */
 typedef struct mqueue_queue* mqueue_queue ;
 
+typedef void (*mqueue_signal_func)(mqueue_queue mq) ;
+
 struct mqueue_queue
 {
+  void*         parent ;        /* pointer to "parent"                  */
+
   qpt_mutex     mutex ;
 
   mqueue_block  head ;          /* NULL => list is empty                      */
@@ -131,15 +102,9 @@ struct mqueue_queue
 
   uint          count ;         /* of items on the queue                      */
 
-  mqueue_queue_type_t  type ;
   bool          revoking ;
 
-  uint          waiters ;
-
-  union {
-    mqueue_queue_cond_t   cond ;
-    mqueue_queue_signal_t signal ;
-  } kick ;
+  mqueue_signal_func  do_signal ;       /* who to call                  */
 } ;
 
 typedef struct mqueue_local_queue  mqueue_local_queue_t ;
@@ -147,8 +112,8 @@ typedef struct mqueue_local_queue* mqueue_local_queue ;
 
 struct mqueue_local_queue
 {
-  mqueue_block head ;           /* NULL => list is empty                      */
-  mqueue_block tail ;           /* last message (if not empty)                */
+  mqueue_block head ;           /* NULL => list is empty        */
+  mqueue_block tail ;           /* last message (if not empty)  */
 } ;
 
 /*==============================================================================
@@ -174,8 +139,9 @@ MQUEUE_UNLOCK(mqueue_queue mq)
 extern void mqueue_initialise(void) ;
 extern void mqueue_finish(void) ;
 
-extern mqueue_queue mqueue_init_new(mqueue_queue mq, mqueue_queue_type_t type,
+extern mqueue_queue mqueue_init_new(mqueue_queue mq, void* parent,
                                                              const char* name) ;
+extern void mqueue_set_signal(mqueue_queue mq, mqueue_signal_func signal_func) ;
 extern void mqueue_empty(mqueue_queue mq) ;
 extern mqueue_queue mqueue_reset(mqueue_queue mq, free_keep_b free_structure) ;
 
@@ -183,32 +149,17 @@ extern mqueue_local_queue mqueue_local_init_new(mqueue_local_queue lmq) ;
 extern mqueue_local_queue mqueue_local_reset(mqueue_local_queue lmq,
                                                    free_keep_b free_structure) ;
 
-extern void mqueue_set_timeout_interval(mqueue_queue mq, qtime_t interval) ;
-extern mqueue_thread_signal mqueue_thread_signal_init(mqueue_thread_signal mqt,
-                                                  qpt_thread qpth, int signum) ;
-extern mqueue_thread_signal mqueue_thread_signal_reset(mqueue_thread_signal mqt,
-                                                   free_keep_b free_structure) ;
-
 extern mqueue_block mqb_init_new(mqueue_block mqb, mqueue_action action,
                                                                    void* arg0) ;
 extern mqueue_block mqb_free(mqueue_block mqb) ;
 
-typedef enum
-{
-  mqb_priority  = true,
-  mqb_ordinary  = false
-} mqb_rank_b ;
-
 extern void mqueue_enqueue(mqueue_queue mq, mqueue_block mqb,
                                                           mqb_rank_b priority) ;
-extern mqueue_block mqueue_dequeue(mqueue_queue mq, bool wait,
-                                                 qtime_mono_t* p_timeout_time) ;
-extern bool mqueue_set_signal(mqueue_queue mq, mqueue_thread_signal mtsig) ;
-extern int mqueue_revoke(mqueue_queue mq, void* arg0, uint num) ;
+extern mqueue_block mqueue_dequeue(mqueue_queue mq) ;
+
+extern uint mqueue_revoke(mqueue_queue mq, void* arg0, uint num) ;
 
 extern bool mqb_revoke(mqueue_block mqb, mqueue_queue mq) ;
-
-extern int mqueue_done_waiting(mqueue_queue mq, mqueue_thread_signal mtsig) ;
 
 extern void mqueue_local_enqueue(mqueue_local_queue lmq, mqueue_block mqb) ;
 extern void mqueue_local_enqueue_head(mqueue_local_queue lmq, mqueue_block mqb) ;

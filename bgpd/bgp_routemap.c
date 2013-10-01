@@ -42,6 +42,8 @@ Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
 
 #include "bgpd/bgpd.h"
 #include "bgpd/bgp_peer.h"
+#include "bgpd/bgp_session.h"
+#include "bgpd/bgp_connection.h"
 #include "bgpd/bgp_route.h"
 #include "bgpd/bgp_table.h"
 #include "bgpd/bgp_attr_store.h"
@@ -163,12 +165,14 @@ route_match_peer(void* value, prefix_c pfx, route_map_object_t type,
     }
   else
     {
-      struct peer_group *group;
-      struct peer *peer;
-      struct listnode *node, *nnode;
+      bgp_peer_group group;
+      bgp_peer peer;
 
       group = brm->peer->group ;
-      for (ALL_LIST_ELEMENTS (group->peer, node, nnode, peer))
+
+      for (peer = ddl_head(group->members) ;
+           peer != NULL ;
+           peer = ddl_next(peer, member_list))
         {
           if (sockunion_same (su, peer->su_name))
             return RMAP_MATCH;
@@ -1158,13 +1162,13 @@ route_set_ip_nexthop (void* value, prefix_c pfx,
 
       if (brm->rmap_type & (BGP_RMAP_TYPE_IN | BGP_RMAP_TYPE_RS_IN
                                              | BGP_RMAP_TYPE_IMPORT) )
-        su = brm->peer->session->cops->su_remote ;
+        su = &brm->peer->session->cops->su_remote ;
       else if (brm->rmap_type & BGP_RMAP_TYPE_OUT)
-        su = brm->peer->session->cops->su_local ;
+        su = &brm->peer->session->cops->su_local ;
       else
-        su = NULL ;
+        return RMAP_OKAY ;
 
-      if ((su == NULL) || (sockunion_family(su) != AF_INET))
+      if (sockunion_family(su) != AF_INET)
         return RMAP_OKAY ;
 
       p_ip = &su->sin.sin_addr.s_addr ;

@@ -39,7 +39,6 @@
 #include "lib/memory.h"
 #include "lib/mqueue.h"
 #include "lib/vhash.h"
-#include "lib/stream.h"
 #include "lib/sockunion.h"
 #include "lib/list_util.h"
 #include "lib/qfstring.h"
@@ -92,7 +91,7 @@ static char* bgp_connection_host_string(char* host_was, bgp_session session,
                                                            bgp_conn_ord_t ord) ;
 static char* bgp_connection_host_string_free(char* host) ;
 
-static bgp_notify bgp_connection_make_args(bgp_connection connection,
+static bgp_note bgp_connection_make_args(bgp_connection connection,
                                                         bgp_session_args args) ;
 
 /*------------------------------------------------------------------------------
@@ -157,7 +156,7 @@ bgp_connection_init_new(bgp_connection connection, bgp_session session,
    *   * meta_events            -- bgp_fmStop
    *
    *   * admin_event            -- bgp_feNULL
-   *   * admin_notif            -- NULL
+   *   * admin_note             -- NULL
    *
    *   * socket_event           -- bgp_feNULL;
    *   * socket_err             -- 0
@@ -168,7 +167,7 @@ bgp_connection_init_new(bgp_connection connection, bgp_session session,
    *   * holdtimer_suppressed   -- false
    *   * delaying_open          -- false
    *
-   *   * idling_state           -- isNULL
+   *   * idling_state           -- fisNULL
    *   * idle_time_pending      -- 0
    *
    *   * qf                     -- none     -- none
@@ -181,7 +180,7 @@ bgp_connection_init_new(bgp_connection connection, bgp_session session,
    *   * remote_as              -- X        -- set below
    *
    *   * cap_suppress           -- false
-   *   * idle_hold_timer_interval -- X      -- set below
+   *   * idle_hold_time         -- X      -- set below
    *
    *   * hold_timer             -- X        -- set below
    *   * keepalive_timer        -- X        -- set below
@@ -195,7 +194,7 @@ bgp_connection_init_new(bgp_connection connection, bgp_session session,
   confirm(bgp_fsNULL    == 0) ;
   confirm(bgp_fmStop    == 0) ;
   confirm(qfDown        == 0) ;
-  confirm(bgp_isNULL    == 0) ;
+  confirm(bgp_fisNULL   == 0) ;
 
   /* Put on the connections that exist list
    */
@@ -203,14 +202,14 @@ bgp_connection_init_new(bgp_connection connection, bgp_session session,
 
   /* Link back to session and set ordinal
    */
-  connection->session      = session ;
-  connection->ord      = ord ;
-  session->connections[ord] = connection ;
+  connection->session           = session ;
+  connection->ord               = ord ;
+  session->connections[ord]     = connection ;
 
   /* Controls and other information required for trying to open a connection.
    */
-  connection->cap_suppress = false ;
-  connection->idle_hold_timer_interval = session->idle_hold_timer_interval ;
+  connection->cap_suppress      = false ;
+  connection->idle_hold_time    = session->idle_hold_time ;
 
   /* Initialise all the timers
    */
@@ -328,12 +327,12 @@ bgp_connection_get_sibling(bgp_connection connection)
  * Make given connection the established one.
  *
  * Returns:  NULL <=> OK all set -- connection established.
- *           otherwise -- notification
+ *           otherwise -- note
  */
-extern bgp_notify
+extern bgp_note
 bgp_connection_establish(bgp_connection connection)
 {
-  bgp_notify    notification ;
+  bgp_note      note ;
   bgp_session   session ;
 
   session = connection->session ;
@@ -345,10 +344,10 @@ bgp_connection_establish(bgp_connection connection)
    * the result arguments.
    */
   session->args = bgp_session_args_reset(session->args) ;
-  notification = bgp_connection_make_args(connection, session->args) ;
+  note = bgp_connection_make_args(connection, session->args) ;
 
-  if (notification != NULL)
-    return notification ;
+  if (note != NULL)
+    return note ;
 
   /* We can now go fsEstablished !
    *
@@ -439,9 +438,8 @@ bgp_connection_free(bgp_connection connection)
 /*==============================================================================
  * Making the effective session arguments for a session.
  */
-static void bgp_add_qafx_set_to_notification(bgp_notify notification,
-                                                               qafx_set_t set) ;
-static void bgp_add_orf_to_notification(bgp_notify notification,
+static void bgp_add_qafx_set_to_notification(bgp_note note, qafx_set_t set) ;
+static void bgp_add_orf_to_notification(bgp_note note,
                        bgp_orf_cap_v orf_pfx_missing, bgp_orf_cap_bits_t mode,
                                            uint8_t cap_type, uint8_t orf_type) ;
 
@@ -453,6 +451,9 @@ static void bgp_add_orf_to_notification(bgp_notify notification,
  *   * connection->open_recv    -- args_recv
  *
  * NB: requires a freshly reset set of args to fill in.
+ *
+ * This if for when is about to change from fsOpenConfirm to fsEstablished.
+ * That can happen only while sAcquiring, and to only one connection !
  *
  * By the time we get to here we have parsed the incoming OPEN, and that was
  * OK.  We can fail here if we don't have any afi/safi in common, or the
@@ -592,20 +593,22 @@ static void bgp_add_orf_to_notification(bgp_notify notification,
  *     args_recv                -- as received
  *
  * Returns:  NULL <=> OK
- *           otherwise -- notification for unacceptable session arguments
+ *           otherwise -- note for unacceptable session arguments
  */
-static bgp_notify
+static bgp_note
 bgp_connection_make_args(bgp_connection connection, bgp_session_args args)
 {
   bgp_session_args_c args_config, args_sent, args_recv ;
   bgp_session   session ;
-  bgp_notify    notification ;
+  bgp_note      note ;
   qafx_t     qafx ;
   qafx_set_t real_af ;
   uint       holdtime, keepalive ;
 
   session = connection->session ;
-  notification = NULL ;                 /* so far, so good      */
+  note    = NULL ;                      /* so far, so good      */
+
+  qassert(session->state == bgp_sAcquiring) ;
 
   /* We are going to construct the "negotiated" arguments in the temporary
    * 'args' -- and in the process we need the (current) args_config, the
@@ -663,10 +666,10 @@ bgp_connection_make_args(bgp_connection connection, bgp_session_args args)
       plog_err (connection->lox.log, "%s [Error] No common capability",
                                                          connection->lox.host) ;
 
-      notification = bgp_notify_new(BGP_NOMC_OPEN, BGP_NOMS_O_CAPABILITY) ;
-      bgp_add_qafx_set_to_notification(notification, args_config->can_af) ;
+      note = bgp_note_new(BGP_NOMC_OPEN, BGP_NOMS_O_CAPABILITY) ;
+      bgp_add_qafx_set_to_notification(note, args_config->can_af) ;
 
-      return notification ;
+      return note ;
     } ;
 
   /* Now complete the set-up of the args to reflect the negotiated session
@@ -827,30 +830,30 @@ bgp_connection_make_args(bgp_connection connection, bgp_session_args args)
         {
           /* Note that we complain about the capability we wanted to see !
            */
-          byte cap[2 + BGP_CAP_AS4_L] ;
+          ptr_t p ;
 
-          if (notification == NULL)
-            notification = bgp_notify_new(BGP_NOMC_OPEN,
+          if (note == NULL)
+            note = bgp_note_new(BGP_NOMC_OPEN,
                                           BGP_NOMS_O_CAPABILITY) ;
 
-          cap[0]  = BGP_CAN_AS4 ;
-          cap[1]  = BGP_CAP_AS4_L ;
-          store_nl(&cap[2], args->remote_as) ;
+          p = bgp_note_prep_data(note, 2 + BGP_CAP_AS4_L) ;
+
+          store_b( &p[0], BGP_CAN_AS4) ;
+          store_b( &p[1], BGP_CAP_AS4_L) ;
+          store_nl(&p[2], args->remote_as) ;
 
           confirm(BGP_CAP_AS4_L == 4) ;
-
-          bgp_notify_append_data(notification, cap, 2 + BGP_CAP_AS4_L) ;
         } ;
 
       /* Check that we got all the families we wanted.
        */
       if (args_config->can_af != args->can_af)
         {
-          if (notification == NULL)
-            notification = bgp_notify_new(BGP_NOMC_OPEN,
+          if (note == NULL)
+            note = bgp_note_new(BGP_NOMC_OPEN,
                                           BGP_NOMS_O_CAPABILITY) ;
 
-          bgp_add_qafx_set_to_notification(notification,
+          bgp_add_qafx_set_to_notification(note,
                                           args_config->can_af & ~args->can_af) ;
         } ;
 
@@ -899,29 +902,29 @@ bgp_connection_make_args(bgp_connection connection, bgp_session_args args)
 
       if (orf_cap_missing != bgp_form_none)
         {
-          if (notification == NULL)
-            notification = bgp_notify_new(BGP_NOMC_OPEN,
+          if (note == NULL)
+            note = bgp_note_new(BGP_NOMC_OPEN,
                                           BGP_NOMS_O_CAPABILITY) ;
 
           if (orf_cap_missing & bgp_form_rfc)
-            bgp_add_orf_to_notification(notification, orf_pfx_missing,
+            bgp_add_orf_to_notification(note, orf_pfx_missing,
                                            ORF_RM, BGP_CAN_ORF, BGP_ORF_T_PFX) ;
 
           if (orf_cap_missing & bgp_form_pre)
-            bgp_add_orf_to_notification(notification, orf_pfx_missing,
+            bgp_add_orf_to_notification(note, orf_pfx_missing,
                                ORF_RM_pre, BGP_CAN_ORF_pre, BGP_ORF_T_PFX_pre) ;
         } ;
     } ;
 
-  return notification ;
+  return note ;
 } ;
 
 /*------------------------------------------------------------------------------
  * Append all the qafx in the given set as MP-Ext capabilities to the given
- * notification.
+ * note.
  */
 static void
-bgp_add_qafx_set_to_notification(bgp_notify notification, qafx_set_t set)
+bgp_add_qafx_set_to_notification(bgp_note note, qafx_set_t set)
 {
   qafx_t qafx ;
 
@@ -929,17 +932,17 @@ bgp_add_qafx_set_to_notification(bgp_notify notification, qafx_set_t set)
     {
       if (set & qafx_bit(qafx))
         {
-          byte cap[2 + BGP_CAP_MPE_L] ;
+          ptr_t p ;
 
-          cap[0]  = BGP_CAN_MP_EXT ;
-          cap[1]  = BGP_CAP_MPE_L ;
-          store_ns(&cap[2], get_iAFI(qafx)) ;
-          cap[4]  = 0 ;
-          cap[5]  = get_iSAFI(qafx) ;
+          p = bgp_note_prep_data(note, 2 + BGP_CAP_MPE_L) ;
 
-          confirm(BGP_CAP_MPE_L == 4) ;
+          store_b( &p[0], BGP_CAN_MP_EXT) ;
+          store_b( &p[1], BGP_CAP_MPE_L) ;
+          store_ns(&p[2], get_iAFI(qafx)) ;
+          store_b( &p[4], 0) ;
+          store_b( &p[5], get_iSAFI(qafx)) ;
 
-          bgp_notify_append_data(notification, cap, 2 + BGP_CAP_MPE_L) ;
+          confirm((2 + BGP_CAP_MPE_L) == 6) ;
         } ;
     } ;
 } ;
@@ -949,7 +952,7 @@ bgp_add_qafx_set_to_notification(bgp_notify notification, qafx_set_t set)
  * the given Capability Type and the given ORF Type.
  */
 static void
-bgp_add_orf_to_notification(bgp_notify notification,
+bgp_add_orf_to_notification(bgp_note note,
                         bgp_orf_cap_v orf_pfx_missing, bgp_orf_cap_bits_t mode,
                                             uint8_t cap_type, uint8_t orf_type)
 {
@@ -994,7 +997,7 @@ bgp_add_orf_to_notification(bgp_notify notification,
   if (ptr != cap)
     {
       cap[1] = ptr - cap - 2 ;
-      bgp_notify_append_data(notification, cap, ptr - cap) ;
+      bgp_note_append_data(note, cap, ptr - cap) ;
     } ;
 } ;
 
@@ -1038,7 +1041,7 @@ bgp_connection_connecting(bgp_connection connection, int sock_fd)
   qfile qf ;
 
   qf = connection->qf = qfile_init_new(connection->qf, NULL) ;
-  qps_add_qfile(bgp_nexus->selection, qf, sock_fd, connection) ;
+  qps_add_qfile(be_nexus->selection, qf, sock_fd, connection) ;
 
   connection->io_state = qfDown ;
 
@@ -1219,7 +1222,6 @@ bgp_connection_write_action(qfile qf, void* file_info)
     bgp_fsm_io_event(connection) ;
 } ;
 
-
 /*==============================================================================
  * Connection options.
  *
@@ -1241,12 +1243,20 @@ bgp_cops_init_new(bgp_cops cops)
  * Copy one set of connection options over another -- allocating if required.
  */
 extern bgp_cops
-bgp_cops_copy(bgp_cops dst,
-                            bgp_cops_c src)
+bgp_cops_copy(bgp_cops dst, bgp_cops_c src)
 {
   dst = bgp_cops_init_new(dst) ;
   *dst = *src ;
   return dst ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Duplicate a set of connection options -- allocating a new set.
+ */
+extern bgp_cops
+bgp_cops_dup(bgp_cops_c src)
+{
+  return bgp_cops_copy(NULL, src) ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -1264,20 +1274,28 @@ bgp_cops_reset(bgp_cops cops)
    *
    *   * port                   -- 0        -- invalid !
    *
-   *   * conn_let               -- bc_anything
+   *   * conn_state             -- bgp_csDown
    *
    *   * can_notify_before_open -- false    -- default
    *
+   *   * idle_hold_max_secs     -- 0        )
+   *   * connect_retry_secs     -- 0        ) unset
+   *   * accept_retry_secs      -- 0        )
+   *   * open_hold_secs         -- 0        )
+   *
    *   * ttl                    -- X        -- set, below
    *   * gtsm                   -- false    -- default
-   *   * gtsm_set               -- false    -- not yet
+   *
+   *   * ttl_out                -- 0        -- nothing set, yet
+   *   * ttl_min                -- 0        -- nothing set -- not GTSM
    *
    *   * password               -- empty    -- embedded string
    *
    *   * ifname                 -- empty    -- embedded string
    *   * ifindex                -- 0        -- none
    */
-  confirm(bc_anything == 0) ;
+  confirm(AF_UNSPEC == 0) ;
+  confirm(bgp_csDown == 0) ;
 
   cops->ttl = TTL_MAX ;
 
@@ -1550,11 +1568,11 @@ static void bgp_acceptor_time_out(qtimer qtr, void* timer_info,
                                                             qtime_mono_t when) ;
 static void  bgp_acceptor_set_open_awaited(bgp_acceptor acceptor, int sock_fd) ;
 static void bgp_acceptor_close_current(bgp_acceptor acceptor, uint when,
-                                                      bgp_notify notification) ;
+                                                                bgp_note note) ;
 static void bgp_acceptor_pending_close(bgp_acceptor acceptor, int sock_fd,
-                                           uint when, bgp_notify notification) ;
+                                                     uint when, bgp_note note) ;
 static void bgp_acceptor_actual_close(bgp_acceptor acceptor) ;
-static void bgp_acceptor_do_close(int sock_fd, bgp_notify notification) ;
+static void bgp_acceptor_do_close(int sock_fd, bgp_note note) ;
 
 /*------------------------------------------------------------------------------
  * Initialise an empty acceptor (unset) -- allocating as required.
@@ -1564,13 +1582,12 @@ static void bgp_acceptor_do_close(int sock_fd, bgp_notify notification) ;
  * NB: if does not allocate, then assumes the given acceptor has never been
  *     kissed.
  */
-extern bgp_acceptor
-bgp_acceptor_init_new(bgp_acceptor acceptor, bgp_session session)
+static bgp_acceptor
+bgp_acceptor_new(bgp_session session)
 {
-  if (acceptor == NULL)
-    acceptor = XCALLOC(MTYPE_BGP_ACCEPTOR, sizeof(bgp_acceptor_t)) ;
-  else
-    memset(acceptor, 0, sizeof(bgp_acceptor_t)) ;
+  bgp_acceptor acceptor ;
+
+  acceptor = XCALLOC(MTYPE_BGP_ACCEPTOR, sizeof(bgp_acceptor_t)) ;
 
   /* Zeroizing the bgp_acceptor has set:
    *
@@ -1581,8 +1598,9 @@ bgp_acceptor_init_new(bgp_acceptor acceptor, bgp_session session)
    *   * pending                -- bacp_none
    *   * sock_fd_pending        -- X        -- set below
    *
-   *   * notification           -- NULL     -- none, yet
+   *   * note           -- NULL     -- none, yet
    *   * cops                   -- NULL     -- ditto
+   *   * su_password            -- NULL     -- ditto
    *   * qf                     -- NULL     -- ditto
    *   * reader                 -- NULL     -- ditto
    *
@@ -1602,58 +1620,8 @@ bgp_acceptor_init_new(bgp_acceptor acceptor, bgp_session session)
   acceptor->lox.log  = session->lox.log ;
   acceptor->lox.host = bgp_connection_host_string(acceptor->lox.host, session,
                                                                     bc_accept) ;
-  return acceptor ;
-} ;
 
-/*------------------------------------------------------------------------------
- * Unset the given session's acceptor -- if not already unset.
- *
- * This is for when peer/session is being de-configured.
- *
- * Closes down any listeners which may required.
- */
-extern void
-bgp_acceptor_unset(bgp_acceptor acceptor)
-{
-  if (acceptor->state != bacs_unset)
-    bgp_listen_unset(acceptor->cops) ;
-
-   bgp_acceptor_reset(acceptor, BGP_NOMS_C_DECONFIG) ;
-
-   /* Now completely clear down the acceptor
-    *
-    * Unsets and frees as follows:
-    *
-    *   * session                -- leaves as is.
-    *   * lox                    -- leaves as is
-    *
-    *   * state                  -> bacs_unset (if not already)
-    *   * pending                -> bacp_none  (should be already)
-    *   * sock_fd_pending        -> fd_undef   (should be already)
-    *
-    *   * notification           )
-    *   * cops                   )  all freed.
-    *   * qf                     )
-    *   * reader                 )
-    *
-    *   * open_received          -> false   (should be already)
-    *   * timer_running          -> false   (should be already)
-    *
-    *   * timer                  -- freed
-    */
-   acceptor->state         = bacs_unset ;        /* definitely   */
-   acceptor->pending       = bacp_none ;
-   acceptor->sock_fd_pending = fd_undef ;
-
-   acceptor->notification  = bgp_notify_free(acceptor->notification) ;
-   acceptor->cops          = bgp_cops_free(acceptor->cops) ;
-   acceptor->qf            = qfile_free(acceptor->qf) ;
-   acceptor->reader        = bgp_msg_reader_free(acceptor->reader) ;
-
-   acceptor->timer_running = false ;
-   acceptor->open_received = false ;
-
-   acceptor->timer         = qtimer_free(acceptor->timer) ;
+  return session->acceptor = acceptor ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -1661,6 +1629,14 @@ bgp_acceptor_unset(bgp_acceptor acceptor)
  *
  * Completes any pending close, closes any pending open and closes any
  * active connection.  Stops any timer.
+ *
+ * We do not expect to have an active connection very often, so we here
+ * discard:
+ *
+ *   * note
+ *   * timer
+ *   * qfile
+ *   * reader
  *
  * Drops to bacs_listening.
  */
@@ -1692,7 +1668,7 @@ bgp_acceptor_reset(bgp_acceptor acceptor, bgp_nom_subcode_t subcode)
             qassert(acceptor->sock_fd_pending >= 0) ;
 
             bgp_acceptor_do_close(acceptor->sock_fd_pending,
-                                      bgp_notify_new(BGP_NOMC_CEASE, subcode)) ;
+                                      bgp_note_new(BGP_NOMC_CEASE, subcode)) ;
             break ;
         } ;
 
@@ -1706,15 +1682,53 @@ bgp_acceptor_reset(bgp_acceptor acceptor, bgp_nom_subcode_t subcode)
                    (acceptor->state == bacs_busted) ) ;
 
           bgp_acceptor_close_current(acceptor, 0 /* now */,
-                                    bgp_notify_new(BGP_NOMC_CEASE, subcode)) ;
+                                    bgp_note_new(BGP_NOMC_CEASE, subcode)) ;
         } ;
-
-      acceptor->open_received = false ;
 
       bgp_acceptor_stop_timer(acceptor) ;
 
+      acceptor->note = bgp_note_free(acceptor->note) ;
+      acceptor->qf           = qfile_free(acceptor->qf) ;
+      acceptor->reader       = bgp_msg_reader_free(acceptor->reader) ;
+
+      bgp_acceptor_cops_reset(acceptor) ;
       acceptor->state = bacs_listening ;
     } ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Reset the acceptor->cops
+ *
+ * This is done when a new accept() connection is made, or when the acceptor
+ * is reset.
+ *
+ * Clears out the:
+ *
+ *   su_remote              -- to be filled in by the accept() action
+ *   su_local               -- to be filled in by the accept() action
+ *
+ *   connect_retry_secs     -- N/A
+ *
+ *   ttl_out                -- to be filled in by the accept() action
+ *   ttl_min                -- to be filled in by the accept() action
+ *
+ *   ifname                 -- N/A
+ *   ifindex                -- N/A
+ */
+extern void
+bgp_acceptor_cops_reset(bgp_acceptor acceptor)
+{
+  qassert((acceptor->state != bacs_unset) && (acceptor->cops != NULL)) ;
+
+  sockunion_clear(&acceptor->cops->su_remote) ;
+  sockunion_clear(&acceptor->cops->su_local) ;
+
+  acceptor->cops->connect_retry_secs = 0 ;
+  acceptor->cops->ttl_out            = 0 ;
+  acceptor->cops->ttl_min            = 0 ;      /* no gtsm, yet */
+
+  memset(acceptor->cops->ifname, 0, sizeof(acceptor->cops->ifname)) ;
+  acceptor->cops->ifindex            = 0 ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -1727,12 +1741,18 @@ bgp_acceptor_free(bgp_acceptor acceptor)
 {
   if (acceptor != NULL)
     {
-      bgp_acceptor_unset(acceptor) ;
+      qassert(acceptor->session->acceptor == acceptor) ;
+
+      if (acceptor->state != bacs_unset)
+        bgp_listen_unset(acceptor->su_password, acceptor->cops) ;
+
+      bgp_acceptor_reset(acceptor, BGP_NOMS_C_DECONFIG) ;
+
+      acceptor->cops        = bgp_cops_free(acceptor->cops) ;
+      acceptor->su_password = sockunion_free(acceptor->su_password) ;
 
       acceptor->lox.log  = NULL ;
       acceptor->lox.host = bgp_connection_host_string_free(acceptor->lox.host) ;
-
-      qassert(acceptor->session->acceptor == acceptor) ;
 
       acceptor->session->acceptor = NULL ;
 
@@ -1743,21 +1763,29 @@ bgp_acceptor_free(bgp_acceptor acceptor)
 } ;
 
 /*------------------------------------------------------------------------------
- * Set new options -- starts acceptor if was bacs_unset.
+ * Set connection options -- creates and/or starts acceptor if required.
  *
- * When a new accept() connection is made, the session->cops_config are
- * copied in, and acted on.
+ * When a new accept() connection is made, the acceptor->cops are reset and
+ * acted on.
  *
  * This function is used to initialise or change the accept->cops.  If a change
  * is made which invalidates any current connection, then that is reset.
  *
- * NB: it is assumed that the su_remote in the session->cops_config will
- *     *never* change.
+ * NB: it is not expected that the su_remote in the session->cops_config will
+ *     *ever* change.
+ *
+ *     However, keep a copy of the session->cops_config->su_remote as the
+ *     acceptor->su_password.  So that if we set a password, we have a separate
+ *     record of what we set the password for.
+ *
+ *     If arrives here with an su_remote which is not the same as the current
+ *     su_password, then will reset the current listening arrangement.
  *
  * Most of the acceptor->cops are unaffected when a new accept connection
- * is made.  All of the settings which affect could cause a connection to
- * be reset are read-only.  (What this means is we don't need an
- * acceptor->cops_config to run this comparison against !)
+ * is made.  All of the settings which could cause a connection to be reset are
+ * read-only -- with the exception of the su_remote, as above.  (What this
+ * means is we don't need an acceptor->cops_config to run this comparison
+ * against -- the acceptor->cops contains both config and current.)
  *
  * The acceptor configuration options are:
  *
@@ -1767,19 +1795,20 @@ bgp_acceptor_free(bgp_acceptor acceptor)
  *   port                   -- if not the same as current, then must unset
  *                             current and start again.
  *
- *   conn_let               -- if bc_no_accept  -- drop any existing
- *                             if bc_shutdown    -- unset the acceptor
+ *   conn_state             -- if is csCanTrack, we run the acceptor,
+ *                             otherwise, not.
  *
  *   can_notify_before_open -- can change at any time
  *
  *   connect_retry_secs     -- N/A
- *   accept_retry_secs      -- changes affect the next timer
+ *   accept_retry_secs      -- change affects the next timer
+ *   open_hold_secs         -- change affects connection when comes up
  *
  *   ttl                    -- if changed must reset
  *   gtsm                   -- if changed must reset
  *
  *   ttl_out                -- N/A  -- filled in for actual connection
- *   ttl_gtsm               -- N/A  -- filled in for actual connection
+ *   ttl_min                -- N/A  -- filled in for actual connection
  *
  *   password               -- if changed must reset and update password
  *
@@ -1787,97 +1816,129 @@ bgp_acceptor_free(bgp_acceptor acceptor)
  *   ifindex                -- N/A
  */
 extern void
-bgp_acceptor_set_options(bgp_acceptor acceptor, bgp_cops_c new_config)
+bgp_acceptor_set_cops(bgp_session session, bgp_cops_c new_config)
 {
-  bool set_new ;
+  bgp_acceptor acceptor ;
+  bool can_track, set_new ;
 
-  if (acceptor->state == bacs_unset)
+  can_track = (new_config->conn_state & bgp_csCanTrack) == bgp_csCanTrack ;
+  acceptor = session->acceptor ;
+  if (acceptor == NULL)
     {
-      /* Is unset, so attempt to set new listener for the port -- if succeeds,
-       * then we are ready to change up to bacs_listening, otherwise stays
-       * bacs_unset.
-       */
-      set_new = bgp_listen_set(new_config) ;
-    }
-  else
+      if (!can_track)
+        return ;                /* no point creating acceptor ! */
+
+      acceptor = bgp_acceptor_new(session) ;
+    } ;
+
+  set_new = false ;
+
+  /* If the acceptor is currently running, we may need to change that.
+   */
+  if (acceptor->state != bacs_unset)
     {
       bgp_cops cops ;
-      bgp_nom_subcode_t subcode ;
-      bool  unset ;
-      bool  passw ;
-      bool  reset ;
+      bool  unset, new_passw, drop ;
 
       cops = acceptor->cops ;
-
       qassert(cops != NULL) ;
-      qassert(sockunion_same(&cops->su_remote, &new_config->su_remote)) ;
+      qassert((cops->conn_state & bgp_csCanTrack) == bgp_csCanTrack) ;
 
-      unset   = (cops->port != new_config->port) ;
-      reset   = false ;
-      subcode = BGP_NOMS_C_CONFIG ;
+      unset     = !can_track || (cops->port != new_config->port)
+                             || !sockunion_same(acceptor->su_password,
+                                                       &new_config->su_remote) ;
 
-      if (new_config->conn_state == bc_is_shutdown)
+      new_passw = !strsame(cops->password, new_config->password) ;
+
+      drop      =   (cops->ttl  != new_config->ttl)
+                 || (cops->gtsm != new_config->gtsm) ;
+
+      set_new = (unset || new_passw || drop) ;
+
+      if (set_new)
         {
-          reset   = true ;
-          subcode = BGP_NOMS_C_SHUTDOWN ;
-        } ;
-
-      if (!(new_config->conn_let & bc_can_accept))
-        reset = true ;
-
-      if (cops->ttl != new_config->ttl)
-        reset = true ;
-
-      if (cops->gtsm != new_config->gtsm)
-        reset = true ;
-
-      passw = (strcmp(cops->password, new_config->password) != 0) ;
-
-      if ((set_new = (unset || reset || passw)))
-        {
-          /* Take down any existing accepted connections.
+          /* If we have a current acceptor running, then something has changed,
+           * configuration-wise, so any current accepted connection must
+           * be dropped, and then the listener may need to be unset or a new
+           * password set.
+           *
+           * It's possible that is because the peer is now shutdown or
+           * deconfigured, but since this connection is being snuffed out
+           * early in its sad little existence, we just say config-change.
            */
-          bgp_acceptor_reset(acceptor, subcode) ;
+          bgp_acceptor_reset(acceptor, BGP_NOMS_C_CONFIG) ;
+          qassert(acceptor->state == bacs_listening) ;
 
-          if (unset)
+          if      (unset)
             {
-              /* Note that unsetting and setting again implicitly updates
-               * the password (if any).
+              /* Note that unsetting and setting again implicitly updates the
+               * password (if any).
                */
-              bgp_listen_unset(cops) ;
+              bgp_listen_unset(acceptor->su_password, cops) ;
               acceptor->state = bacs_unset ;    /* implicitly   */
-
-              set_new = bgp_listen_set(new_config) ;
-
-              if (!set_new)
-                {
-                  /* This is BAD -- could not configure any listeners for
-                   * this acceptor -- so is implicitly bacs_unset, and can be
-                   * cleared down.
-                   */
-                  bgp_acceptor_unset(acceptor) ;
-                } ;
             }
-          else
+          else if (new_passw)
             {
-              /* Not done by unset, so if we need to update the password, now
-               * is the time.
+              /* Not reset, so need to implement the new password directly.
+               *
+               * Updates su_password, below.
                */
-              if (passw)
-                bgp_listen_set_password(new_config) ;
+              bgp_listen_set_password(new_config) ;
             } ;
+        }
+      else
+        {
+          /* We have a current acceptor running, and if anything in the
+           * configuration has changed, then it does not affect any currently
+           * tracked connection.
+           *
+           * We copy across:
+           *
+           *   * conn_state             -- for completeness
+           *
+           *   * can_notify_before_open -- can change at any time
+           *
+           *   * accept_retry_secs      -- change affects the next timer
+           *   * open_hold_secs         -- change affects connection
+           *
+           * but otherwise do nothing at all.
+           */
+          cops->conn_state             = new_config->conn_state ;
+          cops->can_notify_before_open = new_config->can_notify_before_open ;
+          cops->accept_retry_secs      = new_config->accept_retry_secs ;
+          cops->open_hold_secs         = new_config->open_hold_secs ;
         } ;
     } ;
 
-  /* If we have an acceptor which is newly set, or has been reset and is not
-   * now unset, then copy in the set_new configuration and set bacs_listening.
-   *
-   * NB: if nothing has or needed to be changed, then is not set_new !
+  /* If we are (still or now) bacs_unset, and can_track, then we need to fire
+   * up the acceptor (again).
+   */
+  if (can_track && (acceptor->state == bacs_unset))
+    {
+      set_new = bgp_listen_set(new_config) ;
+
+      if (set_new)
+        acceptor->state = bacs_listening ;
+      else
+        acceptor->cops  = bgp_cops_free(acceptor->cops) ;
+    } ;
+
+  /* Keep the su_password up to date.
+   */
+  if      ((acceptor->state == bacs_unset) || (new_config->password[0] == '\0'))
+    acceptor->su_password = sockunion_free(acceptor->su_password) ;
+  else if (set_new)
+    acceptor->su_password = sockunion_copy(acceptor->su_password,
+                                                       &new_config->su_remote) ;
+
+  /* If we (still) have a running acceptor, update the cops if required.
    */
   if (set_new)
     {
+      qassert(acceptor->state == bacs_listening) ;
+
       bgp_cops_copy(acceptor->cops, new_config) ;
-      acceptor->state = bacs_listening ;
+      bgp_acceptor_cops_reset(acceptor) ;
     } ;
 } ;
 
@@ -1950,7 +2011,7 @@ bgp_acceptor_accept(bgp_acceptor acceptor, int sock_fd, bool ok,
 
   /* If we cannot accept the connection, now is the time to say so.
    */
-  if (cops->conn_let & bc_no_accept)
+  if ((cops->conn_state & bgp_csCanTrack) != bgp_csCanTrack)
     {
       if (BGP_DEBUG(fsm, FSM))
         plog_debug(acceptor->lox.log, "[FSM] BGP accept() rejected %s"
@@ -1994,10 +2055,10 @@ bgp_acceptor_accept(bgp_acceptor acceptor, int sock_fd, bool ok,
         qassert(acceptor->pending == bacp_none) ;
         qassert(acceptor->sock_fd_pending  < fd_first) ;
         qassert(qfile_fd_get(acceptor->qf) < fd_first) ;
-        qassert(acceptor->timer_running) ;
+        qassert(acceptor->timer != NULL) ;
 
         bgp_acceptor_pending_close(acceptor, sock_fd, 0 /* leave timer */,
-                          bgp_notify_new(BGP_NOMC_CEASE, BGP_NOMS_UNSPECIFIC)) ;
+                          bgp_note_new(BGP_NOMC_CEASE, BGP_NOMS_UNSPECIFIC)) ;
         break ;
 
       /* bacs_listening => waiting for an in-bound connection -- hurrah !
@@ -2014,14 +2075,14 @@ bgp_acceptor_accept(bgp_acceptor acceptor, int sock_fd, bool ok,
         qassert(acceptor->pending == bacp_none) ;
         qassert(acceptor->sock_fd_pending  < fd_first) ;
         qassert(qfile_fd_get(acceptor->qf) < fd_first) ;
-        qassert(!acceptor->timer_running) ;
+        qassert(acceptor->timer == NULL) ;
 
         if (ok)
           bgp_acceptor_set_open_awaited(acceptor, sock_fd) ;
         else
           {
             bgp_acceptor_do_close(sock_fd,
-                          bgp_notify_new(BGP_NOMC_CEASE, BGP_NOMS_C_REJECTED)) ;
+                          bgp_note_new(BGP_NOMC_CEASE, BGP_NOMS_C_REJECTED)) ;
             bgp_acceptor_set_timer(acceptor, 10) ;
             acceptor->state = bacs_paused ;
           } ;
@@ -2041,7 +2102,7 @@ bgp_acceptor_accept(bgp_acceptor acceptor, int sock_fd, bool ok,
        * NB: the timer continues to run.
        */
       case bacs_paused:
-        qassert(acceptor->timer_running) ;
+        qassert(acceptor->timer != NULL) ;
         qassert(qfile_fd_get(acceptor->qf) < fd_first) ;
 
         switch (acceptor->pending)
@@ -2061,7 +2122,7 @@ bgp_acceptor_accept(bgp_acceptor acceptor, int sock_fd, bool ok,
               qassert(acceptor->sock_fd_pending >= 0) ;
 
               bgp_acceptor_do_close(acceptor->sock_fd_pending,
-                         bgp_notify_new(BGP_NOMC_CEASE, BGP_NOMS_C_COLLISION)) ;
+                         bgp_note_new(BGP_NOMC_CEASE, BGP_NOMS_C_COLLISION)) ;
 
               acceptor->sock_fd_pending = fd_undef ;
               acceptor->pending = bacp_none ;
@@ -2079,7 +2140,7 @@ bgp_acceptor_accept(bgp_acceptor acceptor, int sock_fd, bool ok,
         else
           {
             bgp_acceptor_pending_close(acceptor, sock_fd, 0 /* leave timer */,
-                          bgp_notify_new(BGP_NOMC_CEASE, BGP_NOMS_C_REJECTED)) ;
+                          bgp_note_new(BGP_NOMC_CEASE, BGP_NOMS_C_REJECTED)) ;
           } ;
 
         break ;
@@ -2109,10 +2170,10 @@ bgp_acceptor_accept(bgp_acceptor acceptor, int sock_fd, bool ok,
         qassert(acceptor->pending == bacp_none) ;
         qassert(acceptor->sock_fd_pending  <  fd_first) ;
         qassert(qfile_fd_get(acceptor->qf) >= fd_first) ;
-        qassert(acceptor->timer_running) ;
+        qassert(acceptor->timer != NULL) ;
 
         bgp_acceptor_close_current(acceptor, 0 /* now */,
-                        bgp_notify_new(BGP_NOMC_CEASE, BGP_NOMS_C_COLLISION)) ;
+                        bgp_note_new(BGP_NOMC_CEASE, BGP_NOMS_C_COLLISION)) ;
 
         if (ok)
           {
@@ -2122,7 +2183,7 @@ bgp_acceptor_accept(bgp_acceptor acceptor, int sock_fd, bool ok,
         else
           {
             bgp_acceptor_do_close(sock_fd,
-                          bgp_notify_new(BGP_NOMC_CEASE, BGP_NOMS_C_REJECTED)) ;
+                          bgp_note_new(BGP_NOMC_CEASE, BGP_NOMS_C_REJECTED)) ;
           } ;
 
         bgp_acceptor_set_timer(acceptor, 10) ;
@@ -2156,7 +2217,7 @@ bgp_acceptor_set_open_awaited(bgp_acceptor acceptor, int sock_fd)
   qassert(sock_fd >= fd_first) ;
 
   acceptor->qf = qfile_init_new(acceptor->qf, NULL) ;
-  qps_add_qfile(bgp_nexus->selection, acceptor->qf, sock_fd, acceptor) ;
+  qps_add_qfile(be_nexus->selection, acceptor->qf, sock_fd, acceptor) ;
 
   acceptor->reader = bgp_msg_reader_reset_new(acceptor->reader,
                                                                &acceptor->lox) ;
@@ -2182,12 +2243,12 @@ bgp_acceptor_set_open_awaited(bgp_acceptor acceptor, int sock_fd)
  */
 static void
 bgp_acceptor_pending_close(bgp_acceptor acceptor, int sock_fd, uint when,
-                                                        bgp_notify notification)
+                                                                  bgp_note note)
 {
-  if (acceptor->sock_fd_pending >= 0)           /* belt and braces      */
+  if (acceptor->sock_fd_pending >= 0)   /* belt and braces      */
     bgp_acceptor_actual_close(acceptor) ;
 
-  bgp_notify_free(acceptor->notification) ;     /* make sure            */
+  bgp_note_free(acceptor->note) ;       /* make sure            */
 
   if (sock_fd >= 0)
     {
@@ -2195,15 +2256,15 @@ bgp_acceptor_pending_close(bgp_acceptor acceptor, int sock_fd, uint when,
        */
       acceptor->pending         = bacp_close ;
       acceptor->sock_fd_pending = sock_fd ;
-      acceptor->notification    = notification ;
+      acceptor->note            = note ;
     }
   else
     {
       /* This should not happen -- but if it does, we don't need the
-       * notification (if any)
+       * note (if any)
        */
-      acceptor->pending       = bacp_none ;
-      acceptor->notification  = bgp_notify_free(notification) ;
+      acceptor->pending = bacp_none ;
+      acceptor->note    = bgp_note_free(note) ;
     } ;
 
   if (when != 0)
@@ -2228,8 +2289,7 @@ bgp_acceptor_pending_close(bgp_acceptor acceptor, int sock_fd, uint when,
  * NB: does not change state.
  */
 static void
-bgp_acceptor_close_current(bgp_acceptor acceptor, uint when,
-                                                       bgp_notify notification)
+bgp_acceptor_close_current(bgp_acceptor acceptor, uint when, bgp_note note)
 {
   int sock_fd ;
 
@@ -2243,9 +2303,9 @@ bgp_acceptor_close_current(bgp_acceptor acceptor, uint when,
   sock_fd = qfile_fd_unset(acceptor->qf) ;
 
   if (when == 0)
-    bgp_acceptor_do_close(sock_fd, notification) ;
+    bgp_acceptor_do_close(sock_fd, note) ;
   else
-    bgp_acceptor_pending_close(acceptor, sock_fd, when, notification) ;
+    bgp_acceptor_pending_close(acceptor, sock_fd, when, note) ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -2255,26 +2315,21 @@ static void
 bgp_acceptor_set_timer(bgp_acceptor acceptor, uint secs)
 {
   acceptor->timer = qtimer_init_new(acceptor->timer,
-                                          bgp_nexus->pile, NULL, acceptor) ;
-  qtimer_set(acceptor->timer, QTIME(secs), bgp_acceptor_time_out) ;
-
-  acceptor->timer_running = true ;
+                                              be_nexus->pile, NULL, acceptor) ;
+  qtimer_set_interval(acceptor->timer, QTIME(secs), bgp_acceptor_time_out) ;
 } ;
 
 /*------------------------------------------------------------------------------
- * Stop acceptor->timer, if any
+ * Stop acceptor->timer and free it, if any
  */
 static void
 bgp_acceptor_stop_timer(bgp_acceptor acceptor)
 {
-  if (acceptor->timer != NULL)
-    qtimer_unset(acceptor->timer) ;
-
-  acceptor->timer_running = false ;
+  acceptor->timer = qtimer_free(acceptor->timer) ;
 } ;
 
 /*------------------------------------------------------------------------------
- * We have hung on to the pending close for long enough.
+ * Whatever we were waiting for, the time has come.
  */
 static void
 bgp_acceptor_time_out(qtimer qtr, void* timer_info, qtime_mono_t when)
@@ -2283,8 +2338,6 @@ bgp_acceptor_time_out(qtimer qtr, void* timer_info, qtime_mono_t when)
 
   acceptor = timer_info ;
   qassert(qtr == acceptor->timer) ;
-
-  acceptor->timer_running = false ;
 
   switch (acceptor->state)
     {
@@ -2383,11 +2436,14 @@ bgp_acceptor_time_out(qtimer qtr, void* timer_info, qtime_mono_t when)
         qassert(acceptor->sock_fd_pending  < 0) ;
 
         bgp_acceptor_close_current(acceptor, 0 /* now */,
-                          bgp_notify_new(BGP_NOMC_CEASE, BGP_NOMS_UNSPECIFIC)) ;
+                          bgp_note_new(BGP_NOMC_CEASE, BGP_NOMS_UNSPECIFIC)) ;
 
         acceptor->state = bacs_listening ;      /* change down  */
         break ;
    } ;
+
+  if (!qtimer_is_active(qtr))
+    bgp_acceptor_stop_timer(acceptor) ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -2402,11 +2458,11 @@ bgp_acceptor_actual_close(bgp_acceptor acceptor)
     {
       qassert(acceptor->sock_fd_pending >= 0) ;
 
-      bgp_acceptor_do_close(acceptor->sock_fd_pending, acceptor->notification) ;
+      bgp_acceptor_do_close(acceptor->sock_fd_pending, acceptor->note) ;
 
       acceptor->pending         = bacp_none ;
       acceptor->sock_fd_pending = fd_undef ;
-      acceptor->notification    = NULL ;
+      acceptor->note    = NULL ;
     } ;
 } ;
 
@@ -2416,17 +2472,17 @@ bgp_acceptor_actual_close(bgp_acceptor acceptor)
  * NB: does not unset the timer.
  */
 static void
-bgp_acceptor_do_close(int sock_fd, bgp_notify notification)
+bgp_acceptor_do_close(int sock_fd, bgp_note note)
 {
   if (sock_fd >= 0)
     {
-      if (notification != NULL)
-        bgp_notify_put(sock_fd, notification) ;
+      if (note != NULL)
+        bgp_note_put(sock_fd, note) ;
 
       close(sock_fd) ;
     } ;
 
-  bgp_notify_free(notification) ;
+  bgp_note_free(note) ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -2491,8 +2547,7 @@ bgp_acceptor_co_opt(bgp_connection connection)
 
   connection->reader->plox = &connection->lox ;
 
-  connection->cops         = bgp_cops_copy(connection->cops,
-                                                               acceptor->cops) ;
+  connection->cops         = bgp_cops_copy(connection->cops, acceptor->cops) ;
   acceptor->reader = NULL ;
   acceptor->qf     = NULL ;
 
@@ -2504,10 +2559,7 @@ bgp_acceptor_co_opt(bgp_connection connection)
   qassert(acceptor->pending = bacp_none) ;
   qassert(acceptor->sock_fd_pending < 0) ;
 
-  acceptor->state         = bacs_listening ;
-  acceptor->open_received = false ;
-
-  bgp_acceptor_stop_timer(acceptor) ;
+  bgp_acceptor_reset(acceptor, BGP_NOMS_UNSPECIFIC) ;
 
   return true ;                 /* done !       */
 } ;
@@ -2535,7 +2587,7 @@ bgp_acceptor_read_action(qfile qf, void* file_info)
 {
   bgp_acceptor   acceptor ;
   bgp_msg_reader reader ;
-  bgp_notify     notification ;
+  bgp_note       note ;
   bool           done ;
   bool           stop ;
 
@@ -2548,9 +2600,9 @@ bgp_acceptor_read_action(qfile qf, void* file_info)
 
   bgp_msg_read_raw(reader, qf) ;
 
-  stop         = false ;        /* not yet      */
-  done         = false ;        /* ditto        */
-  notification = NULL ;         /* ditto        */
+  stop  = false ;               /* not yet      */
+  done  = false ;               /* ditto        */
+  note  = NULL ;                /* ditto        */
 
   while (!done)
     {
@@ -2705,13 +2757,13 @@ bgp_acceptor_read_action(qfile qf, void* file_info)
 
           /* Don't like the look of the message !
            *
-           * Log and create notification and classify as bgp_feBGPHeaderErr.
+           * Log and create note and classify as bgp_feBGPHeaderErr.
            */
           case bms_fail_bad_length:
           case bms_fail_bad_marker:
           case bms_complete_too_short:
           case bms_complete_too_long:
-            notification = bgp_msg_read_bad(reader, qf) ;
+            note = bgp_msg_read_bad(reader, qf) ;
             fsm_event    = bgp_feBGPHeaderErr ;
             break ;
 
@@ -2749,8 +2801,6 @@ bgp_acceptor_read_action(qfile qf, void* file_info)
           case bgp_feAcceptOPEN:
             qassert(acceptor->state == bacs_open_received) ;
 
-            acceptor->open_received = true ;
-
             bgp_fsm_accept_event(acceptor->session, bgp_feAcceptOPEN) ;
             break ;
 
@@ -2770,7 +2820,7 @@ bgp_acceptor_read_action(qfile qf, void* file_info)
            * TODO ... logging
            */
           case bgp_feUnexpected:
-            notification = bgp_notify_new(BGP_NOMC_FSM, BGP_NOMS_UNSPECIFIC) ;
+            note = bgp_note_new(BGP_NOMC_FSM, BGP_NOMS_UNSPECIFIC) ;
             break ;
 
           /* Something has gone wrong... so give up, now
@@ -2778,7 +2828,7 @@ bgp_acceptor_read_action(qfile qf, void* file_info)
            * TODO ... logging.
            */
           case bgp_feInvalid:
-            notification = bgp_notify_new(BGP_NOMC_CEASE, BGP_NOMS_UNSPECIFIC) ;
+            note = bgp_note_new(BGP_NOMC_CEASE, BGP_NOMS_UNSPECIFIC) ;
             break ;
 
           /* For everything else, we stop !
@@ -2788,8 +2838,8 @@ bgp_acceptor_read_action(qfile qf, void* file_info)
            * NB: this includes expected and unexpected cases.
            */
           default:
-            if (!stop && (notification == NULL))
-              notification = bgp_notify_new(BGP_NOMC_CEASE,
+            if (!stop && (note == NULL))
+              note = bgp_note_new(BGP_NOMC_CEASE,
                                                           BGP_NOMS_UNSPECIFIC) ;
             break ;
         } ;
@@ -2798,9 +2848,9 @@ bgp_acceptor_read_action(qfile qf, void* file_info)
        *
        * Drops to bacs_paused.
        */
-      if (stop || (notification != NULL))
+      if (stop || (note != NULL))
         {
-          bgp_acceptor_close_current(acceptor, 10 /* not now */, notification) ;
+          bgp_acceptor_close_current(acceptor, 10 /* not now */, note) ;
           acceptor->state = bacs_paused ;
           done = true ;
         } ;

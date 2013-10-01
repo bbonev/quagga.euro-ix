@@ -27,7 +27,7 @@ void test_vector_insert_item(void);
 void test_vector_insert_item_here(void);
 void test_vector_delete_item(void);
 void do_test_insert(const int rider);
-int sort_cmp(void const* const* a, void const* const* b);
+int test_cmp(void const* const* a, void const* const* b);
 void test_vector_sort(void);
 void test_vector_bsearch(void);
 void test_vector_move_item_here(void);
@@ -528,7 +528,7 @@ test_vector_sort(void)
 
   v = vector_init(0);
 
-  vector_sort(v, sort_cmp);     /* null sort */
+  vector_sort(v, test_cmp);     /* null sort */
 
   /* initialize backwards, using width so that lexical = numerical order */
   for (i = 0; i < len; ++i)
@@ -537,7 +537,7 @@ test_vector_sort(void)
     vector_set_index(v, len - i - 1, strdup(buf));
   }
 
-  vector_sort(v, sort_cmp);
+  vector_sort(v, test_cmp);
 
   /* check contents are correct */
   for (i = 0; i < len; ++i)
@@ -556,7 +556,7 @@ test_vector_sort(void)
 }
 
 int
-sort_cmp(void const* const* a, void const* const* b)
+test_cmp(void const* const* a, void const* const* b)
 {
   return strcmp(*a, *b);
 }
@@ -578,7 +578,7 @@ test_vector_bsearch(void)
   sprintf(target, "%9u", target_index);
   v = vector_init(0);
 
-  index = vector_bsearch(v, sort_cmp, target, &result);     /* null search */
+  index = vector_bsearch(v, test_cmp, target, &result);     /* null search */
   assert_true(index == 0, "index != 0");
   assert_true(result == -1, "result != -1");
 
@@ -592,7 +592,7 @@ test_vector_bsearch(void)
   for (target_index = 0; target_index < (unsigned)len; ++target_index)
     {
       sprintf(target, "%9u", target_index);
-      index = vector_bsearch(v, sort_cmp, target, &result);
+      index = vector_bsearch(v, test_cmp, target, &result);
       assert_true(index == target_index, "index != target_index");
       assert_true(result == 0, "result != 0");
       assert_true(strcmp(vector_get_item(v, index), target) == 0,

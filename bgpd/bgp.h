@@ -430,7 +430,7 @@ enum BGP_ATT
   BGP_ATT_NEXT_HOP          =   3,  /* implicitly IPv4                      */
   BGP_ATT_MED               =   4,  /* MULTI_EXIT_DISC                      */
   BGP_ATT_LOCAL_PREF        =   5,
-  BGP_ATT_ATOMIC_AGGREGATE  =   6,
+  BGP_ATT_A_AGGREGATE       =   6,
   BGP_ATT_AGGREGATOR        =   7,  /* AS2 or AS4, depending on context     */
 
   BGP_ATT_COMMUNITIES       =   8,  /*                              RFC1997 */
@@ -617,11 +617,13 @@ typedef U16 BGP_RRM_AFI_T ;         /* Address Family Identifier */
 typedef U8  BGP_RRM_RES_T ;         /* reserved = 0 */
 typedef U8  BGP_RRM_SAFI_T ;        /* Subsequent Address Family Identifier */
 
-VALUE(BGP_RRM_MIN_L         =       /* Route Refresh length */
-                                BGP_MSG_HEAD_L
-                              + sizeof(BGP_RRM_AFI_T)
+VALUE(BGP_RRM_BODY_MIN_L    =       /* Route Refresh body       */
+                                sizeof(BGP_RRM_AFI_T)
                               + sizeof(BGP_RRM_RES_T)
                               + sizeof(BGP_RRM_SAFI_T) ) ;
+VALUE(BGP_RRM_MIN_L         =       /* Route Refresh message    */
+                                BGP_MSG_HEAD_L
+                              + BGP_RRM_BODY_MIN_L ) ;
 CONFIRM(BGP_RRM_MIN_L == 23) ;      /* well known value ! */
 
 typedef U8  BGP_RRM_ORF_WHEN_T ;    /* when to refresh -- see RFC5291 */
@@ -637,6 +639,7 @@ enum                    /* order and offsets wrt start of body  */
   BGP_RRM_ORFS      = BGP_RRM_ORF_WHEN + sizeof(BGP_RRM_ORF_WHEN_T),
                         /* start of ORF collections -- *one* or more    */
 } ;
+CONFIRM(BGP_RRM_BODY_MIN_L == (uint)BGP_RRM_ORF_WHEN) ;
 
 enum                                /* values for the BGP_RRM_ORF_WHEN byte */
 {
@@ -985,14 +988,14 @@ VALUE(BGP_ATT_NEXT_HOP_L   = sizeof(BGP_ATT_NEXT_HOP_T)) ;
 
 /* MULTI_EXIT_DISC Attribute -- BGP_ATT_MED ---------------------------------*/
 
-VALUE(BGP_ATT_MEDS_IS      = BGP_AT_IS_OPTIONAL) ;  /* non-transitive */
+VALUE(BGP_ATT_MED_IS       = BGP_AT_IS_OPTIONAL) ;  /* non-transitive */
 
-typedef U32 BGP_ATT_MEDS_T  ;       /* 4 bytes of "metric"                  */
+typedef U32 BGP_ATT_MED_T  ;        /* 4 bytes of "metric"                  */
 
-VALUE(BGP_ATT_MEDS_L       = sizeof(BGP_ATT_MEDS_T)) ;
+VALUE(BGP_ATT_MED_L        = sizeof(BGP_ATT_MED_T)) ;
 
-/* LOCAL_PREF Attribute -- BGP_ATT_LOCAL_PREF ------------------------------------*/
-
+/* LOCAL_PREF Attribute -- BGP_ATT_LOCAL_PREF ----------------------------------
+ */
 VALUE(BGP_ATT_L_PREF_IS     = BGP_AT_IS_WELL_KNOWN | BGP_AT_IS_MANDATORY
                                                    | BGP_AT_IS_IGP_ONLY) ;
 
@@ -1000,8 +1003,8 @@ typedef U32 BGP_ATT_L_PREF_T ;      /* 4 bytes of "metric"                  */
 
 VALUE(BGP_ATT_L_PREF_L     = sizeof(BGP_ATT_L_PREF_T)) ;
 
-/* ATOMIC_AGGREGATE -- BGP_ATT_ATOMIC_AGGREGATE -----------------------------------*/
-
+/* ATOMIC_AGGREGATE -- BGP_ATT_A_AGGREGATE -------------------------------------
+ */
 VALUE(BGP_ATT_A_AGGREGATE_IS= BGP_AT_IS_WELL_KNOWN) ;
                                     /* discretionary -- SHOULD pass on      */
 

@@ -23,7 +23,6 @@
 
 #include "bgpd/bgp_common.h"
 #include "bgpd/bgp_notification.h"
-#include "bgpd/bgp_route_refresh.h"
 
 #include "ring_buffer.h"
 #include "qpselect.h"
@@ -283,16 +282,16 @@ extern void bgp_msg_read_done(bgp_msg_reader reader) ;
 extern bool bgp_msg_read_stop(bgp_msg_reader reader) ;
 extern void bgp_msg_read_log(bgp_msg_reader reader) ;
 
-extern bgp_notify bgp_msg_read_bad(bgp_msg_reader reader, qfile qf) ;
-extern bgp_notify bgp_msg_read_bad_type(bgp_msg_reader reader) ;
+extern bgp_note bgp_msg_read_bad(bgp_msg_reader reader, qfile qf) ;
+extern bgp_note bgp_msg_read_bad_type(bgp_msg_reader reader) ;
 extern bgp_fsm_event_t bgp_msg_read_failed(bgp_msg_reader reader, qfile qf) ;
-extern bgp_notify bgp_msg_open_bad_id(bgp_id_t id) ;
+extern bgp_note bgp_msg_open_bad_id(bgp_id_t id) ;
 
-extern bgp_notify bgp_msg_open_parse(bgp_connection connection,
+extern bgp_note bgp_msg_open_parse(bgp_connection connection,
                                                         bgp_msg_reader reader) ;
-extern bgp_notify bgp_msg_route_refresh_parse(bgp_route_refresh* p_rr,
-                             bgp_connection connection, bgp_msg_reader reader) ;
-extern bgp_notify bgp_msg_notify_parse(bgp_connection connection,
+extern bgp_note bgp_msg_route_refresh_parse(bgp_connection connection,
+                                                        bgp_msg_reader reader) ;
+extern bgp_note bgp_msg_notify_parse(bgp_connection connection,
                                                         bgp_msg_reader reader) ;
 
 #endif /* BGP_MSG_READ_H_ */

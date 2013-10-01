@@ -28,7 +28,6 @@
 #include "bgpd/bgp_common.h"
 
 #include "lib/vector.h"
-#include "lib/stream.h"
 #include "lib/ring_buffer.h"
 
 /*==============================================================================
@@ -265,6 +264,7 @@ extern bgp_session_args bgp_session_args_reset(bgp_session_args args) ;
 extern void bgp_session_args_suppress(bgp_session_args args) ;
 extern bgp_session_args bgp_session_args_copy(bgp_session_args dst,
                                               bgp_session_args_c src) ;
+extern bgp_session_args bgp_session_args_dup(bgp_session_args_c src) ;
 extern bgp_session_args bgp_session_args_free(bgp_session_args args) ;
 
 extern void bgp_open_state_unknown_add(bgp_open_state state, uint8_t code,

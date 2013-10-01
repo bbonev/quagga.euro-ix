@@ -25,26 +25,11 @@ Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
 #include "command.h"
 
 #include "bgpd/bgp.h"
+#include "bgpd/bgp_mrt.h"
 #include "bgpd/bgpd.h"
 #include "bgpd/bgp_dump.h"
 #include "bgpd/bgp_attr.h"
 #include "bgpd/bgp_aspath.h"
-
-enum MRT_MSG_TYPES {
-   MSG_NULL,
-   MSG_START,                   /* sender is starting up */
-   MSG_DIE,                     /* receiver should shut down */
-   MSG_I_AM_DEAD,               /* sender is shutting down */
-   MSG_PEER_DOWN,               /* sender's peer is down */
-   MSG_PROTOCOL_BGP,            /* msg is a BGP packet */
-   MSG_PROTOCOL_RIP,            /* msg is a RIP packet */
-   MSG_PROTOCOL_IDRP,           /* msg is an IDRP packet */
-   MSG_PROTOCOL_RIPNG,          /* msg is a RIPNG packet */
-   MSG_PROTOCOL_BGP4PLUS,       /* msg is a BGP4+ packet */
-   MSG_PROTOCOL_BGP4PLUS_01,    /* msg is a BGP4+ (draft 01) packet */
-   MSG_PROTOCOL_OSPF,           /* msg is an OSPF packet */
-   MSG_TABLE_DUMP               /* routing table dump */
-};
 
 int
 attr_parse (struct stream *s, u_int16_t len)
@@ -63,7 +48,7 @@ attr_parse (struct stream *s, u_int16_t len)
       flag = stream_getc (s);
       type = stream_getc (s);
 
-      if (flag & ATTR_FLAG_EXTLEN)
+      if (flag & BGP_ATF_EXTENDED)
         length = stream_getw (s);
       else
         length = stream_getc (s);
@@ -170,14 +155,14 @@ main (int argc, char **argv)
 
       /* printf ("TYPE: %d/%d\n", type, subtype); */
 
-      if (type == MSG_PROTOCOL_BGP4MP)
+      if (type == MRT_MT_BGP4MP)
         printf ("TYPE: BGP4MP");
-      else if (type == MSG_TABLE_DUMP)
+      else if (type == MRT_MT_TABLE_DUMP)
         printf ("TYPE: MSG_TABLE_DUMP");
       else
         printf ("TYPE: Unknown %d", type);
 
-      if (type == MSG_TABLE_DUMP)
+      if (type == MRT_MT_TABLE_DUMP)
         switch (subtype)
           {
           case AFI_IP:
@@ -194,16 +179,16 @@ main (int argc, char **argv)
         {
           switch (subtype)
             {
-            case BGP4MP_STATE_CHANGE:
+            case MRT_MST_BGP4MP_STATE_CHANGE:
               printf ("/CHANGE\n");
               break;
-            case BGP4MP_MESSAGE:
+            case MRT_MST_BGP4MP_MESSAGE:
               printf ("/MESSAGE\n");
               break;
-            case BGP4MP_ENTRY:
+            case MRT_MST_BGP4MP_ENTRY:
               printf ("/ENTRY\n");
               break;
-            case BGP4MP_SNAPSHOT:
+            case MRT_MST_BGP4MP_SNAPSHOT:
               printf ("/SNAPSHOT\n");
               break;
             default:
@@ -228,7 +213,7 @@ main (int argc, char **argv)
 
       /* printf ("now read %d\n", len); */
 
-      if (type == MSG_TABLE_DUMP)
+      if (type == MRT_MT_TABLE_DUMP)
         {
           u_char status;
           time_t originated;

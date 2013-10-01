@@ -20,6 +20,7 @@
  */
 #include "misc.h"
 #include "list_util.h"
+#include "heap.h"
 
 /*==============================================================================
  * Single Base, Single Link
@@ -54,22 +55,25 @@
  *          false => item not found on list (or item == NULL)
  */
 extern bool
-ssl_del_func(void** p_prev, void* item, size_t link_offset)
+ssl_del_func(void** prev_p, void* item, void** item_p)
 {
-  void* prev ;
+  size_t offset ;
+  void*  prev ;
 
   if (item == NULL)
     return false ;
 
-  while ((prev = *p_prev) != item)
+  offset = (char*)item_p - (char*)item ;
+
+  while ((prev = *prev_p) != item)
     {
       if (prev == NULL)
         return false ;
 
-      p_prev = _sl_p_next(prev, link_offset) ;
+      prev_p = sl_list_ptr_make(prev, offset) ;
     } ;
 
-  *p_prev = _sl_next(item, link_offset) ;
+  *prev_p = *item_p ;
 
   return true ;
 } ;
@@ -82,14 +86,18 @@ ssl_del_func(void** p_prev, void* item, size_t link_offset)
  * See notes on p_prev above.
  */
 extern void
-ssl_append_func(void** p_prev, void* item, size_t link_offset)
+ssl_append_func(void** prev_p, void* item, void** item_p)
 {
+  size_t offset ;
   void* prev ;
 
-  while ((prev = *p_prev) != NULL)
-    p_prev = _sl_p_next(prev, link_offset) ;
+  offset = (char*)item_p - (char*)item ;
 
-  *p_prev = item ;
+  while ((prev = *prev_p) != NULL)
+    prev_p = sl_list_ptr_make(prev, offset) ;
+
+  *prev_p = item ;
+  *item_p = NULL ;
 } ;
 
 /*==============================================================================
@@ -101,52 +109,140 @@ ssl_append_func(void** p_prev, void* item, size_t link_offset)
  *
  * Have to chase down list to find item.
  *
- * Note that p_this:
- *
- *   * starts as pointer to the base pointer, so should really be void**,
- *     but that causes all sorts of problems with strict-aliasing.
- *
- *     So: have to cast to (void**) before dereferencing to get the address
- *         of the first item on the list.
- *
- *   * as steps along the list p_this points to the "next pointer" in the
- *     previous item.
- *
- *     The _sl_p_next() macro adds the offset of the "next pointer" to the
- *     address of the this item.
- *
- *   * at the end, assigns the item's "next pointer" to the "next pointer"
- *     field pointed at by p_this.
- *
- *     Note again the cast to (void**).
- *
  * Returns: true  => removed item from list
  *          false => item not found on list (or item == NULL)
  */
 extern bool
-dsl_del_func(struct dl_void_base_pair* p_base, void* item, size_t link_offset)
+dsl_del_func(dl_base_pair_v base, void* item, void** item_p)
 {
   void*  this ;
-  void** p_this ;
+  void** this_p ;
+  size_t offset ;
 
   if (item == NULL)
     return false ;
 
-  p_this = &p_base->head ;
+  this_p = &base->head ;
+  offset = (char*)item_p - (char*)item ;
 
-  while ((this = *p_this) != item)
+  while ((this = *this_p) != item)
     {
       if (this == NULL)
         return false ;
 
-      p_this = _sl_p_next(this, link_offset) ;
+      this_p = sl_list_ptr_make(this, offset) ;
     } ;
 
-  *p_this = _sl_next(item, link_offset) ;
+  *this_p = *item_p ;
 
-  if (item == p_base->tail)
-    p_base->tail = *p_this ;
+  if (item == base->tail)
+    base->tail = *item_p ;
 
   return true ;
+} ;
+
+/*==============================================================================
+ * List sorting functions.
+ *
+ *
+ */
+
+/*------------------------------------------------------------------------------
+ * Sort the given double linked list.
+ */
+extern void
+_dl_sort(vp* base, dl_list_pair_v item_p, sort_cmp* cmp, bool double_base)
+{
+} ;
+
+/*------------------------------------------------------------------------------
+ * Insert given item in (ascending) order into the given list.
+ *
+ * Assumes, of course, that the list is already sorted !
+ */
+extern void
+_ddl_insert(dl_base_pair_v base, vp item, dl_list_pair_v item_p,
+                                                                 sort_cmp* cmp)
+{
+  vp  head, prev, next ;
+  dl_list_pair_v prev_p, next_p ;
+  size_t offset ;
+
+  /* Deal with the trivial cases of: (1) empty list
+   *                                 (2) greater than last item
+   *                                 (3) less than first item
+   */
+  head = base->head ;
+  if (head == NULL)
+    {
+      /* List is empty -- trivial !
+       */
+      base->head   = base->tail   = item ;
+      item_p->next = item_p->prev = NULL ;
+      return ;
+    } ;
+
+  offset = (char*)item_p - (char*)item ;
+
+  prev   = base->tail ;
+  prev_p = dl_list_ptr_make(prev, offset) ;
+  if (cmp((const cvp*)&prev, (const cvp*)&item) <= 0)
+    {
+      /* Tail item is less than or equal to the new one -- trivial !
+       */
+      item_p->next = NULL ;
+      item_p->prev = prev ;
+
+      base->tail = prev_p->next = item ;
+
+      return ;
+    } ;
+
+  if ((prev == head) || (cmp((const cvp*)&head, (const cvp*)&item) > 0))
+    {
+      /* Head item is greater than the new one -- trivial.
+       */
+      dl_list_pair_v head_p ;
+
+      head_p = dl_list_ptr_make(head, offset) ;
+
+      item_p->next = head ;
+      item_p->prev = NULL ;
+
+      base->head = head_p->prev = item ;
+
+      return ;
+    } ;
+
+  /* Now we know item belongs after the head, and before the tail.
+   *
+   * We work back from the tail, in the hope that we are roughly adding stuff
+   * in order -- but doesn't make any difference if not.
+   */
+  while (1)
+    {
+      /* Step back so that we have: prev/prev_p pointing at item to consider
+       *                            next/next_p pointing at item after that
+       */
+      next   = prev ;
+      next_p = prev_p ;
+
+      prev   = prev_p->prev ;
+      prev_p = dl_list_ptr_make(prev, offset) ;
+
+      if (prev == head)
+        break ;                 /* we know head is <= item      */
+
+      if (cmp((const cvp*)&prev, (const cvp*)&item) <= 0)
+        break ;                 /* prev is now <= item          */
+    } ;
+
+  /* Now belongs after prev and before next.
+   */
+  item_p->next = next ;
+  item_p->prev = prev ;
+
+  prev_p->next = item ;
+  next_p->prev = item ;
 } ;
 

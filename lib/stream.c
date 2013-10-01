@@ -573,8 +573,7 @@ stream_put_this_at(stream s, const byte* src, size_t n, size_t at)
  *     wanted -- however, will cope if can put everything.
  */
 static void
-stream_put_partial(stream s, const byte* src, size_t n,
-                                                           size_t at, bool step)
+stream_put_partial(stream s, const byte* src, size_t n, size_t at, bool step)
 {
   size_t have ;
 

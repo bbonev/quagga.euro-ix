@@ -48,8 +48,8 @@ enum iAFI
   iAFI_IP          = 1,         /* IP (IP version 4)            */
   iAFI_IP6         = 2,         /* IP6 (IP version 6)           */
 
-  iAFI_IPV4        = iAFI_IP,   /* locally AKA                  */
-  iAFI_IPV6        = iAFI_IP6   /* locally AKA                  */
+  iAFI_IPv4        = iAFI_IP,   /* locally AKA                  */
+  iAFI_IPv6        = iAFI_IP6   /* locally AKA                  */
 } ;
 
 
@@ -93,8 +93,10 @@ enum qAFI
   qAFI_max         = 2,         /* maximum valid qAFI           */
   qAFI_count,                   /* number of distinct qAFI      */
 
+  qAFI_IPv4        = qAFI_IP,
+  qAFI_IPv6        = qAFI_IP6,
   qAFI_ipv4        = qAFI_IP,
-  qAFI_ipv6        = qAFI_IP6
+  qAFI_ipv6        = qAFI_IP6,
 } ;
 
 typedef enum qSAFI qSAFI_t ;
@@ -125,8 +127,8 @@ typedef const struct iAFI_SAFI* iAFI_SAFI_c ;
 
 struct iAFI_SAFI
 {
-  iAFI_t   afi ;
-  iSAFI_t  safi ;
+  iAFI_t   i_afi ;
+  iSAFI_t  i_safi ;
 } ;
 
 typedef struct qAFI_SAFI  qAFI_SAFI_t ;
@@ -135,8 +137,8 @@ typedef const struct qAFI_SAFI* qAFI_SAFI_c ;
 
 struct qAFI_SAFI
 {
-  qAFI_t   afi ;
-  qSAFI_t  safi ;
+  qAFI_t   q_afi ;
+  qSAFI_t  q_safi ;
 } ;
 
 /*==============================================================================

@@ -110,9 +110,6 @@ qpn_init_new(qpn_nexus qpn, bool main_thread, const char* name)
    *
    *    name              -- X       -- set below
    *
-   *    list              -- NULLs   -- put on list when exec'ed
-   *
-   *    started           -- false   -- set when exec'd
    *    terminate         -- false   -- not even started, yet !
    *    main_thread       -- false   -- set below, if required
    *
@@ -126,7 +123,6 @@ qpn_init_new(qpn_nexus qpn, bool main_thread, const char* name)
    *    pile              -- X       -- set below
    *
    *    queue             -- X       -- set below
-   *    mts               -- none
    *
    *    loop              -- X       -- set below
    *
@@ -135,26 +131,27 @@ qpn_init_new(qpn_nexus qpn, bool main_thread, const char* name)
    *    foreground        -- NULLs   -- none, yet
    *    background        -- NULLs   -- none, yet
    *
-   *    stats_slk         -- X       -- set below
+   *    slk               -- X       -- set below
    *
    *    raw               -- all zero
    *    stats             -- all zero
    *    prev_stats        -- all zero
    *
-   *    idleness          -- 0       -- not seen idle, yet
-   *    cpu_time          -- 0
+   *    signal            -- false   -- none, yet
+   *    idleness          -- 0       -- not gone idle, yet
    *
-   *    cpu_clock_id      -- X       -- set when exec'ed
+   *    qpth_stats        -- all 0
    */
   qpn->name        = name ;
 
   qpn->selection   = qps_selection_init_new(qpn->selection);
   qpn->pile        = qtimer_pile_init_new(qpn->pile);
-  qpn->queue       = mqueue_init_new(qpn->queue, mqt_signal_unicast, name);
+  qpn->queue       = mqueue_init_new(qpn->queue, qpn, name);
+
   qpn->main_thread = main_thread;
   qpn->loop        = qpn_loop;
 
-  qpt_spin_init(qpn->stats_slk) ;
+  qpt_spin_init(qpn->slk) ;
 
  /* We set up the qpt_thread object now, and arrange for it to point at the
   * qpn_nexus.  The thread can find its qpt_thread, and the "data" pointer
@@ -222,7 +219,6 @@ qpn_reset(qpn_nexus qpn, free_keep_b free_structure)
     }
 
   qpn->queue = mqueue_reset(qpn->queue, free_it);
-  qpn->mts   = mqueue_thread_signal_reset(qpn->mts, free_it);
 
   if (free_structure)
     XFREE(MTYPE_QPN_NEXUS, qpn) ;       /* sets qpn = NULL      */
@@ -332,33 +328,37 @@ qpn_loop(qpt_thread qpth)
        *
        * Note: only if is completely "idle" -- which includes found nothing to
        *       do in the background -- will we actually block.
+       *
+       * Will not go idle if qpn->signal is set, and clears that under the
+       * slk.
+       *
+       * If is going idle, sets qpn->idleness -- which is used by watchdog and
+       * by qpn_signal().
        */
       now = qt_get_monotonic() ;
-
-      idle = (!this && !prev) && mqueue_set_signal(qpn->queue, qpn->mts) ;
-      if (idle)
-        max_wait = qtimer_pile_top_wait(qpn->pile, qpn_max_pselect_wait, now) ;
-      else
-        max_wait = 0 ;
-
-      /* We are about to do a pselect, which may wait.  Now is the time to
-       * set the "raw" current time, and publish the stats.
-       */
       qpn->raw.last_time = now ;
 
-      qpt_spin_lock(qpn->stats_slk) ;
+      qpt_spin_lock(qpn->slk) ;
+
+      idle = (!this && !prev && !qpn->signal) ;
+      qpn->signal = false ;
 
       qpn->stats = qpn->raw ;
-      if (idle)
-        qpn->idleness = 1 ;
 
-      qpt_spin_unlock(qpn->stats_slk) ;
+      if (!idle)
+        max_wait = 0 ;
+      else
+        {
+          max_wait = qtimer_pile_top_wait(qpn->pile, qpn_max_pselect_wait, now) ;
+          qpn->idleness = 1 ;
+        } ;
+
+      qpt_spin_unlock(qpn->slk) ;
 
       /* Do pselect, which may now wait
        *
-       * After pselect, if is "wait", then will have set the message queue
-       * waiting, which can now be cleared.  If is "idle", any time since
-       * "raw.last_time" must be counted as idle time.
+       * If is "idle", any time since "raw.last_time" must be counted as idle
+       * time.
        *
        * Remember current "done" as "prev", and set done depending on I/O
        * action count.
@@ -374,14 +374,9 @@ qpn_loop(qpt_thread qpth)
         {
           qpn->raw.idle += now - qpn->raw.last_time ;
 
-          if (qpn_wd_enabled)
-            {
-              qpt_spin_lock(qpn->stats_slk) ;
-              qpn->idleness = 0 ;
-              qpt_spin_unlock(qpn->stats_slk) ;
-            } ;
-
-          mqueue_done_waiting(qpn->queue, qpn->mts) ;
+          qpt_spin_lock(qpn->slk) ;
+          qpn->idleness = 0 ;
+          qpt_spin_unlock(qpn->slk) ;
         } ;
 
       prev = this ;
@@ -444,7 +439,7 @@ qpn_loop(qpt_thread qpth)
        * Now we set a limit on how much time to use before returning to see
        * if I/O or timers etc require attention.
        */
-      mqb = mqueue_dequeue(qpn->queue, false, NULL) ;
+      mqb = mqueue_dequeue(qpn->queue) ;
 
       if (mqb != NULL)
         {
@@ -470,7 +465,7 @@ qpn_loop(qpt_thread qpth)
               if (now >= yield_time)
                 break ;
 
-              mqb = mqueue_dequeue(qpn->queue, false, NULL) ;
+              mqb = mqueue_dequeue(qpn->queue) ;
             }
           while (mqb != NULL) ;
 
@@ -506,6 +501,49 @@ qpn_loop(qpt_thread qpth)
 }
 
 /*------------------------------------------------------------------------------
+ * Signal the given qpn -- if required.
+ *
+ * If the given nexus is sitting in pselect(), then send it SIG_INTERRUPT.
+ *
+ * If the given nexus is
+ */
+extern void
+qpn_signal(qpn_nexus qpn)
+{
+  bool raise ;
+
+  qpt_spin_lock(qpn->slk) ;
+
+  if (qpn->signal)
+    raise = false ;             /* already raised, if required  */
+  else
+    {
+      qpn->signal = true ;
+      raise = (qpn->idleness != 0) ;
+    } ;
+
+  qpt_spin_unlock(qpn->slk) ;
+
+  if (raise)
+    qpt_thread_raise(qpn->qpth, qpn->pselect_signal) ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Signal the parent qpn for the given mqueue, if required
+ */
+static void
+qpn_mqueue_signal_func(mqueue_queue mq)
+{
+  qpn_nexus qpn ;
+
+  qpn = mq->parent ;
+  qassert(qpn->queue == mq) ;
+
+  qpn_signal(qpn) ;
+} ;
+
+
+/*------------------------------------------------------------------------------
  * Now running in our thread, do common initialisation
  */
 static void
@@ -520,9 +558,9 @@ qpn_in_thread_init(qpn_nexus qpn)
   qpn->raw.start_time = qt_get_monotonic() ;
   qpn->raw.last_time  = qpn->raw.start_time ;
 
-  qpt_spin_lock(qpn->stats_slk) ;
+  qpt_spin_lock(qpn->slk) ;
   qpn->prev_stats = qpn->stats = qpn->raw ;     /* share loop time etc.  */
-  qpt_spin_unlock(qpn->stats_slk) ;
+  qpt_spin_unlock(qpn->slk) ;
 
 #if 0
 
@@ -562,8 +600,9 @@ qpn_in_thread_init(qpn_nexus qpn)
 
   /* Now we have thread_id and mask, prep for using message queue.
    */
-  if (qpn->queue != NULL)
-    qpn->mts = mqueue_thread_signal_init(qpn->mts, qpn->qpth, SIG_INTERRUPT) ;
+  if ((qpn->queue != NULL) && qpthreads_enabled)
+    mqueue_set_signal(qpn->queue, qpn_mqueue_signal_func) ;
+
   if (qpn->selection != NULL)
     qps_set_signal(qpn->selection, qpn->pselect_mask);
 } ;
@@ -573,16 +612,17 @@ qpn_in_thread_init(qpn_nexus qpn)
  *
  * Does nothing if terminate already set.
  */
-void
+extern void
 qpn_terminate(qpn_nexus qpn)
 {
   if (!qpn->terminate)
     {
       qpn->terminate = true ;
 
-      /* wake up any pselect */
+      /* wake up any pselect
+       */
       if (qpthreads_enabled)
-        qpt_thread_raise(qpn->qpth, SIG_INTERRUPT);
+        qpt_thread_raise(qpn->qpth, qpn->pselect_signal);
     } ;
 } ;
 
@@ -594,14 +634,14 @@ qpn_terminate(qpn_nexus qpn)
 extern void
 qpn_get_stats(qpn_nexus qpn, qpn_stats curr, qpn_stats prev)
 {
-  qpt_spin_lock(qpn->stats_slk) ;
+  qpt_spin_lock(qpn->slk) ;
 
   *prev = qpn->prev_stats ;
   *curr = qpn->stats ;
 
   qpn->prev_stats = qpn->stats ;
 
-  qpt_spin_unlock(qpn->stats_slk) ;
+  qpt_spin_unlock(qpn->slk) ;
 } ;
 
 /*==============================================================================
@@ -1115,12 +1155,12 @@ qpn_wd_check_nexuses(qstring report)
 
       if (state == qpts_running)
         {
-          qpt_spin_lock(qpn->stats_slk) ;       /*<-<-<-<-<-<-<-<-<-<-<-*/
+          qpt_spin_lock(qpn->slk) ;       /*<-<-<-<-<-<-<-<-<-<-<-*/
 
           if (qpn->idleness != 0)
             idleness = ++qpn->idleness ;
 
-          qpt_spin_unlock(qpn->stats_slk) ;     /*<-<-<-<-<-<-<-<-<-<-<-*/
+          qpt_spin_unlock(qpn->slk) ;     /*<-<-<-<-<-<-<-<-<-<-<-*/
         } ;
 
       /* Check for stalled and collect output for this nexus

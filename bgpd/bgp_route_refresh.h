@@ -71,21 +71,29 @@ enum
                           - offsetof(bgp_orf_entry_t, body.orf_unknown.data)
 } ;
 
+typedef struct bgp_route_refresh  bgp_route_refresh_t ;
 typedef struct bgp_route_refresh* bgp_route_refresh ;
+
 struct bgp_route_refresh
 {
   bgp_route_refresh next ;      /* list of same                         */
 
-  qafx_t        qafx ;          /* may be qafx_undef or qafx_other      */
+  /* The address family -- both qafx and the Internet AFI/SAFI.
+   *
+   * May have any AFI/SAFI, so qafx may be qafx_other (or qafx_undef).
+   */
+  qafx_t        qafx ;
 
-  iAFI_t        afi ;           /* NB: Internet AFI/SAFI                */
-  iSAFI_t       safi ;
+  iAFI_t        i_afi ;
+  iSAFI_t       i_safi ;
 
+  /* Any ORF required are stored here.
+   */
   vector_t      entries[1] ;    /* empty => simple ROUTE-REFRESH        */
 
   bool          defer ;         /* otherwise: immediate                 */
 
-  /* These support the output of ROUTE-REFRESH messages.
+  /* These support the output of ROUTE-REFRESH messages with ORF.
    *
    * These are zeroised when the bgp_route_refresh structure is created.
    */

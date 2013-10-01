@@ -25,9 +25,10 @@
  */
 typedef vector_index_t heap_backlink_t ;
 
-typedef int heap_cmp(const cvp* a, const cvp* b) ;
+typedef sort_cmp heap_cmp ;
 typedef heap_backlink_t* heap_backlink(void* item) ;
 
+typedef struct heap  heap_t ;
 typedef struct heap* heap ;
 
 struct heap

@@ -12,7 +12,6 @@
 #include "bgpd/bgpd.h"
 #include "bgpd/bgp_peer.h"
 #include "bgpd/bgp_attr.h"
-#include "bgpd/bgp_open.h"
 #include "bgpd/bgp_debug.h"
 
 #define VT100_RESET "\x1b[0m"
@@ -290,7 +289,7 @@ static struct test_segment {
   { "IPv4-MLVPN",
     "IPv4/MPLS-labeled VPN MP Reach, RD, Nexthop, 3 NLRIs",
     {
-      /* AFI / SAFI */		0x0, AFI_IP, SAFI_MPLS_LABELED_VPN,
+      /* AFI / SAFI */		0x0, AFI_IP, SAFI_MPLS_VPN,
       /* nexthop bytes */	12,
       /* RD */			0, 0, 1, 2,
                                 0, 0xff, 3, 4,
@@ -413,7 +412,7 @@ static struct test_segment mp_unreach_segments [] =
   { "IPv4-unreach-MLVPN",
     "IPv4/MPLS-labeled VPN MP Unreach, RD, 3 NLRIs",
     {
-      /* AFI / SAFI */		0x0, AFI_IP, SAFI_MPLS_LABELED_VPN,
+      /* AFI / SAFI */		0x0, AFI_IP, SAFI_MPLS_VPN,
       /* nexthop bytes */	12,
       /* RD */			0, 0, 1, 2,
                                 0, 0xff, 3, 4,
@@ -433,8 +432,9 @@ static struct test_segment mp_unreach_segments [] =
 
 /* basic parsing test */
 static void
-parse_test (struct peer *peer, struct test_segment *t, int type)
+parse_test (bgp_peer peer, struct test_segment *t, int type)
 {
+  stream ibuf ;
   byte flags ;
   bool parsed ;
   int oldfailed = failed;
@@ -445,26 +445,28 @@ parse_test (struct peer *peer, struct test_segment *t, int type)
 
   memset (args, 0, sizeof (args));
 
-  stream_reset (peer->ibuf);
-  stream_put (peer->ibuf, NULL, RANDOM_FUZZ);
-  stream_set_getp (peer->ibuf, RANDOM_FUZZ);
+  ibuf = stream_new(4096) ;
+
+  stream_reset (ibuf);
+  stream_put (ibuf, NULL, RANDOM_FUZZ);
+  stream_set_getp (ibuf, RANDOM_FUZZ);
 
   flags = BGP_ATF_OPTIONAL | ((t->len < 256) ? 0 : BGP_ATF_EXTENDED) ;
 
-  args->start_p = stream_get_pnt(peer->ibuf) ;
+  args->start_p = stream_get_pnt(ibuf) ;
 
-  stream_putc(peer->ibuf, flags) ;
-  stream_putc(peer->ibuf, type) ;
+  stream_putc(ibuf, flags) ;
+  stream_putc(ibuf, type) ;
   if (flags & BGP_ATF_EXTENDED)
-    stream_putw(peer->ibuf, t->len) ;
+    stream_putw(ibuf, t->len) ;
   else
-    stream_putc(peer->ibuf, t->len) ;
+    stream_putc(ibuf, t->len) ;
 
-  attr_p = stream_get_end(peer->ibuf) ;
+  attr_p = stream_get_end(ibuf) ;
 
-  stream_put (peer->ibuf, t->data, t->len);
+  stream_put (ibuf, t->data, t->len);
 
-  args->end_p = stream_get_end(peer->ibuf) ;
+  args->end_p = stream_get_end(ibuf) ;
 
   printf ("%s: %s\n", t->name, t->desc);
 
@@ -478,12 +480,13 @@ parse_test (struct peer *peer, struct test_segment *t, int type)
     attr_p = tx_bgp_attr_mp_reach_parse (args, attr_p);
   else
     attr_p = tx_bgp_attr_mp_unreach_parse (args, attr_p,
-                                     stream_get_data(peer->ibuf), args->end_p);
+                                     stream_get_data(ibuf), args->end_p);
 
   parsed = (args->ret == BGP_ATTR_PARSE_OK) ;
 
   if (!parsed)
     {
+#if 0
       safi_t safi = t->safi;
 
       if (bgp_afi_safi_valid_indices (t->afi, safi) != t->afi_valid)
@@ -493,6 +496,7 @@ parse_test (struct peer *peer, struct test_segment *t, int type)
               t->afi, t->safi, safi,
               peer->af_rcv[qafx_from_i(t->afi, safi)],
               peer->af_use[qafx_from_i(t->afi, safi)]);
+#endif
     } ;
 
   if (t->parses != parsed)
@@ -510,29 +514,30 @@ parse_test (struct peer *peer, struct test_segment *t, int type)
     printf (" (%u)", failed);
 
   printf ("\n\n");
+  stream_free(ibuf) ;
 }
 
-static struct bgp *bgp;
+static bgp_inst bgp;
 static as_t asn = 100;
 
-static struct peer * peer_create_accept (struct bgp *bgp) ;
+static bgp_peer peer_create_accept (bgp_inst bgp) ;
 
 int
 main (int argc, char **argv)
 {
-  struct peer *peer;
+  bgp_peer peer;
   int i, j;
 
-  conf_bgp_debug_fsm = -1UL;
-  conf_bgp_debug_events = -1UL;
-  conf_bgp_debug_packet = -1UL;
-  conf_bgp_debug_normal = -1UL;
-  conf_bgp_debug_as4 = -1UL;
-  term_bgp_debug_fsm = -1UL;
-  term_bgp_debug_events = -1UL;
-  term_bgp_debug_packet = -1UL;
-  term_bgp_debug_normal = -1UL;
-  term_bgp_debug_as4 = -1UL;
+  conf_bgp_debug_fsm = -1U;
+  conf_bgp_debug_events = -1U;
+  conf_bgp_debug_packet = -1U;
+  conf_bgp_debug_normal = -1U;
+  conf_bgp_debug_as4 = -1U;
+  term_bgp_debug_fsm = -1U;
+  term_bgp_debug_events = -1U;
+  term_bgp_debug_packet = -1U;
+  term_bgp_debug_normal = -1U;
+  term_bgp_debug_as4 = -1U;
 
   qlib_init_first_stage(0);     /* Absolutely first     */
   host_init(argv[0]) ;
@@ -551,8 +556,10 @@ main (int argc, char **argv)
   for (i = AFI_IP; i < AFI_MAX; i++)
     for (j = SAFI_UNICAST; j < SAFI_MAX; j++)
       {
+#if 0
         peer->afc[qafx_from_i(i ,j)] = 1;
         peer->af_adv[qafx_from_i(i ,j)] = 1;
+#endif
       }
 
   i = 0;
@@ -570,10 +577,9 @@ main (int argc, char **argv)
 /*------------------------------------------------------------------------------
  * Make accept BGP peer... used in test programs...  TODO
  */
-struct peer *
-peer_create_accept (struct bgp *bgp)
+bgp_peer peer_create_accept (bgp_inst bgp)
 {
-  struct peer *peer;
+  bgp_peer peer;
 
   peer = bgp_peer_new (bgp, PEER_TYPE_REAL);
 

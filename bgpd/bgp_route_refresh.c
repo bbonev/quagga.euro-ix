@@ -60,11 +60,11 @@ bgp_route_refresh_new(iAFI_t afi, iSAFI_t safi, uint count)
 {
   bgp_route_refresh rr ;
 
-  rr = XCALLOC(MTYPE_BGP_ROUTE_REFRESH, sizeof(struct bgp_route_refresh)) ;
+  rr = XCALLOC(MTYPE_BGP_ROUTE_REFRESH, sizeof(bgp_route_refresh_t)) ;
 
-  rr->qafx  = qafx_from_i(afi, safi) ;  /* if known     */
-  rr->afi   = afi ;
-  rr->safi  = safi ;
+  rr->qafx   = qafx_from_i(afi, safi) ; /* if known     */
+  rr->i_afi  = afi ;
+  rr->i_safi = safi ;
 
   vector_init_new(rr->entries, count) ;
 

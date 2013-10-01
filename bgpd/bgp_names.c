@@ -24,6 +24,7 @@ Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
 #include "bgpd/bgp_common.h"
 #include "bgpd/bgp_connection.h"
 #include "bgpd/bgp_notification.h"
+#include "bgpd/bgp_peer.h"
 
 /*------------------------------------------------------------------------------
  * Names of FSM state values
@@ -84,15 +85,15 @@ static const char* const bgp_fsm_event_map_body[] =
   [bgp_feUpdateMsg]                   = "UpdateMsg",
   [bgp_feUpdateMsgErr]                = "UpdateMsgErr",
 
-  [bgp_feError]                  = "TCP_Failed",
-  [bgp_feConnectFailed]          = "TCP_Connect_Failed",
-  [bgp_feConnected]               = "TCP_Connected (Tcp_CR_Acked)",
-  [bgp_feAccepted]                = "TCP_Accepted (TcpConnectionConfirmed)",
-  [bgp_feDown]                    = "TCP_Down (TcpConnectionFails)",
+  [bgp_feError]                       = "Error",
+  [bgp_feConnectFailed]               = "ConnectFailed",
+  [bgp_feConnected]                   = "Connected (Tcp_CR_Acked)",
+  [bgp_feAccepted]                    = "Accepted (TcpConnectionConfirmed)",
+  [bgp_feDown]                        = "Down (TcpConnectionFails)",
   [bgp_feRRMsg]                       = "RRMsg",
   [bgp_feRRMsgErr]                    = "RRMsgErr",
-  [bgp_feAcceptOPEN]               = "Accepted_OPEN",
-  [bgp_feRestart]                 = "Established",
+  [bgp_feAcceptOPEN]                  = "AcceptedOPEN",
+  [bgp_feRestart]                     = "Restart",
   [bgp_feShut_RD]                     = "Shut_RD (internal)",
   [bgp_feShut_WR]                     = "Shut_WR (internal)",
 
@@ -104,18 +105,59 @@ const map_direct_t bgp_fsm_event_map =
 
 /*------------------------------------------------------------------------------
  * Names of Peer status values
+ *
+ * When is pDown or pResetting, may wish to consult bgp_peer_idle_state_str()
  */
 const char* const bgp_peer_status_map_body[] =
 {
-  [bgp_pDisabled]     = "Idle (Disabled)",
-  [bgp_pEnabled]      = "Idle (Enabled)",
+  [bgp_pDown]         = "Idle (Down)",
+  [bgp_pStarted]      = "Idle (Up)",
   [bgp_pEstablished]  = "Established",
-  [bgp_pClearing]     = "Clearing",
+  [bgp_pResetting]    = "Resetting",
   [bgp_pDeleting]     = "Deleting",
 };
 
 const map_direct_t bgp_peer_status_map =
      map_direct_s(bgp_peer_status_map_body, "unknown(%d)") ;
+
+extern name_str_t
+bgp_peer_idle_state_str(bgp_peer_state_t state, bgp_peer_idle_state_t idle)
+{
+  const char* name ;
+
+  switch (state)
+    {
+      case bgp_pDown:
+      case bgp_pResetting:
+        break ;
+
+      default:
+        return map_direct(bgp_peer_status_map, state) ;
+    } ;
+
+  if      (idle & bgp_pisDeconfigured)
+    name = "Deconfigured" ;
+  else if (idle & bgp_pisShutdown)
+    name = "Shut-Down" ;
+  else if (idle & bgp_pisNoAF)
+    name = "No AFI/SAFI" ;
+  else if (idle & bgp_pisMaxPrefixStop)
+    name = "Max-Pfx Stop" ;
+  else if (idle & bgp_pisMaxPrefixWait)
+    name = "Max-Pfx Wait" ;
+  else if (idle & bgp_pisClearing)
+    name = "Clearing" ;
+  else if (idle & bgp_pisReset)
+    return map_direct(bgp_peer_status_map, bgp_pResetting) ;
+  else if (idle & bgp_pisConfiguring)
+    name = "Configuring" ;
+  else if (idle == bgp_pisRunnable)
+    return map_direct(bgp_peer_status_map, bgp_pDown) ;
+  else
+    return map_name_str_val("??0x%x??", idle) ;
+
+  return map_name_str(name) ;
+} ;
 
 /*------------------------------------------------------------------------------
  * BGP message type names.
@@ -336,7 +378,7 @@ const char* const bgp_attr_name_map_body[] =
   [BGP_ATT_NEXT_HOP]         = "NEXT_HOP",
   [BGP_ATT_MED]              = "MULTI_EXIT_DISC",
   [BGP_ATT_LOCAL_PREF]       = "LOCAL_PREF",
-  [BGP_ATT_ATOMIC_AGGREGATE] = "ATOMIC_AGGREGATE",
+  [BGP_ATT_A_AGGREGATE]      = "ATOMIC_AGGREGATE",
   [BGP_ATT_AGGREGATOR]       = "AGGREGATOR",
   [BGP_ATT_COMMUNITIES]      = "COMMUNITY",
   [BGP_ATT_ORIGINATOR_ID]    = "ORIGINATOR_ID",
@@ -404,4 +446,60 @@ const char* const bgp_capcode_name_map_body[] =
 const map_direct_t bgp_capcode_name_map =
       map_direct_s(bgp_capcode_name_map_body, "unknown Capability(%u)") ;
 
+/*------------------------------------------------------------------------------
+ * BGP Peer Down Causes mapped to strings
+ */
+const char* const bgp_peer_down_map_body[] =
+{
+  [PEER_DOWN_NULL]                 = "",
+
+  [PEER_DOWN_UNSPECIFIED]          = "Unspecified reason",
+
+  [PEER_DOWN_CONFIG_CHANGE]        = "Unspecified config change",
+
+  [PEER_DOWN_RID_CHANGE]           = "Router ID changed",
+  [PEER_DOWN_REMOTE_AS_CHANGE]     = "Remote AS changed",
+  [PEER_DOWN_LOCAL_AS_CHANGE]      = "Local AS change",
+  [PEER_DOWN_CLID_CHANGE]          = "Cluster ID changed",
+  [PEER_DOWN_CONFED_ID_CHANGE]     = "Confederation identifier changed",
+  [PEER_DOWN_CONFED_PEER_CHANGE]   = "Confederation peer changed",
+  [PEER_DOWN_RR_CLIENT_CHANGE]     = "RR client config change",
+  [PEER_DOWN_RS_CLIENT_CHANGE]     = "RS client config change",
+  [PEER_DOWN_UPDATE_SOURCE_CHANGE] = "Update source change",
+  [PEER_DOWN_AF_ACTIVATE]          = "Address family activated",
+  [PEER_DOWN_GROUP_BIND]           = "Peer-group add member",
+  [PEER_DOWN_GROUP_UNBIND]         = "Peer-group delete member",
+  [PEER_DOWN_DONT_CAPABILITY]      = "dont-capability-negotiate changed",
+  [PEER_DOWN_OVERRIDE_CAPABILITY]  = "override-capability changed",
+  [PEER_DOWN_STRICT_CAP_MATCH]     = "strict-capability-match changed",
+  [PEER_DOWN_CAPABILITY_CHANGE]    = "Capability changed",
+  [PEER_DOWN_PASSIVE_CHANGE]       = "Passive config change",
+  [PEER_DOWN_MULTIHOP_CHANGE]      = "Multihop config change",
+  [PEER_DOWN_GTSM_CHANGE]          = "GTSM config change",
+  [PEER_DOWN_AF_DEACTIVATE]        = "Address family deactivated",
+  [PEER_DOWN_PASSWORD_CHANGE]      = "MD5 Password changed",
+  [PEER_DOWN_ALLOWAS_IN_CHANGE]    = "Allow AS in changed",
+
+  [PEER_DOWN_USER_SHUTDOWN]        = "Admin. shutdown",
+  [PEER_DOWN_USER_RESET]           = "User reset",
+  [PEER_DOWN_NEIGHBOR_DELETE]      = "Neighbor deleted",
+
+  [PEER_DOWN_INTERFACE_DOWN]       = "Interface down",
+
+  [PEER_DOWN_MAX_PREFIX]           = "Max Prefix Limit exceeded",
+
+  [PEER_DOWN_HEADER_ERROR]         = "Error in message header",
+  [PEER_DOWN_OPEN_ERROR]           = "Error in BGP OPEN message",
+  [PEER_DOWN_UPDATE_ERROR]         = "Error in BGP UPDATE message",
+  [PEER_DOWN_HOLD_TIMER]           = "HoldTimer expired",
+  [PEER_DOWN_FSM_ERROR]            = "Error in FSM sequence",
+  [PEER_DOWN_DYN_CAP_ERROR]        = "Error in Dynamic Capability",
+
+  [PEER_DOWN_NOTIFY_RECEIVED]      = "Notification received",
+  [PEER_DOWN_NSF_CLOSE_SESSION]    = "NSF peer closed the session",
+  [PEER_DOWN_CLOSE_SESSION]        = "Peer closed the session",
+} ;
+
+const map_direct_t bgp_peer_down_map =
+      map_direct_s(bgp_peer_down_map_body, "unknown(%u)") ;
 

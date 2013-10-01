@@ -118,9 +118,9 @@ extern heap
 heap_init_new(heap h, uint size, heap_cmp* cmp, heap_backlink* bl)
 {
   if (h == NULL)
-    h = XCALLOC(MTYPE_HEAP, sizeof(struct heap)) ;
+    h = XCALLOC(MTYPE_HEAP, sizeof(heap_t)) ;
   else
-    memset(h, 0, sizeof(struct heap)) ;
+    memset(h, 0, sizeof(heap_t)) ;
 
   return heap_setup(h, true /* new vector */, size, cmp, bl) ;
 } ;

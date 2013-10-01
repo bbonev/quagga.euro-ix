@@ -30,7 +30,6 @@
 #include "lib/qpselect.h"
 
 #include "lib/sockunion.h"
-#include "lib/stream.h"
 
 #include "bgpd/bgp_common.h"
 #include "bgpd/bgp_fsm.h"
@@ -77,9 +76,11 @@ struct bgp_cops
    */
   bgp_conn_state_t  conn_state ;
 
+#if 0
   /* Whether to allow disallow inbound and/or outbound connections.
    */
   bgp_conn_let_t    conn_let ;
+#endif
 
   /* Flag so can suppress sending NOTIFICATION messages without first
    * sending an OPEN -- just in case, but default is to not send !
@@ -88,6 +89,7 @@ struct bgp_cops
 
   /* Timer intervals for pre-OPEN timers.
    */
+  uint       idle_hold_max_secs ;
   uint       connect_retry_secs ;
   uint       accept_retry_secs ;
   uint       open_hold_secs ;
@@ -187,7 +189,7 @@ struct bgp_connection
   bgp_fsm_meta_t    meta_events ;
 
   bgp_fsm_event_t   admin_event ;
-  bgp_notify        admin_notif ;
+  bgp_note          admin_note ;
 
   bgp_fsm_event_t   socket_event ;
   int               socket_err ;
@@ -198,7 +200,7 @@ struct bgp_connection
   bgp_fsm_state_t   fsm_state ;         /* FSM state of connection      */
   qfile_state_t     io_state ;          /* I/O state of connection      */
 
-  bgp_idle_state_t  idling_state ;      /* in fsIdle and fsStop         */
+  bgp_fsm_idle_state_t idling_state ;   /* in fsIdle and fsStop         */
   qtime_t           idle_time_pending ; /* after Notification-Hold-Time */
 
   bool              holdtimer_suppressed ;      /* fsOpenConfirm and
@@ -243,12 +245,12 @@ struct bgp_connection
    *     So... if suppressing capabilities doesn't do the job, will keep
    *     trying, with and without capabilities, until get something.
    *
-   *   * idle_hold_timer_interval is set whne the session is enabled.
+   *   * idle_hold_time is set when the session is enabled.
    *
    *     Each time passes through sIdle after a failure, increases this.
    */
   bool              cap_suppress ;
-  qtime_t           idle_hold_timer_interval ;
+  qtime_t           idle_hold_time ;
 
   /* Timer objects.
    */
@@ -413,15 +415,13 @@ struct bgp_acceptor
 
   int           sock_fd_pending ;
   bgp_accept_pending_t  pending ;
-  bgp_notify    notification ;
+  bgp_note      note ;
 
-  bgp_cops cops ;
+  bgp_cops      cops ;
+  sockunion     su_password ;
 
   qfile          qf ;
   bgp_msg_reader reader ;
-
-  bool          open_received ;
-  bool          timer_running ;
 
   qtimer        timer ;
 } ;
@@ -433,14 +433,14 @@ extern void bgp_connections_init(void) ;
 extern void bgp_connections_stop(void) ;
 
 extern bgp_connection bgp_connection_init_new(bgp_connection connection,
-                            bgp_session session, bgp_conn_ord_t ordinal) ;
+                                  bgp_session session, bgp_conn_ord_t ordinal) ;
 extern void bgp_connection_free(bgp_connection connection) ;
-extern bgp_cops bgp_connection_prepare(
-                                                    bgp_connection connection) ;
+extern bgp_cops bgp_connection_prepare(bgp_connection connection) ;
 extern qfile bgp_connection_connecting(bgp_connection connection, int sock_fd) ;
+
 extern bool bgp_connection_io_start(bgp_connection connection) ;
 
-extern bgp_notify bgp_connection_establish(bgp_connection connection) ;
+extern bgp_note bgp_connection_establish(bgp_connection connection) ;
 extern bgp_connection bgp_connection_get_sibling(bgp_connection connection) ;
 extern void bgp_connection_down(bgp_connection connection) ;
 extern void bgp_connection_shut_rd(bgp_connection connection) ;
@@ -450,12 +450,9 @@ extern void bgp_connection_shut_wr(bgp_connection connection) ;
 extern int bgp_connection_queue_process(void) ;
 
 
-extern bgp_acceptor bgp_acceptor_init_new(bgp_acceptor acceptor,
-                                                          bgp_session session) ;
-extern void bgp_acceptor_set_options(bgp_acceptor acceptor,
-                                                        bgp_cops_c new_config) ;
-extern void bgp_acceptor_unset(bgp_acceptor acceptor) ;
+extern void bgp_acceptor_set_cops(bgp_session session, bgp_cops_c new_config) ;
 extern bgp_acceptor bgp_acceptor_free(bgp_acceptor acceptor) ;
+extern void bgp_acceptor_cops_reset(bgp_acceptor acceptor) ;
 extern void bgp_acceptor_accept(bgp_acceptor acceptor, int sock_fd, bool ok,
                                                           sockunion_c sock_su) ;
 
@@ -464,6 +461,7 @@ extern void bgp_acceptor_squelch(bgp_acceptor acceptor) ;
 
 extern bgp_cops bgp_cops_init_new(bgp_cops cops) ;
 extern bgp_cops bgp_cops_copy(bgp_cops dst, bgp_cops_c src) ;
+extern bgp_cops bgp_cops_dup(bgp_cops_c src) ;
 extern bgp_cops bgp_cops_reset(bgp_cops cops) ;
 extern bgp_cops bgp_cops_free(bgp_cops cops) ;
 

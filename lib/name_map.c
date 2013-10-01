@@ -36,17 +36,42 @@ map_direct(const map_direct_t map, int val)
   const char* name ;
   int         index ;
 
-  name_str_t QFB_QFS(st, qfs) ;
-
   name = NULL ;
   if ((val >= map->min_val) && ((index = val - map->min_val) < map->count))
     name = map->body[index] ;
 
-  if      (name != NULL)
-    qfs_put_str(qfs, name) ;
-  else if (map->deflt != NULL)
-    qfs_printf(qfs, map->deflt, val) ;
+  if ((name == NULL) && (map->deflt != NULL))
+    return map_name_str_val(map->deflt, val) ;
 
+  return map_name_str(name) ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Make a name_str from the given string -- NULL gives an empty string
+ */
+extern name_str_t
+map_name_str(const char* name)
+{
+  name_str_t QFB_QFS(st, qfs) ;
+
+  qfs_put_str(qfs, name) ;
+  qfs_term(qfs) ;
+
+  return st ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Make a name_str from the given string
+ */
+extern name_str_t
+map_name_str_val(const char* name, int val)
+{
+  name_str_t QFB_QFS(st, qfs) ;
+
+  if (name == NULL)
+    name = "%d" ;
+
+  qfs_printf(qfs, name, val) ;
   qfs_term(qfs) ;
 
   return st ;

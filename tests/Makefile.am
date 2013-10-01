@@ -4,9 +4,9 @@ DEFS = @DEFS@ $(LOCAL_OPTS) -DSYSCONFDIR=\"$(sysconfdir)/\"
 AM_CFLAGS = $(PICFLAGS)
 AM_LDFLAGS = $(PILDFLAGS)
 
-noinst_PROGRAMS = testsig testbuffer testmemory heavy heavythread \
-                  testprivs teststream \
-                  testchecksum testvector testheap \
+noinst_PROGRAMS = testsig testbuffer testmemory heavy heavywq heavythread \
+                  testprivs teststream testbgpcap \
+                  testchecksum testsvector testvector testheap \
                   testlistutil testqpath testqlump testavl testqfs testprefix \
                   testpqueue testpfifo
 
@@ -29,6 +29,7 @@ testqlump_SOURCES        = test-qlump.c
 testavl_SOURCES          = test-avl.c
 testqfs_SOURCES          = test-qfs.c
 testprefix_SOURCES       = test-prefix.c
+testsvector_SOURCES      = test-svector.c
 
 ##testbgpmpattr_SOURCES    = bgp_mp_attr_test.c
 ##testbgpunk_SOURCES       = test_bgp_unknown.c
@@ -59,6 +60,7 @@ testqlump_LDADD        = ../lib/libzebra.la @LIBCAP@
 testavl_LDADD          = ../lib/libzebra.la @LIBCAP@
 testqfs_LDADD          = ../lib/libzebra.la @LIBCAP@
 testprefix_LDADD       = ../lib/libzebra.la @LIBCAP@
+testsvector_LDADD      = ../lib/libzebra.la @LIBCAP@
 
 ##testbgpmpattr_LDADD    = ../lib/libzebra.la @LIBCAP@ ../bgpd/libbgp.a  -lm
 ##testbgpunk_LDADD       = ../lib/libzebra.la @LIBCAP@ ../bgpd/libbgp.a  -lm

@@ -25,6 +25,9 @@
 /* "zconfig.h" is included at the start of this "misc.h", and at the start
  * of "zebra.h".  This ensures that we get <features.h> defined early, so
  * that all other #includes get the same set of features.
+ *
+ * NB: either misc.h or zebra.h SHOULD be the FIRST #include in all .c and in
+ *     any .h that require them.
  */
 #include "zconfig.h"
 
@@ -180,9 +183,13 @@ enum { qdebug = QDEBUG } ;
  */
 #define ROUND_UP_UP(v, n) ((((v) / (n)) + 1) * (n))
 
-/* Bit number to bit mask
+/* Bit number to (single) bit mask
  */
 #define BIT(b)  (1 << (b))
+
+/* Mask for given number of LS bits
+ */
+#define MASK(n) (((BIT((n) - 1) - 1) << 1) | 1)
 
 /* The LS bit of a given value
  */
@@ -296,6 +303,14 @@ typedef const uint8_t*  ptr_c ;
 typedef uintptr_t uptr_t ;
 
 typedef const void* cvp ;
+typedef void* vp ;
+
+/* The <stdlib.h> sort comparison function takes two const void* pointers.
+ *
+ * For heaps and vectors and such we are sorting pointers to the actual
+ * values, so we commonly need this:
+ */
+typedef int sort_cmp(const cvp* a, const cvp* b) ;
 
 /*------------------------------------------------------------------------------
  * Various integer stuff

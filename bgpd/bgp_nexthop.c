@@ -24,7 +24,6 @@ Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
 #include "thread.h"
 #include "prefix.h"
 #include "zclient.h"
-#include "stream.h"
 #include "network.h"
 #include "log.h"
 #include "memory.h"
@@ -40,6 +39,29 @@ Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
 #include "bgpd/bgp_damp.h"
 #include "zebra/rib.h"
 #include "zebra/zserv.h"        /* For ZEBRA_SERV_PATH. */
+
+
+/*==============================================================================
+ * PRO TEM !!!!!!!!!!!
+ */
+extern next_hop_state_t
+bgp_next_hop_in_valid(attr_set_c attr)
+{
+  return nhs_valid ;            // TODO !!!
+}
+
+
+extern next_hop_state_t
+bgp_next_hop_in_reachable(attr_set_c attr)
+{
+  return nhs_reachable ;        // TODO !!!
+}
+
+
+/*==============================================================================
+ *
+ */
+
 
 struct bgp_nexthop_cache *zlookup_query (struct in_addr);
 #ifdef HAVE_IPV6
@@ -241,7 +263,7 @@ bgp_nexthop_lookup_ipv6 (bgp_peer peer, route_info ri, bool* changed,
 
   /* Only check IPv6 global address only nexthop.
    */
-  attr = ri->attr;
+  attr = ri->current.attr;
 
   if ((attr->next_hop.type != nh_ipv6_1)
                    || IN6_IS_ADDR_LINKLOCAL (&attr->next_hop.ip.v6[in6_global]))
@@ -336,7 +358,7 @@ bgp_nexthop_lookup (qAFI_t q_afi, bgp_peer peer, route_info ri,
   if (zlookup->sock < 0)
     return true ;
 
-  addr = ri->attr->next_hop.ip.in_addr ;
+  addr = ri->current.attr->next_hop.ip.in_addr ;
 
   memset (&p, 0, sizeof (struct prefix));
   p.family = AF_INET;
@@ -448,7 +470,7 @@ bgp_scan (qAFI_t q_afi)
 
       for (q_safi = qSAFI_first ; q_safi <= qSAFI_last ; q_safi++)
         {
-          peer_rib prib ;
+          bgp_prib prib ;
 
           qafx = qafx_from_q(q_afi, q_safi) ;
 
@@ -458,12 +480,12 @@ bgp_scan (qAFI_t q_afi)
           prib = peer_family_prib(peer, qafx) ;
 
           if ((prib != NULL) && (prib->af_session_up))
-            bgp_maximum_prefix_overflow (prib, true /* always */) ;
+            bgp_peer_pmax_check(prib) ;
         } ;
     } ;
 
   qafx = qafx_from_q(q_afi, qSAFI_Unicast) ;
-  rib = bgp->rib[qafx][rib_main] ;
+  rib = bgp->rib[qafx] ;
 
   ihash_walk_start((rib != NULL) ? rib->nodes_table : NULL, walk) ;
 
@@ -471,16 +493,16 @@ bgp_scan (qAFI_t q_afi)
     {
       route_info next ;
 
-      next = ddl_head(rn->routes) ;
+      next = svs_head(rn->aroutes[lc_view_id].base, rn->avail) ;
 
       while (next != NULL)
         {
           route_info ri ;
 
           ri = next ;
-          next = ddl_next(ri, route_list) ;
+          next = svs_next(ri->iroutes[lc_view_id].list, rn->avail) ;
 
-          if (ri->route_type ==
+          if (ri->current.route_type ==
                               bgp_route_type(ZEBRA_ROUTE_BGP, BGP_ROUTE_NORMAL))
             {
               bgp_peer peer ;
@@ -492,21 +514,22 @@ bgp_scan (qAFI_t q_afi)
               peer = ri->prib->peer ;
 
               if ((peer->sort == BGP_PEER_EBGP) && (peer->cops.ttl == 1))
-                valid = bgp_nexthop_onlink (q_afi, &ri->attr->next_hop);
+                valid = bgp_nexthop_onlink (q_afi,
+                                          &ri->iroutes[lc_view_id].attr->next_hop);
               else
                 valid = bgp_nexthop_lookup (q_afi, peer, ri,
                                                       &changed, &metricchanged);
 
-              current = (ri->flags & BGP_INFO_VALID) != 0 ;
+              current = (ri->current.flags & BGP_INFO_VALID) != 0 ;
 
               if (changed)
-                SET_FLAG (ri->flags, BGP_INFO_IGP_CHANGED);
+                SET_FLAG (ri->current.flags, BGP_INFO_IGP_CHANGED);
               else
-                UNSET_FLAG (ri->flags, BGP_INFO_IGP_CHANGED);
+                UNSET_FLAG (ri->current.flags, BGP_INFO_IGP_CHANGED);
 
-#if 0
               if (valid != current)
                 {
+#if 0
                   if (CHECK_FLAG (ri->flags, BGP_INFO_VALID))
                     {
                       bgp_aggregate_decrement (bgp, &rn->p, ri, qafx) ;
@@ -517,8 +540,10 @@ bgp_scan (qAFI_t q_afi)
                       bgp_info_set_flag (rn, ri, BGP_INFO_VALID);
                       bgp_aggregate_increment (bgp, &rn->p, ri, qafx);
                     }
+#endif
                 }
 
+#if 0
               if (CHECK_FLAG (bgp->af_flags[qafx], BGP_CONFIG_DAMPING)
                   && ri->extra && ri->extra->damp_info )
                 {
@@ -529,7 +554,7 @@ bgp_scan (qAFI_t q_afi)
             }
         } ;
 
-      bgp_process_dispatch (bgp, rn);
+       bgp_rib_process_schedule(rn) ;
     }
 
   /* Flash old cache.
@@ -1048,7 +1073,7 @@ bgp_import_check (struct prefix *p, u_int32_t *igpmetric,
 static int
 bgp_import (struct thread *t)
 {
-  struct bgp *bgp;
+  bgp_inst bgp;
   struct listnode *node, *nnode;
 
   bgp_import_thread =

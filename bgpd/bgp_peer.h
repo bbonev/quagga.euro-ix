@@ -24,7 +24,7 @@
 
 #include "bgpd/bgp_common.h"
 #include "bgpd/bgpd.h"
-#include "bgpd/bgp_connection.h"
+#include "bgpd/bgp_session.h"
 #include "bgpd/bgp_rib.h"
 #include "bgpd/bgp_peer_index.h"
 #include "bgpd/bgp_notification.h"
@@ -84,9 +84,10 @@ enum PEER_DOWN
   PEER_DOWN_CAPABILITY_CHANGE,     /* 'neighbor capability'                */
   PEER_DOWN_PASSIVE_CHANGE,        /* 'neighbor passive'                   */
   PEER_DOWN_MULTIHOP_CHANGE,       /* 'neighbor multihop'                  */
+  PEER_DOWN_GTSM_CHANGE,           /* 'neighbor ttl-security hops'         */
   PEER_DOWN_AF_DEACTIVATE,         /* 'no neighbor activate'               */
-  PEER_DOWN_PASSWORD_CHANGE,       /* password changed                     */
-  PEER_DOWN_ALLOWAS_IN_CHANGE,     /* allowas-in change                    */
+  PEER_DOWN_PASSWORD_CHANGE,       /* 'neighbor password'                  */
+  PEER_DOWN_ALLOWAS_IN_CHANGE,     /* 'neighbor allowas-in'                */
 
   /* Other actions that cause a session to be reset
    */
@@ -119,31 +120,26 @@ enum PEER_DOWN
   PEER_DOWN_last        = PEER_DOWN_count - 1,
 } ;
 
-typedef enum peer_flag peer_flag_t ;
-enum peer_flag
-{
-//  PEER_FLAG_SHUTDOWN                 = BIT( 0),
-  PEER_FLAG_PASSIVE,
-  PEER_FLAG_DONT_CAPABILITY,
-  PEER_FLAG_OVERRIDE_CAPABILITY,
-  PEER_FLAG_STRICT_CAP_MATCH,
-  PEER_FLAG_DYNAMIC_CAPABILITY,
-  PEER_FLAG_DISABLE_CONNECTED_CHECK,
-  PEER_FLAG_LOCAL_AS_NO_PREPEND,
-};
-
 enum peer_status_bits
 {
   /* These are states of a peer.
    */
+#if 0
   PEER_STATUS_PREFIX_OVERFLOW   = BIT(0), /* prefix-overflow             */
+#endif
 
   PEER_STATUS_NSF_MODE          = BIT(1), /* NSF aware peer              */
   PEER_STATUS_NSF_WAIT          = BIT(2), /* wait comeback peer          */
 } ;
 typedef uint16_t peer_status_bits_t ;   /* NB: <= 16 flags      */
 
-enum peer_config_bits
+/*------------------------------------------------------------------------------
+ * Each peer has a configuration.
+ */
+typedef struct bgp_peer_config  bgp_peer_config_t ;
+
+typedef enum peer_config_set peer_config_set_t ;
+enum peer_config_set
 {
   /* These record that certain configuration settings have been made.
    */
@@ -161,8 +157,63 @@ enum peer_config_bits
                                 | PEER_CONFIG_MRAI
                                 | PEER_CONFIG_CONNECT_RETRY,
 } ;
-typedef uint16_t peer_config_bits_t ;   /* NB: <= 16 flags      */
 
+/* The peer_flag_t are configuration flags for the entire peer.
+ */
+typedef enum peer_flag peer_flag_t ;
+enum peer_flag
+{
+  PEER_FLAG_SHUTDOWN                 = BIT( 0),
+  PEER_FLAG_PASSIVE                  = BIT( 1),
+  PEER_FLAG_ACTIVE                   = BIT( 2),
+  PEER_FLAG_DONT_CAPABILITY          = BIT( 3),
+  PEER_FLAG_OVERRIDE_CAPABILITY      = BIT( 4),
+  PEER_FLAG_STRICT_CAP_MATCH         = BIT( 5),
+  PEER_FLAG_DYNAMIC_CAPABILITY       = BIT( 6),
+  PEER_FLAG_DYNAMIC_CAPABILITY_DEP   = BIT( 7),
+  PEER_FLAG_DISABLE_CONNECTED_CHECK  = BIT( 8),
+  PEER_FLAG_LOCAL_AS_NO_PREPEND      = BIT( 9),
+
+  /* When binding a peer to a group, the peer loses all its previous settings
+   * for these flags.
+   *
+   * PEER_FLAG_GROUP_SET: when a peer a member of a group, these bits:
+   *
+   *   * will be set in member if are set in group -- group is "master"
+   *
+   *   * may be set in member if they are clear in group.
+   *
+   * So... if the group is detached from the peer, all flags are cleared,
+   * except for the PEER_FLAG_GROUP_SET *where* the group is clear.
+   *
+   * PEER_FLAG_GROUP_CLEAR: when a peer a member of a group, these bits:
+   *
+   *   * will be clear in member if they are clear in group -- group is master
+   *
+   *   * may be clear in member if they are set in group.
+   *
+   * PEER_FLAG_GROUP_CLEAR has no effect when group is detached from peer.
+   *
+   * Bits which are in both PEER_FLAG_GROUP_SET and PEER_FLAG_GROUP_CLEAR must
+   * follow the group setting -- they may not be changed in a group member.
+   */
+  PEER_FLAG_GROUP_SET   = PEER_FLAG_SHUTDOWN
+                        | PEER_FLAG_PASSIVE
+                        | PEER_FLAG_ACTIVE
+                        | PEER_FLAG_DONT_CAPABILITY
+                        | PEER_FLAG_OVERRIDE_CAPABILITY
+                        | PEER_FLAG_STRICT_CAP_MATCH
+                        | PEER_FLAG_DYNAMIC_CAPABILITY
+                        | PEER_FLAG_DYNAMIC_CAPABILITY_DEP
+                        | PEER_FLAG_DISABLE_CONNECTED_CHECK
+                        | PEER_FLAG_LOCAL_AS_NO_PREPEND,
+
+  PEER_FLAG_GROUP_CLEAR = 0,
+} ;
+
+
+
+typedef enum peer_af_flag_bits peer_af_flag_bits_t ;
 enum peer_af_flag_bits
 {
   /* These are configuration flags, for per afi/safi configuration stuff.
@@ -181,239 +232,42 @@ enum peer_af_flag_bits
   PEER_AFF_ALLOWAS_IN               = BIT(11),
   PEER_AFF_NEXTHOP_LOCAL_UNCHANGED  = BIT(12),
 } ;
-typedef uint32_t peer_af_flag_bits_t ;  /* NB: <= 32 flags      */
 
-enum peer_af_status_bits
+
+
+struct bgp_peer_config
 {
-  /* These are states of a given afi/safi, mostly while pEstablished.
-   */
-  PEER_AFS_DISABLED             = BIT( 0), /* configured, but disabled  */
-  PEER_AFS_RUNNING              = BIT( 1), /* session is up             */
-  PEER_AFS_DEFAULT_ORIGINATE    = BIT( 2), /* default-originate peer    */
-  PEER_AFS_EOR_SENT             = BIT( 3), /* end-of-rib send to peer   */
-  PEER_AFS_EOR_RECEIVED         = BIT( 4), /* end-of-rib received from peer */
-  PEER_AFS_PREFIX_THRESHOLD     = BIT( 5), /* exceed prefix-threshold   */
-  PEER_AFS_PREFIX_LIMIT         = BIT( 6), /* exceed prefix-limit       */
-
-  /* These are afi/safi specific peer capabilities
-   */
-  PEER_AFS_GR_CAN_PRESERVE      = BIT( 7), /* GR afi/safi received       */
-  PEER_AFS_GR_HAS_PRESERVED     = BIT( 8), /* GR afi/safi F-bit received */
-
-  /* For Prefix ORF:
+  /* The PEER_FLAG_XXX and was_shutdown latch.
    *
-   *   _CAN_SEND => we expressed the wish, and we have received the go-ahead
-   *   _SENT     => we have sent the Prefix ORF.
+   * See bgp_peer_flag_modify() for the interaction between the flags, and
+   * the interaction between group and group members.
    *
-   *   _EXPECT   => we expressed willing-ness, and received the wish to send
-   *   _WAIT     => waiting to receive the Prefix ORF (just established)
+   * The "was_shutdown" latch is set if PEER_FLAG_SHUTDOWN has been set at some
+   * time since the latch was last cleared.
    */
-  PEER_AFS_ORF_PFX_CAN_SEND     = BIT( 9), /* Prefix ORF Send Mode      */
-  PEER_AFS_ORF_PFX_SENT         = BIT(10), /* prefix-list send peer     */
+  peer_flag_t        flags ;
 
-  PEER_AFS_ORF_PFX_MAY_RECV     = BIT(11), /* Prefix ORF Receive Mode   */
-  PEER_AFS_ORF_PFX_WAIT         = BIT(12), /* wait refresh received peer */
+  bool               was_shutdown ;     /* latch        */
+
+
+
+  peer_config_set_t  set;
+
+  uint16_t      weight ;        /* valid at all times                   */
+
+  uint          config_mrai ;   /* default unless PEER_CONFIG_MRAI      */
+
+  /* The PEER_AFF_XXX
+   *
+   */
+  peer_af_flag_bits_t   af_flags[qafx_count] ;
 } ;
-typedef uint16_t peer_af_status_bits_t ;   /* NB: <= 16 flags           */
+
 
 /*------------------------------------------------------------------------------
- * Each peer has a peer rib for each AFI/SAFI it is configured for.
  *
- * This refers to the bgp instance's RIB, and contains the adj_in and adj_out
- * for the peer.
  *
- * The peer_rib is pointed to by the bgp_peer structure.  When the peer is
- * active for the AFI/SAFI, the peer_rib is on the bgp_rib's peers list.
  */
-typedef struct peer_rib peer_rib_t ;
-
-typedef enum bgp_route_map_types bgp_route_map_types_t ;
-enum bgp_route_map_types
-{
-  RMAP_IN       = 0,
-  RMAP_OUT      = 1,
-  RMAP_IMPORT   = 2,
-  RMAP_EXPORT   = 3,
-  RMAP_RS_IN    = 4,
-
-  RMAP_COUNT    = 5,
-} ;
-
-typedef struct prefix_max  prefix_max_t ;
-typedef struct prefix_max* prefix_max ;
-
-struct prefix_max
-{
-  bool        set ;
-  bool        warning ;
-
-  uint        limit ;
-  uint        threshold ;
-  uint16_t    thresh_pc ;
-  uint16_t    restart ;
-} ;
-
-struct peer_rib
-{
-  bgp_peer    peer ;                    /* parent peer                  */
-
-  /* Each peer_rib is associated with the respective bgp->rib, for the
-   * AFI/SAFI and rib_main or rib_rs
-   */
-  bgp_rib     rib ;
-
-  /* When a peer_rib is enabled (ie the exchange of routes is enabled) the
-   * peer_rib is associated with a bgp_rib_walker.
-   *
-   * The walker has two queues, one for peer_ribs which are in "update" state
-   * and one for peer_ribs in "initial" state -- where "initial" state means
-   * that the peer has just established, or is being route_refreshed, so is
-   * being sent the initial state of the rib.
-   *
-   * When the peer_rib is in "update" state, it is attached to the bgp_rib's
-   * walker, on its "update" list.
-   *
-   * When the peer_rib is in "initial" state, it may be attached to the
-   * bgp_rib's walker, on its "initial" list, or it may be attached to some
-   * other walker, on its "initial" list.
-   *
-   * The update_state signals which state the peer_rib is in.
-   */
-  bgp_rib_walker  walker ;
-
-  struct dl_list_pair(peer_rib) walk_list ;
-
-  /* General stuff for the peer re this qafx.
-   */
-  qafx_t      qafx ;
-  rib_type_t  rib_type ;                /* Main or RS                   */
-
-  prib_state_t update_state ;           /* initial or update            */
-
-  bool        is_mpls ;
-
-  bool        refresh ;
-
-  bool        eor_required ;
-
-  uint        lock;
-
-  /* Per AF configuration flags and status bits.
-   */
-  peer_af_flag_bits_t   af_flags ;
-  peer_af_status_bits_t af_status ;
-
-  /* Where a peer is a member of a peer-group in a given AFI/SAFI, the
-   * relevant bit is set in the peer->group_membership.  The af_group_member
-   * is a copy of that bit.
-   *
-   * Where a peer is pEstablished (which means the session is sEstablished)
-   * the af_session_up flag is set if the AFI/SAFI is now up.  The
-   * af_session_up flag is false at all other times.
-   *
-   * NB: for a peer-group configuration af_group_member and af_session_up are
-   *     *always* false.
-   */
-  bool        af_group_member ;
-  bool        af_session_up ;
-
-  /* allowas-in.
-   */
-  uint8_t     allowas_in ;
-
-  /* NSF mode (graceful restart)
-   */
-  bool        nsf ;
-
-  /* Prefix count and sent prefix count.
-   */
-  uint        pcount ;
-  uint        scount ;
-
-  /* Filters and route-maps.
-    */
-  access_list dlist[FILTER_MAX] ;       /* distribute-list.     */
-
-  prefix_list plist[FILTER_MAX] ;       /* prefix-list.         */
-
-  as_list     flist[FILTER_MAX] ;       /* filter-list          */
-
-  route_map   rmap[RMAP_COUNT] ;        /* route-map            */
-
-  route_map   us_rmap ;                 /* Unsuppress-map.      */
-
-  route_map   default_rmap ;
-
-  /* ORF Prefix-list
-   */
-  prefix_list orf_plist ;
-
-  /* Max prefix count.
-   */
-  prefix_max_t pmax ;
-
-  /* The peer's adj_in stuff for this qafx
-   *
-   * The adj_in are ihash by prefix_id_t, giving a route_info object for each
-   * route received from the peer.  Those route_info objects are "owned" by
-   * the peer, but are also referred to by the bgp_rib_node for the prefix
-   * (where the route is not filtered out).
-   *
-   * Note that Main Peers and RS Clients contribute routes in both the Main
-   * and the RS RIBs.  But only routes from the Main RIB are announced to Main
-   * Peers, and only routes from the RS RIB are announced to RS Clients.
-   *
-   * If there are no RS clients, there is no RS RIB and the RS adj_in is empty.
-   *
-   * The adj_in entries are "route_info" objects.  Note that there are small
-   * differences in what is stored in the route_info for the Main RIB and
-   * what is stored in the route_info for the RS RIB.  In particular:
-   *
-   *
-   */
-  ihash_table     adj_in[rib_type_count] ;   /* route_info                   */
-
-  struct dl_base_pair(route_info) stale_routes ;
-
-  /* The peer's adj_out stuff for this qafx
-   *
-   * A Main Peer receives routes from the Main RIB.
-   * An RS Client receives routes from the RS RIB.
-   */
-  pfifo_period_t  batch_delay ;
-  pfifo_period_t  batch_delay_extra ;   /* maximum extra delay          */
-  pfifo_period_t  announce_delay ;
-  pfifo_period_t  mrai_delay ;          /* actual MRAI                  */
-  pfifo_period_t  mrai_delay_left ;     /* actual MRAI - batch_delay    */
-
-  qtime_mono_t    period_origin ;
-  pfifo_period_t  now ;
-
-  pfifo_period_t  t0 ;
-  pfifo_period_t  tx ;
-
-  ihash_table     adj_out ;             /* adj_out_ptr_t                */
-
-  pfifo           fifo_batch ;          /* rf_act_batch         */
-  pfifo           fifo_mrai ;           /* rf_act_mrai          */
-  pfifo           announce_queue ;      /* rf_act_announce      */
-  struct dl_base_pair(route_flux)
-                  withdraw_queue ;      /* rf_act_withdraw      */
-
-  vhash_table     attr_flux_hash ;
-
-  attr_flux       eor ;                 /* End-of-RIB signal    */
-
-  /* Scheduling the running of the dispatch "process", which is timer driven.
-   *
-   * Dispatches from the fifo_batch and fifo_mrai
-   *
-   */
-  pfifo_period_t  dispatch_delay ;
-  pfifo_period_t  dispatch_time ;
-
-  qtimer          dispatch_qtr ;
-} ;
 
 /*------------------------------------------------------------------------------
  * The structure for each peer.
@@ -422,17 +276,18 @@ struct peer_rib
  * hold the group configuration, and each bgp instance uses one for static
  * routes etc.
  */
+typedef enum peer_type peer_type_t ;
 enum peer_type
 {
   PEER_TYPE_REAL         = 0,           /* not group conf or peer_self */
   PEER_TYPE_GROUP_CONF   = 1,           /* peer-group conf             */
   PEER_TYPE_SELF         = 2,           /* holder of statics etc       */
 } ;
-typedef uint8_t peer_type_t ;           /* NB: <= 256 types (!) */
 
-typedef struct peer bgp_peer_t ;
+typedef struct bgp_peer bgp_peer_t ;
+typedef const bgp_peer_t* bgp_peer_c ;
 
-struct peer
+struct bgp_peer
 {
   /* Parent bgp instance -- all types of peer have a parent.
    */
@@ -458,15 +313,20 @@ struct peer
    *   * PEER_TYPE_SELF    -- one per bgp instance, for static routes etc.
    */
   peer_type_t   type ;
-  qafx_set_t    group_membership ;
+  qafx_set_t    af_member ;
 
-  /* State of the peer
+  /* State and configuration of the peer
    */
   bgp_peer_state_t  state ;
 
-  bool          clearing ;
+  bgp_peer_config_t config ;
 
-  bool          down_pending ;
+  /* The index entry, session and state thereof
+   */
+  bgp_peer_index_entry  peer_ie ;
+  bgp_session           session ;
+
+  bgp_peer_session_state_t session_state ;
 
   /* reference count, primarily to allow bgp_process'ing of route_node's
    * to be done after a struct peer is deleted.
@@ -495,7 +355,8 @@ struct peer
    *
    *     Never a group member, so this is always NULL.
    */
-  peer_group group ;
+  bgp_peer_group group ;
+  struct dl_list_pair(bgp_peer) member_list ;
 
   /* The sort of peer depends on the ASN of the peer, our ASN, CONFED
    * stuff etc.
@@ -509,6 +370,8 @@ struct peer
    */
   bgp_peer_sort_t  sort ;
 
+  bool          down_pending ;
+
   /* Peer information
    *
    * NB: the su_name is IPv4 if the original name was IPv4-Mapped !!  TODO !!!
@@ -516,11 +379,6 @@ struct peer
   sockunion su_name ;           /* Name of the peer is address of same  */
   char*     host ;              /* Printable address of the peer.       */
   char*     desc ;              /* Description of the peer.             */
-
-  bgp_peer_index_entry  peer_ie ;
-  bgp_session  session ;        /* Current session                      */
-
-  bgp_peer_session_state_t session_state ;
 
   time_t uptime;                /* Last Up/Down time                    */
   time_t readtime;              /* Last read time                       */
@@ -533,9 +391,9 @@ struct peer
 
   /* peer reset cause
    */
-  peer_down_t last_reset;
+  peer_down_t   last_reset;
 
-  bgp_notify notification ;
+  bgp_note      note ;
 
   /* Peer address family state and negotiation.
    *
@@ -545,13 +403,6 @@ struct peer
    *     There will be a prib[qafx] for each one.
    *
    *     For a real peer:
-   *
-   *       When the peer is configured for a given qafx:
-   *
-   *         * there is always a rib_main bgp_rib -- for main and RS client
-   *           peers.
-   *
-   *         * if there is at least one RS client, there is a rib_rs bgp_rib.
    *
    *       Unless BGP_FLAG_NO_DEFAULT_IPV4, configuring a peer by:
    *
@@ -568,6 +419,15 @@ struct peer
    *       in the required afi/safi -- or IPv4 Unicast if in no explicit
    *       afi/safi (address-family).
    *
+   *       The "disabled" option:
+   *
+   *         neighbor nnn activate disabled
+   *         neighbor nnn peer-group ggg disabled
+   *
+   *       creates the configuration, but the address family is disabled until:
+   *
+   *         neighbor nnn enable
+   *
    *       NB: in the case of "neighbor nnn peer-group ggg":
    *
    *         * the peer-group must exist and must be configured for the
@@ -578,9 +438,6 @@ struct peer
    *
    *       "no neighbor nnn activate" has the effect of discarding all the
    *       peer's configuration for the afi/safi.
-   *
-   *       See notes on af_enabled for further magic and the effect on any
-   *       session for the peer.
    *
    *     For a peer-group:
    *
@@ -616,22 +473,6 @@ struct peer
    *     This specifies which afi/safi a session should be enabled and started
    *     (or restarted).  This will always be a subset of af_configured.
    *
-   *     A peer may be disabled by:
-   *
-   *       * global "is reading configuration" flag
-   *
-   *       * PEER_FLAG_SHUTDOWN  -- which disables all afi/safi
-   *
-   *         see "neighbor nnn/ggg shutdown" and "no neighbor nnn/ggg shutdown"
-   *
-   *       * PEER_STATUS_PREFIX_OVERFLOW -- which disables all afi/safi
-   *
-   *         which is cleared when the timer expires or is cleared.
-   *
-   *         [Keeps track of exceeding the threshold and the limit on a per
-   *          afi/safi basis... but as soon as exceeds limit on one family,
-   *          brings the entire session down, setting peer level flag.]
-   *
    *     An address family may be disabled by:
    *
    *       * PEER_AFS_DISABLED   -- so can set up an address family initially
@@ -639,12 +480,11 @@ struct peer
    *                                disable an address family, reconfigure and
    *                                then re-enable.
    *
-   *     When a reason for being disabled is changed, af_enabled is
-   *     recalculated, if it changes, then the session (if any) needs to be
-   *     started, restarted or stopped.
+   *     Note that there are many reasons for a peer/session to be "idle",
+   *     see bgp_peer_idle_state_t, so an address family being enabled does
+   *     not mean a session is !
    *
-   * The following are valid for a real peer while it is pEnabled or
-   * pEstablished:
+   * The following are valid for a real peer while it is pEstablished:
    *
    *   * af_running    -- the set of afi/safi for which a session is currently
    *                      running.
@@ -663,7 +503,14 @@ struct peer
 
   /* Peer RIBS -- contain adj_in and adj_out.
    */
-  peer_rib  prib[qafx_count];
+  bgp_prib      prib[qafx_count] ;
+
+  uint          prib_running_count ;
+  bgp_prib      prib_running[qafx_count] ;
+
+  /* List of pending Route_Refresh requests.
+   */
+  struct dl_base_pair(bgp_route_refresh) rr_pending ;
 
   /* Peer's configured session arguments
    *
@@ -785,34 +632,19 @@ struct peer
   as_t          change_local_as ;
   bool          change_local_as_prepend ;
 
-  /* Other flags
+  /* Other flags and running configuration
    */
   bool          disable_connected_check ;
-
-  /* Peer status flags.
-   */
-  peer_status_bits_t sflags;
-
-  /* Values for which we need to know whether an explicit value is set,
-   * or the (current) default applies.
-   *
-   *   * weight is special, and is valid at all times.
-   *
-   *     - if PEER_CONFIG_WEIGHT is set, the weight has been explicity set
-   *       for this peer or group.
-   *
-   *       If a group does not have an explicit weight, then it inherits from
-   *       the bgp instance.
-   *
-   *       Note that where a peer does not have an explicit weight, then if
-   *       it is a member of a group, it inherits the group's weight (which
-   *       may be inherited from the bgp instance).
-   */
-  peer_config_bits_t config;
 
   uint16_t      weight ;        /* valid at all times                   */
 
   uint          config_mrai ;   /* default unless PEER_CONFIG_MRAI      */
+
+  /* Peer status flags.
+   */
+  peer_status_bits_t    sflags;
+
+  bgp_peer_idle_state_t idle ;
 
   /* The connection options include:
    *
@@ -825,7 +657,14 @@ struct peer
    *
    *   * port                   -- for connect() and listen()
    *
-   *   * conn_let               -- generally true, once enabled XXX XXX XXX
+   *   * conn_state             -- is current configuration and reflects
+   *                               down/reset state....
+   *
+   *       bgp_csMayAccept   ) the actual "passive" etc configuration
+   *       bgp_csMayConnect  )
+   *
+   *       bgp_csRun         ) set when the session is updated.
+   *       bgp_csTrack       )
    *
    *   * connect_retry_secs     -- per default, or otherwise
    *   * accept_retry_secs      -- per default, or otherwise
@@ -838,22 +677,26 @@ struct peer
    *
    *   * ifname                 -- "neighbor xx update-source <name>"
    *                               "neighbor xx interface <name>"
-   *
-   * The cops_set are the configuration options last passed to the session.
    */
   bgp_cops_t    cops ;
 
+  /* Timers.
+   *
+   *   * qt_restart     -- used for general restart (or initial start) and for
+   *                       max-prefix delayed restart.
+   */
+  qtimer        qt_restart ;
+
   /* Timer values.
    */
-  uint32_t      v_start;
+  uint          idle_hold_time_secs ;
+  qtime_t       idle_hold_time ;        /* lots of resolution   */
 
-  uint32_t      v_asorig;
-  uint32_t      v_pmax_restart;
-  uint32_t      v_gr_restart;
+  uint          v_asorig;
+  uint          v_gr_restart;
 
   /* Threads
    */
-  struct thread *t_pmax_restart;
   struct thread *t_gr_restart;
   struct thread *t_gr_stale;
 
@@ -861,29 +704,6 @@ struct peer
    */
   uint32_t established;
   uint32_t dropped;
-
-#if 0
-  /* Update/Withdraw lists, Attribute Hash and synctime
-   */
-  bgp_adv_base_t  adv_fifo[bgp_adv_count][qafx_count] ;
-
-  vhash_table     adv_attr_hash[qafx_count] ;
-#endif
-  time_t synctime;
-
-  bool   do_updates ;
-
-#define MAXIMUM_PREFIX_THRESHOLD_DEFAULT 75
-
-
-
-
-  /* Packet receive and send buffers -- for PEER_TYPE_REAL.
-   */
-  stream      ibuf;
-
-  stream_fifo obuf_fifo;
-  stream      work;
 
   /* Peer index, used for dumping TABLE_DUMP_V2 format -- for PEER_TYPE_REAL
    */
@@ -918,15 +738,326 @@ struct peer
 
 /* Prototypes. */
 extern int bgp_event (struct thread *);
-extern int bgp_stop (struct peer *peer);
+extern int bgp_stop (bgp_peer peer);
 #if 0
-extern void bgp_timer_set (struct peer *);
+extern void bgp_timer_set (bgp_peer );
 #endif
-extern void bgp_fsm_change_status (struct peer *peer, int status);
+extern void bgp_fsm_change_status (bgp_peer peer, int status);
 
 #endif
 
 extern const char *peer_down_str[];
+
+/*------------------------------------------------------------------------------
+ * Each peer has a peer rib for each AFI/SAFI it is configured for.
+ *
+ * This refers to the bgp instance's RIB, and contains the adj_in and adj_out
+ * for the peer.
+ *
+ * The peer_rib is pointed to by the bgp_peer structure.  When the peer is
+ * active for the AFI/SAFI, the peer_rib is on the bgp_rib's peers list.
+ */
+typedef struct bgp_prib bgp_prib_t ;
+typedef const bgp_prib_t* bgp_prib_c ;
+
+typedef enum bgp_route_map_types bgp_route_map_types_t ;
+enum bgp_route_map_types
+{
+  RMAP_IN       = 0,
+  RMAP_INX      = 1,
+  RMAP_OUT      = 2,
+  RMAP_IMPORT   = 3,
+  RMAP_EXPORT   = 4,
+
+  RMAP_COUNT    = 5,
+} ;
+
+typedef enum adj_in_state adj_in_state_t ;
+enum adj_in_state
+{
+  ai_next     = 0,              /* process next 'pending' if any        */
+
+  ai_next_hop_valid,
+  ai_next_hop_reachable,
+} ;
+
+enum { MAXIMUM_PREFIX_THRESHOLD_DEFAULT = 75 } ;
+
+typedef struct prefix_max  prefix_max_t ;
+typedef struct prefix_max* prefix_max ;
+
+struct prefix_max
+{
+  bool        set ;
+  bool        warning ;
+
+  uint        trigger ;
+
+  uint        limit ;
+  uint        threshold ;
+  uint16_t    thresh_pc ;
+  uint16_t    restart ;
+} ;
+
+enum peer_af_status_bits
+{
+  /* These are states of a given afi/safi, mostly while pEstablished.
+   */
+  PEER_AFS_DISABLED             = BIT( 0), /* configured, but disabled  */
+  PEER_AFS_RUNNING              = BIT( 1), /* session is up             */
+  PEER_AFS_DEFAULT_SENT         = BIT( 2), /* default-originate peer    */
+  PEER_AFS_EOR_SENT             = BIT( 3), /* end-of-rib send to peer   */
+  PEER_AFS_EOR_RECEIVED         = BIT( 4), /* end-of-rib received from peer */
+  PEER_AFS_PREFIX_THRESHOLD     = BIT( 5), /* exceed prefix-threshold   */
+  PEER_AFS_PREFIX_LIMIT         = BIT( 6), /* exceed prefix-limit       */
+
+  /* These are afi/safi specific peer capabilities
+   */
+  PEER_AFS_GR_CAN_PRESERVE      = BIT( 7), /* GR afi/safi received       */
+  PEER_AFS_GR_HAS_PRESERVED     = BIT( 8), /* GR afi/safi F-bit received */
+
+  /* For Prefix ORF:
+   *
+   *   _CAN_SEND => we expressed the wish, and we have received the go-ahead
+   *   _SENT     => we have sent the Prefix ORF.
+   *
+   *   _EXPECT   => we expressed willing-ness, and received the wish to send
+   *   _WAIT     => waiting to receive the Prefix ORF (just established)
+   */
+  PEER_AFS_ORF_PFX_CAN_SEND     = BIT( 9), /* Prefix ORF Send Mode      */
+  PEER_AFS_ORF_PFX_SENT         = BIT(10), /* prefix-list send peer     */
+
+  PEER_AFS_ORF_PFX_MAY_RECV     = BIT(11), /* Prefix ORF Receive Mode   */
+  PEER_AFS_ORF_PFX_WAIT         = BIT(12), /* wait refresh received peer */
+} ;
+typedef uint16_t peer_af_status_bits_t ;   /* NB: <= 16 flags           */
+
+
+struct bgp_prib
+{
+  bgp_peer      peer ;                  /* parent peer                  */
+
+  /* Each peer-rib is associated with the respective bgp-rib -- for the
+   * same AFI/SAFI and for that bgp instance.
+   *
+   * And the bgp-rib has a list of peers known to it.
+   */
+  bgp_rib       rib ;                   /* parent rib                   */
+
+  struct dl_list_pair(bgp_prib) known_list ;
+
+  /* Each peer-rib is also associated with a "local-context" -- the context
+   * "local" to the bgp-rib.  The local-context is a dense set of contexts,
+   * which are the contexts known to the rib-nodes and the route-infos in
+   * the rib.
+   */
+  bgp_lc_id_t   lc_id ;                 /* parent local-context in rib  */
+  struct dl_list_pair(bgp_prib) lc_list ;
+
+  /* When a peer_rib is enabled (ie the exchange of routes is enabled) the
+   * peer_rib is associated with a bgp_rib_walker.
+   *
+   * The peer_rib walker may be:
+   *
+   *   * the rib's own walker -- in "update" (or not "refresh") state.
+   *
+   *     This is the steady state for a prib.
+   *
+   *     The prib is on one of the rib's update_view_peers or update_peers
+   *     lists, and updates will be sent to the peer when required.
+   *
+   *   * a "refresh" walker or the rib's own walker -- in "refresh" state.
+   *
+   *     In this state updates are being sent to bring the peer up to date.
+   *     This may be after a session has started, or after a route refresh,
+   *     or after some change to 'out' filtering etc.
+   *
+   *     The prib is on the walker's refresh_peers list.
+   *
+   *     A "refresh" walker is always behind the rib's own walker.  If it meets
+   *     the rib's own walker, the list of refresh_peers is transferred, and
+   *     the now redundant "refresh" walker is discarded.
+   *
+   * If there is no walker, then the prib is in some intermediate state (and,
+   * in particular, is not on any of the rib's update_view_peers or update_peers
+   * lists.
+   */
+  bgp_rib_walker  walker ;
+  struct dl_list_pair(bgp_prib) walk_list ;
+
+  bool          refresh ;               /* is on walker's refresh list  */
+  bool          eor_required ;
+
+  /* General stuff for the peer re this qafx.
+   */
+  qafx_t        qafx ;
+  iAFI_t        i_afi ;
+  iSAFI_t       i_safi ;
+
+  bool          real_rib ;      /* With or without zroute       */
+  bool          is_mpls ;
+
+  /* Running flags
+   */
+  bool          route_server_client ;
+  bool          route_reflector_client ;
+  bool          as_path_unchanged ;
+  bool          remove_private_as ;
+  bool          med_unchanged ;
+  bool          send_community ;
+  bool          send_ecommunity ;
+  bool          next_hop_unchanged ;
+  bool          next_hop_local_unchanged ;
+  bool          next_hop_self ;
+  bool          default_originate ;
+  bool          soft_reconfig ;
+
+  uint8_t     allowas_in ;
+
+  /* Per AF status bits.
+   */
+  peer_af_status_bits_t af_status ;
+
+  /* Where a peer is a member of a peer-group in a given AFI/SAFI, the
+   * relevant bit is set in the peer->group_membership.  The af_group_member
+   * is a copy of that bit.
+   *
+   * Where a peer is pEstablished (which means the session is sEstablished)
+   * the af_session_up flag is set if the AFI/SAFI is now up.  The
+   * af_session_up flag is false at all other times.
+   *
+   * NB: for a peer-group configuration af_group_member and af_session_up are
+   *     *always* false.
+   */
+  bool        af_group_member ;
+  bool        af_session_up ;
+
+  /* NSF mode (graceful restart)
+   */
+  bool        nsf ;
+
+  /* Prefix recv/in counts and sent prefix count.
+   *
+   *   * pcount_recv  -- number of routes received, this excludes routes
+   *                     which are:
+   *
+   *                       * RINFO_WITHDRAWN -- withdrawn by peer
+   *
+   *                       * RINFO_STALE     -- effectively withdrawn by peer
+   *
+   *                     and includes:
+   *
+   *                       * RINFO_REFUSED   -- too invalid to accept
+   *
+   *                       * RINFO_DENIED    -- denied by 'in' filtering
+   *
+   *                     Note that this is the number used for max-prefix.
+   *
+   *                     Note that this count takes into account routes
+   *                     received which are pending processing.
+   *
+   *   * pcount_in    -- number of routes which have passed the 'in' filtering.
+   *
+   *                     Note that this count is for the current, processed
+   *                     route state.  So, while there are stale routes, or
+   *                     pending routes, this count may be greater than or
+   *                     less than the pcount_recv !
+   */
+  uint        pcount_recv ;
+  uint        pcount_in ;
+
+  uint        pcount_sent ;
+
+  /* Filters and route-maps.
+    */
+  access_list dlist[FILTER_MAX] ;       /* distribute-list.     */
+
+  prefix_list plist[FILTER_MAX] ;       /* prefix-list.         */
+
+  as_list     flist[FILTER_MAX] ;       /* filter-list          */
+
+  route_map   rmap[RMAP_COUNT] ;        /* route-map            */
+
+  route_map   us_rmap ;                 /* Unsuppress-map.      */
+
+  route_map   default_rmap ;
+
+  /* ORF Prefix-list
+   */
+  prefix_list orf_plist ;
+
+  /* Max prefix count.
+   */
+  prefix_max_t pmax ;
+
+  /* The peer's adj_in stuff for this qafx
+   *
+   * The adj_in are ihash by prefix_id_t, giving a route_info object for each
+   * route received from the peer.  Those route_info objects are "owned" by
+   * the peer, but are also referred to by the bgp_rib_node for the prefix
+   * (where the route is not filtered out).
+   */
+  ihash_table     adj_in ;              /* route_info           */
+
+  struct dl_base_pair(route_info) stale_routes ;
+  struct dl_base_pair(route_info) pending_routes ;
+
+  adj_in_state_t  in_state ;
+  attr_set        in_attrs ;
+
+  /* The peer's adj_out stuff for this qafx
+   *
+   * A Main Peer receives routes from the Main RIB.
+   * An RS Client receives routes from the RS RIB.
+   */
+  pfifo_period_t  batch_delay ;
+  pfifo_period_t  batch_delay_extra ;   /* maximum extra delay          */
+  pfifo_period_t  announce_delay ;
+  pfifo_period_t  mrai_delay ;          /* actual MRAI                  */
+  pfifo_period_t  mrai_delay_left ;     /* actual MRAI - batch_delay    */
+
+  qtime_mono_t    period_origin ;
+  pfifo_period_t  now ;
+
+  pfifo_period_t  t0 ;
+  pfifo_period_t  tx ;
+
+  ihash_table     adj_out ;             /* adj_out_ptr_t                */
+
+  pfifo           fifo_batch ;          /* rf_act_batch         */
+  pfifo           fifo_mrai ;           /* rf_act_mrai          */
+  pfifo           announce_queue ;      /* rf_act_announce      */
+  struct dl_base_pair(route_flux)
+                  withdraw_queue ;      /* rf_act_withdraw      */
+
+  vhash_table     attr_flux_hash ;
+
+  attr_flux       eor ;                 /* End-of-RIB signal    */
+
+  /* Scheduling the running of the dispatch "process", which is timer driven.
+   *
+   * Dispatches from the fifo_batch and fifo_mrai
+   *
+   */
+  pfifo_period_t  dispatch_delay ;
+  pfifo_period_t  dispatch_time ;
+
+  qtimer          dispatch_qtr ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * When processing the configuration for a peer or a group of peers, we
+ * use the following.
+ */
+typedef enum bgp_group_process_state bgp_gps_t ;
+enum bgp_group_process_state
+{
+  gps_none      = 0,
+
+  gps_peer      = BIT(0),       /* processing a peer            */
+  gps_group     = BIT(1),       /* processing group itself      */
+  gps_member    = gps_peer | gps_group
+} ;
 
 /*==============================================================================
  *
@@ -937,6 +1068,16 @@ extern bgp_peer bgp_peer_create (sockunion su, bgp_inst bgp,
 extern bgp_peer bgp_peer_lock (bgp_peer peer) ;
 extern bgp_peer bgp_peer_unlock (bgp_peer peer) ;
 extern bgp_peer bgp_peer_delete (bgp_peer peer);
+
+extern void bgp_peer_start(bgp_peer peer) ;
+extern void bgp_peer_restart(bgp_peer peer, peer_down_t why_down) ;
+extern void bgp_peer_cops_recharge(bgp_peer peer, peer_down_t why_down) ;
+
+extern void bgp_session_has_established(bgp_session session);
+extern void bgp_session_has_stopped(bgp_session session, bgp_note note) ;
+
+
+
 extern sockunion bgp_peer_get_ifaddress(bgp_peer peer, const char* ifname,
                                                                sa_family_t af) ;
 
@@ -945,19 +1086,83 @@ extern void peer_clear (bgp_peer);
 extern bgp_ret_t peer_clear_soft (bgp_peer peer, qafx_t qafx,
                                                        bgp_clear_type_t stype) ;
 
-extern bgp_peer peer_lookup (bgp_inst bgp, sockunion su) ;
-extern bgp_peer peer_lookup_vty (vty vty, bgp_inst bgp, const char* peer_str,
-                                                                  qafx_t qafx) ;
+
+
+
+extern void bgp_peer_enable(bgp_peer peer);
+
+
+
+extern void bgp_peer_down(bgp_peer peer, peer_down_t why_down) ;
+extern void bgp_peer_down_error(bgp_peer peer,
+                               bgp_nom_code_t code, bgp_nom_subcode_t subcode) ;
+
+
+
+
+extern void bgp_peer_down_error_with_data (bgp_peer peer,
+                              bgp_nom_code_t code, bgp_nom_subcode_t subcode,
+                                             const byte* data, size_t datalen) ;
+
+
+
+
+
+
+
+
+extern prefix_max bgp_peer_pmax_reset(bgp_prib prib) ;
+extern bool bgp_peer_pmax_check(bgp_prib prib) ;
+extern void bgp_peer_pmax_clear(bgp_prib prib) ;
+
+
+
+
+extern uint peer_get_accept_retry_time(bgp_peer peer) ;
+extern uint peer_get_open_hold_time(bgp_peer peer) ;
+extern uint peer_get_mrai(bgp_peer peer) ;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+extern bgp_peer peer_lookup_view_su (bgp_inst bgp, sockunion su) ;
+extern bgp_peer peer_lookup_view_vty(struct vty *vty, bgp_inst bgp,
+                                              const char* str, bool real_peer) ;
+extern bgp_peer peer_lookup_view_qafx_vty (vty vty, bgp_inst bgp,
+                                 const char* str, bool real_peer, qafx_t qafx) ;
+extern bgp_peer peer_lookup_vty(struct vty *vty, const char* str,
+                                                               bool real_peer) ;
+extern bgp_peer peer_or_group_lookup_vty(struct vty *vty, const char* str) ;
+
+
+
 extern int peer_cmp (bgp_peer p1, bgp_peer p2) ;
 extern char* peer_uptime (time_t, char*, size_t);
 
-extern peer_group peer_group_lookup (bgp_inst bgp, const char* name);
-extern peer_group peer_group_get (bgp_inst bgp, const char* name);
-extern bgp_ret_t peer_group_delete (peer_group group) ;
-extern int peer_group_cmp (peer_group g1, peer_group g2) ;
+extern bgp_peer_group peer_group_lookup (bgp_inst bgp, const char* name);
+extern bgp_peer_group peer_group_get (bgp_inst bgp, const char* name);
+extern bgp_ret_t peer_group_delete (bgp_peer_group group) ;
+extern int peer_group_cmp (bgp_peer_group g1, bgp_peer_group g2) ;
+
+extern bgp_gps_t peer_group_process_prepare(bgp_peer peer, qafx_t qafx) ;
+extern bgp_gps_t peer_group_process_next(bgp_peer* p_peer, bgp_gps_t gps,
+                                                                  qafx_t qafx) ;
 
 extern bgp_ret_t peer_set_af(bgp_peer peer, qafx_t qafx, bool enable);
 extern int peer_deactivate(bgp_peer peer, qafx_t qafx) ;
+
 
 extern bgp_peer_sort_t peer_sort (bgp_peer peer);
 extern bool peer_sort_set(bgp_peer peer, bgp_peer_sort_t sort) ;
@@ -966,10 +1171,18 @@ extern bgp_ret_t peer_remote_as (bgp_inst bgp, sockunion su, as_t* p_as,
                                                                   qafx_t qafx) ;
 extern bgp_ret_t peer_group_remote_as (bgp_inst bgp, const char* name,
                                                                    as_t* p_as) ;
-extern bgp_ret_t peer_group_remote_as_delete (peer_group);
+extern bgp_ret_t peer_group_remote_as_delete (bgp_peer_group group);
 
-extern bgp_ret_t peer_flag_set (bgp_peer peer, peer_flag_bits_t flag) ;
-extern bgp_ret_t peer_flag_unset (bgp_peer peer, peer_flag_bits_t flag) ;
+
+
+
+
+
+
+extern bgp_ret_t bgp_peer_flag_modify(bgp_peer peer, peer_flag_t flag,
+                                                                     bool set) ;
+
+
 
 extern bgp_ret_t peer_af_flag_set(bgp_peer peer, qafx_t qafx,
                                                      peer_af_flag_bits_t flag) ;
@@ -978,22 +1191,11 @@ extern bgp_ret_t peer_af_flag_unset(bgp_peer peer, qafx_t qafx,
 extern bgp_ret_t peer_af_flag_modify(bgp_peer peer, qafx_t qafx,
                                            peer_af_flag_bits_t flag, bool set) ;
 
-extern bgp_ret_t peer_group_bind (bgp_inst, sockunion, peer_group,
-                                                                qafx_t, as_t*) ;
-extern bgp_ret_t peer_group_unbind (bgp_peer, peer_group, qafx_t) ;
+extern bgp_ret_t peer_group_bind (bgp_inst bgp, sockunion su,
+                               bgp_peer_group group, qafx_t qafx, as_t* p_asn) ;
+extern bgp_ret_t peer_group_unbind (bgp_peer peer, bgp_peer_group group,
+                                                                  qafx_t qafx) ;
 
-extern void bgp_session_do_event(mqueue_block mqb, mqb_flag_t flag);
-extern void bgp_peer_enable(bgp_peer peer);
-extern void bgp_peer_down(bgp_peer peer, peer_down_t why_down) ;
-extern void bgp_peer_down_error(bgp_peer peer,
-                               bgp_nom_code_t code, bgp_nom_subcode_t subcode) ;
-extern void bgp_peer_down_error_with_data (bgp_peer peer,
-                              bgp_nom_code_t code, bgp_nom_subcode_t subcode,
-                                             const byte* data, size_t datalen) ;
-
-extern uint peer_get_accept_retry_time(bgp_peer peer) ;
-extern uint peer_get_open_hold_time(bgp_peer peer) ;
-extern uint peer_get_mrai(bgp_peer peer) ;
 
 #if 0
 extern void bgp_withdraw_schedule(bgp_peer peer) ;
@@ -1018,7 +1220,7 @@ peer_family_is_active(bgp_peer peer, qafx_t qafx)
  * Returns:  address of peer_rib
  *       or: NULL if peer not activated for the given qafx
  */
-Inline peer_rib
+Inline bgp_prib
 peer_family_prib(bgp_peer peer, qafx_t qafx)
 {
   return peer->prib[qafx] ;

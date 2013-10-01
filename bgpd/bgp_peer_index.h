@@ -33,7 +33,11 @@
  *   * IP address (name of peer)
  *   * peer_id    (ordinal of peer)
  *
- * To the bgp_peer_index_entry.
+ * To the bgp_peer_index_entry, which in turn points to:
+ *
+ *   * the peer structure
+ *
+ *   * its session structure.
  *
  * When a peer is created it is "registered", so a Peer Index Entry is created
  * with it, which adds the peer to the peer index by its IP address and gives
@@ -41,47 +45,9 @@
  * IP address.
  *
  * When a peer is deleted, the Peer Index Entry is removed from the IP address
- * index -- so the IP address no longer has a peer associated with it.
- * However, the Peer Index Entry may still be in use by the BGP Engine, so
- * until that is done with the Index Entry it cannot be deleted.  Further,
- * the Index Entry is not actually freed -- along with the id -- until the
- * peer structure is finally deleted.
- *
- * The bgp_peer_index entry contains enough to allow connections to be accepted
- * (or not) completely asynchronously with both the Routeing and the BGP
- * Engines, so:
- *
- *   * particularly for a passive peer, connections can be accepted in between
- *     sessions -- so if a session drops and the peer opens up a connection
- *     before the session is re-enabled, that connection will be accepted and
- *     held.
- *
- *   * when session is Established, is supposed to wait for an OPEN
- *     before rejecting the connection.  (Since we do not support
- *     CollisionDetectEstablishedState.)  Though if Graceful Restart is
- *     set, the session will drop as soon as the new connection is accepted.
- *
- * The bgp_peer_index_entry also keeps track of the password setting for the
- * peer.  So this has a life beyond the session.  Indeed, a
- *
- * When a BGP session is enabled, it will check to see if an accepted
- * connection is pending, and adopt it if it is.
+ * index -- so the IP address no longer has a peer or a session associated with
+ * it.
  */
-#if 0
-typedef enum bgp_peer_index_entry_state bgp_peer_index_entry_state_t ;
-
-enum bgp_peer_index_entry_state
-{
-  pie_inactive      = 0,
-
-  pie_registered    = BIT(0),
-  pie_listening     = BIT(1),
-  pie_in_session    = BIT(2),
-
-  pie_msg_in_flight = BIT(4),
-} ;
-#endif
-
 typedef       struct bgp_peer_index_entry  bgp_peer_index_entry_t ;
 typedef const struct bgp_peer_index_entry* bgp_peer_index_entry_c ;
 
@@ -96,8 +62,7 @@ extern void bgp_peer_index_init(void* parent) ;
 extern void bgp_peer_index_init_r(void) ;
 extern void bgp_peer_index_finish(void) ;
 extern void bgp_peer_index_register(bgp_peer peer, bgp_session session) ;
-extern void bgp_peer_index_deregister_peer(bgp_peer peer) ;
-extern void bgp_peer_index_deregister_session(bgp_session session) ;
+extern void bgp_peer_index_deregister(bgp_peer peer) ;
 
 extern bgp_session bgp_peer_index_seek_session(sockunion su) ;
 

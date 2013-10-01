@@ -22,6 +22,7 @@
 #include <misc.h>
 
 #include "bgpd/bgp_attr_store.h"
+#include "lib/prefix.h"
 
 /*==============================================================================
  * Management of sets of attributes.
@@ -305,6 +306,8 @@ bgp_attr_pair_assign(attr_pair pair)
  *
  * NB: the pair MUST have been loaded -- by bgp_attr_pair_load_new()/_load()/
  *     _load_default() -- so pair->working is not NULL and is valid.
+ *
+ * Returns:  NULL
  */
 extern attr_set
 bgp_attr_pair_unload(attr_pair pair)

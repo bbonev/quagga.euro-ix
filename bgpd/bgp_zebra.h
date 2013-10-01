@@ -25,22 +25,21 @@ Boston, MA 02111-1307, USA.  */
 
 extern void bgp_zebra_init (void);
 extern int bgp_if_update_all (void);
-extern int bgp_config_write_redistribute (struct vty *, struct bgp *, qafx_t,
+extern int bgp_config_write_redistribute (struct vty *, bgp_inst , qafx_t,
                                                                          int *);
-extern route_zebra bgp_zebra_announce(route_zebra zr, bgp_rib_node rn,
-                                                                   prefix_c p) ;
-extern route_zebra bgp_zebra_discard(route_zebra zr, prefix_c p);
-extern void bgp_zebra_withdraw(route_zebra zr, prefix_c p);
+extern zroute bgp_zebra_announce(zroute zr, bgp_rib_node rn, prefix_c pfx) ;
+extern zroute bgp_zebra_discard(zroute zr, prefix_c pfx);
+extern void bgp_zebra_withdraw(zroute zr, prefix_c pfx);
 
 
 
-extern int bgp_redistribute_set (struct bgp *, afi_t, int);
-extern int bgp_redistribute_rmap_set (struct bgp *, afi_t, int, const char *);
-extern int bgp_redistribute_metric_set (struct bgp *, afi_t, int, u_int32_t);
-extern cmd_ret_t bgp_redistribute_unset (struct bgp *bgp, qAFI_t q_afi,
+extern int bgp_redistribute_set (bgp_inst , afi_t, int);
+extern int bgp_redistribute_rmap_set (bgp_inst , afi_t, int, const char *);
+extern int bgp_redistribute_metric_set (bgp_inst , afi_t, int, u_int32_t);
+extern cmd_ret_t bgp_redistribute_unset (bgp_inst bgp, qAFI_t q_afi,
                                                                      int type) ;
-extern int bgp_redistribute_routemap_unset (struct bgp *, afi_t, int);
-extern int bgp_redistribute_metric_unset (struct bgp *, afi_t, int);
+extern int bgp_redistribute_routemap_unset (bgp_inst , afi_t, int);
+extern int bgp_redistribute_metric_unset (bgp_inst , afi_t, int);
 
 
 

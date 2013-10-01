@@ -32,12 +32,17 @@
  *
  * NB: an entirely zero structure represents an entirely empty vector.
  */
-typedef void*         p_vector_item ;
-typedef unsigned int  vector_index_t ;
-typedef unsigned int  vector_length_t ;
+typedef void*   p_vector_item ;
+typedef uint    vector_index_t ;
+typedef uint    vector_length_t ;
 
-enum {
-  VECTOR_LENGTH_MAX = (vector_length_t)INT_MAX + 1
+enum
+{
+  /* The maximum index value must allow for a the length of a vector to be
+   * one greater than the last index value.
+   */
+  VECTOR_LENGTH_MAX = (vector_length_t)UINT_MAX,
+  VECTOR_INDEX_MAX  = (vector_index_t)UINT_MAX - 1
 } ;
 
 struct vector
@@ -203,7 +208,7 @@ extern void vector_delete(vector v, vector_index_t i, vector_length_t n) ;
 typedef int vector_bsearch_cmp(const cvp* pp_val, const cvp* item) ;
 vector_index_t vector_bsearch(vector v, vector_bsearch_cmp* cmp,
                                               const void* p_val, int* result) ;
-typedef int vector_sort_cmp(const cvp* a, const cvp* b) ;
+typedef sort_cmp vector_sort_cmp ;
 void vector_sort(vector v, vector_sort_cmp* cmp) ;
 
 extern vector vector_copy_here(vector dst, vector src) ;

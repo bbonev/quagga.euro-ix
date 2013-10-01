@@ -43,7 +43,7 @@ union sockunion {
 #define su_port               su_si.si_port
 #endif /* 0 */
 
-typedef struct prefix* prefix ;
+typedef const struct prefix* prefix_c ; /* cannot #include "prefix.h"   */
 
 typedef       union sockunion* sockunion ;
 typedef const union sockunion* sockunion_c ;
@@ -166,10 +166,10 @@ extern bool sockunion_unmap_ipv4 (sockunion su) ;
 extern void sockunion_map_ipv4 (sockunion su) ;
 
 extern sockunion sockunion_dup (sockunion_c src);
-extern void sockunion_copy (sockunion dst, sockunion_c src) ;
+extern sockunion sockunion_copy (sockunion dst, sockunion_c src) ;
 extern sockunion sockunion_free (sockunion su);
 
-extern sockunion sockunion_new_prefix(sockunion su, struct prefix* p) ;
+extern sockunion sockunion_new_prefix(sockunion su, prefix_c pfx) ;
 extern sockunion sockunion_new_sockaddr(sockunion su,
                                                     const struct sockaddr* sa) ;
 extern void sockunion_unset(sockunion* p_su) ;

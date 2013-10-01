@@ -86,17 +86,20 @@ slow_func_err (struct work_queue *wq, work_queue_item item)
 static void
 slow_func_del (struct work_queue *wq, work_queue_item item)
 {
+#if 0
   struct heavy_wq_node *hn = item->args.data;
   assert (hn && hn->str);
   printf ("%s: %s\n", __func__, hn->str);
   XFREE (MTYPE_PREFIX_LIST_STR, hn->str);
   hn->str = NULL;
   XFREE(MTYPE_PREFIX_LIST, hn);
+#endif
 }
 
 static wq_item_status
 slow_func (struct work_queue *wq, work_queue_item item)
 {
+#if 0
   struct heavy_wq_node *hn = item->args.data;
   double x = 1;
   int j;
@@ -114,7 +117,7 @@ slow_func (struct work_queue *wq, work_queue_item item)
 
   if ((hn->i % ITERS_PRINT) == 0)
     printf ("%s did %d, x = %g\n", hn->str, hn->i, x);
-
+#endif
   return WQ_SUCCESS;
 }
 
