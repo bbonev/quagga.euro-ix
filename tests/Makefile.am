@@ -5,7 +5,7 @@ AM_CFLAGS = $(PICFLAGS)
 AM_LDFLAGS = $(PILDFLAGS)
 
 noinst_PROGRAMS = testsig testbuffer testmemory heavy heavywq heavythread \
-                  testprivs teststream testbgpcap \
+                  testprivs teststream \
                   testchecksum testsvector testvector testheap \
                   testlistutil testqpath testqlump testavl testqfs testprefix \
                   testpqueue testpfifo
@@ -16,9 +16,8 @@ testmemory_SOURCES       = test-memory.c
 testprivs_SOURCES        = test-privs.c
 teststream_SOURCES       = test-stream.c
 heavy_SOURCES            = heavy.c main.c
-##heavywq_SOURCES          = heavy-wq.c main.c
+heavywq_SOURCES          = heavy-wq.c main.c
 heavythread_SOURCES      = heavy-thread.c main.c
-
 ##testbgpcap_SOURCES       = bgp_capability_test.c
 testchecksum_SOURCES     = test-checksum.c
 testvector_SOURCES       = test-vector.c
@@ -48,7 +47,7 @@ testmemory_LDADD       = ../lib/libzebra.la @LIBCAP@
 testprivs_LDADD        = ../lib/libzebra.la @LIBCAP@
 teststream_LDADD       = ../lib/libzebra.la @LIBCAP@
 heavy_LDADD            = ../lib/libzebra.la @LIBCAP@ -lm
-##heavywq_LDADD          = ../lib/libzebra.la @LIBCAP@ -lm
+heavywq_LDADD          = ../lib/libzebra.la @LIBCAP@ -lm
 heavythread_LDADD      = ../lib/libzebra.la @LIBCAP@ -lm
 ##testbgpcap_LDADD       = ../lib/libzebra.la @LIBCAP@ ../bgpd/libbgp.a -lm
 testchecksum_LDADD     = ../lib/libzebra.la @LIBCAP@
