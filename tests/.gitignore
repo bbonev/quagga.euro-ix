@@ -35,3 +35,6 @@ teststream
 testsymtab
 testvector
 testpfifo
+heavywq
+testbgpmpattr
+testsvector
