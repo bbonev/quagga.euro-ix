@@ -84,6 +84,8 @@ new_table() {
 
 
 // test_vhash_table_ream
+// Create a table and add a value. Call vhash_table_ream. Expect
+// vhash_table_lookup( value ) to be NULL.
 
 
 // test_vhash_table_reset
