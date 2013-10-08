@@ -48,6 +48,7 @@ orphan_func(vhash_item item, vhash_table table) {
   return NULL
 }
 
+
 vhash_table
 new_table() {
   vhash_params_c params;
@@ -59,7 +60,54 @@ new_table() {
 
   vhash_table table;
   table = vhash_table_new(NULL, 512, 0, params);
+  return table;
 }
+
+
+// test_vhash_lookup
+// Add key and get item. Expect p_added to be true. Set value of
+// item. Add duplicate item. Expect p_added to be false. Expect 
+// value of item to be equal to set value.
+
+
+// test_vhash_table_set_parent
+// Create two vhash_tables. Set the parent of table_a to be
+// table_b. Expect that vhash_get_parent( table_a ) returns 
+// table_b.
+
+
+// test_vhash_table_get_parent
+// Create two vhash_tables. Expected that 
+// vhash_get_parent( table_a ) returns NULL. Set the parent of
+// table_a to be table_b. Expect vhash_get_parent( table_a )
+// returns table_b.
+
+
+// test_vhash_table_ream
+
+
+// test_vhash_table_reset
+
+
+// test_vhash_table_reset_bases
+
+
+// test_vhash_unset
+
+
+// test_vhash_unset_delete
+
+
+// test_vhash_delete
+
+
+// test_vhash_walk_start
+
+
+// test_vhash_walk_next
+
+
+// test_vhash_table_extract
 
 
 int
