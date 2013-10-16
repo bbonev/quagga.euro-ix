@@ -4,28 +4,32 @@
 #include <assert.h>
 #include "vhash.h"
 
+vhash_hash_t hash_func(vhash_data_c hash_key);
+int equal_func(vhash_item_c item, vhash_data_c data);
+vhash_item new_func(vhash_table table, vhash_data_c data);
+vhash_item free_func(vhash_item item, vhash_table table);
+vhash_item orphan_func(vhash_item item, vhash_table table);
 
 // Ideal Struct? maybe...
 struct datum {
   vhash_node node;
-  vhash_data_c key;
-  int value;
+  vhash_hash_t key;
+  int val;
 };
 
 
 vhash_hash_t
-hash_func(vhash_data_c data) {
-  uint32 val;
-  val = (uint32)data;
-  val += 7;
-  return (vhash_hash_t)val;
+hash_func(vhash_data_c hash_key) {
+  vhash_hash_t hash;
+  hash = vhash_hash_string( (const char*)hash_key );
+  return hash;
 }
 
 int
 equal_func(vhash_item_c item, vhash_data_c data) {
-  datum* i;
-  i = (datum*)item;
-  if (hash_func(i.value) == hash_func(data)) {
+  const struct datum* i;
+  i = (const struct datum*)item;
+  if (i->key == hash_func(data)) {
     return 0;
   }
   return -1;
@@ -33,47 +37,119 @@ equal_func(vhash_item_c item, vhash_data_c data) {
 
 vhash_item
 new_func(vhash_table table, vhash_data_c data) {
-  datum* i;
-  i.key = data;
+  struct datum* i = malloc( sizeof(struct datum) );
+  i->key = hash_func(data);
+  i->val = -1;
   return (vhash_item)i;
 }
 
 vhash_item
 free_func(vhash_item item, vhash_table table) {
-  return NULL
+  return NULL;
 }
 
 vhash_item
 orphan_func(vhash_item item, vhash_table table) {
-  return NULL
+  return NULL;
 }
 
 
-vhash_table
+static vhash_table
 new_table() {
-  vhash_params_c params;
-  params.vhash_hash_func = &hash_func;
-  params.vhash_equal_func = &equal_func;
-  params.vhash_new_func = &new_func;
-  params.vhash_free_func = &free_func;
-  params.vhash_orphan_func = &orphan_func;
+  vhash_params_t params;
+  params.hash = &hash_func;
+  params.equal = &equal_func;
+  params.new = &new_func;
+  params.free = &free_func;
+  params.orphan = &orphan_func;
 
   vhash_table table;
-  table = vhash_table_new(NULL, 512, 0, params);
+  table = vhash_table_new(NULL, 512, 0, &params);
   return table;
 }
 
 
 // test_vhash_lookup
 // Add key and get item. Expect p_added to be true. Set value of
-// item. Add duplicate item. Expect p_added to be false. Expect 
-// value of item to be equal to set value.
+// item. Add duplicate key. Expect p_added to be true. Expect 
+// value of item to be equal to first item.
+static void
+test_vhash_lookup() {
+  fprintf(stderr, "test_vhash_lookup... \t\t\t");
+  vhash_table table;
+  table = new_table();
+
+  const vhash_data* key;
+  key = (const vhash_data*)"3pin";
+
+  vhash_item item;
+  bool ok;
+  item = vhash_lookup(table, key, &ok);
+  
+  if (ok != true) {
+    fprintf(stderr, "Failed\n");
+    fprintf(stderr, "Value wasn't added to vhash.\n");
+    return;
+  }
+  if (item == NULL) {
+    fprintf(stderr, "Failed\n");
+    fprintf(stderr, "Item returned from vhash_lookup was NULL.\n");
+    return;
+  }
+
+  const vhash_data* dup_key;
+  dup_key = (const vhash_data*)"3pin";
+
+  vhash_item item2;
+  bool ok2;
+  item2 = vhash_lookup(table, dup_key, &ok2);
+
+  if (ok != true) {
+    fprintf(stderr, "Failed\n");
+    fprintf(stderr, "Value wasn't added to vhash.\n");
+    return;
+  }
+  if (item != item2) {
+    fprintf(stderr, "Failed\n");
+    fprintf(stderr, "Item returned from vhash_lookup was not the item expected.\n");
+    return;
+  }
+
+  table = vhash_table_reset(table, true);
+  if (table != NULL) {
+    fprintf(stderr, "Failed\n");
+    fprintf(stderr, "Table failed to be de-allocated.\n");
+  }
+  fprintf(stderr, "OK\n");
+  return;
+}
 
 
 // test_vhash_table_set_parent
 // Create two vhash_tables. Set the parent of table_a to be
 // table_b. Expect that vhash_get_parent( table_a ) returns 
-// table_b.
+// pointer to table_b.
+static void
+test_vhash_table_set_parent() {
+  fprintf(stderr, "test_vhash_table_set_parent... \t\t\t");
+  vhash_table table;
+  table = new_table();
+
+  int i;
+  i = 10000;
+  vhash_table_set_parent(table, &i);
+
+  void* j;
+  j = vhash_table_get_parent(table);
+  
+  if (&i != j) {
+    fprintf(stderr, "Failed\n");
+    fprintf(stderr, "Table failed to return pointer to parent.\n");
+  } else {
+    fprintf(stderr, "OK\n");
+  }
+  return;
+}
 
 
 // test_vhash_table_get_parent
@@ -85,9 +161,16 @@ new_table() {
 
 // test_vhash_table_ream
 // Create a table and add a value. Call vhash_table_ream. Expect
-// vhash_table_lookup( value ) to be NULL.
+// vhash_table_lookup( value ) to be NULL. Ensure table is not
+// NULL.
 
 
+//
+// What are the chain bases in vhash?
+//
+// Diff between ream and reset just the de-allocation of mem. Y.
+// + table now points to NULL. Expect vhash_table_lookup( val )
+// is NULL.
 // test_vhash_table_reset
 
 
@@ -95,9 +178,16 @@ new_table() {
 
 
 // test_vhash_unset
+//
+// If ref count is zero, run vhash_remove, else
+// return pointer to item.
+//
+// - test_vhash_unset_ref_zero. expect NULL
 
 
 // test_vhash_unset_delete
+//
+//
 
 
 // test_vhash_delete
@@ -114,5 +204,6 @@ new_table() {
 
 int
 main(int argc, char* argv[]) {
-  fprintf(stderr, "test_vhash... \t\t");
+  //test_vhash_lookup();
+  test_vhash_table_set_parent();
 }
