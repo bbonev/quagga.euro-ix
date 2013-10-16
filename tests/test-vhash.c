@@ -197,16 +197,56 @@ test_vhash_table_get_parent() {
 }
 
 
-// Create two vhash_tables. Expected that 
-// vhash_get_parent( table_a ) returns NULL. Set the parent of
-// table_a to be table_b. Expect vhash_get_parent( table_a )
-// returns table_b.
-
-
 // test_vhash_table_ream
 // Create a table and add a value. Call vhash_table_ream. Expect
 // vhash_table_lookup( value ) to be NULL. Ensure table is not
 // NULL.
+static void
+test_vhash_table_ream() {
+  fprintf(stderr, "test_vhash_table_ream... \t\t\t");
+  vhash_table table;
+  table = new_table();
+
+  const vhash_data* key;
+  key = (const vhash_data*)"3pin";
+
+  vhash_item item;
+  bool ok;
+  item = vhash_lookup(table, key, &ok);
+  
+  if (ok != true) {
+    fprintf(stderr, "Failed\n");
+    fprintf(stderr, "Value wasn't added to vhash.\n");
+    return;
+  }
+  if (item == NULL) {
+    fprintf(stderr, "Failed\n");
+    fprintf(stderr, "Item returned from vhash_lookup was NULL.\n");
+    return;
+  }
+
+  vhash_table_ream(table);
+  if (table == NULL) {
+    fprintf(stderr, "Failed\n");
+    fprintf(stderr, "Table was incorrectly set to NULL.\n");
+  }
+
+  item = vhash_lookup(table, key, &ok);
+  if (item != NULL) {
+    fprintf(stderr, "Failed\n");
+    fprintf(stderr, "Item returned from vhash_lookup was not NULL.\n");
+    return;
+  }
+
+  table = vhash_table_reset(table, true);
+  if (table != NULL) {
+    fprintf(stderr, "Failed\n");
+    fprintf(stderr, "Table failed to be de-allocated.\n");
+  }
+
+  fprintf(stderr, "OK\n");
+  return;
+}
 
 
 //
@@ -249,6 +289,7 @@ test_vhash_table_get_parent() {
 int
 main(int argc, char* argv[]) {
   //test_vhash_lookup();
-  test_vhash_table_set_parent();
-  test_vhash_table_get_parent();
+  //test_vhash_table_set_parent();
+  //test_vhash_table_get_parent();
+  test_vhash_table_ream();
 }
