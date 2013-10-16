@@ -126,9 +126,9 @@ test_vhash_lookup() {
 
 
 // test_vhash_table_set_parent
-// Create two vhash_tables. Set the parent of table_a to be
-// table_b. Expect that vhash_get_parent( table_a ) returns 
-// pointer to table_b.
+// Create a vhash_table and a random ponter. Set the parent of
+// table_a to be the pointer. Expect that 
+// vhash_get_parent( table_a ) returns pointer to that pointer.
 static void
 test_vhash_table_set_parent() {
   fprintf(stderr, "test_vhash_table_set_parent... \t\t\t");
@@ -159,6 +159,44 @@ test_vhash_table_set_parent() {
 
 
 // test_vhash_table_get_parent
+// Create a vhash_table and a random ponter. Expect that
+// vhash_get_parent( table_a ) returns NULL. Set the parent of
+// table_a to be the pointer. Expect that 
+// vhash_get_parent( table_a ) returns that random pointer.
+static void
+test_vhash_table_get_parent() {
+  fprintf(stderr, "test_vhash_table_get_parent... \t\t\t");
+  vhash_table table;
+  table = new_table();
+
+  void* j;
+  j = vhash_table_get_parent(table);
+  if (j != NULL) {
+    fprintf(stderr, "Failed\n");
+    fprintf(stderr, "Table failed to return NULL pointer of unset parent.\n");
+  }
+
+  int i;
+  i = 10000;
+  vhash_table_set_parent(table, &i);
+  
+  j = vhash_table_get_parent(table);
+  if (&i != j) {
+    fprintf(stderr, "Failed\n");
+    fprintf(stderr, "Table failed to return pointer to parent.\n");
+  }
+
+  table = vhash_table_reset(table, true);
+  if (table != NULL) {
+    fprintf(stderr, "Failed\n");
+    fprintf(stderr, "Table failed to be de-allocated.\n");
+  }
+
+  fprintf(stderr, "OK\n");
+  return;
+}
+
+
 // Create two vhash_tables. Expected that 
 // vhash_get_parent( table_a ) returns NULL. Set the parent of
 // table_a to be table_b. Expect vhash_get_parent( table_a )
@@ -212,4 +250,5 @@ int
 main(int argc, char* argv[]) {
   //test_vhash_lookup();
   test_vhash_table_set_parent();
+  test_vhash_table_get_parent();
 }

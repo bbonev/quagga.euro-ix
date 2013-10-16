@@ -38,3 +38,4 @@ testpfifo
 heavywq
 testbgpmpattr
 testsvector
+testvhash
