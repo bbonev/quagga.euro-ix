@@ -145,9 +145,15 @@ test_vhash_table_set_parent() {
   if (&i != j) {
     fprintf(stderr, "Failed\n");
     fprintf(stderr, "Table failed to return pointer to parent.\n");
-  } else {
-    fprintf(stderr, "OK\n");
   }
+
+  table = vhash_table_reset(table, true);
+  if (table != NULL) {
+    fprintf(stderr, "Failed\n");
+    fprintf(stderr, "Table failed to be de-allocated.\n");
+  }
+
+  fprintf(stderr, "OK\n");
   return;
 }
 
