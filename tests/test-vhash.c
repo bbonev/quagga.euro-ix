@@ -115,10 +115,11 @@ test_vhash_lookup() {
     return;
   }
 
-  table = vhash_table_reset(table, true);
+  table = vhash_table_reset(table);
   if (table != NULL) {
     fprintf(stderr, "Failed\n");
     fprintf(stderr, "Table failed to be de-allocated.\n");
+    return;
   }
   fprintf(stderr, "OK\n");
   return;
@@ -145,12 +146,14 @@ test_vhash_table_set_parent() {
   if (&i != j) {
     fprintf(stderr, "Failed\n");
     fprintf(stderr, "Table failed to return pointer to parent.\n");
+    return;
   }
 
-  table = vhash_table_reset(table, true);
+  table = vhash_table_reset(table);
   if (table != NULL) {
     fprintf(stderr, "Failed\n");
     fprintf(stderr, "Table failed to be de-allocated.\n");
+    return;
   }
 
   fprintf(stderr, "OK\n");
@@ -174,6 +177,7 @@ test_vhash_table_get_parent() {
   if (j != NULL) {
     fprintf(stderr, "Failed\n");
     fprintf(stderr, "Table failed to return NULL pointer of unset parent.\n");
+    return;
   }
 
   int i;
@@ -184,12 +188,14 @@ test_vhash_table_get_parent() {
   if (&i != j) {
     fprintf(stderr, "Failed\n");
     fprintf(stderr, "Table failed to return pointer to parent.\n");
+    return;
   }
 
-  table = vhash_table_reset(table, true);
+  table = vhash_table_reset(table);
   if (table != NULL) {
     fprintf(stderr, "Failed\n");
     fprintf(stderr, "Table failed to be de-allocated.\n");
+    return;
   }
 
   fprintf(stderr, "OK\n");
@@ -229,6 +235,7 @@ test_vhash_table_ream() {
   if (table == NULL) {
     fprintf(stderr, "Failed\n");
     fprintf(stderr, "Table was incorrectly set to NULL.\n");
+    return;
   }
 
   item = vhash_lookup(table, key, &ok);
@@ -238,10 +245,11 @@ test_vhash_table_ream() {
     return;
   }
 
-  table = vhash_table_reset(table, true);
+  table = vhash_table_reset(table);
   if (table != NULL) {
     fprintf(stderr, "Failed\n");
     fprintf(stderr, "Table failed to be de-allocated.\n");
+    return;
   }
 
   fprintf(stderr, "OK\n");
@@ -288,8 +296,8 @@ test_vhash_table_ream() {
 
 int
 main(int argc, char* argv[]) {
-  //test_vhash_lookup();
+  test_vhash_lookup();
   //test_vhash_table_set_parent();
   //test_vhash_table_get_parent();
-  test_vhash_table_ream();
+  //test_vhash_table_ream();
 }
