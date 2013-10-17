@@ -264,7 +264,47 @@ test_vhash_table_ream() {
 // + table now points to NULL. Expect vhash_table_lookup( val )
 // is NULL.
 // test_vhash_table_reset
+static void
+test_vhash_table_reset(void) {
+  fprintf(stderr, "test_vhash_table_reset... \t\t\t");
+  vhash_table table;
+  table = new_table();
 
+  const vhash_data* key;
+  key = (const vhash_data*)"3pin";
+
+  vhash_item item;
+  bool ok;
+  item = vhash_lookup(table, key, &ok);
+  
+  if (ok != true) {
+    fprintf(stderr, "Failed\n");
+    fprintf(stderr, "Value wasn't added to vhash.\n");
+    return;
+  }
+  if (item == NULL) {
+    fprintf(stderr, "Failed\n");
+    fprintf(stderr, "Item returned from vhash_lookup was NULL.\n");
+    return;
+  }
+
+  item = vhash_lookup(table, key, &ok);
+  if (item != NULL) {
+    fprintf(stderr, "Failed\n");
+    fprintf(stderr, "Item returned from vhash_lookup was not NULL.\n");
+    return;
+  }
+
+  table = vhash_table_reset(table);
+  if (table != NULL) {
+    fprintf(stderr, "Failed\n");
+    fprintf(stderr, "Table failed to be deallocated and set to NULL.\n");
+    return;
+  }
+
+  fprintf(stderr, "OK\n");
+  return;
+}
 
 // test_vhash_table_reset_bases
 
@@ -296,8 +336,9 @@ test_vhash_table_ream() {
 
 int
 main(int argc, char* argv[]) {
-  test_vhash_lookup();
+  //test_vhash_lookup();
   //test_vhash_table_set_parent();
   //test_vhash_table_get_parent();
   //test_vhash_table_ream();
+  test_vhash_table_reset();
 }
