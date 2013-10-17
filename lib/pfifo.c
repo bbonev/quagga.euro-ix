@@ -347,7 +347,8 @@ pfifo_item_add(pfifo pf, pfifo_item item, pfifo_period_t p)
            *
            * The current last is the item which is to come before the new one.
            */
-          zi = pf->zi ;                 /* index for pf->pz.            */
+          zi = pf->zi ;                         /* index for pf->pz.      */
+          i  = pfifo_index_prev(pf, zi) ;       /* index for last period  */
 
           last     = pf->f[zi] ;        /* insert after the last        */
           p_last_p = pfifo_pair_get(pf, last) ;
@@ -505,7 +506,7 @@ pfifo_item_add(pfifo pf, pfifo_item item, pfifo_period_t p)
       p_item_p->next = NULL ;
       p_item_p->prev = last ;
 
-      return zi ;
+      return i ;                        /* index of item                */
     }
   else if (p < pf->pf)
     {
@@ -553,7 +554,7 @@ pfifo_item_add(pfifo pf, pfifo_item item, pfifo_period_t p)
       p_item_p->next = next ;
       p_item_p->prev = NULL ;
 
-      return i ;
+      return i ;                /* index of item                */
     } ;
 
   /* We have p >= pf->pf and p < pf->pz -- so inserting in the body of the
