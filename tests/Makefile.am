@@ -5,11 +5,10 @@ AM_CFLAGS = $(PICFLAGS)
 AM_LDFLAGS = $(PILDFLAGS)
 
 noinst_PROGRAMS = testsig testbuffer testmemory heavy heavywq heavythread \
-                  testprivs teststream testbgpcap \
+                  testprivs teststream \
                   testchecksum testsvector testvector testheap \
                   testlistutil testqpath testqlump testavl testqfs testprefix \
-                  testbgpmpattr testbgpunk testbgpclust testbgpcomm \
-                  testbgpecomm testbgpaspath testbgpattrstore
+                  testpqueue testpfifo
 
 testsig_SOURCES          = test-sig.c
 testbuffer_SOURCES       = test-buffer.c
@@ -19,8 +18,7 @@ teststream_SOURCES       = test-stream.c
 heavy_SOURCES            = heavy.c main.c
 heavywq_SOURCES          = heavy-wq.c main.c
 heavythread_SOURCES      = heavy-thread.c main.c
-
-testbgpcap_SOURCES       = bgp_capability_test.c
+##testbgpcap_SOURCES       = bgp_capability_test.c
 testchecksum_SOURCES     = test-checksum.c
 testvector_SOURCES       = test-vector.c
 testheap_SOURCES         = test-heap.c
@@ -32,13 +30,16 @@ testqfs_SOURCES          = test-qfs.c
 testprefix_SOURCES       = test-prefix.c
 testsvector_SOURCES      = test-svector.c
 
-testbgpmpattr_SOURCES    = bgp_mp_attr_test.c
-testbgpunk_SOURCES       = test_bgp_unknown.c
-testbgpclust_SOURCES     = test_bgp_cluster.c
-testbgpcomm_SOURCES      = test_bgp_community.c
-testbgpecomm_SOURCES     = test_bgp_ecommunity.c
-testbgpaspath_SOURCES    = test_bgp_as_path.c
-testbgpattrstore_SOURCES = test_bgp_attr_store.c
+##testbgpmpattr_SOURCES    = bgp_mp_attr_test.c
+##testbgpunk_SOURCES       = test_bgp_unknown.c
+##testbgpclust_SOURCES     = test_bgp_cluster.c
+##testbgpcomm_SOURCES      = test_bgp_community.c
+##testbgpecomm_SOURCES     = test_bgp_ecommunity.c
+##testbgpaspath_SOURCES    = test_bgp_as_path.c
+##testbgpattrstore_SOURCES = test_bgp_attr_store.c
+
+testpqueue_SOURCES       = test-pqueue.c
+testpfifo_SOURCES        = test-pfifo.c
 
 testsig_LDADD          = ../lib/libzebra.la @LIBCAP@
 testbuffer_LDADD       = ../lib/libzebra.la @LIBCAP@
@@ -48,7 +49,7 @@ teststream_LDADD       = ../lib/libzebra.la @LIBCAP@
 heavy_LDADD            = ../lib/libzebra.la @LIBCAP@ -lm
 heavywq_LDADD          = ../lib/libzebra.la @LIBCAP@ -lm
 heavythread_LDADD      = ../lib/libzebra.la @LIBCAP@ -lm
-testbgpcap_LDADD       = ../lib/libzebra.la @LIBCAP@ ../bgpd/libbgp.a -lm
+##testbgpcap_LDADD       = ../lib/libzebra.la @LIBCAP@ ../bgpd/libbgp.a -lm
 testchecksum_LDADD     = ../lib/libzebra.la @LIBCAP@
 testvector_LDADD       = ../lib/libzebra.la @LIBCAP@
 testheap_LDADD         = ../lib/libzebra.la @LIBCAP@
@@ -60,10 +61,13 @@ testqfs_LDADD          = ../lib/libzebra.la @LIBCAP@
 testprefix_LDADD       = ../lib/libzebra.la @LIBCAP@
 testsvector_LDADD      = ../lib/libzebra.la @LIBCAP@
 
-testbgpmpattr_LDADD    = ../lib/libzebra.la @LIBCAP@ ../bgpd/libbgp.a  -lm
-testbgpunk_LDADD       = ../lib/libzebra.la @LIBCAP@ ../bgpd/libbgp.a  -lm
-testbgpclust_LDADD     = ../lib/libzebra.la @LIBCAP@ ../bgpd/libbgp.a  -lm
-testbgpcomm_LDADD      = ../lib/libzebra.la @LIBCAP@ ../bgpd/libbgp.a  -lm
-testbgpecomm_LDADD     = ../lib/libzebra.la @LIBCAP@ ../bgpd/libbgp.a  -lm
-testbgpaspath_LDADD    = ../lib/libzebra.la @LIBCAP@ ../bgpd/libbgp.a  -lm
-testbgpattrstore_LDADD = ../lib/libzebra.la @LIBCAP@ ../bgpd/libbgp.a  -lm
+##testbgpmpattr_LDADD    = ../lib/libzebra.la @LIBCAP@ ../bgpd/libbgp.a  -lm
+##testbgpunk_LDADD       = ../lib/libzebra.la @LIBCAP@ ../bgpd/libbgp.a  -lm
+##testbgpclust_LDADD     = ../lib/libzebra.la @LIBCAP@ ../bgpd/libbgp.a  -lm
+##testbgpcomm_LDADD      = ../lib/libzebra.la @LIBCAP@ ../bgpd/libbgp.a  -lm
+##testbgpecomm_LDADD     = ../lib/libzebra.la @LIBCAP@ ../bgpd/libbgp.a  -lm
+##testbgpaspath_LDADD    = ../lib/libzebra.la @LIBCAP@ ../bgpd/libbgp.a  -lm
+##testbgpattrstore_LDADD = ../lib/libzebra.la @LIBCAP@ ../bgpd/libbgp.a  -lm
+
+testpqueue_LDADD       = ../lib/libzebra.la @LIBCAP@
+testpfifo_LDADD        = ../lib/libzebra.la @LIBCAP@
