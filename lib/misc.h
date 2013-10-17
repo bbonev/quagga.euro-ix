@@ -159,6 +159,7 @@ enum { qdebug = QDEBUG } ;
  * Now a "minimum" set of includes
  */
 #include <string.h>
+#include <ctype.h>
 #include <limits.h>
 #include <unistd.h>
 
@@ -186,10 +187,12 @@ enum { qdebug = QDEBUG } ;
 /* Bit number to (single) bit mask
  */
 #define BIT(b)  (1 << (b))
+#define BIT64(b) (((uint64_t)1) << (b))
 
 /* Mask for given number of LS bits
  */
 #define MASK(n) (((BIT((n) - 1) - 1) << 1) | 1)
+#define MASK64(n) (((BIT64((n) - 1) - 1) << 1) | 1)
 
 /* The LS bit of a given value
  */
@@ -296,14 +299,27 @@ typedef enum free_keep free_keep_b ;
  *
  * Less straightforward is mixing "bar_c*" and "cvp*", or "const bar_c*" and
  * "const cvp*".... for reasons which one day one might understand.
+ *
+ * FWIW: const int* is the same as int const*, and the first (however common)
+ *       seems to be a special case.  So to build up chains of const pointers,
+ *       the "real" form is:
+ *
+ *         int const*           -- read backwards: pointer to constant int
+ *         int const* const     -- const pointer to...
+ *         int * const          -- const pointer to not const int
+ *         int const* const*    -- const pointer to const pointer to int
+ *         int const* const* const  -- etc....
  */
+typedef char*           chs_t ;
+typedef char const*     chs_c ;
+
 typedef uint8_t*        ptr_t ;
-typedef const uint8_t*  ptr_c ;
+typedef uint8_t const*  ptr_c ;
 
 typedef uintptr_t uptr_t ;
 
-typedef const void* cvp ;
 typedef void* vp ;
+typedef void const* cvp ;
 
 /* The <stdlib.h> sort comparison function takes two const void* pointers.
  *

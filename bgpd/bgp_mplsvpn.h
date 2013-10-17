@@ -22,13 +22,12 @@ Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
 #define _QUAGGA_BGP_MPLSVPN_H
 
 #include "misc.h"
+#include "qstring.h"
 #include "prefix_id.h"
 #include "vty.h"
-#include "qfstring.h"
 #include "ring_buffer.h"
 
 #include "bgpd/bgp_common.h"
-#include "bgpd/bgp_attr.h"
 
 /*------------------------------------------------------------------------------
  * Route Distinguishers.
@@ -75,8 +74,47 @@ struct mpls_rd
     } u ;
 };
 
+/*------------------------------------------------------------------------------
+ * A single MPLS Label, as a simple 20-bit integer -- 0x00000..0xFFFFF
+ */
+typedef uint32_t mpls_label_t ;
 
-/* Fixed length string structure for Route Distinguisher in string form and
+enum
+{
+  mpls_label_bad      = UINT32_MAX - 1, /* value >= to this is bad      */
+
+  mpls_label_invalid  = UINT32_MAX - 1,
+  mpls_label_overflow = UINT32_MAX,
+} ;
+
+CONFIRM(mpls_label_invalid  > (uint)MPLS_LABEL_LAST) ;
+CONFIRM(mpls_label_overflow > (uint)MPLS_LABEL_LAST) ;
+
+/*------------------------------------------------------------------------------
+ * Opaque value representing an MPLS Tag Stack.
+ *
+ * Convenient to have an mpls_tags_t for simple comparison of tag values, for
+ * equality at least.
+ *
+ * At present, Quagga allows only one level of tag stack -- so the "opaque"
+ * value is the 24 bit RFC3017 label, in Host Order, complete with BoS bit.
+ *
+ * Since the BoS bit is not zero, we can use zero as a null, "no tag" value.
+ */
+typedef uint32_t mpls_tags_t ;
+
+enum
+{
+  mpls_tags_null     = 0,               /* no tag                       */
+
+  mpls_tags_bad      = UINT32_MAX - 1,  /* value >= to this is bad      */
+
+  mpls_tags_invalid  = UINT32_MAX - 1,
+  mpls_tags_overflow = UINT32_MAX,
+} ;
+
+/*------------------------------------------------------------------------------
+ * Fixed length string structure for Route Distinguisher in string form and
  * for tag stack, ditto.
  */
 QFB_T(40) str_rdtoa_t ;
@@ -99,11 +137,8 @@ extern rd_type_t mpls_rd_raw_type (const byte* pnt) ;
 extern bool mpls_rd_known_type(const byte* pnt) ;
 extern bool mpls_rd_decode(mpls_rd rd, const byte* pnt) ;
 
-
-
 extern void bgp_mplsvpn_init (void);
-extern void bgp_mplsvpn_cmd_init (void);
-extern int bgp_nlri_parse_vpnv4 (bgp_peer peer, attr_set attr, bgp_nlri nlri);
+
 extern bool str2prefix_rd (prefix_rd prd, const char* str);
 extern bool str2prefix_rd_vty (vty vty, prefix_rd prd, const char* str);
 extern str_rdtoa_t srdtoa(prefix_rd_c prd) ;

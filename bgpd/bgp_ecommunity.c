@@ -27,7 +27,7 @@
 
 #include "pthread_safe.h"
 
-#include "bgpd/bgp.h"
+#include "bgpd/bgp_common.h"
 #include "bgpd/bgp_ecommunity.h"
 
 /*==============================================================================
@@ -55,11 +55,12 @@ static vhash_item   attr_ecommunity_vhash_free(vhash_item item,
 
 static const vhash_params_t attr_ecommunity_vhash_params =
 {
-    .hash   = attr_ecommunity_hash,
-    .equal  = attr_ecommunity_vhash_equal,
-    .new    = attr_ecommunity_vhash_new,
-    .free   = attr_ecommunity_vhash_free,
-    .orphan = vhash_orphan_null,
+    .hash       = attr_ecommunity_hash,
+    .equal      = attr_ecommunity_vhash_equal,
+    .new        = attr_ecommunity_vhash_new,
+    .free       = attr_ecommunity_vhash_free,
+    .orphan     = vhash_orphan_null,
+    .table_free = vhash_table_free_parent,
 } ;
 
 /*------------------------------------------------------------------------------
@@ -121,7 +122,8 @@ static const qlump_type_t attr_ecommunity_enc_qt[1] =
 extern void
 attr_ecommunity_start(void)
 {
-  attr_ecommunity_vhash = vhash_table_new(NULL, 1000 /* chain bases */,
+  attr_ecommunity_vhash = vhash_table_new(&attr_ecommunity_vhash,
+                                                1000 /* chain bases */,
                                                  200 /* % density   */,
                                                 &attr_ecommunity_vhash_params) ;
 
@@ -146,7 +148,7 @@ attr_ecommunity_start(void)
 extern void
 attr_ecommunity_finish(void)
 {
-  attr_ecommunity_vhash = vhash_table_reset(attr_ecommunity_vhash, free_it) ;
+  attr_ecommunity_vhash = vhash_table_reset(attr_ecommunity_vhash) ;
 } ;
 
 /*------------------------------------------------------------------------------

@@ -21,8 +21,8 @@
 
 #include "bgpd/bgp_common.h"
 #include "bgpd/bgp_adj_in.h"
-#include "bgpd/bgpd.h"
-#include "bgpd/bgp_peer.h"
+#include "bgpd/bgp_run.h"
+#include "bgpd/bgp_prun.h"
 #include "bgpd/bgp_rib.h"
 #include "bgpd/bgp_rcontext.h"
 #include "bgpd/bgp_route.h"
@@ -57,16 +57,27 @@
  */
 
 /*------------------------------------------------------------------------------
- * Create new, empty adj_in.
+ * Create new, empty adj_in, and initialise related fields:
  *
- *
+ *   * adj_in           -- set to a new, empty ihash.
+ *   * stale_routes     -- NULLs        -- none, yet
+ *   * pending_routes   -- NULLs        -- none, yet
+ *   * in_state         -- ai_next
+ *   * in_attrs         -- NULL         -- none, yet
  */
 extern void
 bgp_adj_in_init(bgp_prib prib)
 {
-  /* Set up an empty adj_out -- indexed by prefix_id
+  /* Set up an empty adj_in -- indexed by prefix_id
    */
   prib->adj_in = ihash_table_new(200, 50) ;
+
+  /* For completeness, clear the related fields.
+   */
+  ddl_init(prib->stale_routes) ;
+  ddl_init(prib->pending_routes) ;
+  prib->in_state = ai_next ;
+  prib->in_attrs = NULL ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -445,9 +456,9 @@ bgp_adj_in_update_prefix(bgp_prib prib, prefix_id_entry pie,
            */
           if (BGP_DEBUG (update, UPDATE_IN) &&
                                   (parcel->route_type == bgp_route_type_normal))
-            zlog (prib->peer->log, LOG_DEBUG,
+            zlog (prib->prun->log, LOG_DEBUG,
                        "%s withdraw for unknown route %s",
-                                     prib->peer->host, spfxtoa(pie->pfx).str) ;
+                                    prib->prun->name, spfxtoa(pie->pfx).str) ;
 
           return ;
         } ;
@@ -512,15 +523,15 @@ bgp_adj_in_update_prefix(bgp_prib prib, prefix_id_entry pie,
 
           if (BGP_DEBUG (update, UPDATE_IN) &&
                                   (parcel->route_type == bgp_route_type_normal))
-            zlog (prib->peer->log, LOG_DEBUG,
+            zlog (prib->prun->log, LOG_DEBUG,
                  "%s route for %s withdrawn before previous update processed",
-                                      prib->peer->host, spfxtoa(pie->pfx).str) ;
+                                    prib->prun->name, spfxtoa(pie->pfx).str) ;
         }
       else
         {
-          zlog (prib->peer->log, LOG_DEBUG,
+          zlog (prib->prun->log, LOG_DEBUG,
                      "%s withdraw for already withdrawn route %s",
-                                      prib->peer->host, spfxtoa(pie->pfx).str) ;
+                                    prib->prun->name, spfxtoa(pie->pfx).str) ;
         } ;
 
       return ;
@@ -837,9 +848,9 @@ bgp_adj_in_process(bgp_prib prib)
 
       /* Worry about the med_as stuff.
        */
-      if      (prib->rib->always_compare_med)
+      if      (prib->rib->do_always_compare_med)
         ri->med_as = BGP_ASN_NULL ;
-      else if (prib->rib->confed_compare_med)
+      else if (prib->rib->do_confed_compare_med)
         ri->med_as = as_path_left_most_asn(prib->in_attrs->asp) ;
       else
         ri->med_as = as_path_first_simple_asn(prib->in_attrs->asp) ;
@@ -1693,7 +1704,7 @@ bgp_route_select(bgp_rib_node rn, bgp_lc_id_t lc)
    */
   if (count > 1)
     {
-      if (rn->it.rib->deterministic_med && (count > 2))
+      if (rn->it.rib->do_deterministic_med && (count > 2))
         {
           /* Do the tie break, with Deterministic-MED.
            */
@@ -1992,9 +2003,9 @@ bgp_route_merit(bgp_rib rib, attr_set attr, byte sub_type)
    *    If, for some crazy reason, the AS-PATH is beyond what we have bits
    *    for, we leave the field as 0 -- least possible merit.
    */
-  if (!rib->aspath_ignore)
+  if (!rib->do_aspath_ignore)
     {
-       if (rib->aspath_confed)
+       if (rib->do_aspath_confed)
          temp = as_path_total_path_length (attr->asp);
        else
          temp = as_path_simple_path_length (attr->asp) ;
@@ -2048,7 +2059,7 @@ bgp_tie_break (bgp_rib_node rn, route_info best, route_info cand, bgp_lc_id_t lc
   uint best_cluster, cand_cluster ;
   int ret;
   bgp_peer_sort_t best_sort, cand_sort ;
-  bgp_inst bgp ;
+  bgp_run brun ;
 
   best_attr = best->iroutes[lc].attr ;
   cand_attr = cand->iroutes[lc].attr ;
@@ -2083,12 +2094,12 @@ bgp_tie_break (bgp_rib_node rn, route_info best, route_info cand, bgp_lc_id_t lc
    *
    *    MED is a weight/cost... so we are looking for the smaller.
    */
-  bgp = rn->it.rib->bgp ;
+  brun = rn->it.rib->brun ;
   if (best->med_as == cand->med_as)
     {
       uint32_t best_med, cand_med, default_med ;
 
-      default_med = bgp->default_med ;
+      default_med = brun->args_r.med ;
       best_med    = bgp_med_value (best_attr, default_med);
       cand_med    = bgp_med_value (cand_attr, default_med);
 
@@ -2100,8 +2111,8 @@ bgp_tie_break (bgp_rib_node rn, route_info best, route_info cand, bgp_lc_id_t lc
    *
    *    CONFED and iBGP rank equal, "internal" (RFC5065).
    */
-  best_sort = best->prib->peer->sort ;
-  cand_sort = cand->prib->peer->sort ;
+  best_sort = best->prib->prun->sort ;
+  cand_sort = cand->prib->prun->sort ;
 
   if (best_sort != cand_sort)
     {
@@ -2154,12 +2165,12 @@ bgp_tie_break (bgp_rib_node rn, route_info best, route_info cand, bgp_lc_id_t lc
 
       /* 10. for eBGP (and not cBGP) -- BGP Identifier or prefer current
        */
-      best_id = best->prib->peer->args.remote_id ;
-      cand_id = cand->prib->peer->args.remote_id ;
+      best_id = best->prib->prun->args_r.remote_id ;
+      cand_id = cand->prib->prun->args_r.remote_id ;
 
       if (best_id != cand_id)
         {
-          if (!(bgp->flags & BGP_FLAG_COMPARE_ROUTER_ID))
+          if (brun->do_prefer_current_selection)
             {
               if (best == ris_was)
                 return best ;
@@ -2178,12 +2189,12 @@ bgp_tie_break (bgp_rib_node rn, route_info best, route_info cand, bgp_lc_id_t lc
       if (best_attr->have & atb_originator_id)
         best_id = best_attr->originator_id ;
       else
-        best_id = best->prib->peer->args.remote_id ;
+        best_id = best->prib->prun->args_r.remote_id ;
 
       if (cand_attr->have & atb_originator_id)
         cand_id = cand_attr->originator_id ;
       else
-        cand_id = cand->prib->peer->args.remote_id ;
+        cand_id = cand->prib->prun->args_r.remote_id ;
 
       if (best_id != cand_id)
         return (ntohl (best_id) < ntohl (cand_id)) ? best : cand ;
@@ -2201,8 +2212,8 @@ bgp_tie_break (bgp_rib_node rn, route_info best, route_info cand, bgp_lc_id_t lc
    *
    *     NB: the addresses cannot be equal !
    */
-  ret = sockunion_cmp (&best->prib->peer->session->cops->su_remote,
-                       &cand->prib->peer->session->cops->su_remote);
+  ret = sockunion_cmp (&best->prib->prun->session->cops->su_remote,
+                       &cand->prib->prun->session->cops->su_remote);
 
   return (ret <= 0) ? best : cand ;
 } ;

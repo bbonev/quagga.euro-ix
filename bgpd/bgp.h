@@ -163,6 +163,11 @@ typedef uint32_t  bgp_id_t ;    /* actually an IPv4 IP Address          */
 typedef bgp_id_t  bgp_id_ht ;   /* in host order                        */
 typedef bgp_id_t  bgp_id_nt ;   /* in network order                     */
 
+enum
+{
+  BGP_ID_NULL   = 0             /* == INADDR_ANY !                      */
+};
+
 /* Size of BGP packets or thing in such
  */
 typedef uint16_t bgp_size_t ;

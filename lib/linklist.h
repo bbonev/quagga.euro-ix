@@ -66,6 +66,7 @@ extern struct list *list_new(void); /* encouraged: set list.del callback on new 
 extern void list_free (struct list *);
 
 extern void listnode_add (struct list *, void *);
+extern void listnode_add_head (struct list *, void *) ;
 extern void listnode_add_sort (struct list *, void *);
 extern void listnode_add_after (struct list *, struct listnode *, void *);
 extern void listnode_delete (struct list *, void *);

@@ -23,7 +23,6 @@
 #define _QUAGGA_BGP_PEER_INDEX_H
 
 #include "bgpd/bgp_common.h"
-#include "bgpd/bgp_connection.h"
 
 #include "lib/sockunion.h"
 
@@ -48,23 +47,28 @@
  * index -- so the IP address no longer has a peer or a session associated with
  * it.
  */
-typedef       struct bgp_peer_index_entry  bgp_peer_index_entry_t ;
-typedef const struct bgp_peer_index_entry* bgp_peer_index_entry_c ;
+typedef enum bgp_peer_id bgp_peer_id_t ;
+enum bgp_peer_id
+{
+  bgp_peer_id_null      = 0,     /* no peer can have id == 0     */
 
-typedef uint bgp_peer_id_t ;
-
-enum { bgp_peer_id_null = 0 } ; /* no peer can have id == 0     */
+  bgp_peer_id_first     = 1,
+  bgp_peer_id_max       = UINT_MAX,
+} ;
 
 /*==============================================================================
  * Functions
  */
-extern void bgp_peer_index_init(void* parent) ;
+extern void bgp_peer_index_init(void) ;
 extern void bgp_peer_index_init_r(void) ;
 extern void bgp_peer_index_finish(void) ;
-extern void bgp_peer_index_register(bgp_peer peer, bgp_session session) ;
+
+extern bgp_peer_id_t bgp_peer_index_register(bgp_peer peer) ;
 extern void bgp_peer_index_deregister(bgp_peer peer) ;
 
-extern bgp_session bgp_peer_index_seek_session(sockunion su) ;
+extern bgp_peer bgp_peer_index_peer_lookup(sockunion su) ;
+extern bgp_prun bgp_peer_index_prun_lookup(sockunion su) ;
+extern bgp_session bgp_peer_index_session_lookup(sockunion su) ;
 
 #endif /* _QUAGGA_BGP_PEER_INDEX_H */
 

@@ -23,13 +23,13 @@
 #define _QUAGGA_BGP_ADJ_IN_H
 
 #include "lib/misc.h"
-#include "lib/list_util.h"
-#include "lib/prefix_id.h"
 
 #include "bgpd/bgp_common.h"
-#include "bgpd/bgp_peer.h"
 #include "bgpd/bgp_rib.h"
 #include "bgpd/bgp_attr_store.h"
+
+#include "lib/list_util.h"
+#include "lib/prefix_id.h"
 
 /*------------------------------------------------------------------------------
  * Prototypes.

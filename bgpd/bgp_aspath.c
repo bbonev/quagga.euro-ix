@@ -22,17 +22,16 @@
  */
 
 #include "misc.h"
+
+#include "bgpd/bgp_aspath.h"
+#include "bgpd/bgp_debug.h"
+
 #include "miyagi.h"
 #include "memory.h"
 #include "vhash.h"
 #include "qlump.h"
 #include "vector.h"
-
 #include "log.h"
-
-#include "bgpd/bgp.h"
-#include "bgpd/bgp_aspath.h"
-#include "bgpd/bgp_debug.h"
 
 /*==============================================================================
  * The basic AS_PATH is a (possibly empty) list of AS_PATH segments.  Most
@@ -104,7 +103,7 @@
  * For some attributes, a NULL is equivalent to an empty or absent attribute.
  *
  * For the as_path attribute, an empty as_path object is created, stored and
- * set "owned" early in the morning, and is used when an empty as_path is
+ * set 'held' early in the morning, and is used when an empty as_path is
  * required (available as the extern as_path_empty_asp).
  */
 
@@ -215,6 +214,7 @@ static const vhash_params_t as_path_vhash_params =
     .new    = as_path_vhash_new,
     .free   = as_path_vhash_free,
     .orphan = vhash_orphan_null,
+    .table_free = vhash_table_free_parent,
 } ;
 
 /*------------------------------------------------------------------------------
@@ -289,9 +289,10 @@ inline static asp_item_t* as_path_get_processed(as_path asp) ;
 extern void
 as_path_start(void)
 {
-  as_path_vhash = vhash_table_new(NULL, 1000 /* chain bases */,
-                                         200 /* % density   */,
-                                                        &as_path_vhash_params) ;
+  as_path_vhash = vhash_table_new(as_path_vhash,
+                       1000 /* chain bases */,
+                        200 /* % density   */,
+                        &as_path_vhash_params) ;
   qlump_register_type(MTYPE_AS_PATH_BODY, as_path_body_qt,
                                                        false /* not a test */) ;
   qlump_register_type(MTYPE_AS_PATH_ENC, as_path_enc_qt,
@@ -301,7 +302,7 @@ as_path_start(void)
 
   as_path_empty_asp = as_path_store(as_path_new(0)) ;
 
-  vhash_set(as_path_empty_asp) ;
+  vhash_set_held(as_path_empty_asp) ;
   vhash_dec_ref(as_path_empty_asp, as_path_vhash) ;
 } ;
 
@@ -323,9 +324,9 @@ as_path_finish(void)
   snmp_stream = stream_free(snmp_stream) ;
 #endif
 
-  as_path_empty_asp = vhash_unset_delete(as_path_empty_asp, as_path_vhash) ;
+  as_path_empty_asp = vhash_drop_delete(as_path_empty_asp, as_path_vhash) ;
 
-  as_path_vhash = vhash_table_reset(as_path_vhash, free_it) ;
+  as_path_vhash = vhash_table_reset(as_path_vhash) ;
 } ;
 
 /*------------------------------------------------------------------------------

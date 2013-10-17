@@ -782,11 +782,12 @@ static vhash_free_func   vtysh_config_match_free ;
 
 static vhash_params_t vtysh_config_match_params =
   {
-    .hash   = vtysh_config_name_hash,
-    .equal  = vtysh_config_match_equal,
-    .new    = vtysh_config_match_new,
-    .free   = vtysh_config_match_free,
-    .orphan = vhash_orphan_null,
+    .hash       = vtysh_config_name_hash,
+    .equal      = vtysh_config_match_equal,
+    .new        = vtysh_config_match_new,
+    .free       = vtysh_config_match_free,
+    .orphan     = vhash_orphan_null,
+    .table_free = vhash_table_free_simple,
   } ;
 
 static cmd_ret_t vtysh_config_item_insert(config_collection collection) ;
@@ -884,7 +885,7 @@ vtysh_config_collection_free(vty vtysh)
 
   /* Ream out the symbol table and free it.  All names are discarded later.
    */
-  collection->match = vhash_table_reset(collection->match, free_it) ;
+  collection->match = vhash_table_reset(collection->match) ;
 
   /* Ream out all the node items, and all their children etc.
    */
@@ -3468,7 +3469,7 @@ vtysh_config_make_name(config_collection collection,
   if (added)
     {
       qassert(name == temp) ;
-      vhash_set(name) ;
+      vhash_set_held(name) ;
     }
   else
     vtysh_config_fragment_return(collection, temp) ;

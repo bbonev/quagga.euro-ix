@@ -23,6 +23,8 @@ Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
 
 #include "bgpd/bgp_common.h"
 
+#include "prefix.h"
+
 /* The bgp_node is the entry in a prefix table, which contains the information
  * for a number of notional tables:
  *
@@ -46,8 +48,10 @@ struct bgp_node
 
   void*         info;
 
+#if 0
   bgp_adj_out   adj_out;
   bgp_adj_in    adj_in;
+#endif
 
   bgp_node      prn;
 

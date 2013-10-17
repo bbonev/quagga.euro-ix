@@ -54,7 +54,7 @@ listnode_free (struct listnode *node)
 }
 
 
-/* Add new data to the list. */
+/* Add new data to the tail of the list.        */
 void
 listnode_add (struct list *list, void *val)
 {
@@ -62,7 +62,7 @@ listnode_add (struct list *list, void *val)
 
   assert (val != NULL);
 
-  node = listnode_new ();
+  node = listnode_new ();       /* returns all NULL     */
 
   node->prev = list->tail;
   node->data = val;
@@ -71,7 +71,31 @@ listnode_add (struct list *list, void *val)
     list->head = node;
   else
     list->tail->next = node;
+
   list->tail = node;
+
+  list->count++;
+}
+
+/* Add new data to the head of the list.        */
+void
+listnode_add_head (struct list *list, void *val)
+{
+  struct listnode *node;
+
+  assert (val != NULL);
+
+  node = listnode_new ();       /* returns all NULL     */
+
+  node->next = list->head;
+  node->data = val;
+
+  if (list->head == NULL)
+    list->tail = node;
+  else
+    list->head->prev = node;
+
+  list->head = node;
 
   list->count++;
 }

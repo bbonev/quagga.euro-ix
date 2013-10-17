@@ -19,12 +19,10 @@
  * Boston, MA 02111-1307, USA.
  */
 
-#include "zebra.h"
+#include "misc.h"
 
-#include "bgpd/bgpd.h"
-#include "bgpd/bgp_peer.h"
-#include "bgpd/bgp_session.h"
 #include "bgpd/bgp_open_state.h"
+#include "bgpd/bgp_session.h"
 
 #include "lib/memory.h"
 
@@ -649,7 +647,7 @@ bgp_open_make_cap_r_refresh(blower br, bgp_form_t form, bool wrap)
  */
 extern bool
 bgp_open_prepare_orf_type(bgp_open_orf_type orf_type, uint8_t orft,
-                        bgp_orf_cap_v modes, bgp_form_t form, qafx_set_t can_af)
+                         bgp_orf_caps modes, bgp_form_t form, qafx_set_t can_af)
 {
   bgp_orf_cap_bits_t want ;
   qafx_t qafx ;
@@ -674,7 +672,7 @@ bgp_open_prepare_orf_type(bgp_open_orf_type orf_type, uint8_t orft,
       if (!(can_af & qb))
         continue ;
 
-      have = modes[qafx] & want ;
+      have = modes->af[qafx] & want ;
 
       if (have & (ORF_SM | ORF_SM_pre))
         orf_type->sm |= qb ;

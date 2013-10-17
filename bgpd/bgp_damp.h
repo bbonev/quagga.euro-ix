@@ -136,6 +136,8 @@ struct bgp_damp_config
 #define REUSE_LIST_SIZE          256
 #define REUSE_ARRAY_SIZE        1024
 
+extern void bgp_damping_cmd_init (void) ;
+
 extern int bgp_damp_enable (bgp_inst , qafx_t, time_t, unsigned int,
                                                          unsigned int, time_t);
 extern int bgp_damp_disable (bgp_inst , qafx_t);
@@ -146,9 +148,12 @@ extern int bgp_damp_scan (struct bgp_info *, qafx_t qafx);
 extern void bgp_damp_info_free (struct bgp_damp_info *, bool);
 extern void bgp_damp_info_clean (void);
 extern int bgp_damp_decay (time_t, int);
+
 extern void bgp_config_write_damp (struct vty *);
-extern void bgp_damp_info_vty (struct vty *, route_info ri);
-extern const char * bgp_damp_reuse_time_vty (struct vty *, route_info ri,
-                                             char *, size_t);
+
+extern cmd_ret_t bgp_damp_warning(vty vty) ;
+extern void bgp_damp_info_vty (vty vty, route_info ri);
+extern const char * bgp_damp_reuse_time_vty (vty vty, route_info ri,
+                                                        char *, size_t);
 
 #endif /* _QUAGGA_BGP_DAMP_H */

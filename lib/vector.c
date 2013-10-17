@@ -1188,6 +1188,149 @@ vector_bsearch(vector v, vector_bsearch_cmp* cmp, const void* p_val,
     } ;
 } ;
 
+/*------------------------------------------------------------------------------
+ * Seek item with given value in (assumed to be) sorted vector.
+ *
+ * Uses vector_bsearch() -- so see notes there.
+ *
+ * If there are equal values in the vector, returns the first.
+ *
+ * Returns:  address of item found, or NULL
+ */
+extern p_vector_item
+vector_bseek(vector v, vector_bsearch_cmp* cmp, const void* p_val)
+{
+  vector_index_t i ;
+  int result ;
+
+  i = vector_bsearch(v, cmp, p_val, &result) ;
+
+  if (result != 0)
+    return NULL ;
+
+  while (i > 0)
+    {
+      if (cmp(&p_val, (const cvp*)&v->p_items[i - 1]) != 0)
+        break ;
+
+      i -= 1 ;
+    } ;
+
+  return v->p_items[i] ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Perform insertion using binary search on the given vector.
+ *
+ * Uses vector_bsearch() -- so see notes there.
+ *
+ * If there are equal values in the vector, adds after the last equal value.
+ *
+ * NB: the value to insert must be a vector-item, so the comparison function
+ *     takes two pointers to pointers to vector item -- same like vector_sort.
+ *
+ * Returns:  index of newly inserted item.
+ */
+extern vector_index_t
+vector_binsert(vector v, vector_sort_cmp* cmp, p_vector_item p_v)
+{
+  vector_index_t i ;
+  int result ;
+
+  i = vector_bsearch(v, cmp, p_v, &result) ;
+
+  if (result >= 0)
+    {
+      i += 1 ;                  /* add after entry <= new value */
+
+      while ((result == 0) && (i < v->end))
+        {
+          p_vector_item n_v ;
+
+          n_v = v->p_items[i] ;
+          if (n_v == NULL)
+            break ;
+
+          result = cmp((const cvp*)&p_v, (const cvp*)&n_v) ;
+        } ;
+    } ;
+
+  vector_insert_item(v, i, p_v) ;
+  return i ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Perform deletion using binary search on the given vector.
+ *
+ * Uses vector_bsearch() -- so see notes there.
+ *
+ * If there are equal values in the vector, adds after the last equal value.
+ *
+ * NB: the value to delete must be a vector-item, so the comparison function
+ *     takes two pointers to pointers to vector item -- same like vector_sort.
+ *
+ * Returns:  true <=> OK, done
+ *           false => not found
+ */
+extern bool
+vector_bdelete(vector v, vector_sort_cmp* cmp, p_vector_item p_v)
+{
+  vector_index_t i ;
+  int result ;
+  p_vector_item f_v ;
+
+  i = vector_bsearch(v, cmp, p_v, &result) ;
+
+  if (result != 0)
+    return false ;
+
+  f_v = v->p_items[i] ;
+
+  if (f_v != p_v)
+    {
+      uint si ;
+
+      si = i ;
+
+      while (i < v->end)
+        {
+          i += 1 ;
+          f_v = v->p_items[i] ;
+
+          if (p_v == f_v)
+            goto found ;
+
+          if (f_v == NULL)
+            continue ;
+
+          if (cmp((const cvp*)&p_v, (const cvp*)&f_v) != 0)
+            break ;
+        } ;
+
+      i = si ;                  /* back to where we were        */
+      while (i > 0)
+        {
+          i -= 1 ;
+          f_v = v->p_items[i] ;
+
+          if (p_v == f_v)
+            goto found ;
+
+          if (f_v == NULL)
+            continue ;
+
+          if (cmp((const cvp*)&p_v, (const cvp*)&f_v) != 0)
+            break ;
+        } ;
+
+      return false ;            /* not there !                  */
+    } ;
+
+ found:
+  vector_delete_item(v, i) ;
+  return true ;
+} ;
+
 /*==============================================================================
  * Mechanics for adding/deleting items and managing the vector (logical) end
  * and (physical) limit.

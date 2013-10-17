@@ -22,6 +22,7 @@
 
 #include "misc.h"
 
+#include "bgpd/bgp_common.h"
 #include "bgpd/bgpd.h"
 #include "bgpd/bgp_connection.h"
 #include "bgpd/bgp_network.h"
@@ -223,11 +224,28 @@ bgp_connection_init_new(bgp_connection connection, bgp_session session,
    *
    * This also names the timers -- so done after the timers are created.
    */
-  qassert(connection->lox.host == NULL) ;
+  qassert(connection->lox.name == NULL) ;
   bgp_connection_init_host(connection, ord) ;
   connection->lox.log  = session->lox.log ;
 
   return connection ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Start connection for session, trying to connect() or accept()
+ *
+ * Creates new connection object, sets that into the session and then sets the
+ * FSM going.
+ */
+extern void
+bgp_connection_start(bgp_session session, bgp_conn_ord_t ord)
+{
+  bgp_connection connection ;
+
+  qassert(session->connections[ord] == NULL) ;
+
+  connection = bgp_connection_init_new(NULL, session, ord) ;
+  bgp_fsm_start_connection(connection) ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -240,7 +258,7 @@ bgp_connection_init_new(bgp_connection connection, bgp_session session,
 static void
 bgp_connection_init_host(bgp_connection connection, bgp_conn_ord_t ord)
 {
-  connection->lox.host = bgp_connection_host_string(connection->lox.host,
+  connection->lox.name = bgp_connection_host_string(connection->lox.name,
                                                      connection->session, ord) ;
 
   if (BGP_DEBUG(fsm, FSM))
@@ -250,14 +268,14 @@ bgp_connection_init_host(bgp_connection connection, bgp_conn_ord_t ord)
       if (connection->hold_timer->qtr != NULL)
         {
           qfs_reset(qfs) ;
-          qfs_printf(qfs, "%s-%s", connection->lox.host, "Hold") ;
+          qfs_printf(qfs, "%s-%s", connection->lox.name, "Hold") ;
           qtimer_set_name(connection->hold_timer->qtr, qfs_string(qfs)) ;
         } ;
 
       if (connection->keepalive_timer->qtr != NULL)
         {
           qfs_reset(qfs) ;
-          qfs_printf(qfs, "%s-%s", connection->lox.host, "KeepA") ;
+          qfs_printf(qfs, "%s-%s", connection->lox.name, "KeepA") ;
           qtimer_set_name(connection->keepalive_timer->qtr, qfs_string(qfs)) ;
         } ;
     } ;
@@ -276,7 +294,7 @@ bgp_connection_host_string(char* host_was, bgp_session session,
   host_was = bgp_connection_host_string_free(host_was) ;
 
   qfs_reset(qfs) ;
-  qfs_printf(qfs, "%s%s", session->lox.host, bgp_connection_tags[ord]) ;
+  qfs_printf(qfs, "%s%s", session->lox.name, bgp_connection_tags[ord]) ;
   qfs_term(qfs) ;
 
   host = XMALLOC(MTYPE_BGP_PEER_HOST, qfs_len(qfs) + 1) ;
@@ -408,7 +426,7 @@ bgp_connection_free(bgp_connection connection)
 
   /* Free any components which still exist
    */
-  connection->lox.host = bgp_connection_host_string_free(connection->lox.host) ;
+  connection->lox.name = bgp_connection_host_string_free(connection->lox.name) ;
   connection->lox.log  = NULL ;
 
   connection->qf   = qfile_free(connection->qf) ;
@@ -440,7 +458,7 @@ bgp_connection_free(bgp_connection connection)
  */
 static void bgp_add_qafx_set_to_notification(bgp_note note, qafx_set_t set) ;
 static void bgp_add_orf_to_notification(bgp_note note,
-                       bgp_orf_cap_v orf_pfx_missing, bgp_orf_cap_bits_t mode,
+                         bgp_orf_caps orf_pfx_missing, bgp_orf_cap_bits_t mode,
                                            uint8_t cap_type, uint8_t orf_type) ;
 
 /*------------------------------------------------------------------------------
@@ -647,7 +665,7 @@ bgp_connection_make_args(bgp_connection connection, bgp_session_args args)
       if (args_recv->can_mp_ext)
         {
           zlog_info ("%s got MP-Ext Capability, so ignoring "
-                                  "override-capability", connection->lox.host) ;
+                                  "override-capability", connection->lox.name) ;
         }
       else if (real_af != args_config->can_af)
         {
@@ -664,7 +682,7 @@ bgp_connection_make_args(bgp_connection connection, bgp_session_args args)
        * afi/safi we *originally* wanted.
        */
       plog_err (connection->lox.log, "%s [Error] No common capability",
-                                                         connection->lox.host) ;
+                                                         connection->lox.name) ;
 
       note = bgp_note_new(BGP_NOMC_OPEN, BGP_NOMS_O_CAPABILITY) ;
       bgp_add_qafx_set_to_notification(note, args_config->can_af) ;
@@ -705,8 +723,8 @@ bgp_connection_make_args(bgp_connection connection, bgp_session_args args)
       if (!(real_af & qafx_bit(qafx)))
         continue ;
 
-      orf_sent = args_sent->can_orf_pfx[qafx] ;
-      orf_recv = args_recv->can_orf_pfx[qafx] ;
+      orf_sent = args_sent->can_orf_pfx.af[qafx] ;
+      orf_recv = args_recv->can_orf_pfx.af[qafx] ;
 
       orf = 0 ;
 
@@ -720,7 +738,7 @@ bgp_connection_make_args(bgp_connection connection, bgp_session_args args)
       if ((orf_sent & ORF_RM_pre) && (orf_recv & ORF_SM_pre))
         orf |= ORF_RM_pre ;
 
-      args->can_orf_pfx[qafx] = orf ;
+      args->can_orf_pfx.af[qafx] = orf ;
     } ;
 
   args->can_dynamic     = args_recv->can_dynamic && args_sent->can_dynamic ;
@@ -820,7 +838,7 @@ bgp_connection_make_args(bgp_connection connection, bgp_session_args args)
    */
   if (args->cap_strict)
     {
-      bgp_orf_cap_v  orf_pfx_missing ;
+      bgp_orf_caps_t orf_pfx_missing ;
       bgp_form_t     orf_cap_missing ;
 
       /* Check that we got AS4 if we wanted it and need it.
@@ -861,13 +879,13 @@ bgp_connection_make_args(bgp_connection connection, bgp_session_args args)
        * it.  (We don't care what the far end wanted, or what we offered.)
        */
       orf_cap_missing = bgp_form_none ;
-      memset(orf_pfx_missing, 0 , sizeof(bgp_orf_cap_v)) ;
+      memset(&orf_pfx_missing, 0 , sizeof(bgp_orf_caps_t)) ;
 
       for (qafx = qafx_first ; qafx <= qafx_last ; ++qafx)
         {
           bgp_orf_cap_bits_t orf_want ;
 
-          orf_want = args_config->can_orf_pfx[qafx] & (ORF_SM | ORF_SM_pre) ;
+          orf_want = args_config->can_orf_pfx.af[qafx] & (ORF_SM | ORF_SM_pre) ;
 
           if (orf_want == 0)
             continue ;
@@ -884,18 +902,18 @@ bgp_connection_make_args(bgp_connection connection, bgp_session_args args)
            * Note that we complain about ORF_RM to the far end... so, the
            * capability from *their* perspective.
            */
-          if (!(args->can_orf_pfx[qafx] & ORF_SM))
+          if (!(args->can_orf_pfx.af[qafx] & ORF_SM))
             {
               if (orf_want & ORF_SM)
                 {
-                  orf_pfx_missing[qafx] |= ORF_RM ;
-                  orf_cap_missing       |= bgp_form_rfc ;
+                  orf_pfx_missing.af[qafx] |= ORF_RM ;
+                  orf_cap_missing          |= bgp_form_rfc ;
                 } ;
 
               if (orf_want & ORF_SM_pre)
                 {
-                  orf_pfx_missing[qafx] |= ORF_RM_pre ;
-                  orf_cap_missing       |= bgp_form_pre ;
+                  orf_pfx_missing.af[qafx] |= ORF_RM_pre ;
+                  orf_cap_missing          |= bgp_form_pre ;
                 } ;
             } ;
         } ;
@@ -903,15 +921,14 @@ bgp_connection_make_args(bgp_connection connection, bgp_session_args args)
       if (orf_cap_missing != bgp_form_none)
         {
           if (note == NULL)
-            note = bgp_note_new(BGP_NOMC_OPEN,
-                                          BGP_NOMS_O_CAPABILITY) ;
+            note = bgp_note_new(BGP_NOMC_OPEN, BGP_NOMS_O_CAPABILITY) ;
 
           if (orf_cap_missing & bgp_form_rfc)
-            bgp_add_orf_to_notification(note, orf_pfx_missing,
+            bgp_add_orf_to_notification(note, &orf_pfx_missing,
                                            ORF_RM, BGP_CAN_ORF, BGP_ORF_T_PFX) ;
 
           if (orf_cap_missing & bgp_form_pre)
-            bgp_add_orf_to_notification(note, orf_pfx_missing,
+            bgp_add_orf_to_notification(note, &orf_pfx_missing,
                                ORF_RM_pre, BGP_CAN_ORF_pre, BGP_ORF_T_PFX_pre) ;
         } ;
     } ;
@@ -953,7 +970,7 @@ bgp_add_qafx_set_to_notification(bgp_note note, qafx_set_t set)
  */
 static void
 bgp_add_orf_to_notification(bgp_note note,
-                        bgp_orf_cap_v orf_pfx_missing, bgp_orf_cap_bits_t mode,
+                         bgp_orf_caps orf_pfx_missing, bgp_orf_cap_bits_t mode,
                                             uint8_t cap_type, uint8_t orf_type)
 {
   qafx_t qafx ;
@@ -964,7 +981,7 @@ bgp_add_orf_to_notification(bgp_note note,
 
   for (qafx = qafx_first ; qafx <= qafx_last ; ++qafx)
     {
-      if (orf_pfx_missing[qafx] & mode)
+      if (orf_pfx_missing->af[qafx] & mode)
         {
           if (ptr == cap)
             {
@@ -1236,6 +1253,9 @@ bgp_cops_init_new(bgp_cops cops)
   if (cops == NULL)
     cops = XMALLOC(MTYPE_BGP_CONNECTION_OPS, sizeof(bgp_cops_t)) ;
 
+  /* At present there is no difference between 'init' (never kissed) and
+   * 'reset' (clear down).
+   */
   return bgp_cops_reset(cops) ;
 } ;
 
@@ -1618,7 +1638,7 @@ bgp_acceptor_new(bgp_session session)
    */
   acceptor->session  = session ;
   acceptor->lox.log  = session->lox.log ;
-  acceptor->lox.host = bgp_connection_host_string(acceptor->lox.host, session,
+  acceptor->lox.name = bgp_connection_host_string(acceptor->lox.name, session,
                                                                     bc_accept) ;
 
   return session->acceptor = acceptor ;
@@ -1752,7 +1772,7 @@ bgp_acceptor_free(bgp_acceptor acceptor)
       acceptor->su_password = sockunion_free(acceptor->su_password) ;
 
       acceptor->lox.log  = NULL ;
-      acceptor->lox.host = bgp_connection_host_string_free(acceptor->lox.host) ;
+      acceptor->lox.name = bgp_connection_host_string_free(acceptor->lox.name) ;
 
       acceptor->session->acceptor = NULL ;
 
@@ -1995,7 +2015,7 @@ bgp_acceptor_accept(bgp_acceptor acceptor, int sock_fd, bool ok,
     {
       plog_err(acceptor->lox.log, "[FSM] BGP accept() for %s"
                                 " -- accept gave address %s ?? (expected %s)",
-            acceptor->lox.host, sutoa(sock_su).str,
+            acceptor->lox.name, sutoa(sock_su).str,
                                 sutoa(&cops_config->su_remote).str) ;
       ok = false ;
     } ;
@@ -2004,7 +2024,7 @@ bgp_acceptor_accept(bgp_acceptor acceptor, int sock_fd, bool ok,
     {
       plog_err(acceptor->lox.log, "[FSM] BGP accept() for %s"
                        " -- accept gave address %s but getpeername() gave %s",
-           acceptor->lox.host, sutoa(sock_su).str,
+           acceptor->lox.name, sutoa(sock_su).str,
                                sutoa(&cops->su_remote).str) ;
       ok = false ;
     } ;
@@ -2016,7 +2036,7 @@ bgp_acceptor_accept(bgp_acceptor acceptor, int sock_fd, bool ok,
       if (BGP_DEBUG(fsm, FSM))
         plog_debug(acceptor->lox.log, "[FSM] BGP accept() rejected %s"
                             " -- peer not (currently) prepared to accept()",
-                                                         acceptor->lox.host) ;
+                                                         acceptor->lox.name) ;
       ok = false ;
     } ;
 

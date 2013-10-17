@@ -23,13 +23,79 @@
 #define _QUAGGA_BGP_ADJ_OUT_H
 
 #include "lib/misc.h"
+
+#include "bgpd/bgp_common.h"
+#include "bgpd/bgp_rib.h"
+#include "bgpd/bgp_attr_store.h"
+
 #include "lib/list_util.h"
 #include "lib/prefix_id.h"
 
-#include "bgpd/bgp_common.h"
-#include "bgpd/bgp_peer.h"
-#include "bgpd/bgp_rib.h"
-#include "bgpd/bgp_attr_store.h"
+/*==============================================================================
+ * The peer adj-out points either to attr_set or to a bgp_adv, so those must
+ * be distinguishable by a common element in the structure.
+ *
+ * The attr_set is the "primary" in this, so the "bgp_adv" is organised to fit
+ * in with that.  The attr_set is constrained to have a vhash_node at the
+ * front, so the distinguisher -- the attr_state_t -- must follow that.
+ */
+#if 0
+typedef union peer_adj_out* peer_adj_out ;
+typedef union peer_adj_out  peer_adj_out_t ;
+
+typedef struct attr_set_h* attr_set_h ;
+typedef struct attr_set_h  attr_set_ht ;
+
+union peer_adj_out
+{
+  attr_set   attr ;
+  bgp_adv    adv ;
+
+  attr_set_h head ;
+} ;
+#endif
+
+typedef byte attr_state_t ;
+
+struct attr_set_h
+{
+  vhash_node_t  place_holder ;
+
+  /* For the attr_set and bgp_adv structures we must CONFIRM that this
+   * field is common to both.
+   *
+   * When handling a peer_adj_out pointer, we can check which of the two
+   * types of value it is by checking the ptr->head.common value.
+   */
+  attr_state_t  common ;
+} ;
+
+enum attr_state
+{
+  /* These values are the only valid ones for attr_set.
+   *
+   * The bgp_attr_store code treats this as a boolean.  That code will never
+   * see a bgp_adv value, and where a peer_adj_out is an attr_set, it will
+   * always be 'ats_stored'.
+   */
+  ats_temp       = 0,   /* => attr_set, not stored      */
+  ats_stored     = 1,   /* => attr_set, stored          */
+
+  /* All other values are not attr_set.
+   */
+  ats_parcel_in  = 2,   /* => incoming "route_parcel"   */
+  ats_parcel_out = 3,   /* => outgoing "route_parcel"   */
+
+  ats_route_mpls = 4,   /* => state of mpls adj_out     */
+
+  /* It's a byte, guys
+   */
+  ats_limit,
+  ats_last       = ats_limit - 1,
+} ;
+
+CONFIRM(((uint)ats_last <= BYTE_MAX)
+                                    && (sizeof(attr_state_t) >= sizeof(byte))) ;
 
 /*------------------------------------------------------------------------------
  * The adj_out belongs to the out-bound peer, and lives in the peer_rib.
@@ -244,8 +310,8 @@ enum adj_out_type
 
   aob_type_count,
 } ;
-CONFIRM(aob_attr_set  == (uint)vhash_ref_count_set) ;
-CONFIRM(aob_attr_flux == (uint)vhash_ref_count_set) ;
+CONFIRM(aob_attr_set  == (uint)vhash_ref_count_held) ;
+CONFIRM(aob_attr_flux == (uint)vhash_ref_count_held) ;
 CONFIRM(aob_type_mask >= (aob_type_count - 1)) ;
 
 /* A route-flux object in aob_flux state has a route_flux_action, indicating

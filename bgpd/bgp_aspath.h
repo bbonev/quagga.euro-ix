@@ -22,11 +22,12 @@ Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
 #define _QUAGGA_BGP_ASPATH_H
 
 #include "misc.h"
+
+#include "bgpd/bgp_common.h"
+
 #include "qlump.h"
 #include "vty.h"
-
-#include "bgpd/bgp.h"
-#include "bgpd/bgp_common.h"
+#include "vhash.h"
 
 /*==============================================================================
  * as_path Structure and asp_item_t

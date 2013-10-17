@@ -25,8 +25,8 @@ Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
 #include "sockunion.h"
 #include "vty.h"
 
-#include "bgpd/bgpd.h"
-#include "bgpd/bgp_peer.h"
+//#include "bgpd/bgpd.h"
+//#include "bgpd/bgp_peer.h"
 #include "bgpd/bgp_table.h"
 
 static void bgp_node_delete (struct bgp_node *);
@@ -157,8 +157,6 @@ bgp_table_free (struct bgp_table *rt)
         }
 
       assert(  (node->info     == NULL)
-            && (node->adj_out  == NULL)
-            && (node->adj_in   == NULL)
             && (node->on_wq    == 0) ) ;
 
       tmp_node = node;

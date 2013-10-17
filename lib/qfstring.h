@@ -233,6 +233,13 @@ QFB_T(qfb_gen_len) qfb_gen_t ;
 enum { qfb_nam_len = 60 } ;     /* More than enough for most purposes ! */
 QFB_T(qfb_nam_len) qfb_nam_t ;
 
+/* A "standard" qfb for times: qfb_time_t
+ *
+ * Plenty for: "9999-mmm-99 ddddd 99:99:99.999_999_999" (38) and some
+ */
+enum { qfb_time_len = 50 } ;    /* More than enough for most purposes ! */
+QFB_T(qfb_time_len) qfb_time_t ;
+
 /*==============================================================================
  * Simple keyword support
  *

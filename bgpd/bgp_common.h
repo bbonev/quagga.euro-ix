@@ -23,25 +23,30 @@
 #define _QUAGGA_BGP_COMMON_H
 
 #include "misc.h"
+
 #include <sys/socket.h>
-#include <netinet/ip.h>
+#include <netinet/in.h>
 #include <net/if.h>
+#include <netinet/ip.h>
 
 #include "bgpd/bgp.h"
-#include "list_util.h"
 #include "qafi_safi.h"
-#include "vhash.h"
-#include "log.h"
 
 /*==============================================================================
  * Here are a number of "incomplete" declarations, which allow a number of
  * bgpd structures to refer to each other.
  */
+typedef struct bgp_env*         bgp_env ;
 typedef struct bgp_inst*        bgp_inst ;
+typedef struct bgp_run*         bgp_run ;
+typedef struct bgp_bconfig*     bgp_bconfig ;
+typedef struct bgp_baf_config*  bgp_baf_config ;
+typedef struct bgp_args*        bgp_args ;
 typedef struct bgp_rcontext*    bgp_rcontext ;
 typedef struct bgp_rib*         bgp_rib ;
 typedef struct bgp_lcontext*    bgp_lcontext ;
 typedef struct bgp_peer*        bgp_peer ;
+typedef struct bgp_prun*        bgp_prun ;
 typedef struct bgp_prib*        bgp_prib ;
 typedef struct bgp_session*     bgp_session ;
 typedef struct bgp_connection*  bgp_connection ;
@@ -57,8 +62,10 @@ typedef struct bgp_msg_reader*  bgp_msg_reader ;
 typedef struct bgp_note*        bgp_note ;
 
 typedef struct bgp_peer_group*  bgp_peer_group ;
-typedef struct bgp_peer_config* bgp_peer_config ;
+typedef struct bgp_pconfig*     bgp_pconfig ;
+typedef struct bgp_paf_config*  bgp_paf_config ;
 
+typedef struct bgp_connection_logging* bgp_connection_logging ;
 
 //typedef struct bgp_event*      bgp_event ;
 
@@ -86,26 +93,344 @@ typedef struct route_flux*      route_flux ;
 
 
 
-
-
-
-
-
 typedef struct bgp_table*       bgp_table ;
 typedef struct bgp_node*        bgp_node ;
-typedef struct bgp_info*        bgp_info ;
-typedef struct bgp_info_extra*  bgp_info_extra ;
-typedef struct bgp_adj_out*     bgp_adj_out ;
-typedef struct bgp_adj_in*      bgp_adj_in ;
-typedef struct bgp_sync*        bgp_sync ;
-
-typedef struct bgp_adv*         bgp_adv ;
 
 /*==============================================================================
- * Route-Context-Id and Local-Context-Id
+ * Miscellaneous common types
  */
-typedef uint16_t bgp_rc_id_t ;
-typedef uint16_t bgp_lc_id_t ;
+typedef uint32_t as_t ;         /* general ASN                  */
+
+/* TTL type and maximum value.
+ */
+enum { TTL_MAX  = MAXTTL } ;    /* MAXTTL from netinet/ip.h     */
+typedef byte ttl_t ;
+CONFIRM(TTL_MAX <= (uint)BYTE_MAX) ;
+
+/* Med value and extremes
+ */
+typedef uint32_t bgp_med_t ;
+enum bgp_med
+{
+  BGP_MED_MIN = 0,
+  BGP_MED_MAX = UINT32_MAX,
+} ;
+
+/* Port number
+ *
+ * NB: we use port_t where we have a *host* order port number, and in_port_t
+ *     where we have the network order port number.
+ */
+typedef in_port_t port_t ;
+
+/*==============================================================================
+ * Common data types
+ */
+enum bgp_password_length
+{
+  BGP_PASSWORD_MIN_LEN    =   1,
+  BGP_PASSWORD_MAX_LEN    = 103,        /* 104 divides exactly by 8     */
+  BGP_PASSWORD_SIZE       = 104,        /* including the '\0'           */
+} ;
+
+typedef char bgp_password_t[BGP_PASSWORD_SIZE] ;
+typedef char bgp_ifname_t[IF_NAMESIZE] ;        /* IF_NAMESIZE includes '\0' */
+
+CONFIRM(BGP_ID_NULL == INADDR_ANY) ;
+CONFIRM(BGP_ID_NULL == 0) ;     /* BGP_ID_NULL == ntohl(BGP_ID_NULL) !! */
+
+/*------------------------------------------------------------------------------
+ * When reading and writing packets using stream buffers, we set the stream
+ * to be a little larger than the maximum size of message.  Don't really expect
+ * messages to overflow, and if they do, not by much -- so most of the time
+ * we will know how badly the stream overflowed.
+ */
+enum { BGP_STREAM_SIZE = BGP_MSG_MAX_L * 5 / 4 } ;
+
+/*==============================================================================
+ *
+ */
+
+/*------------------------------------------------------------------------------
+ * Components of configuration.
+ */
+enum { MAXIMUM_PREFIX_THRESHOLD_DEFAULT = 75 } ;
+
+typedef struct prefix_max  prefix_max_t ;
+typedef struct prefix_max* prefix_max ;
+
+struct prefix_max
+{
+  bool        set ;
+  bool        warning ;
+
+  uint        trigger ;
+
+  uint        limit ;
+  uint        threshold ;
+  uint16_t    thresh_pc ;
+  uint16_t    restart ;
+} ;
+
+/* Names provided by zebra.h
+ */
+enum { FILTER_COUNT = FILTER_MAX } ;
+CONFIRM(FILTER_COUNT == 2) ;
+CONFIRM(FILTER_IN     < 2) ;
+CONFIRM(FILTER_OUT    < 2) ;
+
+/* The known route-maps
+ */
+typedef enum bgp_route_map_types bgp_route_map_types_t ;
+enum bgp_route_map_types
+{
+  RMAP_IN       = 0,
+  RMAP_INX      = 1,
+  RMAP_OUT      = 2,
+  RMAP_IMPORT   = 3,
+  RMAP_EXPORT   = 4,
+
+  RMAP_COUNT    = 5,
+} ;
+
+/* The complete filter set.
+ */
+typedef enum bgp_filter_set bgp_filter_set_t ;
+enum bgp_filter_set
+{
+  bfs_first     = 0,
+
+  bfs_dlist         = bfs_first,
+  bfs_plist         = bfs_dlist     + FILTER_COUNT,
+  bfs_aslist        = bfs_plist     + FILTER_COUNT,
+  bfs_rmap          = bfs_aslist    + FILTER_COUNT,
+  bfs_us_rmap       = bfs_rmap      + RMAP_COUNT,
+
+  bfs_default_rmap,
+  bfs_orf_plist,
+
+  bfs_count,
+  bfs_last      = bfs_count - 1,
+
+  bfs_dlist_in      = bfs_dlist     + FILTER_IN,
+  bfs_dlist_out     = bfs_dlist     + FILTER_OUT,
+
+  bfs_plist_in      = bfs_plist     + FILTER_IN,
+  bfs_plist_out     = bfs_plist     + FILTER_OUT,
+
+  bfs_aslist_in     = bfs_aslist    + FILTER_IN,
+  bfs_aslist_out    = bfs_aslist    + FILTER_OUT,
+
+  bfs_rmap_in       = bfs_rmap      + RMAP_IN,
+  bfs_rmap_inx      = bfs_rmap      + RMAP_INX,
+  bfs_rmap_out      = bfs_rmap      + RMAP_OUT,
+  bfs_rmap_import   = bfs_rmap      + RMAP_IMPORT,
+  bfs_rmap_export   = bfs_rmap      + RMAP_EXPORT,
+} ;
+
+/*==============================================================================
+ * The sort of peer is a key property of the peer:
+ *
+ *   * BGP_PEER_UNSPECIFIED -- for group configuration where the remote-as is
+ *                             not set.
+ *
+ *   * BGP_PEER_IBGP     -- remote peer is in the same AS as us (bpg->my_as),
+ *                          which may be a CONFED Member AS.
+ *
+ *   * BGP_PEER_CBGP     -- peer is in same AS as us (bgp->my_as),
+ *                          ant that AS is a (different) CONFED Member AS
+ *
+ *   * BGP_PEER_EBGP     -- peer is in a different AS to us (bgp->my_as)
+ *                          and that is not a CONFED Member AS (if any)
+ *
+ * The CONFED thing is a bit of a tangle.  Suppose we have AS99, and we
+ * configure that as a Confederation with 3 Member ASN: 65001, 65002 and
+ * 65003.  And suppose we are in the 65001 Member AS, then we have:
+ *
+ *   router bgp 65001                           -- so bgp->my_as      == 65001
+ *    bgp confederation identifier 99           -- so bgp->confed_id  == 99
+ *    bgp confereration_peers 65002 65003
+ *
+ * We have a set of CONFED Member ASes, which includes my_as.
+ *
+ * When we speak to other routers in 65001, that is within our CONFED member AS
+ * and is iBGP, and we preserve confed stuff in the path.  We OPEN connections
+ * as AS65001.
+ *
+ * When we speak to other routers in 65002 or 65003, that is "cBGP"... which
+ * almost eBGP, but we maintain the confed stuff in the path.  We OPEN
+ * connections as AS65001.
+ *
+ * When we speak to other routers outside our confederation, that is eBGP, and
+ * we strip any confed stuff from the path.  We OPEN connections as AS99 (the
+ * bgp->confed_id).  IN bgp->ebgp_as we keep a copy of bgp->my_as or
+ * bgp->confed_id, to give the ASN to peer as for eBGP in all cases (unless
+ * have change_local_as... which is another story).
+ */
+typedef enum bgp_peer_sort bgp_peer_sort_t ;
+enum bgp_peer_sort
+{
+  BGP_PEER_UNSPECIFIED  = 0,
+  BGP_PEER_IBGP,
+  BGP_PEER_CBGP,
+  BGP_PEER_EBGP,
+} ;
+
+typedef enum bgp_peer_sorts bgp_peer_sorts_t ;
+enum bgp_peer_sorts
+{
+  BGP_PSORTS_NONE       = 0,
+
+  BGP_PSORTS_IBGP_BIT   = BIT(0),
+  BGP_PSORTS_CBGP_BIT   = BIT(1),
+  BGP_PSORTS_EBGP_BIT   = BIT(2),
+} ;
+
+/*==============================================================================
+ * Return codes for BGP operations.
+ *
+ * The
+ */
+typedef enum BGP_RET_CODE bgp_ret_t ;
+
+enum BGP_RET_CODE
+{
+  /* General returns.
+   */
+  BGP_SUCCESS     =  0,         /* tickety-boo                          */
+
+  BGP_WARNING     =  1,         /* not good                             */
+  BGP_ERROR,                    /* failed badly                         */
+
+  /* Special purpose "OK" returns
+   */
+  BGP_OK_PEER_IP,
+  BGP_OK_GROUP_NAME,
+
+  /* Error returns of many colours
+   */
+  BGP_ERR_BUG,
+
+  BGP_ERR_NOT_SUPPORTED,
+
+  BGP_ERR_INVALID_VALUE,
+  BGP_ERR_INVALID_FLAG,
+  BGP_ERR_INVALID_AS,
+  BGP_ERR_INVALID_BGP,
+
+  BGP_ERR_INVALID_IF_NAME,
+  BGP_ERR_INVALID_IP_ADDRESS,
+  BGP_ERR_INVALID_CLUSTER_ID,
+  BGP_ERR_INVALID_ROUTE_TYPE,
+  BGP_ERR_INVALID_FAMILY,
+  BGP_ERR_INVALID_METRIC,
+
+  BGP_ERR_MULTIPLE_INSTANCE_USED,
+  BGP_ERR_MULTIPLE_INSTANCE_NOT_SET,
+  BGP_ERR_INSTANCE_MISMATCH,
+  BGP_ERR_AS_MISMATCH,
+
+  BGP_ERR_INVALID_PEER_IP,
+  BGP_ERR_INVALID_GROUP_NAME,
+  BGP_ERR_PEER_NOT_GROUP,
+  BGP_ERR_GROUP_NOT_PEER,
+
+  BGP_ERR_AF_NOT_CONFIGURED,
+  BGP_ERR_PEER_GROUP_AF_NOT_CONFIGURED,
+
+  BGP_ERR_PEER_EXISTS,
+  BGP_ERR_PEER_EXISTS_IN_VIEW,
+  BGP_ERR_CANNOT_SET_AS_AND_GROUP,
+  BGP_ERR_PEER_NEEDS_REMOTE_AS,
+  BGP_ERR_GROUP_NEEDS_REMOTE_AS,
+  BGP_ERR_AS_IS_CONFED_ID,
+
+  BGP_ERR_PEER_GROUP_EXISTS,
+
+  BGP_ERR_PEER_CANNOT_SET_AS,
+  BGP_ERR_PEER_CANNOT_UNSET_AS,
+  BGP_ERR_GROUP_CANNOT_SET_AS,
+  BGP_ERR_CANNOT_CHANGE_AS,
+  BGP_ERR_CANNOT_BIND_GROUP,
+
+  BGP_ERR_PEER_GROUP_CANNOT_CHANGE,
+
+  BGP_ERR_PEER_FLAG_CONFLICT_1,
+  BGP_ERR_PEER_FLAG_CONFLICT_2,
+  BGP_ERR_PEER_FLAG_CONFLICT_3,
+  BGP_ERR_PEER_GROUP_SHUTDOWN,
+  BGP_ERR_PEER_FILTER_CONFLICT,
+  BGP_ERR_NOT_INTERNAL_PEER,
+  BGP_ERR_REMOVE_PRIVATE_AS,
+  BGP_ERR_SOFT_RECONFIG_UNCONFIGURED,
+  BGP_ERR_LOCAL_AS_ALLOWED_ONLY_FOR_EBGP,
+  BGP_ERR_CANNOT_HAVE_LOCAL_AS_SAME_AS,
+  BGP_ERR_CANNOT_HAVE_LOCAL_AS_SAME_CONFED_ID,
+
+  BGP_ERR_CONFED_ID_USED_AS_EBGP_PEER,
+  BGP_ERR_NO_CBGP_WITH_LOCAL_AS ,
+  BGP_ERR_CONFED_ID_USED_AS_LOCAL_AS,
+  BGP_ERR_CONFED_PEER_AS_LOCAL_AS,
+
+  BGP_ERR_LOCAL_AS_ALREADY_SET,
+  BGP_ERR_TCPSIG_FAILED,
+  BGP_ERR_NO_MULTIHOP_WITH_GTSM,
+#if 0
+  BGP_ERR_NO_IBGP_WITH_TTLHACK,
+#endif
+
+  BGP_RET_COUNT,
+} ;
+
+/*==============================================================================
+ * BGP Arguments -- appear in configuration and in the running state.
+ */
+typedef struct bgp_args  bgp_args_t ;
+
+struct bgp_args
+{
+  /* Default port.
+   */
+  uint16_t port ;
+
+  /* Default metrics
+   */
+  uint  local_pref;
+  uint  med ;
+  uint  weight ;
+
+  /* Timer values.
+   *
+   * The "AcceptRetryTime" is not an RFC value... it is invented here as the
+   * time for which the connection accept logic will hold on to an incoming
+   * connection waiting for a session to come up and claim it.
+   *
+   * The "OpenHoldTime" is not given that name in RFC4271, but is the "large"
+   * value that the HoldTimer is set to on entry to OpenSent state.  Suggested
+   * default value is 4 *minutes*.
+   */
+  uint  holdtime_secs ;
+  uint  keepalive_secs ;
+  uint  connect_retry_secs ;
+  uint  accept_retry_secs ;
+  uint  open_hold_secs ;
+
+  uint  ibgp_mrai_secs ;
+  uint  cbgp_mrai_secs ;                /* usually same as eBGP */
+  uint  ebgp_mrai_secs ;
+
+  uint  idle_hold_min_secs ;
+  uint  idle_hold_max_secs ;
+
+  uint  restart_time_secs ;
+  uint  stalepath_time_secs ;
+
+  /* BGP distance configuration.
+   */
+  byte  distance_ebgp ;
+  byte  distance_ibgp ;
+  byte  distance_local ;
+} ;
 
 /*==============================================================================
  * AFI/SAFI encodings for bgpd
@@ -139,6 +464,8 @@ typedef enum qafx_num  qafx_t ;
 enum qafx_num
 {
   qafx_undef            = -1,   /* No defined AFI/SAFI                  */
+  qafx_none             = qafx_undef,   /* "not-an-AFI/SAFI"            */
+
   qafx_min              = 0,    /* minimum valid qafx                   */
 
   qafx_first            = 0,    /* all first..last are "real" qafx      */
@@ -175,26 +502,26 @@ enum qafx_bit
 {
   qafx_bits_min           = 0,
 
-  qafx_set_empty          = 0,
+  qafx_empty_set          = 0,
 
-  qafx_first_bit          = (1 << qafx_first),
+  qafx_first_bit          = BIT(qafx_first),
                                 /* first..last are all "real" qafx      */
 
-  qafx_ipv4_unicast_bit   = (1 << qafx_ipv4_unicast),
-  qafx_ipv4_multicast_bit = (1 << qafx_ipv4_multicast),
-  qafx_ipv4_mpls_vpn_bit  = (1 << qafx_ipv4_mpls_vpn),
+  qafx_ipv4_unicast_bit   = BIT(qafx_ipv4_unicast),
+  qafx_ipv4_multicast_bit = BIT(qafx_ipv4_multicast),
+  qafx_ipv4_mpls_vpn_bit  = BIT(qafx_ipv4_mpls_vpn),
 
-  qafx_ipv6_unicast_bit   = (1 << qafx_ipv6_unicast),
-  qafx_ipv6_multicast_bit = (1 << qafx_ipv6_multicast),
-  qafx_ipv6_mpls_vpn_bit  = (1 << qafx_ipv6_mpls_vpn),
+  qafx_ipv6_unicast_bit   = BIT(qafx_ipv6_unicast),
+  qafx_ipv6_multicast_bit = BIT(qafx_ipv6_multicast),
+  qafx_ipv6_mpls_vpn_bit  = BIT(qafx_ipv6_mpls_vpn),
 
-  qafx_last_bit           = (1 << qafx_last),
+  qafx_last_bit           = BIT(qafx_last),
 
-  qafx_other_bit          = (1 << qafx_other),
+  qafx_other_bit          = BIT(qafx_other),
 
-  qafx_bits_max           = (1 << qafx_count) - 1,
+  qafx_bits_max           = BIT(qafx_count) - 1,
 
-  qafx_known_bits         = (1 << (qafx_last + 1)) - 1
+  qafx_known_bits         = BIT((qafx_last + 1)) - qafx_first_bit
 } ;
 
 CONFIRM(qafx_known_bits == ( qafx_ipv4_unicast_bit
@@ -224,917 +551,6 @@ qafx_bit(qafx_t num)
 /* Get qafx_t for the given qafx_bit_t.
  */
 extern qafx_t qafx_num(qafx_bit_t bit) ;
-
-/*==============================================================================
- * A dense set of the BGP Messages known to Quagga
- */
-typedef enum qBGP_MSG qBGP_MSG_t ;
-enum qBGP_MSG
-{
-  qBGP_MSG_unknown    = 0,
-
-  qBGP_MSG_OPEN,
-  qBGP_MSG_UPDATE,
-  qBGP_MSG_NOTIFICATION,
-  qBGP_MSG_KEEPALIVE,
-  qBGP_MSG_ROUTE_REFRESH,
-  qBGP_MSG_CAPABILITY,
-  qBGP_MSG_ROUTE_REFRESH_pre,
-
-  qBGP_MSG_count,
-} ;
-
-/*==============================================================================
- * Some BGP capabilities and messages have RFC and pre-RFC forms.
- *
- * Sometimes see both, or send RFC and/or pre-RFC forms, or track what form(s)
- * are being used.
- */
-typedef enum bgp_form bgp_form_t ;
-
-enum bgp_form
-{
-  bgp_form_none     = 0,
-  bgp_form_pre      = 1,
-  bgp_form_rfc      = 2,
-  bgp_form_both     = 3     /* _rfc and _pre are bits !     */
-} ;
-
-/*==============================================================================
- * Common data types
- */
-enum bgp_password_length
-{
-  BGP_PASSWORD_MIN_LEN    =   1,
-  BGP_PASSWORD_MAX_LEN    = 103,        /* 104 divides exactly by 8     */
-  BGP_PASSWORD_SIZE       = 104,        /* including the '\0'           */
-} ;
-
-typedef char bgp_password_t[BGP_PASSWORD_SIZE] ;
-typedef char bgp_ifname_t[IF_NAMESIZE] ;        /* IF_NAMESIZE includes '\0' */
-
-typedef struct bgp_connection_logging  bgp_connection_logging_t ;
-typedef struct bgp_connection_logging* bgp_connection_logging ;
-
-struct bgp_connection_logging
-{
-  char*             host ;              /* peer "name" (+ tag)          */
-  struct zlog*      log ;               /* where to log to              */
-} ;
-
-#if 0
-typedef enum bgp_update_source_type bgp_update_source_type_t ;
-enum bgp_update_source_type
-{
-  bgp_upst_none    = 0,
-
-  bgp_upst_source_address,      /* neighbor xx update-source <address>  */
-  bgp_upst_source_interface,    /* neighbor xx update-source <if-name>  */
-
-  bgp_upst_interface,           /* neighbor xx interface <if-name>      */
-} ;
-
-typedef struct bgp_update_source  bgp_update_source_t ;
-typedef struct bgp_update_source* bgp_update_source ;
-
-struct bgp_update_source
-{
-  bgp_update_source_type_t  type ;
-
-  union
-    {
-      sockunion_t   su ;        /* embedded             */
-      bgp_ifname_t  if_name ;   /* embedded             */
-    } u ;
-} ;
-#endif
-
-/*==============================================================================
- * BGP FSM States and events.
- */
-typedef enum bgp_fsm_states bgp_fsm_state_t ;
-enum bgp_fsm_states
-{
-  bgp_fs_first         = 0,
-
-  /* Extra state while has none, eg while FSM/Connection is being initialised.
-   */
-  bgp_fsNULL           = 0,  /* no state                                */
-
-  /* These are the RFC4271 states
-   */
-  bgp_fsIdle           = 1,  /* waiting for Idle Hold time               */
-  bgp_fsConnect        = 2,  /* waiting for connect (may be listening)   */
-  bgp_fsActive         = 3,  /* listening only                           */
-  bgp_fsOpenSent       = 4,  /* sent Open -- awaits Open                 */
-  bgp_fsOpenConfirm    = 5,  /* sent & received Open -- awaits keepalive */
-  bgp_fsEstablished    = 6,  /* running connection                       */
-
-  /* Extra state while bringing FSM/Connection to a halt.
-   */
-  bgp_fsStop           = 7,  /* connection coming to a stop              */
-
-  bgp_fs_count,
-  bgp_fs_last          = bgp_fs_count - 1,
-} ;
-
-typedef enum bgp_fsm_events bgp_fsm_event_t ;
-enum bgp_fsm_events
-{
-  bgp_feNULL                          =  0,
-
-  /* 8.1.2 Administrative Events
-   */
-  bgp_feManualStart                   =  1,
-  bgp_feManualStop                    =  2,
-  bgp_feAutomaticStart                =  3,
-  bgp_feManualStart_with_Passive      =  4,
-  bgp_feAutomaticStart_with_Passive   =  5,
-  bgp_feAutomaticStart_with_Damp      =  6,
-  bgp_feAutomaticStart_with_Damp_and_Passive   =  7,
-  bgp_feAutomaticStop                 =  8,
-
-  /* 8.1.3 Timer Events
-   */
-  bgp_feConnectRetryTimer_Expires     =  9,
-  bgp_feHoldTimer_Expires             = 10,
-  bgp_feKeepaliveTimer_Expires        = 11,
-  bgp_feDelayOpenTimer_Expires        = 12,
-  bgp_feIdleHoldTimer_Expires         = 13,
-
-  /* 8.1.4 TCP Connection-Based Events
-   *
-   * These are less than obvious...
-   *
-   *   14. TcpConnection_Valid    -- in-bound connection    -- N/A
-   *
-   *       A SYN has been received, and the source address and port and the
-   *       destination address and port are all valid.
-   *
-   *       This is not something we can see in a POSIX environment (except with
-   *       raw sockets perhaps).
-   *
-   *       We don't use this.
-   *
-   *   15. Tcp_CR_Invalid         -- in-bound connection    -- N/A
-   *
-   *       A SYN has been received, but something is invalid about it.
-   *
-   *       This is not something we can see in a POSIX environment (except with
-   *       raw sockets perhaps).
-   *
-   *       We don't use this.
-   *
-   *   16. Tcp_CR_Acked           -- out-bound connection   -- feConnected
-   *
-   *       Connection is up -- three-way handshake completed.
-   *
-   *   17. TcpConnectionConfirmed -- in-bound connection    -- feAccepted
-   *
-   *       Connection is up -- three-way handshake completed.
-   *
-   *   18. TcpConnectionFails     -- after 16 or 17...      -- feDown
-   *                                 ...or at any time ?
-   *       Connection is down.
-   */
-  bgp_feTcpConnection_Valid           = 14,     /* N/A                  */
-  bgp_feTcp_CR_Invalid                = 15,     /* N/A                  */
-  bgp_feTcp_CR_Acked                  = 16,     /* feConnected          */
-  bgp_feTcpConnectionConfirmed        = 17,     /* feAccepted           */
-  bgp_feTcpConnectionFails            = 18,     /* feDown               */
-
-  /* 8.1.5 BGP Message-Based Events
-   */
-  bgp_feBGPOpen                       = 19,
-  bgp_feBGPOpen_with_DelayOpenTimer   = 20,
-  bgp_feBGPHeaderErr                  = 21,
-  bgp_feBGPOpenMsgErr                 = 22,
-  bgp_feOpenCollisionDump             = 23,
-  bgp_feNotifyMsgVerErr               = 24,
-  bgp_feNotifyMsg                     = 25,
-  bgp_feKeepAliveMsg                  = 26,
-  bgp_feUpdateMsg                     = 27,
-  bgp_feUpdateMsgErr                  = 28,
-
-  /* End of the standard event numbers
-   */
-  bgp_fe_rfc_count,
-  bgp_fe_rfc_last       = bgp_fe_rfc_count - 1,
-
-  bgp_fe_extra_first    = bgp_fe_rfc_count,
-
-  /*--------------------------------------------------------------------
-   * Alias TCP events and some extra ones.
-   *
-   *   * feConnected        -- out-bound        == feTcp_CR_Acked
-   *
-   *     An outbound connection is now up.
-   *
-   *   * feAccepted         -- in-bound         == feTcpConnectionConfirmed
-   *
-   *     An inbound connection is now up in the Acceptor.
-   *
-   *   * feDown             -- in-/out-bound    == feTcpConnectionFails
-   *
-   *     But this is *strictly* where an existing connection stops after it
-   *     came up either feConnected or feAccepted.
-   *
-   *   * feError            -- in-/out-bound    -- extra
-   *
-   *     This is a sort of catch-all for socket and such-like errors which
-   *     we don't really expect to get.  These errors suggest something is
-   *     missing or not working properly, and should be fixed.
-   *
-   *   * feConnectFailed    -- out-bound        -- extra
-   *
-   *     Cannot get a connection up for a variety of reasons to do with the
-   *     underlying network, or the other end not playing nicely.  These are
-   *     the sorts of things that indicate (a possibly transient) network or
-   *     configuration problem at either end.
-   *
-   *   * feAcceptOPEN       -- in-bound         -- extra
-   *
-   *     The acceptor has seen an complete OPEN message.
-   */
-  bgp_feConnected      = bgp_feTcp_CR_Acked,
-  bgp_feAccepted       = bgp_feTcpConnectionConfirmed,
-  bgp_feDown           = bgp_feTcpConnectionFails,
-
-  bgp_feError          = bgp_fe_extra_first,
-  bgp_feConnectFailed,
-  bgp_feAcceptOPEN,
-
-  /* Other extra events
-   *
-   *   * feRRMsg           -- a Route Refresh message has been received
-   *   * feRRMsgErr        -- a Route Refresh message has been recieved but all
-   *                          is not well with it.
-   *
-   *   * feRestart         -- the connection should fall fsIdle, or stop
-   *                          if is fsEstablished.
-   *
-   *   * feShut_RD         -- the read side has shutdown.
-   *   * feShut_WR         -- the write side has shutdown.
-   */
-  bgp_feRRMsg,
-  bgp_feRRMsgErr,
-
-  bgp_feRestart,
-  bgp_feShut_RD,
-  bgp_feShut_WR,
-
-  /* Extra error events
-   *
-   *   * feUnexpected      -- an unexpected message has arrived.
-   *
-   *                          This will generally map to a BGP_NOMC_FSM
-   *                          NOTIFICATION message.
-   *
-   *   * feInvalid         -- something has gone wrong (at our end).
-   *
-   *                          This will generally map to a BGP_NOMC_CEASE/
-   *                          BGP_NOMS_UNSPECIFIC NOTIFICATION message.
-   */
-  bgp_feUnexpected,
-  bgp_feInvalid,
-
-  /* The feIO "pseudo" event -- not handled by the event-handler itself.
-   */
-  bgp_feIO,
-
-  /* Number of events -- including the feNULL
-   */
-  bgp_fe_count,
-  bgp_fe_last           = bgp_fe_count - 1,
-} ;
-
-#if 0
-/*==============================================================================
- * Session level events -- which arise in the BGP Engine and are (generally)
- * reported back to the Peering Engine.
- *
- * Many of these are (strongly) related to FSM level events (bgp_fsm_eXxxx),
- * but some are not.
- */
-typedef enum bgp_session_events bgp_session_event_t ;
-enum bgp_session_events
-{
-  bgp_seNULL         =  0,
-
-  bgp_seStart,                  /* enter fsConnect/fsActive from fsIdle */
-  bgp_seRetry,                  /* fsConnect/fsActive                   */
-
-  bgp_seFSM,                    /* had to reject an OPEN message        */
-  bgp_seInvalid_msg,            /* BGP message invalid                  */
-  bgp_seFSM_error,              /* unexpected BGP message received      */
-  bgp_seNOM_recv,               /* NOTIFICATION message received        */
-
-  bgp_seExpired,                /* HoldTime expired                     */
-  bgp_seTCP_dropped,            /* TCP connection dropped               */
-
-  bgp_seTCP_open_failed,        /* TCP connection failed to come up     */
-  bgp_seTCP_error,              /* some socket level error              */
-
-  bgp_seEstablished,            /* session state -> sEstablished        */
-  bgp_seStop,                   /* disabled by Routeing Engine          */
-
-  bgp_seInvalid,                /* invalid internal event               */
-
-  bgp_se_count,
-  bgp_se_last        = bgp_se_count - 1,
-} ;
-#endif
-
-/*==============================================================================
- * States of Peer and Session and Connections
- */
-
-/* The state of the peer -- strongly related to the state of the session !
- *
- *   1. pDown
- *
- *      All real peers start in this state.
- *
- *      This is the case while no address families are enabled, eg:
- *
- *        a. when a bgp_peer structure is first created.
- *
- *           Note that PEER_TYPE_GROUP_CONF and PEER_TYPE_SELF are permanently
- *           pDown.
- *
- *        b. not one address family is configured *and* enabled
- *
- *        c. peer is administratively down/disabled/deactivated
- *
- *        d. peer is waiting for route flap or other such timer before
- *           reawakening.
- *
- *      The peer-session states relate to the above as follows:
- *
- *        pssInitial -- case (a)
- *
- *        pssStopped -- all of the above
- *
- *                      NB: in pDown and pssStopped, the acceptor will be
- *                          running if the current cops allow.
- *
- *        all other states are IMPOSSIBLE
- *
- *      When at least one address family is enabled the peer can go pStarted,
- *      and a session will be started.
- *
- *   2. pStarted
- *
- *      This is the case when a message has been sent to the BGP engine to
- *      enable a new session, and is now waiting for the session to be
- *      established.
- *
- *      The session must be sUp.
- *
- *      If the Routeing Engine disables the session -> pLimping and sLimping
- *
- *      The BGP Engine may send event messages, which signal:
- *
- *        * feXxxxx, but not "stopped"    -> remains pStarted
- *
- *          the BGP Engine signals various events which do not stop it from
- *          trying to establish a session, but may be of interest.
- *
- *        * session is (now) sEstablished -> pEstablished
- *
- *        * feXxxxx, and "stopped"        -> pResetting (however briefly)
- *
- *      All other messages are discarded -- there should not be any.
- *
- *   3. pEstablished
- *
- *      Reaches this state from pStarted when a session becomes established.
- *
- *      The session must be sUp.
- *
- *      If the Routeing Engine disables the session -> pResetting/pssLimping.
- *
- *          The Routeing Engine sets the "down reason" etc. according to why
- *          the session is being disabled.  While pssLimping, this is
- *          provisional.  When a "stopped" event arrives, it may be found that
- *          the session stopped in the BGP Engine before the disable message
- *          arrived, in which case the "down reason" will change to whatever
- *          happened in the BGP Engine.
- *
- *      The BGP Engine may signal:
- *
- *        * feXxxxx, but not "stopped"    -> remains pEstablished
- *
- *          the BGP Engine may signal events which do not stop the established
- *          session, but may be of interest.
- *
- *        * feXxxxx, and "stopped"        -> pResetting (however briefly)
- *                                           and psStopped
- *
- *          The "down reason" is set according to what the BGP Engine reports.
- *
- *      Accepts and sends UPDATE etc messages while is pEstablished.
- *
- *   4. pResetting
- *
- *      Reaches this state from pStarted or pEstablished, as above.
- *
- *      When a disable message is sent to the BGP Engine it is set pssLimping,
- *      and will go pssStopped when is seen to stop.  While is pssLimping, all
- *      messages from the BGP Engine are discarded, until it is seen to stop,
- *      and is set pssStopped.
- *
- *      (When pssStopped is set, will flush all message queues for the session,
- *      since the BGP Engine is now done with it.)
- *
- *      Tidies up the peer, including clearing routes etc.  Once the peer is
- *      completely tidy, and the session is pssStopped:
- *
- *         peer    -> pDown/pssStopped
- *
- *      NB: while pResetting the peer's routes and RIBs may be being processed
- *         (and may or may not be being discarded).
- *
- *          All other parts of the peer may be modified... but mindful of the
- *          "background" tasks which are yet to complete.
- *
- *   5. bgp_pDeleting
- *
- *      This is an exotic state, reached only when a peer is being completely
- *      deleted.
- *
- *      This state may be reached from any of the above.
- *
- *      If there is an active session, it will be sLimping.  When advances to
- *      sDown it will be deleted.
- *
- *      The remaining tasks are to clear out routes, dismantle the peer
- *      structure and delete it.  While that is happening, the peer is in this
- *      state.
- */
-typedef enum bgp_peer_states bgp_peer_state_t ;
-enum bgp_peer_states
-{
-  bgp_peer_state_min     = 0,
-
-  bgp_pInitial      = 0,        /* in the process of being created      */
-
-  bgp_pDown         = 1,        /* not yet started/restarted            */
-  bgp_pStarted      = 2,        /* started, but not yet established     */
-  bgp_pEstablished  = 3,        /* session established                  */
-
-  bgp_pResetting    = 4,        /* session stopping/stopped, clearing   */
-
-  bgp_pDeleting     = 5,        /* lingers until lock count == 0        */
-
-  bgp_peer_state_max     = 6
-} ;
-
-/* The state of the session, as far as the peer is concerned.
- *
- * The peer->session_state belongs to the Routing Engine (RE), and is updated
- * as messages are sent to and arrive from the BGP Engine (BE).
- *
- *   * pssInitial   -- means that the peer and session are being created (or
- *                     are about to be).
- *
- *   * pssStopped   -- means that the session is not running -- nothing at all
- *                     is happening for the session in the BE, EXCEPT that the
- *                     acceptor may (well) be running.
- *
- *                     NB: while is pssStopped, any changes to the peer->cops
- *                         cause the BE to be prodded if this may affect the
- *                         acceptor, or if becomes pisRunnable.
- *
- *                         The pisReset may hold the session pssStopped until
- *                         the restart timer goes off.
- *
- *                         while is pssStopped, any changes to the peer->args
- *                         do not cause the BE to be prodded.
- *
- *   * pssRunning   -- means that the session is running (something is, as far
- *                     as the RE is concerned, happening for the session in the
- *                     BE).
- *
- *                     NB: changes to peer->cops and/or peer->args will cause
- *                         the BE to be prodded.
- *
- *                         Changing to anything other than pisRunnable will
- *                         send to pssLimping.
- *
- *                         If the session stops spontaneously (from the
- *                         perspective of the RE) then it drops to pssStopped.
- *
- *   * pssLimping   -- means that was pssRunning and the RE is now waiting to
- *                     see a Stopped message from the BE.
- *
- *                     NB: while is pssLimping, changes to peer->cops and
- *                         peer->args are treated in the same way as in
- *                         pssStopped.
- *
- *                         At a minimum will be pisReset.
- *
- *   * pssDeleted   -- means that the peer is being deleted, and session has
- *                     been -- at least, the peer has cut the session away,
- *                     and sent a message to the BE to delete the session..
- */
-typedef enum bgp_peer_session_state bgp_peer_session_state_t ;
-enum bgp_peer_session_state
-{
-  bgp_peer_session_state_min = 0,
-
-  bgp_pssInitial    = 0,        /* in the process of being created      */
-
-  bgp_pssStopped    = 1,
-  bgp_pssRunning    = 2,
-  bgp_pssLimping    = 3,        /* neither up nor down                  */
-
-  bgp_pssDeleted    = 4,        /* gone                                 */
-
-  bgp_peer_session_state_max = 2
-} ;
-
-/* The state of the session, as far as the session is concerned.
- *
- * The session->state belongs to the BGP Engine (BE), and is updated as
- * messages are sent to and arrive from the Routeing Engine (RE).
- *
- *   * sReset       -- means that the session has been initialised, ready to
- *                     run.
- *
- *                     The acceptor will be running,
- *
- *   * sAcquiring   -- means that the session has been started, so the fsm(s)
- *                     are running and trying to acquire and establish a
- *                     session.
- *
- *                     The acceptor will be running.
- *
- *   * sEstablished -- means an fsm is running and the session has established.
- *
- *                     The acceptor will be running.
- *
- *   * sStopped     -- means that the session is stopped, so the fsm(s) are
- *                     not running.
- *
- *                     The acceptor will be running.
- *
- *   * sDeleting    -- means the session is in the process of being deleted,
- *                     by the BE.
- *
- *                     The session is no longer attached to the parent peer,
- *                     or referred to by the peer_index.
- *
- *                     The acceptor is not running or will be stopped.
- */
-typedef enum bgp_session_state bgp_session_state_t ;
-enum bgp_session_state
-{
-  bgp_session_state_min     = 0,
-
-  bgp_sReset        = 0,
-  bgp_sAcquiring,
-  bgp_sEstablished,
-  bgp_sStopped,
-
-  bgp_sDeleting,
-
-  bgp_session_state_count,
-  bgp_session_state_max     = bgp_session_state_count - 1,
-} ;
-
-typedef enum bgp_conn_ord bgp_conn_ord_t ;
-enum bgp_conn_ord
-{
-  bc_estd       = 0,
-  bc_connect    = 1,
-  bc_accept     = 2,
-
-  bc_first      = bc_connect,   /* for stepping through same !  */
-  bc_last       = bc_accept,
-
-  bc_count,
-} ;
-
-/* Whether the connection is prepared to accept and/or connect and/or track.
- *
- * This is the primary control over the connection handling in the BGP Engine,
- * and lives in the connection options as transmitted to the BGP Engine.
- *
- *   * csMayAccept      -- is allowed to accept() a connection
- *
- *   * csMayConnect     -- is allowed to make a connect() connection
- *
- *   * csTrack          -- run the acceptor and track incoming connections
- *
- *                         Ignored if not csMay_Accept !
- *
- *                         This is cleared if the peer is pisDown
- *
- *   * csRun            -- run the session or session acquisition.
- *
- *                         Ignored if not csMay_Accept or csMay_Connect,
- *                         unless a session is established already.
- *
- *                         This is cleared if the peer is not pisRunnable
- *
- * Note that may be csRun without either csMayAccept/Connect.  In particular,
- * once a session is Established, changes to csMayAccept/Connect do not affect
- * the session, but clearing csRun brings it down.
- *
- * When a peer is stopped, will clear csRun, and when it is down, will clear
- * both csRun and csTrack.
- */
-typedef enum bgp_conn_state bgp_conn_state_t ;
-enum bgp_conn_state
-{
-  bgp_csDown        = 0,
-
-  bgp_csMayAccept   = BIT(0),
-  bgp_csMayConnect  = BIT(1),
-
-  bgp_csMayMask     = bgp_csMayAccept | bgp_csMayConnect,
-  bgp_csMayBoth     = bgp_csMayAccept | bgp_csMayConnect,
-
-  bgp_csTrack       = BIT(4),
-  bgp_csRun         = BIT(5),
-
-  bgp_csCanTrack    = bgp_csTrack | bgp_csMayAccept,
-} ;
-
-/* Whether and why the peer is "Idle".
- */
-typedef enum bgp_peer_idle_state bgp_peer_idle_state_t ;
-enum bgp_peer_idle_state
-{
-  bgp_pisRunnable       = 0,
-
-  /* This is the all purpose is reset and pending some sort of restart, flag.
-   *
-   * When the Peering Engine is ready, it will release this and proceed to
-   * restart the session.
-   */
-  bgp_pisReset          = BIT(0),
-
-  /* These are temporary states -- when they are cleared, the connection may
-   * well be up again, and that should trigger session state change.
-   */
-  bgp_pisConfiguring    = BIT(1),   /* updating configuration           */
-  bgp_pisClearing       = BIT(2),   /* clearing from last session drop  */
-  bgp_pisMaxPrefixWait  = BIT(3),   /* waiting for restart timer        */
-
-  /* These are serious, configuration set issues, and will cause the acceptor
-   * to reject incoming connections.
-   *
-   * NB: for status display, the highest numbered bit is used.
-   */
-  bgp_pisMaxPrefixStop  = BIT(4),   /* max prefix -- no restart         */
-  bgp_pisNoAF           = BIT(5),   /* no address families are enabled  */
-  bgp_pisShutdown       = BIT(6),   /* "administratively SHUTDOWN"      */
-  bgp_pisDeconfigured   = BIT(7),   /* administratively dead            */
-
-  bgp_pisDown           = bgp_pisDeconfigured  |
-                          bgp_pisShutdown      |
-                          bgp_pisNoAF          |
-                          bgp_pisMaxPrefixStop,
-} ;
-
-#if 0
-/* Whether the connection(s) are enabled or not.
- */
-typedef enum bgp_conn_state bgp_conn_state_t ;
-enum bgp_conn_state
-{
-  bc_is_up              = 0,
-
-  /* This is the all purpose is reset and pending some sort of restart, flag.
-   *
-   * When the Peering Engine is ready, it will release this and proceed to
-   * restart the session.
-   */
-  bc_is_reset           = BIT(0),
-
-  /* These are temporary states -- when they are cleared, the connection may
-   * well be up again, and that should trigger session state change.
-   */
-  bc_is_clearing        = BIT(1),   /* clearing from last session drop  */
-  bc_is_max_prefix_wait = BIT(2),   /* waiting for restart timer        */
-
-  /* These are serious, configuration set issues, and will cause the acceptor
-   * to reject incoming connections.
-   *
-   * NB:
-   */
-  bc_is_max_prefix_stop = BIT(4),   /* max prefix -- no restart         */
-  bc_is_no_af           = BIT(5),   /* no address families are enabled  */
-  bc_is_shutdown        = BIT(6),   /* "administratively SHUTDOWN"      */
-  bc_is_deconfigured    = BIT(7),   /* administratively dead            */
-
-  bc_is_down            = bc_is_deconfigured |
-                          bc_is_shutdown     |
-                          bc_is_no_af        |
-                          bc_is_max_prefix_stop,
-} ;
-#endif
-
-/*==============================================================================
- * A bgp_route_type is a packed value:
- *
- *   * bits 1..0:  the bgp_route_subtype, as below
- *
- *   * bits 7..2:  the zebra route type (ZEBRA_ROUTE_XXX)
- */
-typedef byte bgp_route_subtype_t ;
-typedef byte bgp_zebra_route_t ;
-
-enum bgp_route_subtype
-{
-  /* BGP_ROUTE_NORMAL  -- learned from peer
-   *
-   */
-  BGP_ROUTE_NORMAL,
-  BGP_ROUTE_AGGREGATE,
-  BGP_ROUTE_REDISTRIBUTE,
-  BGP_ROUTE_STATIC,
-
-  BGP_ROUTE_SUBTYPE_COUNT
-};
-
-typedef enum bgp_route_type bgp_route_type_t ;
-enum bgp_route_type
-{
-  BGP_ZEBRA_ROUTE_SHIFT   = 2,
-
-  BGP_ROUTE_SUBTYPE_MASK  = BIT(BGP_ZEBRA_ROUTE_SHIFT)     - 1,
-  BGP_ZEBRA_ROUTE_MASK    = BIT(8 - BGP_ZEBRA_ROUTE_SHIFT) - 1,
-
-  bgp_route_type_null     = 0,
-
-  bgp_route_type_normal   = (ZEBRA_ROUTE_BGP << BGP_ZEBRA_ROUTE_SHIFT)
-                                                             | BGP_ROUTE_NORMAL,
-
-  bgp_route_type_t_max    = BGP_ROUTE_SUBTYPE_MASK | BGP_ZEBRA_ROUTE_MASK,
-} ;
-
-CONFIRM((BGP_ROUTE_SUBTYPE_COUNT - 1) <= BGP_ROUTE_SUBTYPE_MASK) ;
-CONFIRM((ZEBRA_ROUTE_MAX         - 1) <= BGP_ZEBRA_ROUTE_MASK) ;
-CONFIRM(bgp_route_type_null == ((ZEBRA_ROUTE_SYSTEM << BGP_ZEBRA_ROUTE_SHIFT)
-                                                          | BGP_ROUTE_NORMAL)) ;
-CONFIRM(bgp_route_type_t_max <= 255) ;  /* byte         */
-
-Inline bgp_route_subtype_t bgp_route_subtype(bgp_route_type_t type)
-                                                                 Always_Inline ;
-Inline bgp_zebra_route_t bgp_zebra_route(bgp_route_type_t type)  Always_Inline ;
-Inline bgp_route_type_t bgp_route_type(bgp_zebra_route_t ztype,
-                                    bgp_route_subtype_t stype)   Always_Inline ;
-
-/*------------------------------------------------------------------------------
- * Extract bgp_route_subtype_t from given bgp_route_type_t
- */
-Inline bgp_route_subtype_t
-bgp_route_subtype(bgp_route_type_t type)
-{
-  return type & BGP_ROUTE_SUBTYPE_MASK ;
-} ;
-
-/*------------------------------------------------------------------------------
- * Extract bgp_zebra_route_t from given bgp_route_type_t
- */
-Inline bgp_zebra_route_t
-bgp_zebra_route(bgp_route_type_t type)
-{
-  return type >> BGP_ZEBRA_ROUTE_SHIFT ;
-}
-
-/*------------------------------------------------------------------------------
- * Construct bgp_route_type_t from given bgp_zebra_route_t + bgp_route_subtype_t
- */
-Inline bgp_route_type_t
-bgp_route_type(bgp_zebra_route_t ztype, bgp_route_subtype_t stype)
-{
-  return (ztype << BGP_ZEBRA_ROUTE_SHIFT) | stype ;
-} ;
-
-/*==============================================================================
- * The peer adj-out points either to attr_set or to a bgp_adv, so those must
- * be distinguishable by a common element in the structure.
- *
- * The attr_set is the "primary" in this, so the "bgp_adv" is organised to fit
- * in with that.  The attr_set is constrained to have a vhash_node at the
- * front, so the distinguisher -- the attr_state_t -- must follow that.
- */
-typedef union peer_adj_out* peer_adj_out ;
-typedef union peer_adj_out  peer_adj_out_t ;
-
-typedef struct attr_set_h* attr_set_h ;
-typedef struct attr_set_h  attr_set_ht ;
-
-union peer_adj_out
-{
-  attr_set   attr ;
-  bgp_adv    adv ;
-
-  attr_set_h head ;
-} ;
-
-typedef byte attr_state_t ;
-
-struct attr_set_h
-{
-  vhash_node_t  place_holder ;
-
-  /* For the attr_set and bgp_adv structures we must CONFIRM that this
-   * field is common to both.
-   *
-   * When handling a peer_adj_out pointer, we can check which of the two
-   * types of value it is by checking the ptr->head.common value.
-   */
-  attr_state_t  common ;
-} ;
-
-enum attr_state
-{
-  /* These values are the only valid ones for attr_set.
-   *
-   * The bgp_attr_store code treats this as a boolean.  That code will never
-   * see a bgp_adv value, and where a peer_adj_out is an attr_set, it will
-   * always be 'ats_stored'.
-   */
-  ats_temp       = 0,   /* => attr_set, not stored      */
-  ats_stored     = 1,   /* => attr_set, stored          */
-
-  /* All other values are not attr_set.
-   */
-  ats_parcel_in  = 2,   /* => incoming "route_parcel"   */
-  ats_parcel_out = 3,   /* => outgoing "route_parcel"   */
-
-  ats_route_mpls = 4,   /* => state of mpls adj_out     */
-
-  /* It's a byte, guys
-   */
-  ats_limit,
-  ats_last       = ats_limit - 1,
-} ;
-
-CONFIRM(((uint)ats_last <= BYTE_MAX)
-                                    && (sizeof(attr_state_t) >= sizeof(byte))) ;
-
-/*==============================================================================
- * Other common types
- */
-
-/* AS Numbers
- */
-typedef uint32_t as_t ;         /* general ASN                  */
-
-/* TTL value
- */
-typedef byte ttl_t ;
-CONFIRM(MAXTTL <= 255) ;
-
-/* Port number
- *
- * NB: we use port_t where we have a *host* order port number, and in_port_t
- *     where we have the network order port number.
- */
-typedef in_port_t port_t ;
-
-/* A single MPLS Label, as a simple 20-bit integer -- 0x00000..0xFFFFF
- */
-typedef uint32_t mpls_label_t ;
-
-enum
-{
-  mpls_label_bad      = UINT32_MAX - 1, /* value >= to this is bad      */
-
-  mpls_label_invalid  = UINT32_MAX - 1,
-  mpls_label_overflow = UINT32_MAX,
-} ;
-
-CONFIRM(mpls_label_invalid  > (uint)MPLS_LABEL_LAST) ;
-CONFIRM(mpls_label_overflow > (uint)MPLS_LABEL_LAST) ;
-
-/* Opaque value representing an MPLS Tag Stack.
- *
- * Convenient to have an mpls_tags_t for simple comparison of tag values, for
- * equality at least.
- *
- * At present, Quagga allows only one level of tag stack -- so the "opaque"
- * value is the 24 bit RFC3017 label, in Host Order, complete with BoS bit.
- *
- * Since the BoS bit is not zero, we can use zero as a null, "no tag" value.
- */
-typedef uint32_t mpls_tags_t ;
-
-enum
-{
-  mpls_tags_null     = 0,               /* no tag                       */
-
-  mpls_tags_bad      = UINT32_MAX - 1,  /* value >= to this is bad      */
-
-  mpls_tags_invalid  = UINT32_MAX - 1,
-  mpls_tags_overflow = UINT32_MAX,
-} ;
 
 
 /*==============================================================================

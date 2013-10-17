@@ -26,6 +26,7 @@
 
 #include "log.h"
 
+#include "bgpd/bgpd.h"
 #include "bgpd/bgp_session.h"
 #include "bgpd/bgp_connection.h"
 #include "bgpd/bgp_notification.h"
@@ -367,10 +368,10 @@ bgp_fsm_start_session(bgp_session session)
   /* Accept and/or Connect connections enabled now
    */
   if (conn_state & bgp_csMayConnect)
-    bgp_fsm_start_connection(session, bc_connect) ;
+    bgp_connection_start(session, bc_connect) ;
 
   if (conn_state & bgp_csMayAccept)
-    bgp_fsm_start_connection(session, bc_accept) ;
+    bgp_connection_start(session, bc_accept) ;
 
   session->state = bgp_sAcquiring ;
 } ;
@@ -406,16 +407,11 @@ bgp_fsm_stop_session(bgp_session session, bgp_note note)
 } ;
 
 /*------------------------------------------------------------------------------
- * Enable connection for session, trying to connect() or accept()
+ * Start FSM running for the given (brand new) connection.
  */
 extern void
-bgp_fsm_start_connection(bgp_session session, bgp_conn_ord_t ord)
+bgp_fsm_start_connection(bgp_connection connection)
 {
-  bgp_connection connection ;
-
-  qassert(session->connections[ord] == NULL) ;
-
-  connection = bgp_connection_init_new(NULL, session, ord) ;
   qassert(connection->fsm_state == bgp_fsNULL) ;
 
   /* Set an fmRun meta-event so is set running and is added to the ring.
@@ -846,7 +842,7 @@ bgp_fsm_connect_event(bgp_connection connection, int sock_fd, int err)
         if (BGP_DEBUG(fsm, FSM))
           plog_debug(connection->lox.log,
                                        "%s [FSM] BGP connection opened fd %d",
-                                                connection->lox.host, sock_fd) ;
+                                                connection->lox.name, sock_fd) ;
         fsm_event = bgp_feConnected ;
         break ;
 
@@ -872,7 +868,7 @@ bgp_fsm_connect_event(bgp_connection connection, int sock_fd, int err)
         if (BGP_DEBUG(fsm, FSM) && (sock_fd >= 0))
           plog_debug(connection->lox.log,
                         "%s [FSM] BGP connect() failed fd %d (%s)",
-                            connection->lox.host, sock_fd, errtoa(err, 0).str) ;
+                            connection->lox.name, sock_fd, errtoa(err, 0).str) ;
 
         if (err != ETIMEDOUT)
           fsm_event = bgp_feConnectFailed ;
@@ -933,7 +929,7 @@ bgp_fsm_io_failed(bgp_connection_logging plox, int sock_fd, int err,
       case 0:
         if (BGP_DEBUG(fsm, FSM))
           plog_debug(plox->log, "%s [FSM] BGP connection %s closed fd %d",
-                                                   plox->host, where, sock_fd) ;
+                                                   plox->name, where, sock_fd) ;
         return bgp_feDown ;
 
       case ECONNRESET:
@@ -942,16 +938,16 @@ bgp_fsm_io_failed(bgp_connection_logging plox, int sock_fd, int err,
       case ETIMEDOUT:
         if (BGP_DEBUG(fsm, FSM))
           plog_debug(plox->log, "%s [FSM] BGP connection %s closed fd %d (%s)",
-                               plox->host, where, sock_fd, errtoa(err, 0).str) ;
+                               plox->name, where, sock_fd, errtoa(err, 0).str) ;
         return bgp_feDown ;
 
       default:
         if (sock_fd >= fd_first)
           plog_err (plox->log, "%s [Error] bgp I/O error fd %d (%s): %s",
-                               plox->host, sock_fd, where, errtoa(err, 0).str) ;
+                               plox->name, sock_fd, where, errtoa(err, 0).str) ;
         else
           plog_err (plox->log, "%s [Error] bgp socket error (%s): %s",
-                                        plox->host, where, errtoa(err, 0).str) ;
+                                        plox->name, where, errtoa(err, 0).str) ;
         return bgp_feError ;
     } ;
 } ;
@@ -2293,13 +2289,13 @@ bgp_fsm_event_handle(bgp_connection connection, bgp_fsm_event_t fsm_event,
    */
   if (BGP_DEBUG(fsm, FSM) && (fsm_event != bgp_feNULL))
     plog_debug(connection->lox.log, "%s [FSM] event %s (%s->%s)",
-                    connection->lox.host,
+                    connection->lox.name,
                     map_direct(bgp_fsm_event_map, fsm_event).str,
                     map_direct(bgp_fsm_state_map, fsm_state_was).str,
                     map_direct(bgp_fsm_state_map, connection->fsm_state).str) ;
   else if (BGP_DEBUG(normal, NORMAL) && (fsm_event != bgp_feNULL))
     plog_debug (connection->lox.log, "%s on %s FSM went from %s to %s",
-                  connection->lox.host,
+                  connection->lox.name,
                   map_direct(bgp_fsm_event_map, fsm_event).str,
                   map_direct(bgp_fsm_state_map, fsm_state_was).str,
                   map_direct(bgp_fsm_state_map, connection->fsm_state).str) ;
@@ -2709,13 +2705,13 @@ bgp_fsm_invalid_event(bgp_connection connection, bgp_fsm_eqb eqb)
 {
   if (eqb->note == NULL)
     plog_err(connection->lox.log, "%s [FSM] invalid event %s in state %s",
-             connection->lox.host,
+             connection->lox.name,
              map_direct(bgp_fsm_event_map, eqb->fsm_event).str,
              map_direct(bgp_fsm_state_map, connection->fsm_state).str) ;
   else
     plog_err(connection->lox.log, "%s [FSM] invalid event %s in state %s"
                                                        " with notification %s",
-             connection->lox.host,
+             connection->lox.name,
              map_direct(bgp_fsm_event_map, eqb->fsm_event).str,
              map_direct(bgp_fsm_state_map, connection->fsm_state).str,
              bgp_note_string(eqb->note).str) ;
@@ -3129,7 +3125,7 @@ bgp_fsm_enter_open_confirm(bgp_connection connection)
         {
           plog_warn(connection->lox.log,
                                      "%s [FSM] received two BGP-ID: %s and %s",
-                    connection->lox.host, siptoa(AF_INET, &remote_id).str,
+                    connection->lox.name, siptoa(AF_INET, &remote_id).str,
                                           siptoa(AF_INET, &sibling_id).str) ;
 
           bgp_fsm_admin_event(connection, bgp_feBGPOpenMsgErr,
@@ -3147,7 +3143,7 @@ bgp_fsm_enter_open_confirm(bgp_connection connection)
       if (BGP_DEBUG(fsm, FSM))
         plog_debug(connection->lox.log,
                    "%s [FSM] BGP is loser in collision, fd %d",
-                                     loser->lox.host, qfile_fd_get(loser->qf)) ;
+                                     loser->lox.name, qfile_fd_get(loser->qf)) ;
 
       /* Throw feOpenCollisionDump at the loser, which will be in:
        *
@@ -3434,6 +3430,9 @@ bgp_fsm_idle_hold_time_update(bgp_connection connection, bool damp)
 
 /*------------------------------------------------------------------------------
  * Start (or restart) the ConnectRetryTimer
+ *
+ * No matter what the configuration says, will set a timer of at least 1
+ * second !
  */
 static void
 bgp_connect_retry_timer_start(bgp_connection connection)
@@ -3901,7 +3900,7 @@ bgp_fsm_timer_action(qtimer qtr, void* timer_info, qtime_mono_t when)
   connection = ft->connection ;
 
   if (BGP_DEBUG (fsm, FSM)) \
-    plog_debug (connection->lox.log, "%s [FSM] Timer: %s", connection->lox.host,
+    plog_debug (connection->lox.log, "%s [FSM] Timer: %s", connection->lox.name,
                             map_direct(bgp_fsm_event_map, ft->fsm_event).str) ;
 
   ft->state = bfts_expired ;
@@ -4331,7 +4330,7 @@ bgp_fsm_do_io(bgp_connection connection, bgp_fsm_eqb eqb)
                 case qBGP_MSG_KEEPALIVE:
                   if (BGP_DEBUG (keepalive, KEEPALIVE) && !BGP_DEBUG(io, IO_IN))
                     plog_debug(reader->plox->log, "%s KEEPALIVE rcvd",
-                                                           reader->plox->host) ;
+                                                           reader->plox->name) ;
                   bgp_msg_read_done(reader) ;
 
                   if (established)

@@ -45,11 +45,12 @@ static vhash_item   attr_unknown_vhash_free(vhash_item item,
 
 static const vhash_params_t attr_unknown_vhash_params =
 {
-    .hash   = attr_unknown_hash,
-    .equal  = attr_unknown_equal,
-    .new    = attr_unknown_vhash_new,
-    .free   = attr_unknown_vhash_free,
-    .orphan = vhash_orphan_null,
+    .hash       = attr_unknown_hash,
+    .equal      = attr_unknown_equal,
+    .new        = attr_unknown_vhash_new,
+    .free       = attr_unknown_vhash_free,
+    .orphan     = vhash_orphan_null,
+    .table_free = vhash_table_free_parent,
 } ;
 
 static void attr_unknown_stash(attr_unknown dst, attr_unknown src,
@@ -70,8 +71,9 @@ static vector attr_unknown_get_aux(attr_unknown unk) ;
 extern void
 attr_unknown_start(void)
 {
-  attr_unknown_vhash = vhash_table_new(NULL, 1000 /* chain bases */,
-                                             200 /* % density   */,
+  attr_unknown_vhash = vhash_table_new(&attr_unknown_vhash,
+                                        1000 /* chain bases */,
+                                         200 /* % density   */,
                                                    &attr_unknown_vhash_params) ;
 } ;
 
@@ -90,7 +92,7 @@ attr_unknown_start(void)
 extern void
 attr_unknown_finish(void)
 {
-  attr_unknown_vhash = vhash_table_reset(attr_unknown_vhash, free_it) ;
+  attr_unknown_vhash = vhash_table_reset(attr_unknown_vhash) ;
 } ;
 
 /*------------------------------------------------------------------------------

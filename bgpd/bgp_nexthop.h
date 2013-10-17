@@ -90,7 +90,7 @@ extern bool bgp_nexthop_lookup (qAFI_t q_afi, bgp_peer peer, route_info ri,
                                                                   bool*, bool*);
 extern void bgp_connected_add (struct connected *c);
 extern void bgp_connected_delete (struct connected *c);
-extern int bgp_multiaccess_check_v4 (in_addr_t ip, sockunion su);
+extern int bgp_multiaccess_check_v4 (in_addr_t ip, sockunion_c su);
 extern int bgp_config_write_scan_time (struct vty *);
 extern bool bgp_nexthop_onlink (qAFI_t q_afi, attr_next_hop next_hop);
 extern bool bgp_nexthop_self (in_addr_t ip);

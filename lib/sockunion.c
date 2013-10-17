@@ -897,6 +897,39 @@ sockunion_same (sockunion_c su1, sockunion_c su2)
 } ;
 
 /*------------------------------------------------------------------------------
+ * Make a sockunion_name from the given sockunion -- create new if required.
+ */
+extern sockunion_name
+sockunion2name(sockunion_name sn, sockunion_c su)
+{
+  if (sn == NULL)
+    sn = XCALLOC(MTYPE_SOCKUNION_NAME, sizeof(sockunion_name_t)) ;
+
+  switch (su->sa.sa_family)
+  {
+    case AF_INET:
+      store_ns(&sn->name[0], AF_INET) ;
+      store_l(&sn->name[2], su->sin.sin_addr.s_addr) ;
+      sn->len = 2 + 4 ;
+      break ;
+
+#ifdef HAVE_IPV6
+    case AF_INET6:
+      store_ns(&sn->name[0], AF_INET) ;
+      memcpy(&sn->name[2], &su->sin6.sin6_addr, sizeof(struct in6_addr)) ;
+      sn->len = 2 + sizeof (struct in6_addr) ;
+      break ;
+#endif /* HAVE_IPV6 */
+
+    default:
+      sn->len = 0 ;
+      break ;
+  } ;
+
+  return sn ;
+} ;
+
+/*------------------------------------------------------------------------------
  * Get local (getsockname) or remote (getpeername) address and port.
  *
  * Returns: >= 0 == the address family (AF_UNSPEC if fd sock_fd < 0)

@@ -22,7 +22,8 @@ Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
 #define _QUAGGA_BGP_NAMES_H
 
 #include "name_map.h"
-#include "bgp_peer.h"
+#include "bgpd/bgp_common.h"
+#include "bgpd/bgp_prun.h"
 
 /*------------------------------------------------------------------------------
  * Mapping various BGP protocol items to their names

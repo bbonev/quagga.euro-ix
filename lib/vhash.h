@@ -121,16 +121,22 @@ enum
 /*------------------------------------------------------------------------------
  * Parameters for a Value Hash Table
  *
- * All methods MUST be set.  There are null methods for vhash_free_func()
- * and vhash_orphan_func(), which do nothing.
+ * The 'hash', 'equal', 'new' and 'free' functions MUST be set.
+ *
+ * There are null methods for 'free', 'orphan' and 'table_free', which do
+ * very little.
  *
  * Each vhash_table has a pointer to a *const* set of the table's parameters.
+ *
+ * The 'equal function must return: 0 <=> item value == given value.  Anything
+ * else <=> not equal -- so ordinary cmp function will do the job.
  */
 typedef vhash_hash_t vhash_hash_func(vhash_data_c data) ;
 typedef int          vhash_equal_func(vhash_item_c item, vhash_data_c data) ;
 typedef vhash_item   vhash_new_func(vhash_table table, vhash_data_c data) ;
 typedef vhash_item   vhash_free_func(vhash_item item, vhash_table table) ;
 typedef vhash_item   vhash_orphan_func(vhash_item item, vhash_table table) ;
+typedef vhash_table  vhash_table_free_func(vhash_table table, bool on_reset) ;
 
 struct vhash_params
 {
@@ -138,9 +144,11 @@ struct vhash_params
   vhash_equal_func*    equal ;  /* item equal to data ? -- for lookup   */
   vhash_new_func*      new ;    /* to add an item to the table          */
   vhash_free_func*     free ;   /* when item is not in table and
-                                 * ref count == 0 (may be "set")        */
+                                 * ref count == 0 (may be 'held')       */
   vhash_orphan_func*   orphan ; /* when item is not in table, but the
-                                 * ref count != 0 (may also be "set")   */
+                                 * ref count != 0 (may also be 'held')  */
+  vhash_table_free_func*
+                       table_free ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -157,7 +165,7 @@ struct vhash_table
   uint     max_index ;          /* maximum index in the table           */
   uint     extend_thresh ;      /* when to extend the hash table        */
 
-  vhash_ref_count_t ref_count ; /* references and "set" state           */
+  vhash_ref_count_t ref_count ; /* references and 'held' state          */
 
   uint16_t density ;            /* entries per chain base * 100         */
   uint16_t init_base_count ;    /* initial number of chain bases        */
@@ -223,19 +231,19 @@ struct vhash_node
 
   vhash_hash_t  hash ;          /* set when put into a table    */
 
-  vhash_ref_count_t ref_count ; /* references and "set" state   */
+  vhash_ref_count_t ref_count ; /* references and 'held' state  */
 } ;
 
 enum { VHASH_NODE_INIT_ALL_ZEROS = true } ;
 
-/* The ref_count actually counts in 2's.  The LS bit is the "set" bit.
+/* The ref_count actually counts in 2's.  The LS bit is the 'held' bit.
  *
- * While the "set" bit is set, the ref_count field is not zero !
+ * While the 'held' bit is set, the ref_count field is not zero !
  */
 enum vhash_ref_count
 {
   vhash_ref_count_increment = 2,
-  vhash_ref_count_set       = 1
+  vhash_ref_count_held      = 1
 } ;
 
 /*------------------------------------------------------------------------------
@@ -256,26 +264,28 @@ extern vhash_table vhash_table_new(void* parent, uint base_count,
                                           uint density, vhash_params_c params) ;
 extern void vhash_table_init(vhash_table table, void* parent, uint base_count,
                                           uint density, vhash_params_c params) ;
-extern vhash_item vhash_orphan_null(vhash_item item, vhash_table table) ;
 
-Inline vhash_table vhash_table_inc_ref(vhash_table table) ;
-Inline vhash_table vhash_table_dec_ref(vhash_table table) ;
-Private vhash_table vhash_table_ref_final(vhash_table table) ;
+extern vhash_item vhash_orphan_null(vhash_item item, vhash_table table) ;
+extern vhash_item vhash_free_null(vhash_item item, vhash_table table) ;
+
+extern vhash_table vhash_table_free_simple(vhash_table table, bool on_reset) ;
+extern vhash_table vhash_table_free_parent(vhash_table table, bool on_reset) ;
+extern vhash_table vhash_table_free_null(vhash_table table, bool on_reset) ;
+extern vhash_table vhash_table_free(vhash_table table) ;
 
 extern void  vhash_table_set_parent(vhash_table table, void* parent) ;
 extern void* vhash_table_get_parent(vhash_table table) ;
 
 extern void vhash_table_ream(vhash_table table) ;
-extern vhash_table vhash_table_reset(vhash_table table,
-                                                       free_keep_b free_table) ;
+extern vhash_table vhash_table_reset(vhash_table table) ;
 extern void vhash_table_reset_bases(vhash_table table, uint base_count) ;
 
 extern vhash_item vhash_lookup(vhash_table table, vhash_data_c data,
                                                                 bool* p_added) ;
-Inline vhash_item vhash_set(vhash_item item) ;
-Inline vhash_item vhash_clear_set(vhash_item item) ;
-extern vhash_item vhash_unset(vhash_item item, vhash_table table) ;
-extern vhash_item vhash_unset_delete(vhash_item item, vhash_table table) ;
+Inline vhash_item vhash_set_held(vhash_item item) ;
+Inline vhash_item vhash_clear_held(vhash_item item) ;
+extern vhash_item vhash_drop(vhash_item item, vhash_table table) ;
+extern vhash_item vhash_drop_delete(vhash_item item, vhash_table table) ;
 extern vhash_item vhash_delete(vhash_item item, vhash_table table) ;
 
 Inline vhash_item vhash_inc_ref(vhash_item item) ;
@@ -315,84 +325,33 @@ Inline vhash_hash_t vhash_hash_address_cont(const void* a, vhash_hash_t h) ;
  */
 
 /*------------------------------------------------------------------------------
- * Increment table reference count.
- *
- * Returns:  the table
- */
-Inline vhash_table
-vhash_table_inc_ref(vhash_table table)
-{
-  table->ref_count += vhash_ref_count_increment ;
-
-  return table ;
-} ;
-
-/*------------------------------------------------------------------------------
- * Decrement table reference count:
- *
- * If the reference count is not zero, decrements it.
- *
- * Then:
- *
- *   * if the reference count is not zero, or the table is "set"
- *
- *     Returns the table.
- *
- *   * if the reference count is zero, and the table is not "set"
- *
- *     vhash_table_reset() the table, and free it.
- *
- *     Returns NULL
- *
- * For the avoidance of doubt: it is probably an error to attempt to decrement
- * a zero reference count.  What this does is:
- *
- *   * ignore the decrement if the table is "set"
- *
- *   * vhash_table_reset() the table if it is not "set"
- *
- * Returns:  NULL if the table has been freed
- *           the table, otherwise.
- */
-Inline vhash_table
-vhash_table_dec_ref(vhash_table table)
-{
-  if (table->ref_count > vhash_ref_count_increment)
-    {
-      table->ref_count -= vhash_ref_count_increment ;
-      return table ;
-    } ;
-
-  return vhash_table_ref_final(table) ;
-} ;
-
-/*------------------------------------------------------------------------------
- * Set the "set" state for the given item
+ * Set the 'held' state for the given item
  *
  * Returns:  the item
  */
 Inline vhash_item
-vhash_set(vhash_item item)
+vhash_set_held(vhash_item item)
 {
   confirm(vhash_node_offset == 0) ;
 
-  ((vhash_node)item)->ref_count |= vhash_ref_count_set ;
+  ((vhash_node)item)->ref_count |= vhash_ref_count_held ;
 
   return item ;
 } ;
 
 /*------------------------------------------------------------------------------
- * Clear the "set" state for the given item
+ * Clear the 'held' state for the given item
  *
- * The item may then be ready to be freed, but is not freed at this time.
+ * The item may then be ready to be freed, but is NOT freed at this time.
+ * (Contrast with vhash_drop.)
  *
  * A later call of vhash_unset() will proceed to free the item, if the
  * reference count is zero.
  *
- * The "set" state is expected to be used to signal that some "owner" of the
- * item has it in their hands and/or that the value of the item is "set".
+ * The 'held' state is expected to be used to signal that some "owner" of the
+ * item has it in their hands and/or that the value of the item is 'held'.
  * When the "owner" is about to release an item and/or its value is about to
- * be dismantled, the "set" state can be cleared to signal that.
+ * be dismantled, the 'held' state can be cleared to signal that.
  *
  * NB: a later call of vhash_dec_ref() could also free the item... so, to be
  *     completely certain of holding onto the item once it is unset:
@@ -407,11 +366,11 @@ vhash_set(vhash_item item)
  * Returns:  the item
  */
 Inline vhash_item
-vhash_clear_set(vhash_item item)
+vhash_clear_held(vhash_item item)
 {
   confirm(vhash_node_offset == 0) ;
 
-  ((vhash_node)item)->ref_count &= ~(vhash_ref_count_t)vhash_ref_count_set ;
+  ((vhash_node)item)->ref_count &= ~(vhash_ref_count_t)vhash_ref_count_held ;
 
   return item ;
 } ;
@@ -438,11 +397,11 @@ vhash_inc_ref(vhash_item item)
  *
  * Then:
  *
- *   * if the reference count is not zero, or the item is "set"
+ *   * if the reference count is not zero, or the item is 'held'
  *
  *     Returns the item.
  *
- *   * if the reference count is zero, and the item is not "set"
+ *   * if the reference count is zero, and the item is not 'held'
  *
  *     vhash_delete() the item -- ie remove it from the table (if it is there)
  *                                and then free() it (if possible).
@@ -459,9 +418,9 @@ vhash_inc_ref(vhash_item item)
  * For the avoidance of doubt: it is probably an error to attempt to decrement
  * a zero reference count.  What this does is:
  *
- *   * ignore the decrement if the item is "set"
+ *   * ignore the decrement if the item is 'held'
  *
- *   * vhash_delete() the item if it is not "set"
+ *   * vhash_delete() the item if it is not 'held'
  *
  * Returns:  NULL if the item has been freed (or would have been freed, but
  *                                                                table is NULL)
@@ -489,9 +448,9 @@ vhash_dec_ref(vhash_item item, vhash_table table)
  * NB: if the reference count becomes zero, or is already zero, this has no
  *     effect.
  *
- *     This is the same as vhash_dec_ref() when the item is "set".
+ *     This is the same as vhash_dec_ref() when the item is 'held'.
  *
- *     BUT, if the item is not "set", it will remain in the hash with a
+ *     BUT, if the item is not 'held', it will remain in the hash with a
  *     zero reference count.  (This is not illegal, but is unusual where the
  *     reference count is used.)
  *
@@ -511,7 +470,7 @@ vhash_dec_ref_simple(vhash_item item)
 /*------------------------------------------------------------------------------
  * Test whether there are any references.
  *
- * Note that for this purpose, the "set" state does not count
+ * Note that for this purpose, the 'held' state does not count
  */
 Inline bool
 vhash_has_references(vhash_item item)
@@ -522,18 +481,18 @@ vhash_has_references(vhash_item item)
 } ;
 
 /*------------------------------------------------------------------------------
- * Test the "set" state
+ * Test the 'held' state
  */
 Inline bool
 vhash_is_set(vhash_item item)
 {
   confirm(vhash_node_offset == 0) ;
 
-  return ((vhash_node)item)->ref_count & vhash_ref_count_set ;
+  return ((vhash_node)item)->ref_count & vhash_ref_count_held ;
 } ;
 
 /*------------------------------------------------------------------------------
- * Test for not "set" and no references
+ * Test for not 'held' and no references
  */
 Inline bool
 vhash_is_unused(vhash_item item)

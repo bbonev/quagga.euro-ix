@@ -644,11 +644,13 @@ main (int argc, char **argv)
   if (fileno (stdout) >= 0)
     tty = isatty (fileno (stdout));
 
+#if 0
   if (bgp_get (&bgp, &asn, NULL))
     return -1;
 
   peer = peer_create_accept (bgp);
   peer->host = miyagi("foo");
+#endif
 
   for (i = AFI_IP; i < AFI_MAX; i++)
     for (j = SAFI_UNICAST; j < SAFI_MAX; j++)
@@ -678,7 +680,9 @@ main (int argc, char **argv)
   while (opt_params[i].name)
     parse_test (peer, &opt_params[i++], OPT_PARAM);
 
+#if 0
   peer->state = bgp_pEstablished;
+#endif
 
   i = 0;
   while (dynamic_cap_msgs[i].name)
@@ -693,6 +697,7 @@ main (int argc, char **argv)
  */
 bgp_peer peer_create_accept (bgp_inst bgp)
 {
+#if 0
   bgp_peer peer;
 
   peer = bgp_peer_new (bgp, PEER_TYPE_REAL);
@@ -701,6 +706,8 @@ bgp_peer peer_create_accept (bgp_inst bgp)
   listnode_add_sort (bgp->peer, peer);
 
   return peer;
+#endif
+  return NULL ;
 }
 
 

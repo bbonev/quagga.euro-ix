@@ -18,13 +18,14 @@ along with GNU Zebra; see the file COPYING.  If not, write to the Free
 Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
 02111-1307, USA.  */
 
-#include <zebra.h>
+#include "misc.h"
 
 #include "bgpd/bgp_names.h"
 #include "bgpd/bgp_common.h"
 #include "bgpd/bgp_connection.h"
 #include "bgpd/bgp_notification.h"
 #include "bgpd/bgp_peer.h"
+#include "bgpd/bgp_prun.h"
 
 /*------------------------------------------------------------------------------
  * Names of FSM state values

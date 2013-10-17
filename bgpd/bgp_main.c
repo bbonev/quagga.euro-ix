@@ -46,6 +46,8 @@ Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
 #include "bgpd/bgp_aspath.h"
 #include "bgpd/bgp_dump.h"
 #include "bgpd/bgp_route.h"
+#include "bgpd/bgp_route_static.h"
+#include "bgpd/bgp_show.h"
 #include "bgpd/bgp_nexthop.h"
 #include "bgpd/bgp_regex.h"
 #include "bgpd/bgp_clist.h"
@@ -54,7 +56,12 @@ Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
 #include "bgpd/bgp_network.h"
 #include "bgpd/bgp_engine.h"
 #include "bgpd/bgp_vty.h"
+#include "bgpd/bgp_clist_vty.h"
+#include "bgpd/bgp_config_vty.h"
 #include "bgpd/bgp_zebra.h"
+#include "bgpd/bgp_damp.h"
+#include "bgpd/bgp_route_aggr.h"
+#include "bgpd/bgp_routemap.h"
 
 /* Configuration file and directory.
  */
@@ -594,13 +601,17 @@ bgp_cmd_init(void)
 {
   cmd_table_init (BGPD);
 
-  bgp_vty_cmd_init() ;          /* Installs all the bgpd nodes  */
+  bgp_vty_cmd_init() ;          /* Installs bgp config writer   */
+  bgp_vty_config_cmd_init() ;
 
   bgp_dump_cmd_init() ;
   bgp_debug_cmd_init() ;
   bgp_filter_cmd_init() ;
-  bgp_mplsvpn_cmd_init() ;
   bgp_route_cmd_init() ;
+  bgp_damping_cmd_init() ;
+  bgp_static_cmd_init () ;
+  bgp_aggregate_cmd_init () ;
+  bgp_show_cmd_init () ;
   bgp_route_map_cmd_init() ;
   bgp_scan_cmd_init() ;
   bgp_show_nexus_cmd_init() ;
@@ -780,9 +791,8 @@ bgp_exit (int status)
 
   /* reverse bgp_master_init
    */
-  for (ALL_LIST_ELEMENTS (bm->bgp, node, nnode, bgp))
+  while ((bgp = ddl_head(bm->bgps)) != NULL)
     bgp_delete (bgp);
-  list_free (bm->bgp);
 
   /* dismantle the peer index
    */

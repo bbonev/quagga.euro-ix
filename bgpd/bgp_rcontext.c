@@ -25,7 +25,7 @@
 
 #include "bgpd/bgp_rcontext.h"
 #include "bgpd/bgpd.h"
-#include "bgpd/bgp_peer.h"
+#include "bgpd/bgp_prun.h"
 
 #include "lib/vhash.h"
 #include "lib/memory.h"
@@ -53,11 +53,12 @@ static vhash_equal_func bgp_rcontext_equal ;
 
 static const vhash_params_t bgp_rcontext_vhash_params =
 {
-  .hash   = vhash_hash_string,
-  .equal  = bgp_rcontext_equal,
-  .new    = bgp_rcontext_new,
-  .free   = bgp_rcontext_free,
-  .orphan = vhash_orphan_null,
+  .hash         = vhash_hash_string,
+  .equal        = bgp_rcontext_equal,
+  .new          = bgp_rcontext_new,
+  .free         = bgp_rcontext_free,
+  .orphan       = vhash_orphan_null,
+  .table_free   = vhash_table_free_simple,
 } ;
 
 /*------------------------------------------------------------------------------
@@ -90,12 +91,12 @@ bgp_rcontext_finish(void)
 } ;
 
 /*------------------------------------------------------------------------------
- *
+ * Empty out and free the given bgp instance's rcontext name index, if any.
  */
 extern void
-bgp_rcontext_xxx(bgp_inst bgp)
+bgp_rcontext_discard_name_index(bgp_inst bgp)
 {
-  bgp->rc_name_index = vhash_table_reset(bgp->rc_name_index, free_it) ;
+  bgp->rc_name_index = vhash_table_reset(bgp->rc_name_index) ;
 }
 
 /*------------------------------------------------------------------------------
@@ -164,7 +165,7 @@ bgp_rcontext_lookup(bgp_inst bgp, const char* name, bgp_rcontext_type_t type,
       rc->bgp  = bgp ;
       rc->type = type ;
 
-      vhash_set(rc) ;
+      vhash_set_held(rc) ;
     } ;
 
   return vhash_inc_ref(rc) ;
@@ -187,7 +188,8 @@ bgp_rcontext_get(bgp_rc_id_t rc_id)
 extern bgp_rcontext
 bgp_rcontext_unlock(bgp_rcontext rc)
 {
-  vhash_dec_ref(rc, rc->bgp->rc_name_index) ;
+  if (rc != NULL)
+    vhash_dec_ref(rc, rc->bgp->rc_name_index) ;
   return NULL ;
 } ;
 
@@ -386,7 +388,7 @@ bgp_rcontext_new(vhash_table table, vhash_data_c data)
  * Give back the route-context-id -- the vhash_item is an rcontext
  *                                                            -- vhash_free_func
  *
- * If the item is "set", then it is being reamed out, and we are happy to do
+ * If the item is 'held', then it is being reamed out, and we are happy to do
  * that now.
  */
 static vhash_item

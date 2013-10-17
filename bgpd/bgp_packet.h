@@ -27,17 +27,11 @@ Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
 
 /* Packet send and receive function prototypes.
  */
-extern void bgp_packet_write_stuff(bgp_peer peer, ring_buffer rb) ;
+extern void bgp_packet_write_stuff(bgp_prun prun, ring_buffer rb) ;
 
 extern void bgp_route_refresh_send (bgp_prib prib, byte orf_type,
                                             byte when_to_refresh, bool remove) ;
 
-
-extern void bgp_packet_read_stuff(bgp_peer peer, ring_buffer rb) ;
-
-
-
-
-extern bool bgp_nlri_sanity_check(bgp_peer peer, bgp_nlri nlri) ;
+extern void bgp_packet_read_stuff(bgp_prun prun, ring_buffer rb) ;
 
 #endif /* _QUAGGA_BGP_PACKET_H */

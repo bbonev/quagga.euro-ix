@@ -34,6 +34,7 @@
 #include "bgpd/bgp_ecommunity.h"
 #include "bgpd/bgp_unknown.h"
 #include "bgpd/bgp_cluster.h"
+#include "bgpd/bgp_mplsvpn.h"
 
 /*==============================================================================
  * BGP attribute structure
@@ -285,41 +286,6 @@ struct attr_pair
    */
   attr_set_t scratch[1] ;
 } ;
-
-/*------------------------------------------------------------------------------
- * For Route-Map operations we pass a small package of information, including
- * a pointer to an attr_pair.
- *
- */
-enum bgp_rmap_type
-  {
-    BGP_RMAP_TYPE_NONE         = 0,
-
-    BGP_RMAP_TYPE_IN           = BIT( 0), /* neighbor route-map in       */
-    BGP_RMAP_TYPE_OUT          = BIT( 1), /* neighbor route-map out      */
-    BGP_RMAP_TYPE_NETWORK      = BIT( 2), /* network route-map           */
-    BGP_RMAP_TYPE_REDISTRIBUTE = BIT( 3), /* redistribute route-map      */
-    BGP_RMAP_TYPE_DEFAULT      = BIT( 4), /* default-originate route-map */
-
-    BGP_RMAP_TYPE_RS_IN        = BIT( 5), /* neighbor route-map rs-in    */
-    BGP_RMAP_TYPE_IMPORT       = BIT( 6), /* neighbor route-map import   */
-    BGP_RMAP_TYPE_EXPORT       = BIT( 7), /* neighbor route-map export   */
-  } ;
-typedef enum bgp_rmap_type bgp_rmap_type_t ;
-
-typedef struct bgp_route_map  bgp_route_map_t ;
-typedef struct bgp_route_map* bgp_route_map ;
-
-struct bgp_route_map
-{
-  attr_pair     attrs ;
-
-  bgp_peer      peer ;
-
-  qafx_t        qafx ;
-
-  bgp_rmap_type_t rmap_type;
-};
 
 /*==============================================================================
  * Functions.

@@ -21,8 +21,10 @@ Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
 #ifndef _QUAGGA_BGP_DUMP_H
 #define _QUAGGA_BGP_DUMP_H
 
-#include "bgp_connection.h"
-#include <stdbool.h>
+#include "misc.h"
+
+#include "bgpd/bgp_common.h"
+#include "bgpd/bgp_fsm.h"
 
 /*------------------------------------------------------------------------------
  */

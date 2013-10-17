@@ -19,9 +19,10 @@
  */
 #include "zebra.h"
 
-#include "bgp_rib.h"
-#include "bgp_peer.h"
-#include "bgp_adj_in.h"
+#include "bgpd/bgp_rib.h"
+#include "bgpd/bgp_run.h"
+#include "bgpd/bgp_prun.h"
+#include "bgpd/bgp_adj_in.h"
 
 /*==============================================================================
  */
@@ -41,7 +42,7 @@
  * Returns:  address of the new bgp_rib
  */
 extern bgp_rib
-bgp_rib_new(bgp_inst bgp, qafx_t qafx)
+bgp_rib_new(bgp_run brun, qafx_t qafx)
 {
   bgp_rib  rib ;
 
@@ -49,7 +50,7 @@ bgp_rib_new(bgp_inst bgp, qafx_t qafx)
 
   /* Zeroizing has set:
    *
-   *   * bgp            -- X          -- set below
+   *   * brun           -- X          -- set below
    *
    *   * qafx           -- X          -- set below
    *   * real_rib       -- X          -- copied from bgp_instance
@@ -65,9 +66,9 @@ bgp_rib_new(bgp_inst bgp, qafx_t qafx)
    *   * queue          -- NULLs      -- empty queue, but walker added, below
    *   * walker         -- X          -- set below
    */
-  rib->bgp         = bgp ;
+  rib->brun        = brun ;
   rib->qafx        = qafx ;
-  rib->real_rib    = bgp->real_rib ;
+  rib->real_rib    = brun->real_rib ;
 
   rib->nodes_table = ihash_table_init(rib->nodes_table, 0, 60) ;
 
@@ -76,7 +77,7 @@ bgp_rib_new(bgp_inst bgp, qafx_t qafx)
 
   ddl_append(rib->queue_base, &rib->walker->it, queue) ;
 
-  return bgp->rib[qafx] = rib ;
+  return brun->rib[qafx] = rib ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -744,250 +745,4 @@ bgp_rib_rd_seek(bgp_rib rib, prefix_rd prd)
 
   return rib_rdie ;
 } ;
-
-/*==============================================================================
- * Creation and destruction of peer_rib structures.
- */
-
-/*------------------------------------------------------------------------------
- * Create new, empty peer_rib structure.
- *
- * Requires that there is currently no peer_rib for the given qafx.  (Will leak
- * memory if there is, and the peer_rib will simply be cast loose.)
- *
- * Creates a completely empty 'rib_main' peer_rib.
- *
- * If there is no 'rib_main' bgp_rib, creates an empty one.
- *
- * Returns:  address of the new peer_rib
- */
-extern bgp_prib
-peer_rib_new(bgp_peer peer, qafx_t qafx)
-{
-  bgp_prib prib ;
-  bgp_rib  rib ;
-
-  qassert(peer->prib[qafx] == NULL) ;
-
-  prib = XCALLOC(MTYPE_BGP_PEER_RIB, sizeof(bgp_prib_t)) ;
-
-  /* Zeroising has set:
-   *
-   *   * peer                 -- X        -- set below
-   *
-   *   * rib                  -- X        -- set below
-   *
-   *   * walker               -- NULL     -- none, yet
-   *   * walk_list            -- NULLs    -- not on any walker's list, yet
-
-   *   * qafx                 -- X        -- set below
-   *   * i_afi                -- X        -- set below
-   *   * i_safi               -- X        -- set below
-   *   * rib_type             -- rib_main -- default
-   *
-   *   * update_state         -- prib_initial   -- starting state
-   *
-   *   * is_mpls              -- X        -- set below, per qafx
-   *   * refresh              -- false    -- not yet
-   *   * eor_required         -- false    -- not yet
-   *
-   *   * lock                 -- 0
-   *
-   *   * af_flags             -- 0        -- nothing set
-   *   * af_sflags            -- 0        -- nothing set
-   *   * af_cap               -- 0        -- nothing set
-   *
-   *   * af_group_member      -- false
-   *   * af_session_up        -- false
-   *
-   *   * allowas_in           -- 0        -- default state
-   *
-   *   * nsf                  -- false    -- initial state
-   *
-   *   * pcount_recv          -- 0       )
-   *   * pcount_in            -- 0       )   nothing yet
-   *   * p_count_sent         -- 0       )
-   *
-   *   * dlist                -- NULLs   )
-   *   * plist                -- NULLs   )
-   *   * flist                -- NULLs   )   no filters/routemaps, yet
-   *   * rmap                 -- NULLs   )
-   *   * us_rmap              -- NULL    )
-   *   * default_rmap         -- NULL    )
-   *   * orf_plist            -- NULL    )
-   *
-   *   * pmax                 -- all zero -- nothing
-   *     pmax.set             -- false
-   *
-   *   * adj_in               -- NULLs    -- see bgp_adj_in_init()
-   *   * stale_routes         -- NULLs    -- none, yet
-   *
-   *   * batch_delay          -- 0       )
-   *   * batch_delay_extra    -- 0       )
-   *   * announce_delay       -- 0       )
-   *   * mrai_delay           -- 0       )   see bgp_adj_out_init()
-   *   * mrai_delay_left      -- 0       )
-   *   * period_origin        -- 0       )
-   *   * now                  -- 0       )
-   *   * t0                   -- 0       )
-   *   * tx                   -- 0       )
-   *
-   *   * adj_out              -- NULL     -- see bgp_adj_out_init()
-   *
-   *   * fifo_batch           -- NULL    )
-   *   * fifo_mrai            -- NULL    )
-   *   * announce_queue       -- NULL    )   see bgp_adj_out_init()
-   *   * withdraw_queue       -- NULLs   )
-   *   * attr_flux_hash       -- NULL    )
-   *   * eor                  -- NULL    )
-   *
-   *   * dispatch_delay       -- 0       )
-   *   * dispatch_time        -- 0       )   see bgp_adj_out_init()
-   *   * dispatch_qtr         -- NULL    )
-   */
-  prib->peer    = peer ;
-  prib->qafx    = qafx ;
-  prib->i_afi   = get_iAFI(qafx) ;
-  prib->i_safi  = get_iSAFI(qafx) ;
-
-  prib->is_mpls = qafx_is_mpls_vpn(qafx) ;
-
-  /* Now worry about the bgp->rib.
-   *
-   * The peer_rib is automatically associated with the Main bgp_rib.  If there
-   * is no such rib, then we create an empty one here and now.
-   *
-   * If the peer is later set to be a Route-Server Client, then the peer_rib
-   * will be associated with the RS bgp_rib (and that will be created, if
-   * necessary).  Note that even if there are no Main RIB peers, there is
-   * always a Main RIB.
-   */
-  rib =  peer->bgp->rib[qafx] ;
-  if (rib == NULL)
-    rib = peer->bgp->rib[qafx] = bgp_rib_new(peer->bgp, qafx) ;
-  prib->rib = rib ;
-
-  rib->peer_count += 1 ;
-
-  /* Set and return the new prib.
-   */
-  return peer->prib[qafx] = prib ;
-} ;
-
-/*------------------------------------------------------------------------------
- * Discard peer_rib structure.
- */
-extern bgp_prib
-peer_rib_free(bgp_prib prib)
-{
-
-
-  XFREE(MTYPE_BGP_PEER_RIB, prib) ;
-  return NULL ;
-} ;
-
-
-#if 0
-/*------------------------------------------------------------------------------
- * If the given peer is not already an RS Client for the AFI/SAFI, set it to be
- *                                                                 an RS Client.
- *
- * Does nothing if is already a rib_rs peer.
- *
- * Creates a completely empty peer_rib, if one does not exist.  Creates as a
- * rib_main peer, associated with the rib_main bgp_rib (creating that, if
- * required).
- *
- * Creates a rib_rs bgp_rib if required.
- *
- * If was a rib_main peer, then discards any walker with which the peer was
- * associated.
- *
- * Returns:  address of the new peer_rib
- */
-extern bgp_prib
-peer_rib_set_rs(bgp_peer peer, qafx_t qafx)
-{
-  bgp_prib prib ;
-  bgp_rib  rib ;
-
-  prib = peer->prib[qafx] ;
-
-  if (prib == NULL)
-    prib = peer_rib_new(peer, qafx) ;   /* creates rib_main bgp_rib if
-                                         * required                     */
-  else if (prib->rib_type == rib_rs)
-    return prib ;
-
-  /* We (now) have a prib, and it is rib_main.
-   */
-  rib = prib->rib ;                     /* the rib_main bgp_rib         */
-
-  bgp_rib_walker_detach(prib) ;         /* stop if walking rib_main     */
-
-  rib->peer_count -= 1 ;
-
-  rib = peer->bgp->rib[qafx] ;
-  if (rib == NULL)
-    rib = peer->bgp->rib[qafx] = bgp_rib_new(peer->bgp, qafx) ;
-
-  prib->rib = rib ;
-
-  rib->peer_count += 1 ;
-
-  return prib ;
-} ;
-
-/*------------------------------------------------------------------------------
- * If the given peer is an RS Client for the AFI/SAFI, unset that.
- *
- * Creates a completely empty peer_rib, if one does not exist.  Creates as a
- * rib_main peer, associated with the rib_main bgp_rib (creating that, if
- * required).
- *
- * Creates a rib_rs bgp_rib if required.
- *
- * Does nothing if is already a rib_rs peer.
- *
- * If was a rib_main peer, then discards any walker with which the peer was
- * associated.
- *
- * Returns:  address of the new peer_rib
- */
-extern bgp_prib
-peer_rib_unset_rs(bgp_peer peer, qafx_t qafx)
-{
-  bgp_prib prib ;
-  bgp_rib  rib ;
-
-  prib = peer->prib[qafx] ;
-
-  if (prib == NULL)
-    prib = peer_rib_new(peer, qafx) ;   /* creates rib_main bgp_rib if
-                                         * required                     */
-
-  if (prib->rib_type == rib_main)
-    return prib ;
-
-  /* We (now) have a prib, and it is rib_rs.
-   */
-  rib = prib->rib ;                     /* the rib_rs bgp_rib           */
-  qassert(rib->rib_type == rib_rs) ;
-
-  bgp_rib_walker_detach(prib) ;         /* stop if walking rib_rs       */
-
-  rib->peer_count -= 1 ;
-
-  rib = peer->bgp->rib[qafx][rib_main] ;
-  qassert(rib != NULL) ;
-
-  prib->rib_type = rib_main ;
-  prib->rib = rib ;
-
-  rib->peer_count += 1 ;
-
-  return prib ;
-} ;
-
-#endif
 

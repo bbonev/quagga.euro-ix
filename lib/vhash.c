@@ -72,49 +72,102 @@
  *     Note that the new() does not need to worry about the vhash_node part of
  *     the item -- in particular, it is not required to zeroize it.
  *
- *     If the item holds a pointer to the table, then vhash_table_inc_ref()
- *     can/should be used to avoid that pointer becoming a dangling pointer.
+ *     Each new item implicitly holds a ref-count on the table object.
  *
  *   * vhash_free_func*   free
  *
  *     This is called when an item has been removed from the table and the
- *     item's reference count is zero -- the item may or may not be "set".
+ *     item's reference count is zero -- the item may or may not be 'held'.
  *     (The item may be an orphan, so have been removed from the table some
  *     time ago.)
  *
  *     The expected action is that the item, and any value it may have, will be
- *     freed.  If vhash_table_inc_ref() was called when the item was created,
- *     the vhash_table_dec_ref() will be required.  The function should
- *     return NULL.
+ *     freed, and the function returns NULL.
  *
  *     If (for whatever, bizarre) reason the item is not freed, the free()
  *     function may elect to return the item or NULL.
  *
- *     In any case, it is a mistake to call vhash_unset() in the free()
+ *     In any case, it is a mistake to call vhash_drop() in the free()
  *     function, because that will recurse.
+ *
+ *     After calling the free(), the implicit ref-count on the table will be
+ *     reduced, and if the table is no longer 'held', it may softly and
+ *     suddenly vanish away.
  *
  *   * vhash_orphan_func* orphan
  *
  *     This is called when an item is removed from the table and the item's
- *     reference count is not zero -- the item may or may not be "set".
+ *     reference count is not zero -- the item may or may not be 'held'.
  *
  *     The expected action is that the item's value will be cleared, and any
- *     "set" state cleared with it.  At a minimum, the "set" state should be
+ *     'held' state cleared with it.  At a minimum, the 'held' state should be
  *     cleared, so that when the reference count is reduced to zero, the
  *     item will then be freed.  The function should return the item.
  *
  *     It is a mistake to fiddle with the reference count in the orphan()
  *     function, because that may recurse or cause free() to be called.
  *
- *     The orphan() function may call vhash_unset() -- subject to the caveat re
+ *     The orphan() function may call vhash_drop() -- subject to the caveat re
  *     fiddling with the reference count.
  *
- *     If the "set" state is not clear when orphan() returns, then the
+ *     If the 'held' state is not clear when orphan() returns, then the
  *     application must clear it at some other time (if the item is to be
- *     freed).  The vhash_orphan_null() does nothing other than clear "set".
+ *     freed).  The vhash_orphan_null() does nothing other than clear 'held'.
  *
  *     If (for whatever, really, bizarre) reason the item is freed, the
  *     orphan() function must return NULL.
+ *
+ *     Orphans continue to count towards the table's ref-count.  When the
+ *     orphan is, eventually, freed the table ref-count reduces etc.
+ *
+ *     A NULL orphan function maps to vhash_orphan_null().
+ *
+ *   * vhash_table_free_func*  table_free
+ *
+ *     This is called when the table is not 'held' -- ie once it has been
+ *     vhash_table_reset() -- and the ref-count is zero.
+ *
+ *     As above, new() and free() implicitly count items in and out of the
+ *     table.
+ *
+ *     vhash_table_reset() clears the table's 'held' flag when it has finished
+ *     emptying the table.  If there are no orphans, the table_free function
+ *     is called immediately -- with 'on_reset' == true.
+ *
+ *     If orphans are left after vhash_table_reset(), the table may,
+ *     eventually be freed when all orphans are, in which case the table_free
+ *     function is called -- with 'on_reset' == false.
+ *
+ *     vhash_table_reset() returns NULL iff it calls table_free(), and that
+ *     returns NULL.
+ *
+ *     The recommendation is:
+ *
+ *       * for dynamically allocated tables, the table_free() function must
+ *         call vhash_table_free().
+ *
+ *         Setting table_free() to vhash_table_free_simple() will do that.
+ *
+ *       * for dynamically allocated tables the usual:
+ *
+ *           table = vhash_table_reset(table) ;
+ *
+ *         will clear the pointer to the table, *only* if there are no orphans.
+ *
+ *         The recommendation is that the table_free() function should clear
+ *         any pointer to the table.
+ *
+ *         If the table->parent pointer is set to point at the pointer to
+ *         the table, then vhash_table_free_parent() function will do the
+ *         trick, *and* go on the do vhash_table_free().
+ *
+ *         If the dynamically allocated table is pointed to by some data
+ *         structure, then the table_free() function could free off the
+ *         parent structure -- perhaps using the 'on_reset' flag to tell
+ *         it whether this is a "late" free of the table.
+ *
+ *       * for embedded tables, the table_free() function must take care of
+ *         business.
  *
  * The array of chain-bases is dynamically allocated and will grow to maintain
  * an approximate given maximum number of items per chain base.  This density
@@ -126,36 +179,36 @@
  * Since that is odd, it is co-prime with the hash, so contributes to the hash
  * process.
  *
- * The reference counting and "set" state work as follows:
+ * The reference counting and 'held' state work as follows:
  *
- *   * an item which is marked as "set" is not freed when the reference count
- *     is zero, but it may be deleted from the table -- which clears the "set"
+ *   * an item which is marked as 'held' is not freed when the reference count
+ *     is zero, but it may be deleted from the table -- which clears the 'held'
  *     state.
  *
  *     The intent is that there may be "users" of an item, who are counted by
- *     the reference count, and one "owner" of an item who holds the "set" flag
- *     while the item has a (or any) value.
+ *     the reference count, and one "owner" of an item who holds the 'held'
+ *     flag while the item has a (or any) value.
  *
  *   * when saving/discarding the address of an item, the "user" can
  *     increment/decrement the reference count to register/unregister their
  *     interest in the item.
  *
  *     Decrementing the reference count to zero (or when it is zero) will
- *     cause the item to be deleted, unless it is "set".
+ *     cause the item to be deleted, unless it is 'held'.
  *
- *   * the owner of an item may clear the "set" state, and the item will
+ *   * the owner of an item may clear the 'held' state, and the item will
  *     be freed immediately or when its reference count reduces to zero.
  *
  *   * an item may be deleted from the table -- it is expected that only the
- *     "owner" will do this, and that the "set" will be cleared at the same
+ *     "owner" will do this, and that the 'held' will be cleared at the same
  *     time.
  *
  *     If the item has a zero reference count, it will be freed immediately.
  *
  *     Otherwise, the item becomes an orphan -- that is, not in the table and
- *     not "set".  All "users" of the item will still have a valid pointer to
+ *     not 'held'.  All "users" of the item will still have a valid pointer to
  *     it -- though the item may be marked empty in some way (noting that the
- *     "set" state may be used for that purpose).  If the table structure
+ *     'held' state may be used for that purpose).  If the table structure
  *     remains valid, the item may be freed when its reference count is
  *     reduced to zero.
  *
@@ -163,38 +216,38 @@
  *     "name" can be created, and that is entirely separate from the orphaned
  *     item.
  *
- * The reference count and "set" state are used by the following functions:
+ * The reference count and 'held' state are used by the following functions:
  *
- *   * vhash_set()     -- sets the "set" state
+ *   * vhash_set_held() -- sets the 'held' state
  *
- *   * vhash_unset()   -- clears the "set" state (if it was set)
+ *   * vhash_drop()     -- clears the 'held' state (if it was set)
  *
- *                        if the reference count is zero, removes the item from
- *                        the table and frees it.
+ *                         if the reference count is zero, removes the item from
+ *                         the table and frees it.
  *
- *   * vhash_inc_ref() -- increments the reference count
+ *   * vhash_inc_ref()  -- increments the reference count
  *
- *   * vhash_dec_ref() -- decrements the reference count (if not already zero)
+ *   * vhash_dec_ref()  -- decrements the reference count (if not already zero)
  *
- *                        if the resulting reference count is zero, and the
- *                        item is not "set", removes it from the table and
- *                        frees it.
+ *                         if the resulting reference count is zero, and the
+ *                         item is not 'held', removes it from the table and
+ *                         frees it.
  *
- *   * vhash_unset_delete()  -- combined vhash_unset()/vhash_delete()
+ *   * vhash_drop_delete()  -- combined vhash_drop()/vhash_delete()
  *
- *   * vhash_delete()  -- removes item from the table, then:
+ *   * vhash_delete()   -- removes item from the table, then:
  *
- *                          if the reference count is zero, call free()
+ *                           if the reference count is zero, call free()
  *
- *                          if the reference count is not zero, call orphan()
+ *                           if the reference count is not zero, call orphan()
  *
- *                        NB: in this case, when free() or orphan() are called
- *                            the item may still be "set".
+ *                         NB: in this case, when free() or orphan() are called
+ *                             the item may still be 'held'.
  *
- *                            Generally, only the "owner" of an item will
- *                            vhash_delete() it, so the "set" state signals
- *                            that any value is still present, and may (well)
- *                            need to be discarded.
+ *                             Generally, only the "owner" of an item will
+ *                             vhash_delete() it, so the 'held' state signals
+ *                             that any value is still present, and may (well)
+ *                             need to be discarded.
  *
  * Note that vhash_delete() can create orphan items, which are covered below.
  *
@@ -202,20 +255,21 @@
  * Orphan items etc.
  *
  * When an item which has a non-zero reference count (irrespective of whether
- * it is "set" or not) is deleted by vhash_delete() it becomes an orphan.
+ * it is 'held' or not) is deleted by vhash_delete() it becomes an orphan.
  * During the delete operation the table's orphan() function is called to
  * signal that fact.
  *
  * It is likely that when an item becomes an orphan its value will be cleared,
  * but that is a matter outside the scope of the vhash_table.  At the same time,
- * if the item is "set", it is likely to be unset.
+ * if the item is 'held', that flag can be cleared to signal that the "owner"
+ * of the value has done with it..
  *
  * It is expected that each "user" of the item will, in due course, call
  * vhash_dec_ref().  When the reference count becomes zero, the item will be
  * freed.
  *
  * Once an item is an orphan: vhash_inc_ref() will work as you might expect;
- * vhash_set() and vhash_unset() will also work, but what they mean is not
+ * vhash_set_held() and vhash_drop() will also work, but what they mean is not
  * clear -- an orphan is not likely to have a value; vhash_delete() has no
  * effect.
  *
@@ -245,8 +299,8 @@
  * in each item a pointer to the vhash table in which it belongs.  To avoid
  * dangling references to the vhash table we have an additional mechanism,
  * the vhash table's 'ref_count', which is much like the ref_count for each
- * item.  When a vhash table is created it is "set".  When it is reset and
- * freed, the "set" state is cleared, but if the reference count is not
+ * item.  When a vhash table is created it is 'held'.  When it is reset and
+ * freed, the 'held' state is cleared, but if the reference count is not
  * zero, the vhash table structure is not freed.  The vhash_table_inc_ref() and
  * vhash_table_def_ref() functions may be used to register/de-register an
  * interest in the vhash table.  This may be used:
@@ -263,41 +317,99 @@
  *     orphan items.
  *
  * Note that the free() function is only called when the item's reference
- * count is zero.  The "set" state may signal that the item has a value, which
- * needs to be freed.  But whatever the "set" state, the expectation is that
+ * count is zero.  The 'held' state may signal that the item has a value, which
+ * needs to be freed.  But whatever the 'held' state, the expectation is that
  * the item will be freed and that free() will return NULL.
  *
  * The orphan() function is only called when the items's reference count is
  * not zero.  It is also only called when the item becomes an orphan, that is
- * at the time it is removed from the table.  The "set" state may signal that
+ * at the time it is removed from the table.  The 'held' state may signal that
  * the item has a value, which needs to be freed.  But in any case, since the
  * item is being deleted, it is likely that any value will be discarded at
- * this point, and any "set" state cleared.
+ * this point, and any 'held' state cleared.
  */
 
- /*------------------------------------------------------------------------------
-  * Null orphan() function -- clear any "set" state, but otherwise do nothing
-  * and return the item.
-  *
-  * If no action is required when an item is orphaned, the table's orphan()
-  * function may be set to this.
-  */
+/*------------------------------------------------------------------------------
+ * Null free() function -- clear any 'held' state, but otherwise do nothing
+ * and return the item.
+ *
+ * If no action is required when an item is free, the table's orphan()
+ * function may be set to this.
+ */
+extern vhash_item
+vhash_free_null(vhash_item item, vhash_table table)
+{
+  ((vhash_node)item)->ref_count &= ~(vhash_ref_count_t)vhash_ref_count_held ;
+
+  return item ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Null orphan() function -- clear any 'held' state, but otherwise do nothing
+ * and return the item.
+ *
+ * If no action is required when an item is orphaned, the table's orphan()
+ * function may be set to this.
+ */
 extern vhash_item
 vhash_orphan_null(vhash_item item, vhash_table table)
 {
-  ((vhash_node)item)->ref_count &= ~(vhash_ref_count_t)vhash_ref_count_set ;
+  ((vhash_node)item)->ref_count &= ~(vhash_ref_count_t)vhash_ref_count_held ;
 
   return item ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Null table_free() function -- do nothing at all at all.
+ */
+extern vhash_table
+vhash_table_free_null(vhash_table table, bool on_reset)
+{
+  return NULL ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Simple table_free() function -- do vhash_table_free().
+ */
+extern vhash_table
+vhash_table_free_simple(vhash_table table, bool on_reset)
+{
+  return vhash_table_free(table) ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * "parent" table_free() function -- do vhash_table_free().
+ *
+ * If (and only if) *(table->parent) == table, set that to the
+ * Assumes that table->parent is the address of a pointer to the table,
+ * which should now be cleared.
+ */
+extern vhash_table
+vhash_table_free_parent(vhash_table table, bool on_reset)
+{
+  if (table != NULL)
+    {
+      vhash_table* p_table ;
+
+      p_table = table->parent ;
+
+      if ((p_table == NULL) || (*p_table != table))
+        return *p_table = vhash_table_free(table) ;
+    } ;
+
+    return vhash_table_free(table) ;
 } ;
 
 /*==============================================================================
  * Value Hash Table Operations
  */
+static vhash_table vhash_do_table_free(vhash_table table, bool on_reset) ;
 static void vhash_table_free_bases(vhash_table table) ;
 static void vhash_table_new_bases(vhash_table table, uint new_base_count) ;
 static void vhash_table_extend_bases(vhash_table table) ;
 static vhash_item vhash_reap(vhash_node node, vhash_table table,
                                                            vhash_node* p_prev) ;
+static vhash_item vhash_item_free(vhash_item item, vhash_table table) ;
 
 inline static uint vhash_base_index(vhash_table table, vhash_hash_t hash) ;
 
@@ -345,6 +457,8 @@ inline static uint vhash_base_index(vhash_table table, vhash_hash_t hash) ;
  * the base_count and the density settings until they are needed -- see
  * vhash_table_new_bases().
  *
+ * Sets the table to be 'held' -- so owner has some control.
+ *
  * Returns:  address of new vhash table
  */
 extern vhash_table
@@ -384,7 +498,7 @@ vhash_table_init(vhash_table table, void* parent, uint base_count, uint density,
    *   max_index       -- 0     -- table is empty !
    *   extend_thresh   -- 0     -- set when chain bases are allocated
    *
-   *   ref_count       -- X     -- is "set", below.
+   *   ref_count       -- X     -- is 'held', below.
    *
    *   density         -- X     -- set below, per argument
    *   init_base_count -- X     -- set below, per argument
@@ -392,8 +506,7 @@ vhash_table_init(vhash_table table, void* parent, uint base_count, uint density,
    *   params          -- X     -- set below
    */
   table->parent          = parent ;
-
-  table->ref_count       = vhash_ref_count_set ;
+  table->ref_count       = vhash_ref_count_held ;
 
   if (base_count > UINT16_MAX)
     base_count = UINT16_MAX ;
@@ -404,13 +517,13 @@ vhash_table_init(vhash_table table, void* parent, uint base_count, uint density,
   table->init_base_count = base_count ;
   table->density         = density ;
 
-  qassert(params->hash  != NULL) ;      /* must have            */
-  qassert(params->equal != NULL) ;      /* must have            */
-  qassert(params->new   != NULL) ;      /* must have            */
+  qassert(params->hash       != NULL) ; /* must have            */
+  qassert(params->equal      != NULL) ; /* ditto                */
+  qassert(params->new        != NULL) ; /* ditto                */
+  qassert(params->free       != NULL) ; /* ditto                */
                                         /* rest optional        */
   table->params = params ;
 } ;
-
 
 /*------------------------------------------------------------------------------
  * Set "parent" of vhash table.
@@ -435,7 +548,11 @@ vhash_table_get_parent(vhash_table table)
  *
  * Does nothing if the table is NULL.
  *
- * This preserves the current table and chain bases.
+ * This preserves the current table and chain bases -- leaves table 'held'.
+ *
+ * NB: it is probably a mistake to ream a table which has already been
+ *     vhash_table_reset()... but to avoid complete confusion, this will
+ *     set the table 'held' again !
  *
  * NB: vhash_delete() can do pretty much anything it likes with the table,
  *     short of freeing the table structure -- up to and including
@@ -448,6 +565,8 @@ vhash_table_ream(vhash_table table)
 
   if (table == NULL)
     return ;
+
+  table->ref_count |= vhash_ref_count_held ;
 
   rescan = false ;
   while ((table->entry_count != 0) && (table->bases != NULL))
@@ -505,62 +624,71 @@ vhash_table_ream(vhash_table table)
 } ;
 
 /*------------------------------------------------------------------------------
- * Ream out given table (if any), free the chain bases and (if required) free
- * the table.
+ * Ream out given table (if any), free the chain bases and free the table.
  *
  * All items in the table are deleted as if by vhash_delete().
  *
- * If the table is not freed, then can continue to use it (!) and if a new
- * item is added to the table, will create a new set of chain bases.
+ * Clears the 'held' state, and if the table reference count is now zero,
+ * immediately frees the table -- calling the 'table_free' function.  If the
+ * reference count is not zero, then when it becomes so the table will then be
+ * freed.
  *
- * If the table is to be freed, clears the "set" state for the table, and
- * free it if the reference count is zero.  If the reference count is not zero,
- * the table is not freed, but will be when the reference count is reduced
- * to zero.
- *
- * NB: once the table is no longer "set", it is a mistake to look up items in
+ * NB: once the table is no longer 'held', it is a mistake to look up items in
  *     the table, and especially a mistake to try to add anything to it.
  *
- * Returns:  table if not 'free_table'
- *           NULL if 'table_free'
+ * Returns:  table if reference count not zero
+ *           NULL if 'table_free' returns NULL
  */
 extern vhash_table
-vhash_table_reset(vhash_table table, free_keep_b free_table)
+vhash_table_reset(vhash_table table)
 {
   if (table != NULL)
     {
       vhash_table_ream(table) ;
-
       vhash_table_free_bases(table) ;
 
-      if (free_table)
-        {
-          table->ref_count &= ~(vhash_ref_count_t)vhash_ref_count_set ;
-          if (table->ref_count == 0)
-            XFREE(MTYPE_VHASH_TABLE, table) ;
-
-          table = NULL ;
-        } ;
+      table->ref_count &= ~(vhash_ref_count_t)vhash_ref_count_held ;
+      if (table->ref_count == 0)
+        table = vhash_do_table_free(table, true /* on_reset */) ;
     } ;
 
   return table ;
 } ;
 
 /*------------------------------------------------------------------------------
- * Unless the "set" state is set, clear the reference count to zero, then
- * do vhash_table_reset(table, free_it)
- *
- * Returns: the original table, if is "set"
- *          otherwise: NULL
+ * Invoke the table_free() function for the given table.
  */
-Private vhash_table
-vhash_table_ref_final(vhash_table table)
+static vhash_table
+vhash_do_table_free(vhash_table table, bool on_reset)
 {
-  if (table->ref_count & vhash_ref_count_set)
-    return table ;
+  if (table != NULL)
+    {
+      qassert(table->ref_count == 0) ;
 
-  table->ref_count = 0 ;
-  return vhash_table_reset(table, free_it) ;
+      if (table->params->table_free != NULL)
+        table = table->params->table_free(table, on_reset) ;
+      else
+        table = vhash_table_free_null(table, on_reset) ;
+    } ;
+
+  return table ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Free the given dynamically allocated table -- if any.
+ *
+ * Returns:  NULL
+ */
+extern vhash_table
+vhash_table_free(vhash_table table)
+{
+  if (table != NULL)
+    {
+      qassert(table->ref_count == 0) ;
+      XFREE(MTYPE_VHASH_TABLE, table) ;
+    } ;
+
+  return NULL ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -806,7 +934,7 @@ static vhash_item vhash_remove(vhash_item item, vhash_table table) ;
  * If the p_added argument is not NULL, add item if required and set true if
  * added or false if item found.
  *
- * Returns:  NULL if not found and not required to add (or table is not "set").
+ * Returns:  NULL if not found and not required to add (or table is not 'held').
  *           otherwise: address of item found or added
  *
  * The data argument is passed, verbatim, to:
@@ -837,9 +965,9 @@ vhash_lookup(vhash_table table, vhash_data_c data, bool* p_added)
    */
   if (table->bases == NULL)
     {
-      qassert(table->ref_count & vhash_ref_count_set) ;
+      qassert(table->ref_count & vhash_ref_count_held) ;
 
-      if ((p_added == NULL) || !(table->ref_count & vhash_ref_count_set))
+      if ((p_added == NULL) || !(table->ref_count & vhash_ref_count_held))
         return NULL ;
 
       vhash_table_new_bases(table, table->init_base_count) ;
@@ -924,7 +1052,8 @@ vhash_lookup(vhash_table table, vhash_data_c data, bool* p_added)
   if (index > table->max_index)
     table->max_index = index ;
 
-  ++table->entry_count ;
+  table->entry_count    += 1 ;
+  table->ref_count      += vhash_ref_count_increment ;
 
   confirm(vhash_node_offset == 0) ;
 
@@ -932,19 +1061,27 @@ vhash_lookup(vhash_table table, vhash_data_c data, bool* p_added)
 } ;
 
 /*------------------------------------------------------------------------------
- * Clear the "set" state.
+ * Clear the 'held' state (if any).  Then, if ref_count == 0, remove vhash
+ *                                                             entry from table.
  *
- * If the reference count is zero do vhash_remove()
+ * This may be used where the 'held' state allows an "owner" to control the
+ * existence of a vhash entry.
+ *
+ * This may also be used where no reference count is used -- eg where there
+ * is (implicitly) single ownership of the vhash entry.
+ *
+ * See vhash_remove() for notes on removing vhash entries after the table
+ * has been emptied or freed.
  *
  * Returns: the original item, if reference count != 0
  *          otherwise: see vhash_remove()
  */
 extern vhash_item
-vhash_unset(vhash_item item, vhash_table table)
+vhash_drop(vhash_item item, vhash_table table)
 {
   confirm(vhash_node_offset == 0) ;
 
-  ((vhash_node)item)->ref_count &= ~(vhash_ref_count_t)vhash_ref_count_set ;
+  ((vhash_node)item)->ref_count &= ~(vhash_ref_count_t)vhash_ref_count_held ;
 
   if (((vhash_node)item)->ref_count != 0)
     return item ;
@@ -953,34 +1090,34 @@ vhash_unset(vhash_item item, vhash_table table)
 } ;
 
 /*------------------------------------------------------------------------------
- * Clear the "set" state and delete given vhash_item (if any).
+ * Clear the 'held' state (if any).  Then, delete vhash entry from table.
  *
- * This is the same as vhash_delete(), except that clears the "set" state,
+ * This is the same as vhash_delete(), except that clears the 'held' state,
  * before doing vhash_remove().
  *
- * If the "set" state is significant for the free() or orphan() functions,
+ * If the 'held' state is significant for the free() or orphan() functions,
  * then this may be used to clear the state and then delete the item.
- * (Unlike vhash_delete(), which leaves the "set" state.)
+ * (Unlike vhash_delete(), which leaves the 'held' state.)
  *
- * This could be done by vhash_unset() followed by vhash_delete(), except that
+ * This could be done by vhash_drop() followed by vhash_delete(), except that
  * would need to check the reference count and only do the vhash_delete() if
- * it was not zero -- before the vhash_unset().
+ * it was not zero -- before the vhash_drop().
  */
 extern vhash_item
-vhash_unset_delete(vhash_item item, vhash_table table)
+vhash_drop_delete(vhash_item item, vhash_table table)
 {
   if (item == NULL)
     return NULL ;               /* assume already freed !       */
 
   confirm(vhash_node_offset == 0) ;
 
-  ((vhash_node)item)->ref_count &= ~(vhash_ref_count_t)vhash_ref_count_set ;
+  ((vhash_node)item)->ref_count &= ~(vhash_ref_count_t)vhash_ref_count_held ;
 
   return vhash_remove(item, table) ;
 } ;
 
 /*------------------------------------------------------------------------------
- * Delete vhash_item (if any) from vhash_table (if any).
+ * Delete vhash entry from table -- will orphan it if 'held' or ref-count != 0.
  *
  * Returns: see vhash_remove()
  */
@@ -994,16 +1131,16 @@ vhash_delete(vhash_item item, vhash_table table)
 } ;
 
 /*------------------------------------------------------------------------------
- * Unless the "set" state is set, clear the reference count to zero, then
+ * Unless the 'held' state is set, clear the reference count to zero, then
  * do vhash_remove()
  *
- * Returns: the original item, if is "set"
+ * Returns: the original item, if is 'held'
  *          otherwise: see vhash_remove() -- NULL unless free() is bizarre
  */
 Private vhash_item
 vhash_ref_final(vhash_item item, vhash_table table)
 {
-  if (((vhash_node)item)->ref_count & vhash_ref_count_set)
+  if (((vhash_node)item)->ref_count & vhash_ref_count_held)
     return item ;
 
   ((vhash_node)item)->ref_count = 0 ;
@@ -1018,7 +1155,7 @@ vhash_ref_final(vhash_item item, vhash_table table)
  *   This means that the table has been freed and the item is an orphan.  There
  *   is no free() function to be called, so:
  *
- *     * if the reference count is zero (irrespective of the "set" state)
+ *     * if the reference count is zero (irrespective of the 'held' state)
  *
  *       returns NULL, as if free() had freed it
  *
@@ -1030,7 +1167,7 @@ vhash_ref_final(vhash_item item, vhash_table table)
  *
  *   This means that the item has already been removed from the table.
  *
- *     * if the reference count is zero (irrespective of the "set" state)
+ *     * if the reference count is zero (irrespective of the 'held' state)
  *
  *       calls free() to free the item and returns what it returns.
  *
@@ -1046,7 +1183,7 @@ vhash_ref_final(vhash_item item, vhash_table table)
  *   This means that the item was in the table.  So, we now remove it from the
  *   table and:
  *
- *     * if the reference count is zero (irrespective of the "set" state)
+ *     * if the reference count is zero (irrespective of the 'held' state)
  *
  *       call free() to free the item and return the result.
  *
@@ -1056,6 +1193,10 @@ vhash_ref_final(vhash_item item, vhash_table table)
  *
  * Note that orphan() is only called when the the item is first removed from
  * the table.
+ *
+ * NB: After the table has been reset -- ie it is no longer 'held' -- it is
+ *     possible that either free() or orphan() can free the table... so care
+ *     needs to be taken using the given pointer to the table !
  */
 static vhash_item
 vhash_remove(vhash_item item, vhash_table table)
@@ -1095,15 +1236,7 @@ vhash_remove(vhash_item item, vhash_table table)
    *
    * If the reference count is not zero, then the orphan lives on.
    */
-  if (((vhash_node)item)->ref_count < vhash_ref_count_increment)
-    {
-      if (table != NULL)
-        return table->params->free(item, table) ;
-
-      return NULL ;     /* as if free() were called     */
-    } ;
-
-  return item ;         /* the orphan                   */
+  return vhash_item_free(item, table) ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -1111,7 +1244,7 @@ vhash_remove(vhash_item item, vhash_table table)
  *
  * Adjust the entry_count and tidy up the node.
  *
- * If the reference count is zero (irrespective of the "set" state):
+ * If the reference count is zero (irrespective of the 'held' state):
  *
  *   call the table's free() and return what it returns.
  *
@@ -1134,10 +1267,61 @@ vhash_reap(vhash_node node, vhash_table table, vhash_node* p_prev)
 
   confirm(vhash_node_offset == 0) ;
 
-  if (node->ref_count < vhash_ref_count_increment)
-    return table->params->free((vhash_item)node, table) ;
+  return vhash_item_free((vhash_item)node, table) ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Invoke the
+ */
+static vhash_item
+vhash_item_free(vhash_item item, vhash_table table)
+{
+  if (((vhash_node)item)->ref_count < vhash_ref_count_increment)
+    {
+      /* The reference count allows us to vhash_free_func() the item.
+       *
+       * The item may be 'held', but that is a matter for the vhash_free_func()
+       * to take notice of, or ignore as it wishes.
+       *
+       * It is expected that the vhash_free_func() will return NULL, but
+       * whatever it returns is returned from here.
+       *
+       * However, if the table is NULL we can do nothing, and we pretend the
+       * item has been deleted and discarded.
+       */
+      if (table == NULL)
+        return NULL ;
+
+      item = table->params->free(item, table) ;
+
+      /* Now that the item has been freed, we can reduce the refcount on the
+       * table.
+       *
+       * If the result is not 'held' and refcount == 0, then ----
+       */
+      if (table->ref_count > vhash_ref_count_increment)
+        table->ref_count -= vhash_ref_count_increment ;
+      else if ((table->ref_count &= vhash_ref_count_held) == 0)
+        vhash_do_table_free(table, false /* !on_reset */) ;
+    }
   else
-    return table->params->orphan((vhash_item)node, table) ;
+    {
+      /* The reference count does not allow us to vhash_free_func(), so we now
+       * have an orphan on out hands.
+       *
+       * If the table is NULL at this point, we do nothing at all, and return
+       * the orphan as is.
+       */
+      if (table != NULL)
+        {
+          if (table->params->orphan != NULL)
+            item = table->params->orphan(item, table) ;
+          else
+            item = vhash_orphan_null(item, table) ;
+        }
+    }
+
+  return item ;
 } ;
 
 /*==============================================================================
@@ -1165,7 +1349,7 @@ vhash_reap(vhash_node node, vhash_table table, vhash_node* p_prev)
  * where table == NULL is treated as an empty table.
  *
  * NB: it is possible to delete the current item during the walk, directly
- *     by vhash_delete(), or indirectly by vhash_unset() or vhash_dec_ref()
+ *     by vhash_delete(), or indirectly by vhash_drop() or vhash_dec_ref()
  *     etc.
  *
  *     Any other changes to the table must NOT be attempted.

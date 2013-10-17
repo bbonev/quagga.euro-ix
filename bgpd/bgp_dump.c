@@ -18,12 +18,13 @@ along with GNU Zebra; see the file COPYING.  If not, write to the Free
 Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
 02111-1307, USA.  */
 
-#include <zebra.h>
+#include "misc.h"
 
+#include "bgpd/bgpd.h"
 #include "bgpd/bgp_dump.h"
 #include "bgpd/bgp_mrt.h"
-#include "bgpd/bgpd.h"
-#include "bgpd/bgp_peer.h"
+#include "bgpd/bgp_run.h"
+#include "bgpd/bgp_prun.h"
 #include "bgpd/bgp_table.h"
 #include "bgpd/bgp_route.h"
 #include "bgpd/bgp_attr.h"
@@ -438,8 +439,8 @@ bgp_dump_free(bgp_dump bd)
 /*==============================================================================
  * TABLE (and TABLE_NOW) dumps
  */
-static bgp_dump bgp_dump_routes_index_table(bgp_dump bd, bgp_inst bgp) ;
-static bgp_dump bgp_dump_routes_family(bgp_dump bd, bgp_inst bgp,
+static bgp_dump bgp_dump_routes_index_table(bgp_dump bd, bgp_run brun) ;
+static bgp_dump bgp_dump_routes_family(bgp_dump bd, bgp_run brun,
                                                                   qAFI_t q_afi);
 
 static stream bgp_dump_header (bgp_dump bd, int type, int subtype) ;
@@ -454,6 +455,7 @@ static void
 bgp_dump_table(bgp_dump_control bdc)
 {
   bgp_inst bgp ;
+  bgp_run  brun ;
   bgp_dump bd ;
 
   if (qdebug)
@@ -461,9 +463,9 @@ bgp_dump_table(bgp_dump_control bdc)
 
   bd = bgp_dump_truncate(bdc->bd) ;     /* could (conceivably) fail     */
 
-  bgp = bgp_get_default();
+  bgp = bgp_inst_default() ;
 
-  if ((bgp != NULL) && (bd != NULL))
+  if ((bgp != NULL) && (bd != NULL) && ((brun = bgp->brun) != NULL))
     {
       /* Set up buffer for dumping
        */
@@ -477,13 +479,13 @@ bgp_dump_table(bgp_dump_control bdc)
 
       /* Construct the index table for all peers and output it.
        */
-      bd = bgp_dump_routes_index_table(bd, bgp) ;
+      bd = bgp_dump_routes_index_table(bd, brun) ;
 
       /* Now dump all the routes
        */
-      bd = bgp_dump_routes_family(bd, bgp, qAFI_IP) ;
+      bd = bgp_dump_routes_family(bd, brun, qAFI_IP) ;
 #ifdef HAVE_IPV6
-      bd = bgp_dump_routes_family(bd, bgp, qAFI_IP6) ;
+      bd = bgp_dump_routes_family(bd, brun, qAFI_IP6) ;
 #endif /* HAVE_IPV6 */
 
       /* Flush anything left to go
@@ -500,11 +502,11 @@ bgp_dump_table(bgp_dump_control bdc)
  * Returns:  bd if OK, or NULL if failed (or was NULL already).
  */
 static bgp_dump
-bgp_dump_routes_index_table(bgp_dump bd, bgp_inst bgp)
+bgp_dump_routes_index_table(bgp_dump bd, bgp_run brun)
 {
-  struct stream* s ;
-  bgp_peer peer ;
-  struct listnode *node ;
+  stream        s ;
+  bgp_prun      prun ;
+  uint          prun_count ;
   uint16_t peerno, len ;
 
   if (bd == NULL)
@@ -514,14 +516,19 @@ bgp_dump_routes_index_table(bgp_dump bd, bgp_inst bgp)
    */
   s = bgp_dump_header(bd, MRT_MT_TABLE_DUMP_V2, MRT_MST_TDV2_PEER_INDEX_TABLE) ;
 
-  stream_put_ipv4(s, bgp->router_id) ;          /* Collector BGP ID     */
+  stream_put_ipv4(s, brun->router_id_r) ;       /* Collector BGP ID     */
 
-  len = (bgp->name != NULL) ? strlen(bgp->name) : 0 ;
-  stream_putw(s, len) ;                         /* View name            */
+  len = (brun->view_name != NULL) ? strlen(brun->view_name) : 0 ;
+  stream_putw(s, len) ;         /* View name                    */
   if (len != 0)
-    stream_put(s, bgp->name, len) ;
+    stream_put(s, brun->view_name, len) ;
 
-  stream_putw (s, listcount(bgp->peer));        /* Peer count           */
+  prun_count = 0 ;
+  for(prun = ddl_head(brun->pruns) ; prun != NULL ;
+                                     prun = ddl_next(prun, prun_list))
+    prun_count += 0 ;
+
+  stream_putw (s, prun_count) ; /* number of peers      */
 
   /* Walk down all peers and construct peer index entries for the known
    * address families.
@@ -532,12 +539,13 @@ bgp_dump_routes_index_table(bgp_dump bd, bgp_inst bgp)
    * peer is an AS4 speaker.
    */
   peerno = 0 ;                  /* index for first entry        */
-  for(ALL_LIST_ELEMENTS_RO (bgp->peer, node, peer))
+  for(prun = ddl_head(brun->pruns) ; prun != NULL ;
+                                     prun = ddl_next(prun, prun_list))
     {
-      sockunion su ;
+      sockunion_c su ;
       uint  type ;
 
-      su = peer->su_name ;
+      su = prun->su_name ;
 
       type = MRT_TDV2_PEER_INDEX_TABLE_AS4 ;    /* always, for simplicity */
 
@@ -558,11 +566,11 @@ bgp_dump_routes_index_table(bgp_dump bd, bgp_inst bgp)
         } ;
 
       stream_putc (s, type) ;
-      stream_put_ipv4 (s, peer->args.remote_id) ;
+      stream_put_ipv4 (s, prun->args_r.remote_id) ;
       stream_put (s, sockunion_get_addr(su), sockunion_get_addr_len(su)) ;
-      stream_putl (s, peer->args.remote_as) ;   /* AS4  */
+      stream_putl (s, prun->args_r.remote_as) ;   /* AS4  */
 
-      peer->table_dump_index = peerno ;         /* set peer number      */
+      prun->table_dump_index = peerno ;         /* set peer number      */
 
       ++peerno ;
     } ;
@@ -586,7 +594,7 @@ bgp_dump_routes_index_table(bgp_dump bd, bgp_inst bgp)
  * NB: assumes that th afi is known !
  */
 static bgp_dump
-bgp_dump_routes_family(bgp_dump bd, bgp_inst bgp, qAFI_t q_afi)
+bgp_dump_routes_family(bgp_dump bd, bgp_run brun, qAFI_t q_afi)
 {
   vector         rv ;
   vector_index_t i ;
@@ -615,7 +623,7 @@ bgp_dump_routes_family(bgp_dump bd, bgp_inst bgp, qAFI_t q_afi)
 
   /* Get the required table -- gets empty vector, if none
    */
-  rv = bgp_rib_extract(bgp->rib[qafx_from_q(q_afi, qSAFI_Unicast)], lc_view_id,
+  rv = bgp_rib_extract(brun->rib[qafx_from_q(q_afi, qSAFI_Unicast)], lc_view_id,
                                                                          NULL) ;
   /* Walk down each BGP route
    */
@@ -663,7 +671,7 @@ bgp_dump_routes_family(bgp_dump bd, bgp_inst bgp, qAFI_t q_afi)
 
           /* Peer index
            */
-          stream_putw(s, ri->prib->peer->table_dump_index);
+          stream_putw(s, ri->prib->prun->table_dump_index);
 
           /* Originated
            */

@@ -3518,6 +3518,10 @@ DEFUN (config_write_file,
 
 /*------------------------------------------------------------------------------
  * Write configuration (if any) for given node to the vty.
+ *
+ * Returns: -1 <=> there is no configuration writer for this node.
+ *           0 <=> nothing was written for the node
+ *         > 0 <=> something was written for the node
  */
 static int
 config_write_file_node(vty vty, node_type_t node)

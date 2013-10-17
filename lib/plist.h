@@ -84,7 +84,7 @@ extern bool prefix_list_is_active(prefix_list plist) ;
 extern bool prefix_list_is_set(prefix_list plist) ;
 extern const char* prefix_list_get_name(prefix_list plist) ;
 
-extern void prefix_bgp_orf_name_set(bgp_orf_name, sockunion, uint16_t qafx) ;
+extern void prefix_bgp_orf_name_set(bgp_orf_name, sockunion_c, uint16_t qafx) ;
 extern bool prefix_bgp_orf_get(orf_prefix_value orfpv, prefix_list plist,
                                                               vector_index_t i);
 extern cmd_ret_t prefix_bgp_orf_set (bgp_orf_name, qAFI_t, orf_prefix_value,

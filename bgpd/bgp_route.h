@@ -1,22 +1,26 @@
-/* BGP routing information base
-   Copyright (C) 1996, 97, 98, 2000 Kunihiro Ishiguro
-
-This file is part of GNU Zebra.
-
-GNU Zebra is free software; you can redistribute it and/or modify it
-under the terms of the GNU General Public License as published by the
-Free Software Foundation; either version 2, or (at your option) any
-later version.
-
-GNU Zebra is distributed in the hope that it will be useful, but
-WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
-General Public License for more details.
-
-You should have received a copy of the GNU General Public License
-along with GNU Zebra; see the file COPYING.  If not, write to the Free
-Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
-02111-1307, USA.  */
+/* BGP BGP routing decisions -- header
+ * Copyright (C) 1996, 97, 98, 99 Kunihiro Ishiguro
+ *
+ *
+ * Recast: Copyright (C) 2013 Chris Hall (GMCH), Highwayman
+ *
+ * This file is part of GNU Zebra.
+ *
+ * GNU Zebra is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published
+ * by the Free Software Foundation; either version 2, or (at your
+ * option) any later version.
+ *
+ * GNU Zebra is distributed in the hope that it will be useful, but
+ * WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with GNU Zebra; see the file COPYING.  If not, write to the
+ * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
+ * Boston, MA 02111-1307, USA.
+ */
 
 #ifndef _QUAGGA_BGP_ROUTE_H
 #define _QUAGGA_BGP_ROUTE_H
@@ -25,6 +29,7 @@ Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
 #include "bgp_attr_store.h"
 #include "bgp_attr.h"
 
+#if 0
 /*------------------------------------------------------------------------------
  * Ancillary information to struct bgp_info,
  * used for uncommonly used data (aggregation, MPLS, etc.)
@@ -46,6 +51,7 @@ struct bgp_info_extra
   /* MPLS label.                                */
   u_char tag[3];
 };
+#endif
 
 /*------------------------------------------------------------------------------
  * BGP Info Object -- contains one route
@@ -65,6 +71,7 @@ enum bgp_info_flags
   BGP_INFO_COUNTED        = BIT(10),
 } ;
 
+#if 0
 /* The bgp_info structure contains the RIB information for each route for
  * a given prefix.
  */
@@ -114,39 +121,7 @@ struct bgp_info
   byte   type ;                 /* static, RIP, OSPF, BGP etc.  */
   byte   sub_type ;             /* normal, static, etc.         */
 };
-
-/*------------------------------------------------------------------------------
- * BGP static route configuration.
- */
-typedef struct bgp_static bgp_static_t ;
-
-struct bgp_static
-{
-  /* Backdoor configuration.                            */
-  bool backdoor;
-
-  /* Import check status.                               */
-  bool  valid;
-
-  /* IGP metric.                                        */
-  uint32_t igpmetric;
-
-  /* IGP nexthop.                                       */
-  struct in_addr igpnexthop;
-
-  /* Atomic set reference count (ie cause of pathlimit) */
-  uint32_t atomic;
-
-  /* BGP redistribute route-map.                        */
-  struct
-  {
-    char *name;
-    struct route_map *map;
-  } rmap;
-
-  /* MPLS label.                                        */
-  byte  tag[3];
-};
+#endif
 
 /*------------------------------------------------------------------------------
  */
@@ -204,6 +179,10 @@ extern void bgp_route_cmd_init (void);
 extern void bgp_route_init (void);
 extern void bgp_route_finish (void);
 
+extern bool bgp_update (bgp_prun prun, prefix p, attr_set attr, qafx_t qafx,
+                   int type, int subtype, const byte* tag, bool soft_reconfig) ;
+extern bool bgp_withdraw (bgp_prun prun, prefix p, qafx_t qafx,
+                                                       int type, int sub_type) ;
 
 extern attr_set bgp_route_in_filter(bgp_prib prib, attr_set attr,
                                                         prefix_id_entry_c pie) ;
@@ -214,77 +193,31 @@ extern attr_set bgp_route_rc_to_from_filter(bgp_lcontext lc_from, attr_set attr,
 
 extern bool bgp_update_filter_next_hop(bgp_prib prib, prefix_c pfx) ;
 
-
-
-
-
-
-extern bool bgp_update_rs_from_peer(bgp_prib prib, route_info ri_main,
-                                            prefix_id_entry pie, bool process) ;
 extern void bgp_rib_process_schedule(bgp_rib_node rn) ;
 
-extern void bgp_announce_all_families (bgp_peer peer, uint delay);
-extern void bgp_announce_family(bgp_peer peer, qafx_t qafx, uint delay) ;
+extern void bgp_announce_all_families (bgp_prun prun, uint delay);
+extern void bgp_announce_family(bgp_prun prun, qafx_t qafx, uint delay) ;
 
+extern void bgp_soft_reconfig_in (bgp_prun prun, qafx_t qafx);
+extern void bgp_soft_reconfig_rsclient_in (bgp_prun prun, qafx_t qafx) ;
+extern void bgp_check_local_routes_rsclient (bgp_prun rsclient, qafx_t qafx);
 
-extern void bgp_default_originate (bgp_peer peer, qafx_t qafx, bool withdraw) ;
-extern void bgp_soft_reconfig_in (bgp_peer peer, qafx_t qafx);
-extern void bgp_soft_reconfig_rsclient_in (bgp_peer peer, qafx_t qafx) ;
-extern void bgp_check_local_routes_rsclient (bgp_peer rsclient, qafx_t qafx);
-
-extern void bgp_clear_routes(bgp_peer peer, bool nsf);
+extern void bgp_clear_routes(bgp_prun prun, bool nsf);
 extern void bgp_clear_adj_in(bgp_prib prib, bool nsf);
 
-extern void bgp_clear_rsclient_rib(bgp_peer rsclient, qafx_t qafx) ;
-extern void bgp_clear_stale_route (bgp_peer, qafx_t);
+extern void bgp_clear_rsclient_rib(bgp_prun rsrun, qafx_t qafx) ;
+extern void bgp_clear_stale_route (bgp_prun prun, qafx_t qafx);
 
-extern struct bgp_info *bgp_info_lock (struct bgp_info *);
-extern struct bgp_info *bgp_info_unlock (struct bgp_info *);
-extern void bgp_info_add (struct bgp_node *rn, struct bgp_info *ri);
-extern void bgp_info_delete (struct bgp_node *rn, struct bgp_info *ri);
-extern struct bgp_info_extra *bgp_info_extra_get (struct bgp_info *);
-extern void bgp_info_set_flag (struct bgp_node *, struct bgp_info *, u_int32_t);
-extern void bgp_info_unset_flag (struct bgp_node *, struct bgp_info *, u_int32_t);
+extern void bgp_default_originate (bgp_prun prun, qafx_t qafx, bool withdraw) ;
 
 extern void bgp_redistribute_add (prefix, ip_union, uint32_t, uchar);
-extern void bgp_redistribute_delete (struct prefix *, u_char);
+extern void bgp_redistribute_delete (prefix, u_char);
 extern void bgp_redistribute_withdraw_all (bgp_inst , qAFI_t, int);
 
-extern void bgp_static_delete (bgp_inst bgp);
-extern void bgp_static_update (bgp_inst bgp, prefix pfx,
-                                             struct bgp_static *, qafx_t qafx);
-extern void bgp_static_withdraw (bgp_inst bgp, prefix pfx, qafx_t qafx);
-
-extern cmd_ret_t bgp_static_set_vpnv4 (struct vty *vty, const char *,
-                          const char *, const char *);
-extern cmd_ret_t bgp_static_unset_vpnv4 (struct vty *, const char *,
-                            const char *, const char *);
-
-
-extern bool bgp_update (bgp_peer peer, prefix p, attr_set attr, qafx_t qafx,
-                   int type, int subtype, const byte* tag, bool soft_reconfig) ;
-extern bool bgp_withdraw (bgp_peer peer, prefix p, qafx_t qafx,
-                                                       int type, int sub_type) ;
-
-/* for bgp_nexthop and bgp_damp */
+/* for bgp_nexthop and bgp_damp
+ */
 extern void bgp_process_dispatch (bgp_inst bgp, bgp_rib_node rn);
-extern int bgp_config_write_network (struct vty *, bgp_inst , qafx_t,
-                                                                        int *);
-extern int bgp_config_write_distance (struct vty *, bgp_inst );
 
-extern void bgp_aggregate_increment (bgp_inst , prefix, struct bgp_info *,
-                                                                   qafx_t qafx);
-extern void bgp_aggregate_decrement (bgp_inst , prefix, struct bgp_info *,
-                                                                   qafx_t qafx);
-
-extern byte bgp_distance_apply (bgp_peer peer, prefix_c p);
-
-extern qAFI_t bgp_node_afi (struct vty* vty) ;
-extern qSAFI_t bgp_node_safi (struct vty* vty) ;
-extern qafx_t bgp_node_qafx (struct vty* vty) ;
-
-extern void route_vty_out (vty vty, prefix p, route_info ri, bool display);
-extern void route_vty_out_tag (vty vty, prefix p, route_info ri, bool display);
-extern void route_vty_out_tmp (vty vty, prefix p, attr_set attr, qafx_t qafx) ;
+extern byte bgp_distance_apply (bgp_prun prun, prefix_c p);
 
 #endif /* _QUAGGA_BGP_ROUTE_H */

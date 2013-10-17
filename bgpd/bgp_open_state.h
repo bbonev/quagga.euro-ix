@@ -63,7 +63,30 @@ enum bgp_orf_cap_bits
 } ;
 typedef uint8_t bgp_orf_cap_bits_t ;    /* NB: <= 8 flags       */
 
-typedef bgp_orf_cap_bits_t  bgp_orf_cap_v[qafx_count] ;
+//typedef bgp_orf_cap_bits_t  bgp_orf_cap_v[qafx_count] ;
+
+typedef struct bgp_orf_caps  bgp_orf_caps_t ;
+typedef struct bgp_orf_caps* bgp_orf_caps ;
+
+struct bgp_orf_caps
+{
+  bgp_orf_cap_bits_t  af[qafx_count] ;
+} ;
+
+/* Some BGP capabilities and messages have RFC and pre-RFC forms.
+ *
+ * Sometimes see both, or send RFC and/or pre-RFC forms, or track what form(s)
+ * are being used.
+ */
+typedef enum bgp_form bgp_form_t ;
+
+enum bgp_form
+{
+  bgp_form_none     = 0,
+  bgp_form_pre      = 1,
+  bgp_form_rfc      = 2,
+  bgp_form_both     = 3     /* _rfc and _pre are bits !     */
+} ;
 
 /*------------------------------------------------------------------------------
  * Session Arguments affect the state of a session from the moment a
@@ -137,7 +160,7 @@ struct bgp_session_args
    * The can_orf_pfx says what ORF types are supported for each qafx.
    */
   bgp_form_t     can_orf ;
-  bgp_orf_cap_v  can_orf_pfx ;
+  bgp_orf_caps_t can_orf_pfx ;
 
   bool       can_dynamic ;
   bool       can_dynamic_dep ;
@@ -289,7 +312,7 @@ extern void bgp_open_make_cap_r_refresh(blower br, bgp_form_t form, bool wrap) ;
 extern void bgp_open_make_cap_end(blower sbr, blower br, bool one_option) ;
 
 extern bool bgp_open_prepare_orf_type(bgp_open_orf_type orf_type, uint8_t orft,
-                      bgp_orf_cap_v modes, bgp_form_t form, qafx_set_t can_af) ;
+                       bgp_orf_caps modes, bgp_form_t form, qafx_set_t can_af) ;
 extern void bgp_open_make_cap_orf(blower br, uint8_t cap_code, uint count,
                     bgp_open_orf_type_t types[], qafx_set_t can_af, bool wrap) ;
 extern void bgp_open_make_cap_gr(blower br, bgp_session_args_gr cap_gr,
