@@ -218,7 +218,8 @@ test_pfifo_item_move_bwd(void) {
   pfifo_period_t period;
   period = 10;
 
-  pfifo_item_add(p, &item_a, period);
+  pfifo_index_t loc_a;
+  loc_a = pfifo_item_add(p, &item_a, period);
 
   pfifo_index_t loc_b;
   loc_b = pfifo_item_add(p, &item_b, period + 1);
@@ -506,7 +507,7 @@ test_pfifo_first_period_pn(void) {
 
 
 // Get period of the first item in the pfifo. If item exists in
-// the 'ex' list expect pn - 1 .
+// the 'ex' list expect p0 - 1 .
 static void
 test_pfifo_first_period_pn_m_one(void) {
   fprintf(stderr, "test_pfifo_first_period_pn_m_one... \t");
@@ -529,7 +530,7 @@ test_pfifo_first_period_pn_m_one(void) {
   pfifo_period_t restime;
   restime = pfifo_first_period(p);
 
-  if (restime != ptime) {
+  if (restime != (ptime+10-1)) {
     fprintf(stderr, "Failed\n");
     fprintf(stderr, "Expected period %d, but received %d.\n", (int)ptime, (int)restime);
   } else {

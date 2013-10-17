@@ -12,11 +12,11 @@ libzebra_la_SOURCES = \
   elstring.c  errno_names.c  filter.c  getopt.c  getopt1.c  \
   hash.c  heap.c  if.c  if_rmap.c  ihash.c  jhash.c  keychain.c  \
   keyword.c  keystroke.c  linklist.c  list_util.c  log.c  md5.c  \
-  memory.c  mempool.c  memtypes.c  misc.c  mqueue.c  network.c  \
-  name_map.c  pfifo.c  pid_output.c  plist.c  pqueue.c  prefix.c  \
-  prefix_id.c  privs.c  pthread_safe.c  qafi_safi.c  qatomic.c  \
-  qfstring.c  qiovec.c  qlib_init.c  qlump.c  qpath.c  qpnexus.c  \
-  qpselect.c  qpthreads.c  qrand.c  qstring.c  qs_pcsub.c  \
+  memory.c  mempool.c  memtypes.c  misc.c  mqueue.c  name_index.c  \
+  name_map.c  network.c  pfifo.c  pid_output.c  plist.c  pqueue.c  \
+  prefix.c  prefix_id.c  privs.c  pthread_safe.c  qafi_safi.c  \
+  qatomic.c  qfstring.c  qiovec.c  qlib_init.c  qlump.c  qpath.c  \
+  qpnexus.c  qpselect.c  qpthreads.c  qrand.c  qstring.c  qs_pcsub.c  \
   qtime.c  qtimers.c  ring_buffer.c  routemap.c  sigevent.c  \
   smux.c  sockopt.c  sockunion.c  str.c  stream.c  svector.c  table.c  \
   thread.c  tstring.c  vector.c  vhash.c  vio_fifo.c  vio_lines.c  \
@@ -39,8 +39,8 @@ pkginclude_HEADERS = \
   if_rmap.h  ihash.h  iovec.h  jhash.h  keychain.h  keyword.h \
   keystroke.h  linklist.h  list_util.h  log.h  \
   log_common.h  log_local.h  md5.h  memory.h  mempool.h  \
-  memtypes.h  misc.h  miyagi.h  mqueue.h  name_map.h  \
-  network.h  pfifo.h  plist.h  pqueue.h  prefix.h  \
+  memtypes.h  misc.h  miyagi.h  mqueue.h  name_index.h  \
+  name_map.h  network.h  pfifo.h  plist.h  pqueue.h  prefix.h  \
   prefix_id.h  privs.h  pthread_safe.h  qafi_safi.h  \
   qatomic.h  qdebug_nb.h  qfstring.h  qiovec.h  qlib_init.h  \
   qlump.h  qpath.h  qpnexus.h  qpselect.h  qpthreads.h  \

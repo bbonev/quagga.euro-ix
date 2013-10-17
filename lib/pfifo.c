@@ -347,7 +347,8 @@ pfifo_item_add(pfifo pf, pfifo_item item, pfifo_period_t p)
            *
            * The current last is the item which is to come before the new one.
            */
-          zi = pf->zi ;                 /* index for pf->pz.            */
+          zi = pf->zi ;                         /* index for pf->pz.      */
+          i  = pfifo_index_prev(pf, zi) ;       /* index for last period  */
 
           last     = pf->f[zi] ;        /* insert after the last        */
           p_last_p = pfifo_pair_get(pf, last) ;
@@ -505,7 +506,7 @@ pfifo_item_add(pfifo pf, pfifo_item item, pfifo_period_t p)
       p_item_p->next = NULL ;
       p_item_p->prev = last ;
 
-      return zi ;
+      return i ;                        /* index of item                */
     }
   else if (p < pf->pf)
     {
@@ -553,7 +554,7 @@ pfifo_item_add(pfifo pf, pfifo_item item, pfifo_period_t p)
       p_item_p->next = next ;
       p_item_p->prev = NULL ;
 
-      return i ;
+      return i ;                /* index of item                */
     } ;
 
   /* We have p >= pf->pf and p < pf->pz -- so inserting in the body of the
@@ -696,9 +697,9 @@ pfifo_item_del(pfifo pf, pfifo_item item, pfifo_index_t i)
                * If first == prev, we end up with:
                *
                *        +------------+
-               *  i, fi | first      | <- Pf  -- first & last not empty period
+               *  i, fi | first=prev | <- Pf  -- first & last not empty period
                *        +------------+
-               *     zi | first      | <- Pz  -- Pz == Pf + 1
+               *     zi | prev=first | <- Pz  -- Pz == Pf + 1
                *        .            .
                *
                * ie: a pfifo with one item in it, which is fine.
@@ -716,23 +717,37 @@ pfifo_item_del(pfifo pf, pfifo_item item, pfifo_index_t i)
                *     zi | item       | <- Pz  -- Pz == p + 1
                *        .            .
                *
-               * If q != item, and we can simply set f[zi] = prev.
+               * If q != item, and we can simply set f[zi] = prev, so that
+               * we end up with:
+               *
+               *        +------------+
+               *     fi | first      | <- Pf  -- first not empty period
+               *        .            .
+               *      i | q != prev  | <- p   -- last not empty period
+               *        +------------+
+               *     zi | prev       | <- Pz  -- Pz == p + 1
+               *        .            .
+               *
                * If q == prev, we end up with:
                *
                *        +------------+
                *     fi | first      | <- Pf  -- first not empty period
                *        .            .
-               *      i | prev       | <- p   -- last not empty period
+               *      i | q=prev     | <- p   -- last not empty period
                *        +------------+
-               *     zi | prev       | <- Pz  -- Pz == p + 1
+               *     zi | prev=q     | <- Pz  -- Pz == p + 1
                *        .            .
                *
                * ie: a last period with one item in it, which is fine.  (So, if
-               * f[i] != item, we cab set f[zi] = prev.)
+               * f[i] != item, we can set f[zi] = prev.)
                *
-               * If q == item we had just one item in the last period:
+               * So... for all cases where f[i] != item, we can simply set
+               * f[zi] = prev.
                *
-               *        +------------+
+               * But... if f[i] == item we had just one item in the last
+               * period:
+               *
+               *  (3)   +------------+
                *     fi | first      | <- Pf  -- first not empty period
                *        .            .
                *      i | item       | <- p   -- last not empty period

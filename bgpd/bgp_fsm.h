@@ -29,12 +29,212 @@
 #include "bgpd/bgp_notification.h"
 
 #include "qpselect.h"
+#include "qtimers.h"
 
 /*==============================================================================
  * The BGP Finite State Machine
  *
  * Each connection has its FSM.
  */
+
+/*==============================================================================
+ * BGP FSM States and events.
+ */
+typedef enum bgp_fsm_states bgp_fsm_state_t ;
+enum bgp_fsm_states
+{
+  bgp_fs_first         = 0,
+
+  /* Extra state while has none, eg while FSM/Connection is being initialised.
+   */
+  bgp_fsNULL           = 0,  /* no state                                */
+
+  /* These are the RFC4271 states
+   */
+  bgp_fsIdle           = 1,  /* waiting for Idle Hold time               */
+  bgp_fsConnect        = 2,  /* waiting for connect (may be listening)   */
+  bgp_fsActive         = 3,  /* listening only                           */
+  bgp_fsOpenSent       = 4,  /* sent Open -- awaits Open                 */
+  bgp_fsOpenConfirm    = 5,  /* sent & received Open -- awaits keepalive */
+  bgp_fsEstablished    = 6,  /* running connection                       */
+
+  /* Extra state while bringing FSM/Connection to a halt.
+   */
+  bgp_fsStop           = 7,  /* connection coming to a stop              */
+
+  bgp_fs_count,
+  bgp_fs_last          = bgp_fs_count - 1,
+} ;
+
+typedef enum bgp_fsm_events bgp_fsm_event_t ;
+enum bgp_fsm_events
+{
+  bgp_feNULL                          =  0,
+
+  /* 8.1.2 Administrative Events
+   */
+  bgp_feManualStart                   =  1,
+  bgp_feManualStop                    =  2,
+  bgp_feAutomaticStart                =  3,
+  bgp_feManualStart_with_Passive      =  4,
+  bgp_feAutomaticStart_with_Passive   =  5,
+  bgp_feAutomaticStart_with_Damp      =  6,
+  bgp_feAutomaticStart_with_Damp_and_Passive   =  7,
+  bgp_feAutomaticStop                 =  8,
+
+  /* 8.1.3 Timer Events
+   */
+  bgp_feConnectRetryTimer_Expires     =  9,
+  bgp_feHoldTimer_Expires             = 10,
+  bgp_feKeepaliveTimer_Expires        = 11,
+  bgp_feDelayOpenTimer_Expires        = 12,
+  bgp_feIdleHoldTimer_Expires         = 13,
+
+  /* 8.1.4 TCP Connection-Based Events
+   *
+   * These are less than obvious...
+   *
+   *   14. TcpConnection_Valid    -- in-bound connection    -- N/A
+   *
+   *       A SYN has been received, and the source address and port and the
+   *       destination address and port are all valid.
+   *
+   *       This is not something we can see in a POSIX environment (except with
+   *       raw sockets perhaps).
+   *
+   *       We don't use this.
+   *
+   *   15. Tcp_CR_Invalid         -- in-bound connection    -- N/A
+   *
+   *       A SYN has been received, but something is invalid about it.
+   *
+   *       This is not something we can see in a POSIX environment (except with
+   *       raw sockets perhaps).
+   *
+   *       We don't use this.
+   *
+   *   16. Tcp_CR_Acked           -- out-bound connection   -- feConnected
+   *
+   *       Connection is up -- three-way handshake completed.
+   *
+   *   17. TcpConnectionConfirmed -- in-bound connection    -- feAccepted
+   *
+   *       Connection is up -- three-way handshake completed.
+   *
+   *   18. TcpConnectionFails     -- after 16 or 17...      -- feDown
+   *                                 ...or at any time ?
+   *       Connection is down.
+   */
+  bgp_feTcpConnection_Valid           = 14,     /* N/A                  */
+  bgp_feTcp_CR_Invalid                = 15,     /* N/A                  */
+  bgp_feTcp_CR_Acked                  = 16,     /* feConnected          */
+  bgp_feTcpConnectionConfirmed        = 17,     /* feAccepted           */
+  bgp_feTcpConnectionFails            = 18,     /* feDown               */
+
+  /* 8.1.5 BGP Message-Based Events
+   */
+  bgp_feBGPOpen                       = 19,
+  bgp_feBGPOpen_with_DelayOpenTimer   = 20,
+  bgp_feBGPHeaderErr                  = 21,
+  bgp_feBGPOpenMsgErr                 = 22,
+  bgp_feOpenCollisionDump             = 23,
+  bgp_feNotifyMsgVerErr               = 24,
+  bgp_feNotifyMsg                     = 25,
+  bgp_feKeepAliveMsg                  = 26,
+  bgp_feUpdateMsg                     = 27,
+  bgp_feUpdateMsgErr                  = 28,
+
+  /* End of the standard event numbers
+   */
+  bgp_fe_rfc_count,
+  bgp_fe_rfc_last       = bgp_fe_rfc_count - 1,
+
+  bgp_fe_extra_first    = bgp_fe_rfc_count,
+
+  /*--------------------------------------------------------------------
+   * Alias TCP events and some extra ones.
+   *
+   *   * feConnected        -- out-bound        == feTcp_CR_Acked
+   *
+   *     An outbound connection is now up.
+   *
+   *   * feAccepted         -- in-bound         == feTcpConnectionConfirmed
+   *
+   *     An inbound connection is now up in the Acceptor.
+   *
+   *   * feDown             -- in-/out-bound    == feTcpConnectionFails
+   *
+   *     But this is *strictly* where an existing connection stops after it
+   *     came up either feConnected or feAccepted.
+   *
+   *   * feError            -- in-/out-bound    -- extra
+   *
+   *     This is a sort of catch-all for socket and such-like errors which
+   *     we don't really expect to get.  These errors suggest something is
+   *     missing or not working properly, and should be fixed.
+   *
+   *   * feConnectFailed    -- out-bound        -- extra
+   *
+   *     Cannot get a connection up for a variety of reasons to do with the
+   *     underlying network, or the other end not playing nicely.  These are
+   *     the sorts of things that indicate (a possibly transient) network or
+   *     configuration problem at either end.
+   *
+   *   * feAcceptOPEN       -- in-bound         -- extra
+   *
+   *     The acceptor has seen an complete OPEN message.
+   */
+  bgp_feConnected      = bgp_feTcp_CR_Acked,
+  bgp_feAccepted       = bgp_feTcpConnectionConfirmed,
+  bgp_feDown           = bgp_feTcpConnectionFails,
+
+  bgp_feError          = bgp_fe_extra_first,
+  bgp_feConnectFailed,
+  bgp_feAcceptOPEN,
+
+  /* Other extra events
+   *
+   *   * feRRMsg           -- a Route Refresh message has been received
+   *   * feRRMsgErr        -- a Route Refresh message has been recieved but all
+   *                          is not well with it.
+   *
+   *   * feRestart         -- the connection should fall fsIdle, or stop
+   *                          if is fsEstablished.
+   *
+   *   * feShut_RD         -- the read side has shutdown.
+   *   * feShut_WR         -- the write side has shutdown.
+   */
+  bgp_feRRMsg,
+  bgp_feRRMsgErr,
+
+  bgp_feRestart,
+  bgp_feShut_RD,
+  bgp_feShut_WR,
+
+  /* Extra error events
+   *
+   *   * feUnexpected      -- an unexpected message has arrived.
+   *
+   *                          This will generally map to a BGP_NOMC_FSM
+   *                          NOTIFICATION message.
+   *
+   *   * feInvalid         -- something has gone wrong (at our end).
+   *
+   *                          This will generally map to a BGP_NOMC_CEASE/
+   *                          BGP_NOMS_UNSPECIFIC NOTIFICATION message.
+   */
+  bgp_feUnexpected,
+  bgp_feInvalid,
+
+  /* The feIO "pseudo" event -- not handled by the event-handler itself.
+   */
+  bgp_feIO,
+
+  /* Number of events -- including the feNULL
+   */
+  bgp_fe_count,
+  bgp_fe_last           = bgp_fe_count - 1,
+} ;
 
 /*------------------------------------------------------------------------------
  * Connection "meta-events".
@@ -178,8 +378,7 @@ struct bgp_fsm_timer
  */
 extern void bgp_fsm_start_session(bgp_session session) ;
 extern bgp_note bgp_fsm_stop_session(bgp_session session, bgp_note note) ;
-extern void bgp_fsm_start_connection(bgp_session session,
-                                                          bgp_conn_ord_t ord) ;
+extern void bgp_fsm_start_connection(bgp_connection connection) ;
 extern void bgp_fsm_restart_connection(bgp_connection connection,
                                                                 bgp_note note) ;
 extern void bgp_fsm_stop_connection(bgp_connection connection,

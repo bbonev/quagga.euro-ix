@@ -36,8 +36,8 @@ Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
 #include "bgpd/bgp_session.h"
 #include "bgpd/bgp_connection.h"
 
-#include "bgpd/bgpd.h"
-#include "bgpd/bgp_peer.h"
+#include "bgpd/bgp_run.h"
+#include "bgpd/bgp_prun.h"
 #include "bgpd/bgp_route.h"
 #include "bgpd/bgp_debug.h"
 #include "bgpd/bgp_names.h"
@@ -68,7 +68,7 @@ uint term_bgp_debug_zebra;
  * Dump attribute to given buffer in human readable form.
  */
 extern qstring
-bgp_dump_attr (bgp_peer peer, attr_set attr,
+bgp_dump_attr (bgp_prun prun, attr_set attr,
                         attr_next_hop_t* next_hop, attr_next_hop_t* mp_next_hop)
 {
   qstring  qs ;
@@ -161,7 +161,7 @@ bgp_dump_attr (bgp_peer peer, attr_set attr,
  * Log given notification, if required.
  */
 extern void
-bgp_notify_print(bgp_peer peer, bgp_note note)
+bgp_notify_print(bgp_prun prun, bgp_note note)
 {
   map_direct_p subcode_map ;
   const char* hex_form ;
@@ -171,7 +171,7 @@ bgp_notify_print(bgp_peer peer, bgp_note note)
 
   /* See if we need to do any of this
    */
-  if      (bgp_flag_check (peer->bgp, BGP_FLAG_LOG_NEIGHBOR_CHANGES))
+  if      (prun->do_log_neighbor_changes_r)
     log_neighbor_changes = true ;
   else if (BGP_DEBUG (normal, NORMAL))
     log_neighbor_changes = false ;
@@ -211,13 +211,13 @@ bgp_notify_print(bgp_peer peer, bgp_note note)
 
   if (log_neighbor_changes)
     zlog_info("%%NOTIFICATION: %s neighbor %s %s%s (%d/%d) %d bytes %s",
-              note->received ? "received from" : "sent to", peer->host,
+              note->received ? "received from" : "sent to", prun->name,
               map_direct(bgp_notify_msg_map, note->code).str,
               map_direct(subcode_map, note->subcode).str,
               note->code, note->subcode, length, hex_form) ;
   else
-    plog_debug(peer->log, "%s %s NOTIFICATION %s%s (%d/%d) %d bytes %s",
-               peer->host, note->received ? "received" : "sending",
+    plog_debug(prun->log, "%s %s NOTIFICATION %s%s (%d/%d) %d bytes %s",
+               prun->name, note->received ? "received" : "sending",
                map_direct(bgp_notify_msg_map, note->code).str,
                map_direct(subcode_map, note->subcode).str,
                note->code, note->subcode, length, hex_form) ;

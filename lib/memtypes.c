@@ -101,6 +101,7 @@ struct memory_list memory_list_lib[] =
   { MTYPE_IF_RMAP,              "Interface route map"           },
   { MTYPE_IF_RMAP_NAME,         "I.f. route map name",          },
   { MTYPE_SOCKUNION,            "Socket union"                  },
+  { MTYPE_SOCKUNION_NAME,       "Socket union name"             },
   { MTYPE_PRIVS,                "Privilege information"         },
   { MTYPE_ZLOG,                 "Logging"                       },
   { MTYPE_ZCLIENT,              "Zclient"                       },
@@ -110,6 +111,8 @@ struct memory_list memory_list_lib[] =
   { MTYPE_PQUEUE,               "Priority queue"                },
   { MTYPE_PQUEUE_DATA,          "Priority queue data"           },
   { MTYPE_HOST,                 "Host config"                   },
+  { MTYPE_NAME_INDEX,           "Name-Index"                    },
+  { MTYPE_NAME,                 "Name-Index-Entry"              },
   { -1, NULL },
 };
 
@@ -129,14 +132,18 @@ struct memory_list memory_list_zebra[] =
 struct memory_list memory_list_bgp[] =
 {
   { MTYPE_BGP,                  "BGP instance"                  },
+  { MTYPE_BGP_CONFIG,           "BGP instance configuration"    },
+  { MTYPE_BGP_AF_CONFIG,        "BGP instance af-configuration" },
   { MTYPE_BGP_LISTENER,         "BGP listen socket details"     },
   { MTYPE_BGP_PEER,             "BGP peer"                      },
+  { MTYPE_BGP_PEER_CONFIG,      "BGP peer configuration"        },
+  { MTYPE_BGP_PEER_AF_CONFIG,   "BGP peer af-configuration"     },
   { MTYPE_BGP_PEER_HOST,        "BGP peer hostname"             },
   { MTYPE_BGP_RCONTEXT,         "BGP route-context"             },
   { MTYPE_BGP_LCONTEXT,         "BGP local-context"             },
   { MTYPE_PEER_GROUP,           "Peer group"                    },
   { MTYPE_PEER_DESC,            "Peer description"              },
-  { MTYPE_BGP_PEER_ID_TABLE,    "Peer ID table"                 },
+  { MTYPE_BGP_PEER_ID_ENTRY,    "Peer ID Entry"                 },
   { MTYPE_BGP_SESSION,          "BGP session"                   },
   { MTYPE_BGP_SESSION_ARGS,     "BGP session arguments"         },
   { MTYPE_BGP_OPEN_STATE,       "BGP Open State"                },
@@ -158,7 +165,9 @@ struct memory_list memory_list_bgp[] =
   { MTYPE_ASN_SET,              "BGP asn set"                   },
   { MTYPE_ASN_SET_BODY,         "BGP asn set body"              },
   { MTYPE_BGP_DUMP,             "BGP MRT dump item"             },
+  { MTYPE_BGP_NAME,             "BGP name of something"         },
   { 0, NULL },
+
   { MTYPE_BGP_RIB,              "BGP RIB"                       },
   { MTYPE_BGP_RIB_NODE,         "BGP RIB Node"                  },
   { MTYPE_BGP_RIB_WALKER,       "BGP RIB Walker"                },

@@ -1,22 +1,25 @@
-/* BGP attributes.
-   Copyright (C) 1996, 97, 98 Kunihiro Ishiguro
-
-This file is part of GNU Zebra.
-
-GNU Zebra is free software; you can redistribute it and/or modify it
-under the terms of the GNU General Public License as published by the
-Free Software Foundation; either version 2, or (at your option) any
-later version.
-
-GNU Zebra is distributed in the hope that it will be useful, but
-WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
-General Public License for more details.
-
-You should have received a copy of the GNU General Public License
-along with GNU Zebra; see the file COPYING.  If not, write to the Free
-Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
-02111-1307, USA.  */
+/* BGP attributes -- header.
+ * Copyright (C) 1996, 97, 98 Kunihiro Ishiguro
+ *
+ * Recast: Copyright (C) 2013 Chris Hall (GMCH), Highwayman
+ *
+ * This file is part of GNU Zebra.
+ *
+ * GNU Zebra is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published
+ * by the Free Software Foundation; either version 2, or (at your
+ * option) any later version.
+ *
+ * GNU Zebra is distributed in the hope that it will be useful, but
+ * WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with GNU Zebra; see the file COPYING.  If not, write to the
+ * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
+ * Boston, MA 02111-1307, USA.
+ */
 
 #ifndef _QUAGGA_BGP_ATTR_H
 #define _QUAGGA_BGP_ATTR_H
@@ -25,17 +28,10 @@ Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
 #include "bitmap.h"
 
 #include "bgpd/bgp_common.h"
-#include "bgpd/bgpd.h"
-#include "bgpd/bgp_attr_store.h"
 #include "bgpd/bgp_attr_store.h"
 
+#include "prefix_id.h"
 #include "ring_buffer.h"
-
-enum
-{
-  BGP_MED_MIN = 0,
-  BGP_MED_MAX = UINT32_MAX,
-} ;
 
 /*
  *
@@ -102,7 +98,7 @@ struct bgp_attr_parsing
 {
   /* Context in which parsing proceeds.
    */
-  bgp_peer        peer ;
+  bgp_prun        prun ;
 
   bgp_peer_sort_t sort ;
   bool            as4 ;         /* NEW_BGP speaker              */
@@ -176,6 +172,8 @@ extern ulen bgp_blow_prefix(blower br, bgp_prib prib, prefix_id_t pfx_id,
 extern ulen bgp_unreach_attribute(blower br, bgp_prib prib) ;
 
 extern ulen bgp_dump_routes_attr(blower br, attr_set attr, prefix p) ;
+
+extern bool bgp_nlri_sanity_check(bgp_prun prun, bgp_nlri nlri) ;
 
 /*------------------------------------------------------------------------------
  * Unit test interfaces

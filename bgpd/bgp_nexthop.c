@@ -30,9 +30,11 @@ Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
 #include "sockunion.h"
 
 #include "bgpd/bgpd.h"
-#include "bgpd/bgp_peer.h"
+#include "bgpd/bgp_run.h"
+#include "bgpd/bgp_prun.h"
 #include "bgpd/bgp_table.h"
 #include "bgpd/bgp_route.h"
+#include "bgpd/bgp_route_static.h"
 #include "bgpd/bgp_attr.h"
 #include "bgpd/bgp_nexthop.h"
 #include "bgpd/bgp_debug.h"
@@ -438,13 +440,13 @@ bgp_nexthop_cache_reset (struct bgp_table *table)
 static void
 bgp_scan (qAFI_t q_afi)
 {
-  bgp_inst     bgp;
+  bgp_inst     bgp ;
+  bgp_run      brun ;
   bgp_rib      rib ;
-  bgp_peer     peer;
+  bgp_prun     prun;
   bgp_rib_node rn;
   qafx_t       qafx ;
   ihash_walker_t walk[1] ;
-  struct listnode *node, *nnode;
 
   /* Change cache.
    */
@@ -455,17 +457,22 @@ bgp_scan (qAFI_t q_afi)
 
   /* Get default bgp.
    */
-  bgp = bgp_get_default ();
+  bgp = bgp_inst_default ();
   if (bgp == NULL)
     return;
 
+  brun = bgp->brun ;
+  if (brun == NULL)
+    return ;
+
   /* Maximum prefix check
    */
-  for (ALL_LIST_ELEMENTS (bgp->peer, node, nnode, peer))
+  for (prun = ddl_head(brun->pruns) ; prun != NULL ;
+                                      prun = ddl_next(prun, prun_list))
     {
       qSAFI_t q_safi ;
 
-      if (peer->state != bgp_pEstablished)
+      if (prun->state != bgp_pEstablished)
         continue;
 
       for (q_safi = qSAFI_first ; q_safi <= qSAFI_last ; q_safi++)
@@ -477,15 +484,15 @@ bgp_scan (qAFI_t q_afi)
           if ((qafx < qafx_first) || (qafx >  qafx_last))
             continue ;
 
-          prib = peer_family_prib(peer, qafx) ;
+          prib = prun->prib[qafx] ;
 
-          if ((prib != NULL) && (prib->af_session_up))
+          if ((prib != NULL) && (prib->session_up))
             bgp_peer_pmax_check(prib) ;
         } ;
     } ;
 
   qafx = qafx_from_q(q_afi, qSAFI_Unicast) ;
-  rib = bgp->rib[qafx] ;
+  rib = brun->rib[qafx] ;
 
   ihash_walk_start((rib != NULL) ? rib->nodes_table : NULL, walk) ;
 
@@ -505,19 +512,19 @@ bgp_scan (qAFI_t q_afi)
           if (ri->current.route_type ==
                               bgp_route_type(ZEBRA_ROUTE_BGP, BGP_ROUTE_NORMAL))
             {
-              bgp_peer peer ;
+              bgp_prun prun ;
               bool valid, current, changed, metricchanged ;
 
               changed       = false;
               metricchanged = false ;
 
-              peer = ri->prib->peer ;
+              prun = ri->prib->prun ;
 
-              if ((peer->sort == BGP_PEER_EBGP) && (peer->cops.ttl == 1))
+              if ((prun->sort == BGP_PEER_EBGP) && (prun->cops_r.ttl == 1))
                 valid = bgp_nexthop_onlink (q_afi,
                                           &ri->iroutes[lc_view_id].attr->next_hop);
               else
-                valid = bgp_nexthop_lookup (q_afi, peer, ri,
+                valid = bgp_nexthop_lookup (q_afi, prun, ri,
                                                       &changed, &metricchanged);
 
               current = (ri->current.flags & BGP_INFO_VALID) != 0 ;
@@ -1073,8 +1080,7 @@ bgp_import_check (struct prefix *p, u_int32_t *igpmetric,
 static int
 bgp_import (struct thread *t)
 {
-  bgp_inst bgp;
-  struct listnode *node, *nnode;
+  bgp_run brun ;
 
   bgp_import_thread =
     thread_add_timer (master, bgp_import, NULL, bgp_import_interval);
@@ -1082,12 +1088,14 @@ bgp_import (struct thread *t)
   if (BGP_DEBUG (events, EVENTS))
     zlog_debug ("Import timer expired.");
 
-  for (ALL_LIST_ELEMENTS (bm->bgp, node, nnode, bgp))
+  for (brun = ddl_head(bm->bruns) ; brun != NULL ;
+                                    brun = ddl_next(brun, brun_list))
     {
       qafx_t qafx ;
 
       for (qafx = qafx_first ; qafx <= qafx_last ; qafx++)
         {
+          bgp_rib  rib ;
           bgp_node rn ;
           struct bgp_static *bgp_static;
           int valid;
@@ -1097,8 +1105,11 @@ bgp_import (struct thread *t)
           if (qafx_is_mpls_vpn(qafx))
             continue ;
 
-          for (rn = bgp_table_top (bgp->route[qafx]); rn;
-                                                      rn = bgp_route_next (rn))
+          rib = brun->rib[qafx] ;
+          if (rib == NULL)
+            continue ;
+
+          for (rn = bgp_table_top (rib->route); rn; rn = bgp_route_next (rn))
             if ((bgp_static = rn->info) != NULL)
               {
                 if (bgp_static->backdoor)
@@ -1108,8 +1119,7 @@ bgp_import (struct thread *t)
                 metric  = bgp_static->igpmetric;
                 nexthop = bgp_static->igpnexthop;
 
-                if (bgp_flag_check (bgp, BGP_FLAG_IMPORT_CHECK)
-                                                      && qafx_is_unicast(qafx))
+                if (rib->brun->do_import_check && qafx_is_unicast(qafx))
                   {
                     bgp_static->valid = bgp_import_check (&rn->p,
                                                       &bgp_static->igpmetric,
@@ -1125,16 +1135,16 @@ bgp_import (struct thread *t)
                 if (bgp_static->valid != valid)
                   {
                     if (bgp_static->valid)
-                      bgp_static_update (bgp, &rn->p, bgp_static, qafx);
+                      bgp_static_update (brun, &rn->p, bgp_static, qafx);
                     else
-                      bgp_static_withdraw (bgp, &rn->p, qafx);
+                      bgp_static_withdraw (brun, &rn->p, qafx);
                   }
                 else if (bgp_static->valid)
                   {
                     if (bgp_static->igpmetric != metric
                         || bgp_static->igpnexthop.s_addr != nexthop.s_addr
                         || bgp_static->rmap.name)
-                      bgp_static_update (bgp, &rn->p, bgp_static, qafx);
+                      bgp_static_update (brun, &rn->p, bgp_static, qafx);
                   }
               }
         } ;
@@ -1145,7 +1155,7 @@ bgp_import (struct thread *t)
 
 /* Check specified multiaccess next-hop. */
 extern int
-bgp_multiaccess_check_v4 (in_addr_t nexthop, sockunion su)
+bgp_multiaccess_check_v4 (in_addr_t nexthop, sockunion_c su)
 {
   struct bgp_node *rn1;
   struct bgp_node *rn2;

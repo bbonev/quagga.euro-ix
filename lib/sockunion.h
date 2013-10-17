@@ -89,6 +89,22 @@ struct sockunion_string
   char str[SU_ADDRSTRLEN] ;
 };
 
+/* Sockunion name object.
+ *
+ * The name is the sa_family_t in network byte order, followed by the address,
+ * ditto, and optionally a port number, ditto.  The result can be compared,
+ * etc. as straight-forward bytes string.
+ */
+typedef struct sockunion_name  sockunion_name_t ;
+typedef struct sockunion_name* sockunion_name ;
+typedef struct sockunion_name const* sockunion_name_c ;
+
+struct sockunion_name
+{
+  ushort    len ;
+  byte      name[sizeof(sockunion_t)] ;
+};
+
 /* Macros to set link local index to the IPv6 address.  For KAME IPv6 stack.
  */
 #define KAME_IN6_LINKLOCAL_IFINDEX(a)  ((a).s6_addr[2] << 8 | (a).s6_addr[3])
@@ -144,6 +160,7 @@ extern const char *sockunion2str (sockunion_c su, char* buf, size_t size);
 extern sockunion_string_t sutoa(sockunion_c su) ;
 extern int sockunion_cmp (sockunion_c su1, sockunion_c su2);
 extern bool sockunion_same (sockunion_c su1, sockunion_c su2);
+extern sockunion_name sockunion2name(sockunion_name sn, sockunion_c su) ;
 
 extern char* sockunion_su2str (sockunion_c su, mtype_t mtype) ;
 extern bool sockunion_str2su (sockunion su, const char *str) ;

@@ -24,7 +24,6 @@
 
 #include "bgpd/bgp_common.h"
 #include "bgpd/bgp_msg_read.h"
-#include "bgpd/bgpd.h"
 #include "bgpd/bgp_debug.h"
 #include "bgpd/bgp_aspath.h"
 #include "bgpd/bgp_session.h"
@@ -1360,12 +1359,12 @@ bgp_msg_read_log(bgp_msg_reader reader)
       plog_debug(reader->plox->log,
              "%s [IO] received UPDATE %u bytes: %u bytes withdraw, "
                                      "%u bytes attributes, %u bytes NLRI",
-                                     reader->plox->host, length, wl, al, nl) ;
+                                     reader->plox->name, length, wl, al, nl) ;
     }
   else
     {
       plog_debug(reader->plox->log, "%s [IO] received %s %u bytes",
-       reader->plox->host, map_direct(bgp_message_type_map, type).str, length) ;
+       reader->plox->name, map_direct(bgp_message_type_map, type).str, length) ;
     } ;
 } ;
 
@@ -1454,7 +1453,7 @@ bgp_msg_read_bad(bgp_msg_reader reader, qfile qf)
         qfs_term(qfs) ;
 
         plog_warn(reader->plox->log, "%s bad message marker: %s",
-                                                  reader->plox->host, qfb.str) ;
+                                                  reader->plox->name, qfb.str) ;
 
         note = bgp_note_new(BGP_NOMC_HEADER, BGP_NOMS_H_NOT_SYNC) ;
         break ;
@@ -1483,7 +1482,7 @@ bgp_msg_read_bad(bgp_msg_reader reader, qfile qf)
               length  = reader->msg_body_length + BGP_MSG_HEAD_L ;
               break ;
           } ;
-        plog_warn(reader->plox->log, log_msg, reader->plox->host, length,
+        plog_warn(reader->plox->log, log_msg, reader->plox->name, length,
                    map_direct(bgp_message_type_map, reader->msg_bgp_type).str) ;
         note = bgp_note_append_w(
                             bgp_note_new(BGP_NOMC_HEADER, BGP_NOMS_H_BAD_LEN),
@@ -1514,10 +1513,10 @@ bgp_msg_read_bad_type(bgp_msg_reader reader)
 {
   if (reader->msg_qtype == qBGP_MSG_unknown)
     plog_warn(reader->plox->log, "%s unknown message type 0x%02x",
-                                     reader->plox->host, reader->msg_bgp_type) ;
+                                     reader->plox->name, reader->msg_bgp_type) ;
   else
     plog_err (reader->plox->log, "%s [Error] BGP %s message is not enabled",
-              reader->plox->host,
+              reader->plox->name,
                    map_direct(bgp_message_type_map, reader->msg_bgp_type).str) ;
 
   return bgp_note_append_b(bgp_note_new(BGP_NOMC_HEADER, BGP_NOMS_H_BAD_TYPE),
@@ -1659,7 +1658,7 @@ bgp_msg_open_parse(bgp_connection connection, bgp_msg_reader reader)
   if (BGP_DEBUG (normal, NORMAL))
     plog_debug (plox->log,
          "%s rcv OPEN, version %d, remote-as (in open) %u, holdtime %d, id %s",
-                plox->host, version,
+                plox->name, version,
                    args_recv->remote_as, args_recv->holdtime_secs,
                                   siptoa(AF_INET, &args_recv->remote_id ).str) ;
 
@@ -1670,7 +1669,7 @@ bgp_msg_open_parse(bgp_connection connection, bgp_msg_reader reader)
       if (BGP_DEBUG (normal, NORMAL))
         plog_debug(plox->log,
                  "%s bad protocol version, remote requested %d, local max %d",
-                                 plox->host, version, BGP_VERSION_4) ;
+                                 plox->name, version, BGP_VERSION_4) ;
 
       return bgp_note_append_w(bgp_msg_open_error(BGP_NOMS_O_VERSION),
                                                                 BGP_VERSION_4) ;
@@ -1683,7 +1682,7 @@ bgp_msg_open_parse(bgp_connection connection, bgp_msg_reader reader)
        (args_recv->remote_id  == args_config->local_id) )
     {
       plog_debug (plox->log, "%s rcv OPEN, multicast or our id %s",
-                      plox->host, siptoa(AF_INET, &args_recv->remote_id ).str) ;
+                      plox->name, siptoa(AF_INET, &args_recv->remote_id ).str) ;
       return bgp_msg_open_bad_id(args_recv->remote_id ) ;
     } ;
 
@@ -1708,12 +1707,12 @@ bgp_msg_open_parse(bgp_connection connection, bgp_msg_reader reader)
    */
   if (BGP_DEBUG (normal, NORMAL))
     plog_debug(plox->log, "%s rcv OPEN w/ OPTION parameter len: %u",
-                                                           plox->host, optlen) ;
+                                                           plox->name, optlen) ;
 
   if (optlen != suck_left(sr))
     {
       plog_err(plox->log, "%s bad OPEN, message length %u but option length %u",
-                  plox->host, reader->msg_body_length + BGP_MSG_HEAD_L, optlen) ;
+                  plox->name, reader->msg_body_length + BGP_MSG_HEAD_L, optlen) ;
       return bgp_msg_open_error(BGP_NOMS_UNSPECIFIC) ;
     } ;
 
@@ -1730,7 +1729,7 @@ bgp_msg_open_parse(bgp_connection connection, bgp_msg_reader reader)
       if (args_recv->can_as4)
         {
           plog_err (plox->log, "%s [AS4] bad OPEN, got AS4 capability, "
-                                               "but AS4 set to 0", plox->host) ;
+                                               "but AS4 set to 0", plox->name) ;
           return bgp_msg_open_error(BGP_NOMS_O_BAD_AS) ;
         }
       else
@@ -1738,7 +1737,7 @@ bgp_msg_open_parse(bgp_connection connection, bgp_msg_reader reader)
           if (BGP_DEBUG (as4, AS4))
             plog_debug (plox->log,
                            "%s [AS4] OPEN remote_as is 0 (not AS4 speaker)"
-                                " odd, but proceeding.", plox->host) ;
+                                " odd, but proceeding.", plox->name) ;
         } ;
     } ;
 
@@ -1749,14 +1748,14 @@ bgp_msg_open_parse(bgp_connection connection, bgp_msg_reader reader)
       if (args_recv->can_as4)
         {
           plog_err(plox->log, "%s [AS4] NEW speaker using AS_TRANS for AS4, "
-                                                    "not allowed", plox->host) ;
+                                                    "not allowed", plox->name) ;
           return bgp_msg_open_error(BGP_NOMS_O_BAD_AS) ;
         }
       else
         {
           if (BGP_DEBUG (as4, AS4))
             plog_debug (plox->log, "%s [AS4] OPEN remote_as is AS_TRANS "
-                        "(not AS4 speaker) odd, but proceeding.", plox->host) ;
+                        "(not AS4 speaker) odd, but proceeding.", plox->name) ;
         } ;
     } ;
 
@@ -1769,13 +1768,13 @@ bgp_msg_open_parse(bgp_connection connection, bgp_msg_reader reader)
           if ((args_recv->remote_as <= BGP_AS2_MAX) && BGP_DEBUG(as4, AS4))
             plog_debug(plox->log, "%s [AS4] OPEN remote_as is AS_TRANS,"
                                " but AS4 (%u) fits in 2-bytes, very odd peer",
-                                             plox->host, args_recv->remote_as) ;
+                                             plox->name, args_recv->remote_as) ;
         }
       else
         {
           plog_err(plox->log, "%s bad OPEN, got AS4 capability, "
                                      "but remote_as %u != 'my asn' %u in open",
-                          plox->host, args_recv->remote_as, open_recv->my_as2) ;
+                          plox->name, args_recv->remote_as, open_recv->my_as2) ;
 
           return bgp_msg_open_bad_as(args_recv->remote_as, true) ;
         } ;
@@ -1787,7 +1786,7 @@ bgp_msg_open_parse(bgp_connection connection, bgp_msg_reader reader)
     {
       if (BGP_DEBUG (normal, NORMAL))
         plog_debug (plox->log, "%s bad OPEN, remote AS is %u, expected %u",
-                    plox->host, args_recv->remote_as, args_config->remote_as) ;
+                    plox->name, args_recv->remote_as, args_config->remote_as) ;
 
       return bgp_msg_open_bad_as(args_recv->remote_as, args_recv->can_as4) ;
     } ;
@@ -1915,14 +1914,14 @@ bgp_msg_open_option_parse(bgp_open_state open_recv, sucker sr,
        */
       if (left < 0)
         {
-          plog_warn(plox->log, "%s Option length error", plox->host) ;
+          plog_warn(plox->log, "%s Option length error", plox->name) ;
           return bgp_msg_open_error(BGP_NOMS_UNSPECIFIC) ;
         }
 
       if (BGP_DEBUG (normal, NORMAL))
         plog_debug(plox->log,
                       "%s rcvd OPEN w/ optional parameter type %u (%s) len %u",
-                         plox->host, opt_type,
+                         plox->name, opt_type,
                          opt_type == BGP_OPT_AUTH ? "Authentication" :
                          opt_type == BGP_OPT_CAPS ? "Capability"
                                                   : "Unknown", opt_length) ;
@@ -2086,7 +2085,7 @@ bgp_msg_open_option_parse(bgp_open_state open_recv, sucker sr,
                             orf |= ORF_RM_pre ;
                         } ;
 
-                      open_recv->args->can_orf_pfx[cap->qafx] = orf;
+                      open_recv->args->can_orf_pfx.af[cap->qafx] = orf;
                     } ;
                 } ;
             } ;
@@ -2099,14 +2098,14 @@ bgp_msg_open_option_parse(bgp_open_state open_recv, sucker sr,
             {
               plog_info(plox->log, "%s dropped ORF capability(ies) for "
                                             "AFI/SAFI %u/%u-- not in MP_EXT",
-                                    plox->host, cap->mp.i_afi, cap->mp.i_safi) ;
+                                    plox->name, cap->mp.i_afi, cap->mp.i_safi) ;
             } ;
 
           if (cap->gr.seen)
             {
               plog_info(plox->log, "%s dropped Graceful Restart state for "
                                             "AFI/SAFI %u/%u -- not in MP_EXT",
-                                    plox->host, cap->mp.i_afi, cap->mp.i_safi) ;
+                                    plox->name, cap->mp.i_afi, cap->mp.i_safi) ;
             } ;
 
           bgp_open_state_afi_safi_drop(open_recv, i) ;
@@ -2243,7 +2242,7 @@ bgp_msg_capability_option_parse(bgp_open_state open_recv,
         {
           plog_warn(plox->log,
                           "%s Capability length error %u bytes for red tape",
-                                                            plox->host, left) ;
+                                                            plox->name, left) ;
           return bgp_msg_capability_bad() ;
         } ;
 
@@ -2254,7 +2253,7 @@ bgp_msg_capability_option_parse(bgp_open_state open_recv,
         {
           plog_warn(plox->log,
                          "%s Capability length error: expect %u, have %u",
-                                             plox->host, cap_length, left - 2) ;
+                                             plox->name, cap_length, left - 2) ;
           return bgp_msg_capability_bad() ;
         } ;
 
@@ -2264,7 +2263,7 @@ bgp_msg_capability_option_parse(bgp_open_state open_recv,
       if (BGP_DEBUG (normal, NORMAL))
         plog_debug (plox->log,
                        "%s OPEN has %s capability (%u), length %u",
-                           plox->host,
+                           plox->name,
                                map_direct(bgp_capcode_name_map, cap_code).str,
                                                          cap_code, cap_length) ;
 
@@ -2295,7 +2294,7 @@ bgp_msg_capability_option_parse(bgp_open_state open_recv,
 
                   plog_warn(plox->log,
                       "%s %s Capability length error: got %u, expected %s%u",
-                         plox->host,
+                         plox->name,
                              map_direct(bgp_capcode_name_map, cap_code).str,
                                cap_length, tag, (uint) cap_minsizes[cap_code]) ;
 
@@ -2362,11 +2361,11 @@ bgp_msg_capability_option_parse(bgp_open_state open_recv,
             if (cap_code >= 128)
               plog_debug(plox->log,
                       "%s unknown vendor specific capability %d -- ignored",
-                                                         plox->host, cap_code) ;
+                                                         plox->name, cap_code) ;
             else
               plog_debug(plox->log,
                              "%s unknown capability %d -- ignored",
-                                                         plox->host, cap_code) ;
+                                                         plox->name, cap_code) ;
 
             ret = cap_ret_unknown ;
 
@@ -2432,7 +2431,7 @@ bgp_msg_capability_mp(bgp_open_state open_recv, sucker sr,
   if (BGP_DEBUG (normal, NORMAL))
     plog_debug (plox->log,
                       "%s OPEN has MP_EXT capability for afi/safi: %u/%u",
-                                            plox->host, mp->i_afi, mp->i_safi) ;
+                                            plox->name, mp->i_afi, mp->i_safi) ;
 
   cap = bgp_open_state_afi_safi_find(open_recv, mp) ;
   cap->mp_ext.seen = true ;
@@ -2444,13 +2443,13 @@ bgp_msg_capability_mp(bgp_open_state open_recv, sucker sr,
     {
       plog_info(plox->log,
                        "%s MP_EXT capability for reserved AFI/SAFI %u/%u",
-                                            plox->host, mp->i_afi, mp->i_safi) ;
+                                            plox->name, mp->i_afi, mp->i_safi) ;
     }
   else if (cap->qafx == qafx_other)
     {
       plog_debug (plox->log,
                       "%s MP_EXT capability for unknown AFI/SAFI %u/%u",
-                                            plox->host, mp->i_afi, mp->i_safi) ;
+                                            plox->name, mp->i_afi, mp->i_safi) ;
     } ;
 
   return cap_ret_ok ;
@@ -2579,7 +2578,7 @@ bgp_msg_capability_orf_entry(bgp_open_state open_recv, bgp_form_t form,
     {
       plog_warn(plox->log,
                    "%s ORF%s capability length error, Cap length left %u",
-                                               plox->host, pre, suck_left(sr)) ;
+                                               plox->name, pre, suck_left(sr)) ;
       return cap_ret_invalid ;
     } ;
 
@@ -2591,7 +2590,7 @@ bgp_msg_capability_orf_entry(bgp_open_state open_recv, bgp_form_t form,
   if (BGP_DEBUG (normal, NORMAL))
     plog_debug (plox->log,
                    "%s ORF%s capability entry for afi/safi %u/%u %d types",
-                               plox->host, pre, mp->i_afi, mp->i_safi, number) ;
+                               plox->name, pre, mp->i_afi, mp->i_safi, number) ;
 
   /* Validate number field
    */
@@ -2600,7 +2599,7 @@ bgp_msg_capability_orf_entry(bgp_open_state open_recv, bgp_form_t form,
     {
       plog_info (plox->log, "%s ORF%s capability entry for afi/safi %u/%u: "
                                  "number error, number %u but length left %u",
-                plox->host, pre, mp->i_afi, mp->i_safi, number, suck_left(sr)) ;
+                plox->name, pre, mp->i_afi, mp->i_safi, number, suck_left(sr)) ;
       return cap_ret_invalid ;
     } ;
 
@@ -2616,12 +2615,12 @@ bgp_msg_capability_orf_entry(bgp_open_state open_recv, bgp_form_t form,
   if      (cap->qafx == qafx_undef)
     {
       plog_warn(plox->log, "%s ORF%s capability for reserved AFI/SAFI %u/%u",
-                                       plox->host, pre, mp->i_afi, mp->i_safi) ;
+                                       plox->name, pre, mp->i_afi, mp->i_safi) ;
     }
   else if (cap->qafx == qafx_other)
     {
       plog_debug(plox->log, "%s ORF%s capability for unknown AFI/SAFI %u/%u",
-                                       plox->host, pre, mp->i_afi, mp->i_safi) ;
+                                       plox->name, pre, mp->i_afi, mp->i_safi) ;
     } ;
 
   /* Process the supported ORF types
@@ -2648,7 +2647,7 @@ bgp_msg_capability_orf_entry(bgp_open_state open_recv, bgp_form_t form,
           default:
             plog_warn(plox->log, "%s ORF%s capability for afi/safi %u/%u: "
                                        "invalid send/receive 'mode' value %u",
-                                 plox->host, pre, mp->i_afi, mp->i_safi, mode) ;
+                                 plox->name, pre, mp->i_afi, mp->i_safi, mode) ;
             break ;
         } ;
 
@@ -2680,7 +2679,7 @@ bgp_msg_capability_orf_entry(bgp_open_state open_recv, bgp_form_t form,
                         "%s ORF%s capability for afi/safi %u/%u: "
                            "inconsistent send/receive 'modes' value was %u, "
                                                                   "new %u %s",
-                                        plox->host, pre, mp->i_afi, mp->i_safi,
+                                        plox->name, pre, mp->i_afi, mp->i_safi,
                                                cap->orf.types[type].mode, mode,
                                                 set ? "replaces" : "ignored") ;
             } ;
@@ -2749,7 +2748,7 @@ bgp_msg_capability_gr(bgp_open_state open_recv,
     {
       plog_warn(plox->log,
                  "%s Graceful Restart Capability length error, Cap length %u",
-                                                           plox->host, length) ;
+                                                           plox->name, length) ;
       return cap_ret_invalid ;
     } ;
 
@@ -2762,7 +2761,7 @@ bgp_msg_capability_gr(bgp_open_state open_recv,
 
       plog_info(plox->log,
                 "%s Graceful Restart Capability repeated: ignoring previous",
-                                                                   plox->host) ;
+                                                                   plox->name) ;
 
       i = 0 ;
       while (1)
@@ -2794,9 +2793,9 @@ bgp_msg_capability_gr(bgp_open_state open_recv,
   if (BGP_DEBUG (normal, NORMAL))
     {
       plog_debug (plox->log,
-                     "%s OPEN has Graceful Restart capability", plox->host) ;
+                     "%s OPEN has Graceful Restart capability", plox->name) ;
       plog_debug (plox->log,
-                     "%s Peer has%srestarted. Restart Time : %u", plox->host,
+                     "%s Peer has%srestarted. Restart Time : %u", plox->name,
                                open_recv->args->gr.restarting ? " " : " not ",
                                open_recv->args->gr.restart_time);
     } ;
@@ -2824,7 +2823,7 @@ bgp_msg_capability_gr(bgp_open_state open_recv,
            */
           plog_info (plox->log,
                       "%s Graceful Restart capability repeats AFI/SAFI %u/%u",
-                                            plox->host, mp->i_afi, mp->i_safi) ;
+                                            plox->name, mp->i_afi, mp->i_safi) ;
         }
       else
         {
@@ -2836,14 +2835,14 @@ bgp_msg_capability_gr(bgp_open_state open_recv,
               plog_warn(plox->log,
                          "%s Graceful Restart capability for reserved "
                                                              "AFI/SAFI %u/%u",
-                                            plox->host, mp->i_afi, mp->i_safi) ;
+                                            plox->name, mp->i_afi, mp->i_safi) ;
             }
           else if (cap->qafx == qafx_other)
             {
               plog_debug(plox->log,
                           "%s Graceful Restart capability for unknown "
                                                             "AFI/SAFI %u/%u",
-                                            plox->host, mp->i_afi, mp->i_safi) ;
+                                            plox->name, mp->i_afi, mp->i_safi) ;
             } ;
         } ;
 
@@ -2875,7 +2874,7 @@ bgp_msg_capability_as4 (bgp_open_state open_recv,
 
   if (BGP_DEBUG (as4, AS4))
     plog_debug (plox->log, "%s [AS4] received AS4 Capability ASN=%u",
-                                       plox->host, open_recv->args->remote_as) ;
+                                       plox->name, open_recv->args->remote_as) ;
   return cap_ret_ok ;
 } ;
 
@@ -2942,10 +2941,10 @@ bgp_msg_route_refresh_parse(bgp_connection connection, bgp_msg_reader reader)
         qafx_ipv6_unicast_bit | qafx_ipv6_multicast_bit |
         qafx_ipv4_mpls_vpn_bit ;
 
-  if ((qb & connection->session->args->can_af) == qafx_set_empty)
+  if ((qb & connection->session->args->can_af) == qafx_empty_set)
     {
       plog_warn (reader->plox->log,
-            "%s rcvd REFRESH_REQ for %s afi/safi: %u/%u", reader->plox->host,
+            "%s rcvd REFRESH_REQ for %s afi/safi: %u/%u", reader->plox->name,
                   (qb == 0) ? "unknown" : "unexpected", mp->i_afi, mp->i_safi) ;
 
       return bgp_note_new(BGP_NOMC_CEASE, BGP_NOMS_UNSPECIFIC) ;
@@ -2955,7 +2954,7 @@ bgp_msg_route_refresh_parse(bgp_connection connection, bgp_msg_reader reader)
   if (BGP_DEBUG (normal, NORMAL))
     plog_debug (reader->plox->log,
                         "%s rcvd REFRESH_REQ for afi/safi: %u/%u",
-                                    reader->plox->host, mp->i_afi, mp->i_safi) ;
+                                    reader->plox->name, mp->i_afi, mp->i_safi) ;
 
   return NULL ;
 } ;
@@ -3036,7 +3035,7 @@ bgp_msg_route_refresh_parse(bgp_route_refresh* p_rr,
   if (BGP_DEBUG (normal, NORMAL))
     plog_debug (reader->plox->log,
                         "%s rcvd REFRESH_REQ for afi/safi: %u/%u%s",
-                                      reader->plox->host, mp->i_afi, mp->i_safi,
+                                      reader->plox->name, mp->i_afi, mp->i_safi,
                                    (qb == 0) ? " -- unknown combination" : "") ;
 
   rr = bgp_route_refresh_new(mp->i_afi, mp->i_safi, 0) ;
@@ -3065,7 +3064,7 @@ bgp_msg_route_refresh_parse(bgp_route_refresh* p_rr,
           default:
             plog_warn(reader->plox->log,
                "%s ORF route refresh invalid 'when' value %d (AFI/SAFI %u/%u)",
-                   reader->plox->host, when_to_refresh, rr->i_afi, rr->i_safi) ;
+                   reader->plox->name, when_to_refresh, rr->i_afi, rr->i_safi) ;
             defer = false ;
             ok    = false ;
             break ;
@@ -3134,13 +3133,13 @@ bgp_msg_orf_recv(bgp_connection connection, bgp_route_refresh rr,
       plog_warn(plox->log,
                   "%s ORF route refresh length error: %d when %d left"
                                        " (AFI/SAFI %d/%d, type %d length %d)",
-          plox->host, orf_len, left, rr->i_afi, rr->i_safi, orf_type, orf_len) ;
+          plox->name, orf_len, left, rr->i_afi, rr->i_safi, orf_type, orf_len) ;
       return false ;
     } ;
 
   if (BGP_DEBUG (normal, NORMAL))
     plog_debug (plox->log, "%s rcvd ORF type %d length %d",
-                                                plox->host, orf_type, orf_len) ;
+                                                plox->name, orf_type, orf_len) ;
 
   /* Sex the ORF type -- accept only if negotiated it
    *
@@ -3208,7 +3207,7 @@ bgp_msg_orf_recv(bgp_connection connection, bgp_route_refresh rr,
                 plog_warn(plox->log,
                             "%s ORF route refresh invalid common byte: %u"
                                         " (AFI/SAFI %d/%d, type %d length %d)",
-                 plox->host, common, rr->i_afi, rr->i_safi, orf_type, orf_len) ;
+                 plox->name, common, rr->i_afi, rr->i_safi, orf_type, orf_len) ;
                 return cap_ret_invalid ;
             } ;
 
@@ -3230,7 +3229,7 @@ bgp_msg_orf_recv(bgp_connection connection, bgp_route_refresh rr,
                   plog_info (plox->log,
                               "%s ORF route refresh invalid Prefix ORF entry"
                                        " (AFI/SAFI %d/%d, type %d length %d)",
-                         plox->host, rr->i_afi, rr->i_safi, orf_type, orf_len) ;
+                         plox->name, rr->i_afi, rr->i_safi, orf_type, orf_len) ;
                   return false ;
                 } ;
             } ;

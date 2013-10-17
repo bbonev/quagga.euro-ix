@@ -211,11 +211,12 @@ static vhash_orphan_func access_list_vhash_orphan ;
 
 static const vhash_params_t access_list_vhash_params =
 {
-  .hash   = vhash_hash_string,
-  .equal  = access_list_vhash_equal,
-  .new    = access_list_vhash_new,
-  .free   = access_list_vhash_free,
-  .orphan = access_list_vhash_orphan,
+  .hash         = vhash_hash_string,
+  .equal        = access_list_vhash_equal,
+  .new          = access_list_vhash_new,
+  .free         = access_list_vhash_free,
+  .orphan       = access_list_vhash_orphan,
+  .table_free   = vhash_table_free_simple,
 } ;
 
 static void access_list_flush(access_list alist) ;
@@ -260,10 +261,10 @@ access_list_reset(free_keep_b free)
 
       if (am != NULL)
         {
-          vhash_table_reset(am->table, free) ;
-
           if (free)
-            am->table = NULL ;
+            am->table = vhash_table_reset(am->table) ;
+          else
+            vhash_table_ream(am->table) ;
         } ;
     } ;
 } ;
@@ -358,7 +359,7 @@ access_list_vhash_new(vhash_table table, vhash_data_c data)
    */
   confirm(form_unknown == 0) ;
 
-  new->table  = vhash_table_inc_ref(table) ;
+  new->table  = table ;
   new->master = table->parent ;
   new->name   = XSTRDUP(MTYPE_ACCESS_LIST_STR, name) ;
 
@@ -386,7 +387,6 @@ access_list_vhash_free (vhash_item item, vhash_table table)
   access_list alist = item ;
 
   access_list_flush(alist) ;            /* make sure            */
-  vhash_table_dec_ref(alist->table) ;
 
   XFREE(MTYPE_ACCESS_LIST_STR, alist->name) ;
   XFREE(MTYPE_ACCESS_LIST, alist);
@@ -406,7 +406,7 @@ access_list_vhash_orphan(vhash_item item, vhash_table table)
 
   access_list_flush(alist) ;
 
-  return vhash_unset(alist, alist->table) ;
+  return vhash_drop(alist, alist->table) ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -428,10 +428,10 @@ access_list_is_empty (access_list alist)
  * Lookup access-list by afi and name -- do not create.
  *
  * Returns:  address of access-list
- *           NULL <=> not found OR is not "set"
+ *           NULL <=> not found OR is not "set" ('held')
  *
  * NB: returns NULL if the access-list exists but is empty (no description and
- *     no access_list entries <=> not "set").
+ *     no access_list entries <=> not "set" ('held').
  */
 extern access_list
 access_list_lookup (qAFI_t afi, const char *name)
@@ -558,9 +558,9 @@ access_list_get_name(access_list alist)
 } ;
 
 /*------------------------------------------------------------------------------
- * Return whether access_list is "set" -- that is, some value has been set.
+ * Return whether access_list is 'held' -- that is, some value has been set.
  *
- * Will not be "set" if is NULL.
+ * Will not be 'held' if is NULL.
  *
  * For access-list, the value may be just the remark.
  */
@@ -590,7 +590,7 @@ access_list_is_active(access_list alist)
  * Delete access_list.
  *
  * If the access-list has any remaining entries or any remaining remark,
- * discard them.  Clear the "set" state.
+ * discard them.  Clear the 'held' state.
  *
  * Invoke the delete_hook() if any.
  *
@@ -603,7 +603,7 @@ access_list_delete (access_list alist)
 {
   vhash_inc_ref(alist) ;        /* want to hold onto the alist pro tem. */
 
-  access_list_flush(alist) ;    /* hammer the value and clear "set"     */
+  access_list_flush(alist) ;    /* hammer the value and clear 'held'    */
 
   /* access-list no longer has a value
    *
@@ -624,7 +624,7 @@ access_list_delete (access_list alist)
  *
  * Retains all the red-tape.  Releases the access-list entries and remark
  *
- * NB: does not touch the reference count BUT clears the "set" state WITHOUT
+ * NB: does not touch the reference count BUT clears the 'held' state WITHOUT
  *     freeing the access-list.
  */
 static void
@@ -647,9 +647,9 @@ access_list_flush(access_list alist)
   if (alist->remark)
     XFREE (MTYPE_ACCESS_LIST_STR, alist->remark) ; /* sets alist->remark NULL */
 
-  /* Clear the "set" state -- but do NOT delete, even if reference count == 0
+  /* Clear the 'held' state -- but do NOT delete, even if reference count == 0
    */
-  vhash_clear_set(alist) ;
+  vhash_clear_held(alist) ;
 } ;
 
 /*==============================================================================
@@ -810,7 +810,7 @@ access_list_filter_add (access_list alist, access_list_entry temp,
 
   ddl_append(alist->base, ae, list) ;
 
-  vhash_set(alist) ;
+  vhash_set_held(alist) ;
 
   if (alist->master->add_hook != NULL)
     (*alist->master->add_hook)(alist) ;
@@ -879,7 +879,7 @@ vty_access_list_remark_set (struct vty *vty, qAFI_t afi, const char* name,
     XFREE (MTYPE_ACCESS_LIST_STR, alist->remark) ;
 
   alist->remark = XSTRDUP(MTYPE_ACCESS_LIST_STR, remark) ;
-  vhash_set(alist) ;                    /* Has description => is "set"  */
+  vhash_set_held(alist) ;       /* Has description => is set    */
 
   XFREE(MTYPE_TMP, remark) ;
   return CMD_SUCCESS;

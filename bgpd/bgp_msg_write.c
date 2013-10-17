@@ -790,7 +790,7 @@ bgp_msg_write_msg_check(bgp_msg_writer writer, uint msg_length)
   if ((msg_iv_count < 1) || (msg_iv_count > bgp_msg_writer_msg_part_count))
     {
       zlog_err("BUG in %s() for %s: unready to write", __func__,
-                                                           writer->plox->host) ;
+                                                           writer->plox->name) ;
       return bgp_msg_write_msg_stomp(writer) ;
     } ;
 
@@ -801,14 +801,14 @@ bgp_msg_write_msg_check(bgp_msg_writer writer, uint msg_length)
   if (msg_length != check_length)
     {
       zlog_err("BUG in %s() for %s: expected message length = %u, actual = %u",
-                       __func__, writer->plox->host, msg_length, check_length) ;
+                       __func__, writer->plox->name, msg_length, check_length) ;
       return bgp_msg_write_msg_stomp(writer) ;
     } ;
 
   if ((msg_length < BGP_MSG_MIN_L) || (msg_length > BGP_MSG_MAX_L))
     {
       zlog_err("BUG in %s() for %s: invalid message length = %u",
-                                     __func__, writer->plox->host, msg_length) ;
+                                     __func__, writer->plox->name, msg_length) ;
       return bgp_msg_write_msg_stomp(writer) ;
     } ;
 
@@ -817,7 +817,7 @@ bgp_msg_write_msg_check(bgp_msg_writer writer, uint msg_length)
   if (msg_length_in_header != msg_length)
     {
       zlog_err("BUG in %s() for %s: message length in header = %u, actual = %u",
-               __func__, writer->plox->host, msg_length_in_header, msg_length) ;
+               __func__, writer->plox->name, msg_length_in_header, msg_length) ;
       return bgp_msg_write_msg_stomp(writer) ;
     } ;
 
@@ -1524,7 +1524,7 @@ bgp_msg_write_open(bgp_connection connection)
 
       zlog_debug("%s sending OPEN, version %d, my as %u%s, "
                                                         "holdtime %d, id %s%s",
-                  connection->lox.host, BGP_VERSION_4, args_sent->local_as, as4,
+                  connection->lox.name, BGP_VERSION_4, args_sent->local_as, as4,
                     args_sent->holdtime_secs,
                       siptoa(AF_INET, &args_sent->local_id).str, no_cap) ;
     } ;
@@ -1596,7 +1596,7 @@ bgp_open_options(blower br, bgp_open_state open_state)
       bool have ;
 
       have = bgp_open_prepare_orf_type(orf_type, BGP_CAP_ORFT_T_PFX,
-                                args->can_orf_pfx, bgp_form_rfc, args->can_af) ;
+                               &args->can_orf_pfx, bgp_form_rfc, args->can_af) ;
       if (have)
         {
           bgp_open_make_cap_orf(sbr, BGP_CAN_ORF, 1, orf_type,
@@ -1618,7 +1618,7 @@ bgp_open_options(blower br, bgp_open_state open_state)
       bool have ;
 
       have = bgp_open_prepare_orf_type(orf_type, BGP_CAP_ORFT_T_PFX_pre,
-                                args->can_orf_pfx, bgp_form_pre, args->can_af) ;
+                               &args->can_orf_pfx, bgp_form_pre, args->can_af) ;
       if (have)
         {
           bgp_open_make_cap_orf(sbr, BGP_CAN_ORF, 1, orf_type,
@@ -1696,7 +1696,7 @@ bgp_msg_write_keepalive(bgp_connection connection, bool must)
       if (writer->msg_iv_count != 0)
         {
           zlog_err ("%s not sending KEEPALIVE, even though 'must'"
-                               " -- iovec NOT empty ??", connection->lox.host) ;
+                               " -- iovec NOT empty ??", connection->lox.name) ;
           return ;
         } ;
     }
@@ -1707,7 +1707,7 @@ bgp_msg_write_keepalive(bgp_connection connection, bool must)
        */
       if (BGP_DEBUG (keepalive, KEEPALIVE))
         zlog_debug ("%s not sending KEEPALIVE -- buffer not empty",
-                                                         connection->lox.host) ;
+                                                         connection->lox.name) ;
       return ;
     } ;
 
@@ -1727,11 +1727,11 @@ bgp_msg_write_keepalive(bgp_connection connection, bool must)
       bgp_msg_write_away(writer, msg_length) ;
 
       if (BGP_DEBUG (keepalive, KEEPALIVE) && !BGP_DEBUG (io, IO_OUT))
-        zlog_debug ("%s sending KEEPALIVE", connection->lox.host);
+        zlog_debug ("%s sending KEEPALIVE", connection->lox.name);
 
       if (BGP_DEBUG (normal, NORMAL))
         zlog_debug ("%s send message type %d, length (incl. header) %u",
-                       connection->lox.host, BGP_MT_KEEPALIVE, msg_length) ;
+                       connection->lox.name, BGP_MT_KEEPALIVE, msg_length) ;
 
       qa_add_to_uint(&connection->session->stats.keepalive_out, 1) ;
     } ;
@@ -1884,7 +1884,7 @@ bgp_msg_write_update(bgp_msg_writer writer, ptr_t rb_body, uint rb_length,
   if (rb_length < min_rb_length)
     {
       zlog_err("BUG in %s() for %s: ring-buffer message length %u type %u",
-                                __func__, writer->plox->host, rb_length, type) ;
+                                __func__, writer->plox->name, rb_length, type) ;
       return bgp_msg_write_msg_stomp(writer) ;
     } ;
 
@@ -1893,14 +1893,14 @@ bgp_msg_write_update(bgp_msg_writer writer, ptr_t rb_body, uint rb_length,
   if (part2_length > body_length)
     {
       zlog_err("BUG in %s() for %s: part2_length %u > body %u",
-                      __func__, writer->plox->host, part2_length, body_length) ;
+                      __func__, writer->plox->name, part2_length, body_length) ;
       return bgp_msg_write_msg_stomp(writer) ;
     } ;
 
   if (part1_length < BGP_UPM_BODY_MIN_L)
     {
       zlog_err("BUG in %s() for %s: part1_length %u < minumum %u",
-               __func__, writer->plox->host, part1_length, BGP_UPM_BODY_MIN_L) ;
+               __func__, writer->plox->name, part1_length, BGP_UPM_BODY_MIN_L) ;
       return bgp_msg_write_msg_stomp(writer) ;
    } ;
 
@@ -1919,10 +1919,10 @@ bgp_msg_write_update(bgp_msg_writer writer, ptr_t rb_body, uint rb_length,
     {
       if (wl > (body_length - BGP_UPM_BODY_MIN_L))
         zlog_err("BUG in %s() for %s: withdraw length %u > body %u - %u",
-            __func__, writer->plox->host, wl, body_length, BGP_UPM_BODY_MIN_L) ;
+            __func__, writer->plox->name, wl, body_length, BGP_UPM_BODY_MIN_L) ;
       else
         zlog_err("BUG in %s() for %s: withdraw length %u > part1 %u - %u",
-           __func__, writer->plox->host, wl, part1_length, BGP_UPM_BODY_MIN_L) ;
+           __func__, writer->plox->name, wl, part1_length, BGP_UPM_BODY_MIN_L) ;
 
       return bgp_msg_write_msg_stomp(writer) ;
     } ;
@@ -1932,7 +1932,7 @@ bgp_msg_write_update(bgp_msg_writer writer, ptr_t rb_body, uint rb_length,
     {
       zlog_err("BUG in %s() for %s: attribute length %u > "
                                                    "body %u - withdraw %u - %u",
-        __func__, writer->plox->host, al, body_length, wl, BGP_UPM_BODY_MIN_L) ;
+        __func__, writer->plox->name, al, body_length, wl, BGP_UPM_BODY_MIN_L) ;
       return bgp_msg_write_msg_stomp(writer) ;
     } ;
 
@@ -1947,7 +1947,7 @@ bgp_msg_write_update(bgp_msg_writer writer, ptr_t rb_body, uint rb_length,
       zlog (writer->plox->log, LOG_DEBUG,
              "%s [IO] dispatch UPDATE %u bytes: %u bytes withdraw, "
                                      "%u bytes attributes, %u bytes NLRI",
-                    writer->plox->host, msg_length, wl, al, nl) ;
+                    writer->plox->name, msg_length, wl, al, nl) ;
     } ;
 
   return msg_length ;
@@ -1974,7 +1974,7 @@ bgp_msg_write_rr(bgp_msg_writer writer, ptr_t rb_body, uint rb_length,
   if (rb_length < 4)
     {
       zlog_err("BUG in %s() for %s: unexpected Route-Refresh message length %u",
-                                      __func__, writer->plox->host, rb_length) ;
+                                      __func__, writer->plox->name, rb_length) ;
       return bgp_msg_write_msg_stomp(writer) ;
     } ;
 
@@ -1991,7 +1991,7 @@ bgp_msg_write_rr(bgp_msg_writer writer, ptr_t rb_body, uint rb_length,
 
   if (BGP_DEBUG (normal, NORMAL) || BGP_DEBUG (io, IO_OUT))
     zlog_debug ("%s sending REFRESH_REQ (%u) for afi/safi: %u/%u length %u",
-                                          writer->plox->host, msg_type,
+                                          writer->plox->name, msg_type,
                                           load_ns(&rb_body[0]),
                                            load_b(&rb_body[3]), msg_length) ;
   return msg_length ;
@@ -2038,7 +2038,7 @@ bgp_msg_write_eor(bgp_msg_writer writer, ptr_t rb_body, uint rb_length)
   if ((rb_length != min_eor_msg_len) && (rb_length != max_eor_msg_len))
     {
       zlog_err("BUG in %s() for %s: unexpected EoR message length %u",
-                                      __func__, writer->plox->host, rb_length) ;
+                                      __func__, writer->plox->name, rb_length) ;
       return bgp_msg_write_msg_stomp(writer) ;
     } ;
 
@@ -2064,7 +2064,7 @@ bgp_msg_write_eor(bgp_msg_writer writer, ptr_t rb_body, uint rb_length)
         }
 
       zlog_debug ("send End-of-RIB for afi/safi %u/%u to %s",
-                                            i_afi, i_safi, writer->plox->host) ;
+                                            i_afi, i_safi, writer->plox->name) ;
     } ;
 
   return msg_length ;

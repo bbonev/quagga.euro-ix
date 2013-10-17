@@ -18,19 +18,17 @@ along with GNU Zebra; see the file COPYING.  If not, write to the Free
 Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
 02111-1307, USA.  */
 
-#include <zebra.h>
+#include "misc.h"
 
 #include "command.h"
 #include "log.h"
 #include "memory.h"
-#include "buffer.h"
 #include "vhash.h"
 
-#include "bgpd/bgpd.h"
-#include "bgpd/bgp_peer.h"
+#include "bgpd/bgp_common.h"
+#include "bgpd/bgp_filter.h"
 #include "bgpd/bgp_attr_store.h"
 #include "bgpd/bgp_regex.h"
-#include "bgpd/bgp_filter.h"
 
 /*==============================================================================
  * AS Path Filter handling
@@ -112,11 +110,12 @@ static vhash_orphan_func as_list_vhash_orphan ;
 
 static const vhash_params_t as_list_vhash_params =
 {
-  .hash   = vhash_hash_string,
-  .equal  = as_list_vhash_equal,
-  .new    = as_list_vhash_new,
-  .free   = as_list_vhash_free,
-  .orphan = as_list_vhash_orphan,
+  .hash         = vhash_hash_string,
+  .equal        = as_list_vhash_equal,
+  .new          = as_list_vhash_new,
+  .free         = as_list_vhash_free,
+  .orphan       = as_list_vhash_orphan,
+  .table_free   = vhash_table_free_simple,
 } ;
 
 static void as_list_flush(as_list flist) ;
@@ -148,7 +147,7 @@ bgp_filter_reset (void)
 {
   /* Empty out the embedded as-list table.
    */
-  vhash_table_reset(as_lists->table, keep_it) ;
+  vhash_table_reset(as_lists->table) ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -239,7 +238,7 @@ as_list_vhash_orphan(vhash_item item, vhash_table table)
 
   as_list_flush(flist) ;
 
-  return vhash_unset(flist, table) ;
+  return vhash_drop(flist, table) ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -325,9 +324,7 @@ as_list_get_ref(const char* name)
 } ;
 
 /*------------------------------------------------------------------------------
- * Finished with a reference to the given as-list (if any).
- *
- * If as-list is no longer in use and is not set, will vanish.
+ * Take another reference to the given as-list (if any).
  *
  * Returns:  as-list as given
  */
@@ -343,7 +340,7 @@ as_list_set_ref(as_list flist)
 /*------------------------------------------------------------------------------
  * Finished with a reference to the given as-list (if any).
  *
- * If as-list is no longer in use and is not set, will vanish (and ditto
+ * If as-list is no longer in use and is not 'held', will vanish (and ditto
  * the related vhash_table).
  *
  * Returns:  NULL
@@ -367,9 +364,9 @@ as_list_get_name(as_list flist)
 } ;
 
 /*------------------------------------------------------------------------------
- * Return whether as_list is "set" -- that is, some value has been set.
+ * Return whether as_list is 'held' -- that is, some value has been set.
  *
- * Will not be "set" if is NULL.
+ * Will not be 'held' if is NULL.
  */
 extern bool
 as_list_is_set(as_list flist)
@@ -395,7 +392,7 @@ as_list_is_active(as_list flist)
 /*------------------------------------------------------------------------------
  * Delete as_list.
  *
- * If the as-list has any remaining entries discard them.  Clear the "set"
+ * If the as-list has any remaining entries discard them.  Clear the 'held'
  * state.
  *
  * Invoke the delete_hook() if any.
@@ -409,7 +406,7 @@ as_list_delete (as_list flist)
 {
   vhash_inc_ref(flist) ;        /* want to hold onto the flist pro tem. */
 
-  as_list_flush(flist) ;        /* hammer the value and clear "set"     */
+  as_list_flush(flist) ;        /* hammer the value and clear 'held'    */
 
   /* as-list no longer has a value
    *
@@ -430,7 +427,7 @@ as_list_delete (as_list flist)
  *
  * Retains all red-tape.  Releases the as-list entries.
  *
- * NB: does not touch the reference count BUT clears the "set" state WITHOUT
+ * NB: does not touch the reference count BUT clears the 'held' state WITHOUT
  *     freeing the as-list.
  */
 static void
@@ -448,9 +445,9 @@ as_list_flush(as_list flist)
       as_list_entry_free(ae) ;
     } ;
 
-  /* Clear the "set" state -- but do NOT delete, even if reference count == 0
+  /* Clear the 'held' state -- but do NOT delete, even if reference count == 0
    */
-  vhash_clear_set(flist) ;
+  vhash_clear_held(flist) ;
 } ;
 
 /*==============================================================================
@@ -543,7 +540,7 @@ as_list_entry_delete (as_list flist, as_list_entry ae)
  *   * if the 'type's are different, delete the existing entry, and then
  *     append the new one.
  *
- * NB: if the as-list was empty, caller may wish to now "set" it.
+ * NB: if the as-list was empty, caller may wish to now set it and mark 'held'.
  */
 static void
 as_list_entry_add (as_list flist, as_list_entry ae)
@@ -653,10 +650,10 @@ DEFUN (ip_as_path, ip_as_path_cmd,
   /* Get the as-list -- creating an empty one, if required.
    *
    * Since we are about to add an entry, if this is a new as-list, it must
-   * now be "set" and the 'add_hook' kicked.
+   * now be set 'held' and the 'add_hook' kicked.
    *
-   * (The as-list is "set" after the 'add_hook' is kicked, because do not
-   *  want to have "set" when the list of entries is empty.)
+   * (The as-list is set 'held' after the 'add_hook' is kicked, because do not
+   *  want to have 'held' when the list of entries is empty.)
    */
   flist = as_list_find(argv[0]) ;
 
@@ -665,7 +662,7 @@ DEFUN (ip_as_path, ip_as_path_cmd,
       if (as_lists->add_hook != NULL)
          as_lists->add_hook() ;
 
-      vhash_set(flist) ;
+      vhash_set_held(flist) ;
     } ;
 
   /* Add new entry to the flist.
@@ -782,7 +779,7 @@ DEFUN (no_ip_as_path_all,
 static int as_list_sort_cmp(const vhash_item_c* pa, const vhash_item_c* pb) ;
 
 /*------------------------------------------------------------------------------
- * Show the given as-list -- if not NULL and "set"
+ * Show the given as-list -- if not NULL and is set ('held')
  */
 static cmd_ret_t
 as_list_show (struct vty *vty, as_list flist)
@@ -801,7 +798,7 @@ as_list_show (struct vty *vty, as_list flist)
 } ;
 
 /*------------------------------------------------------------------------------
- * Show all the as-list that exist -- ignore those which are not "set".
+ * Show all the as-list that exist -- ignore those which are not set ('held').
  */
 static cmd_ret_t
 as_list_show_all (struct vty *vty)

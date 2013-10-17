@@ -43,6 +43,12 @@
  * by different views to the same thing as necessary.
  */
 
+/*==============================================================================
+ * Route-Context-Id and Local-Context-Id
+ */
+typedef uint16_t bgp_rc_id_t ;
+typedef uint16_t bgp_lc_id_t ;
+
 /*------------------------------------------------------------------------------
  * The rcontext.
  *
@@ -79,7 +85,8 @@ typedef struct bgp_rcontext  bgp_rcontext_t ;
 
 struct bgp_rcontext
 {
-  /* The name is the key for a vhash for finding route-contexts.
+  /* The name is the key for a vhash for finding route-contexts within the
+   * 'view'.
    */
   vhash_node_t  vhash ;
 
@@ -170,6 +177,7 @@ struct bgp_lcontext
  */
 extern void bgp_rcontext_init(void) ;
 extern void bgp_rcontext_finish(void) ;
+extern void bgp_rcontext_discard_name_index(bgp_inst bgp) ;
 
 extern bgp_lcontext bgp_lcontext_new(bgp_rib rib, bgp_rcontext rc) ;
 

@@ -22,6 +22,7 @@
 #define BGP_MSG_READ_H_
 
 #include "bgpd/bgp_common.h"
+#include "bgpd/bgp_fsm.h"
 #include "bgpd/bgp_notification.h"
 
 #include "ring_buffer.h"
@@ -108,6 +109,25 @@ enum bgp_msg_in_state
   bms_in_hand   = 0,            /* in main reader buffer        */
   bms_in_temp,                  /* in temp reader buffer        */
   bms_in_other,                 /* in some other buffer         */
+} ;
+
+/*------------------------------------------------------------------------------
+ * A dense set of the BGP Messages known to Quagga
+ */
+typedef enum qBGP_MSG qBGP_MSG_t ;
+enum qBGP_MSG
+{
+  qBGP_MSG_unknown    = 0,
+
+  qBGP_MSG_OPEN,
+  qBGP_MSG_UPDATE,
+  qBGP_MSG_NOTIFICATION,
+  qBGP_MSG_KEEPALIVE,
+  qBGP_MSG_ROUTE_REFRESH,
+  qBGP_MSG_CAPABILITY,
+  qBGP_MSG_ROUTE_REFRESH_pre,
+
+  qBGP_MSG_count,
 } ;
 
 /*------------------------------------------------------------------------------

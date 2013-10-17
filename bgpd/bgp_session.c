@@ -20,8 +20,10 @@
  */
 #include "misc.h"
 
+#include "bgpd/bgpd.h"
 #include "bgpd/bgp_session.h"
-#include "bgpd/bgp_peer.h"
+#include "bgpd/bgp_run.h"
+#include "bgpd/bgp_prun.h"
 #include "bgpd/bgp_engine.h"
 #include "bgpd/bgp_fsm.h"
 #include "bgpd/bgp_open_state.h"
@@ -75,18 +77,18 @@ static void bgp_session_send_delete(bgp_session session) ;
  *     While the acceptor is NULL, no connections will be accepted -- RST.
  */
 extern bgp_session
-bgp_session_init_new(bgp_peer peer)
+bgp_session_init_new(bgp_prun prun)
 {
   bgp_session session ;
 
-  assert(peer->state == bgp_pDown) ;
-  assert(peer->session == NULL) ;
+  assert(prun->state == bgp_pDown) ;
+  assert(prun->session == NULL) ;
 
   session = XCALLOC(MTYPE_BGP_SESSION, sizeof(bgp_session_t)) ;
 
   /* Zeroizing sets:
    *
-   *   * peer                   -- X            -- set below
+   *   * prun                   -- X            -- set below
    *
    *   * state_seen             -- sReset       -- starting state
    *   * ord                    -- 0            -- none, yet
@@ -102,7 +104,7 @@ bgp_session_init_new(bgp_peer peer)
    *
    *   * args_sent              -- NULL         -- none, yet
    *   * args_config            -- NULL         -- none, yet
-   *   * args                   -- NULL         -- none, yet
+   *   * args_r                   -- NULL         -- none, yet
    *
    *   * open_sent              -- NULL         -- none, yet
    *   * open_recv              -- NULL         -- none, yet
@@ -123,8 +125,8 @@ bgp_session_init_new(bgp_peer peer)
    *
    *   * acceptor               -- NULL         -- none, yet
    */
-  session->peer  = peer ;
-  bgp_peer_lock(peer) ;         /* Account for the session->peer pointer */
+  session->prun  = prun ;
+  bgp_peer_lock(prun) ;         /* Account for the session->peer pointer */
 
   confirm(bgp_sReset   == 0) ;
   confirm(bgp_feNULL   == 0) ;
@@ -138,9 +140,9 @@ bgp_session_init_new(bgp_peer peer)
 
   /* Register the peer and set: peer->peer_ie and peer->session.
    */
-  bgp_peer_index_register(peer, session);
+  bgp_peer_index_register(prun, session);
 
-  return peer->session = session ;
+  return prun->session = session ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -158,15 +160,15 @@ bgp_session_init_new(bgp_peer peer)
  *
  */
 extern void
-bgp_session_delete(bgp_peer peer)
+bgp_session_delete(bgp_prun prun)
 {
   bgp_session session ;
 
-  session = peer->session ;
-  qassert(peer == session->peer) ;
+  session = prun->session ;
+  qassert(prun == session->prun) ;
 
-  qassert(  (peer->session_state == bgp_pssInitial)     /* not started  */
-         || (peer->session_state == bgp_pssStopped) ) ; /* now stopped  */
+  qassert(  (prun->session_state == bgp_pssInitial)     /* not started  */
+         || (prun->session_state == bgp_pssStopped) ) ; /* now stopped  */
 
   /* Deregister the peer -- so accept() can no longer find address.
    *
@@ -177,7 +179,7 @@ bgp_session_delete(bgp_peer peer)
    *     created, but the acceptor, listener and password are set up by the
    *     BE on receipt of another *later* message.
    */
-  bgp_peer_index_deregister(peer);
+  bgp_peer_index_deregister(prun);
 
   /* Unhook the session and the peer from each other.
    *
@@ -186,14 +188,14 @@ bgp_session_delete(bgp_peer peer)
    * there are none hanging around by revoking them.  Note that messages
    * to the RE point to the peer -- messages to the BE point to the session.
    */
-  peer->session = NULL ;
+  prun->session = NULL ;
 
-  qa_set_ptr((void**)&session->peer, NULL) ;
-  mqueue_revoke(re_nexus->queue, peer, 0) ;
+  qa_set_ptr((void**)&session->prun, NULL) ;
+  mqueue_revoke(re_nexus->queue, prun, 0) ;
 
-  peer->session_state = bgp_pssDeleted ;        /* from peer's pov      */
+  prun->session_state = bgp_pssDeleted ;        /* from peer's pov      */
 
-  bgp_peer_unlock(peer) ;       /* Account for the session->peer pointer */
+  bgp_peer_unlock(prun) ;       /* Account for the session->peer pointer */
 
   /* Clear out everything we can do on this side of the house, set final
    * state of session, and send message to tell BE to finish the job.
@@ -212,7 +214,7 @@ bgp_session_delete(bgp_peer peer)
  *
  * Clears down as follows:
  *
- *   * peer                     -- preserved
+ *   * prun                     -- preserved
  *
  *   * state_seen               -- sReset       -- starting state
  *   * ord                      -- 0            -- none, yet
@@ -229,7 +231,7 @@ bgp_session_delete(bgp_peer peer)
  *
  *   * args_sent                -- NULL         -- none
  *   * args_config              -- NULL         -- none
- *   * args                     -- NULL         -- none
+ *   * args_r                     -- NULL         -- none
  *   * open_sent                -- NULL         -- none
  *   * open_recv                -- NULL         -- none
  *
@@ -262,8 +264,8 @@ bgp_session_clear(bgp_session session)
   session->ord_estd     = 0 ;
 
   session->lox.log      = NULL;
-  if (session->lox.host != NULL)
-    XFREE(MTYPE_BGP_PEER_HOST, session->lox.host) ;
+  if (session->lox.name != NULL)
+    XFREE(MTYPE_BGP_PEER_HOST, session->lox.name) ;
                                         /* sets session->lox.host NULL  */
 
   session->args_sent    = bgp_session_args_free(session->args_sent) ;
@@ -289,7 +291,7 @@ bgp_session_clear(bgp_session session)
 static void
 bgp_session_destroy(bgp_session session)
 {
-  qassert(session->peer  == NULL) ;
+  qassert(session->prun  == NULL) ;
   qassert(session->state == bgp_sDeleting) ;
 
   /* What we have left are:
@@ -317,22 +319,22 @@ bgp_session_destroy(bgp_session session)
 } ;
 
 /*------------------------------------------------------------------------------
- * Set session->lox from peer->lox (if any)
+ * Set session->lox from prun->lox (if any)
  */
 static void
 bgp_session_set_lox(bgp_session session)
 {
-  bgp_peer peer ;
+  bgp_prun prun ;
 
-  peer = session->peer ;
+  prun = session->prun ;
 
-  session->lox.log = (peer != NULL) ? peer->log : NULL ;
+  session->lox.log = (prun != NULL) ? prun->log : NULL ;
 
-  if (session->lox.host != NULL)
-    XFREE(MTYPE_BGP_PEER_HOST, session->lox.host) ;
+  if (session->lox.name != NULL)
+    XFREE(MTYPE_BGP_PEER_HOST, session->lox.name) ;
 
-  session->lox.host = XSTRDUP(MTYPE_BGP_PEER_HOST,
-              ( ((peer != NULL) && (peer->host != NULL)) ? peer->host
+  session->lox.name = XSTRDUP(MTYPE_BGP_PEER_HOST,
+              ( ((prun != NULL) && (prun->name != NULL)) ? prun->name
                                                          : "<unknown-host>" )) ;
 } ;
 
@@ -382,7 +384,7 @@ static bgp_note bgp_session_prod(bgp_session session, bgp_note note,
  * Does nothing if the session is pisDown -- stays in current state
  *
  * Otherwise: refresh the cops_tx and the args_tx and send a prod message
- *                           (whether or not the cops and/or args have changed).
+ *                           (whether or not the cops and/or args_r have changed).
  *
  *            Sets: sReset     -- the last session (if any) is now completely
  *                                forgotten.
@@ -397,29 +399,29 @@ static bgp_note bgp_session_prod(bgp_session session, bgp_note note,
 extern void
 bgp_session_start(bgp_session session)
 {
-  bgp_peer      peer ;
+  bgp_prun      prun ;
   qtime_t       idle_hold_time ;
 
-  peer = session->peer ;
-  qassert(session == peer->session) ;
+  prun = session->prun ;
+  qassert(session == prun->session) ;
 
-  if      (peer->session_state == bgp_pssInitial)
+  if      (prun->session_state == bgp_pssInitial)
     qassert(session->state == bgp_sReset) ;
-  else if (peer->session_state == bgp_pssStopped)
+  else if (prun->session_state == bgp_pssStopped)
     qassert((session->state == bgp_sReset) ||
             (session->state == bgp_sStopped)) ;
   else
     qassert(false) ;
 
-  if (peer->idle & bgp_pisDown)
+  if (prun->idle & bgp_pisDown)
     return ;
 
   /* Clear the session and set:
    *
    *   * idle_hold_time         -- to current value
    *
-   *   * lox.log                -- copy of peer->log
-   *   * lox.host               -- copy of peer->host
+   *   * lox.log                -- copy of prun->log
+   *   * lox.host               -- copy of prun->host
    *
    *   * stats                  -- reset to zero   TODO yes ??
    *
@@ -432,12 +434,12 @@ bgp_session_start(bgp_session session)
 
   session->state = bgp_sReset ;
 
-  idle_hold_time = peer->idle_hold_time ;
+  idle_hold_time = prun->idle_hold_time ;
 
-  if (idle_hold_time > QTIME(peer->bgp->default_idle_hold_max_secs))
-    idle_hold_time = QTIME(peer->bgp->default_idle_hold_max_secs) ;
-  if (idle_hold_time < QTIME(peer->bgp->default_idle_hold_min_secs))
-    idle_hold_time = QTIME(peer->bgp->default_idle_hold_min_secs) ;
+  if (idle_hold_time > QTIME(prun->bgp_args_r.idle_hold_max_secs))
+    idle_hold_time = QTIME(prun->bgp_args_r.idle_hold_max_secs) ;
+  if (idle_hold_time < QTIME(prun->bgp_args_r.idle_hold_min_secs))
+    idle_hold_time = QTIME(prun->bgp_args_r.idle_hold_min_secs) ;
 
   session->idle_hold_time = idle_hold_time ;
 
@@ -448,7 +450,7 @@ bgp_session_start(bgp_session session)
    * There are no other messages for this peer outstanding, but we issue a
    * priority message to jump past any queue of outbound message events.
    */
-  peer->session_state = (peer->idle == bgp_pisRunnable) ? bgp_pssRunning
+  prun->session_state = (prun->idle == bgp_pisRunnable) ? bgp_pssRunning
                                                         : bgp_pssStopped ;
   bgp_session_prod(session, NULL, true /* force */) ;
 } ;
@@ -457,7 +459,7 @@ bgp_session_start(bgp_session session)
  * Routeing Engine: recharge session, if necessary and possible -- may stop it !
  *
  * This will update the BGP Engine's view of the cops and (if necessary) the
- * args, if there is a change in those.
+ * args_r, if there is a change in those.
  *
  * In particular:
  *
@@ -470,7 +472,7 @@ bgp_session_start(bgp_session session)
  *     while the peer is idle for some reason, but not pisDown.
  *
  *   * if not pEstablished (ie Established from the Routeing Engine
- *     perspective) will send a change of args to the BGP Engine.
+ *     perspective) will send a change of args_r to the BGP Engine.
  *
  *     This is used when is pStarted and something changes which may affect
  *     the way in which a session should be configured.  When the news
@@ -480,7 +482,7 @@ bgp_session_start(bgp_session session)
  *         the change requires.
  *
  *         The Routeing Engine will, eventually, see a session become
- *         established with the changed cops and/or args.
+ *         established with the changed cops and/or args_r.
  *
  *       * but if a session has become established already, it will drop that,
  *         if the change requires.
@@ -527,20 +529,20 @@ bgp_session_recharge(bgp_session session, bgp_note note)
 static bool
 bgp_session_cops_make(bgp_session session, bool force)
 {
-  bgp_peer   peer ;
+  bgp_prun   prun ;
   bgp_cops   p_cops ;
   bgp_cops_t cops_dummy ;
   bgp_conn_state_t conn_state ;
 
-  peer = session->peer ;
+  prun = session->prun ;
 
-  if (peer != NULL)
+  if (prun != NULL)
     {
-      /* We have an attached peer.
+      /* We have an attached prun.
        *
-       * Clear down the unused entries in the original peer->cops.
+       * Clear down the unused entries in the original prun->cops.
        */
-      p_cops = &peer->cops ;
+      p_cops = &prun->cops_r ;
 
       p_cops->ttl_out = p_cops->ttl_min = 0 ;
       p_cops->ifindex = 0 ;
@@ -550,10 +552,10 @@ bgp_session_cops_make(bgp_session session, bool force)
        */
       conn_state = p_cops->conn_state & bgp_csMayMask ;
 
-      if (!(peer->idle & bgp_pisDown))
+      if (!(prun->idle & bgp_pisDown))
         {
           conn_state |= bgp_csTrack ;
-          if (peer->idle == bgp_pisRunnable)
+          if (prun->idle == bgp_pisRunnable)
             conn_state |= bgp_csRun ;
         } ;
     }
@@ -592,7 +594,7 @@ bgp_session_cops_make(bgp_session session, bool force)
 /*------------------------------------------------------------------------------
  * If the arguments have changed, update peer->args_sent.
  *
- * The session arguments are a direct copy of the peer->args, except:
+ * The session arguments are a direct copy of the peer->args_r, except:
  *
  *   * remote_id                -- 0
  *   * cap_suppressed           -- false
@@ -604,7 +606,7 @@ bgp_session_cops_make(bgp_session session, bool force)
  * And the Prefix ORF stuff:
  *
  *   * if we are not actually advertising anything, then we suppress
- *     args->can_orf, so will not send the capability at all.
+ *     args_r->can_orf, so will not send the capability at all.
  *
  *   * if we are willing to send the per-RFC capability, then update the
  *     Prefix ORF types to be advertised.
@@ -619,19 +621,19 @@ bgp_session_cops_make(bgp_session session, bool force)
  *   * gr.can_preserve          -- empty
  *   * gr.has_preserved         -- empty
  *
- * Returns:  true <=> args changed since session->args_sent or 'force'
+ * Returns:  true <=> args_r changed since session->args_sent or 'force'
  */
 static bool
 bgp_session_args_make(bgp_session session, bool force)
 {
-  bgp_peer   peer ;
+  bgp_prun   prun ;
   bgp_session_args_t args[1] ;
   qafx_t     qafx ;
   bgp_form_t can_orf ;
 
-  peer = session->peer ;
+  prun = session->prun ;
 
-  if (peer != NULL)
+  if (prun != NULL)
     {
       /* We have an attached peer... so copy it's current arguments, clearing
        * down stuff which does not apply.
@@ -640,12 +642,12 @@ bgp_session_args_make(bgp_session session, bool force)
        *
        * If !can_capability, flush out everything that depends on same !
        */
-      memcpy(args, &peer->args, sizeof(args)) ;
+      memcpy(args, &prun->args_r, sizeof(args)) ;
 
       args->remote_id       = 0 ;
       args->cap_suppressed  = false ;
 
-      args->gr.can = (peer->bgp->flags & BGP_FLAG_GRACEFUL_RESTART) ;
+      args->gr.can = prun->do_graceful_restart ;
 
       if (!args->can_capability)
         bgp_session_args_suppress(args) ;
@@ -660,7 +662,7 @@ bgp_session_args_make(bgp_session session, bool force)
     } ;
 
   /* We have the Prefix ORF wishes -- but not for pre-RFC, if that is being
-   * supported.  (If !args->can_capability then the whole thing has been swept
+   * supported.  (If !args_r->can_capability then the whole thing has been swept
    * away, already, and what follows adds nothing.)
    *
    * NB: if we cannot send MP-Ext, we can only send ORF for IPv4/Unicast.
@@ -671,7 +673,7 @@ bgp_session_args_make(bgp_session session, bool force)
     {
       bgp_orf_cap_bits_t orf_pfx, orf_wish ;
 
-      orf_wish = args->can_orf_pfx[qafx] & (ORF_SM | ORF_RM) ;
+      orf_wish = args->can_orf_pfx.af[qafx] & (ORF_SM | ORF_RM) ;
       orf_pfx  = 0 ;
       if ((args->can_af & qafx_bit(qafx)) && (orf_wish != 0))
         {
@@ -693,7 +695,7 @@ bgp_session_args_make(bgp_session session, bool force)
           confirm(ORF_RM_pre == (ORF_RM << 4)) ;
         } ;
 
-      args->can_orf_pfx[qafx] = orf_pfx ;
+      args->can_orf_pfx.af[qafx] = orf_pfx ;
     } ;
 
   args->can_orf = can_orf ;
@@ -701,7 +703,7 @@ bgp_session_args_make(bgp_session session, bool force)
   /* Graceful restart capability
    */
   if (args->gr.can)
-    args->gr.restart_time  = peer->bgp->restart_time ;
+    args->gr.restart_time  = prun->bgp_args_r.restart_time_secs ;
 
   /* TODO: check not has restarted and not preserving forwarding open_send (?)
    */
@@ -738,10 +740,10 @@ static void bgp_session_args_update(bgp_session session,
 /*------------------------------------------------------------------------------
  * Routeing Engine: prod the session if required.
  *
- * This can be called when the peer cops and/or args may have changed, or when
+ * This can be called when the peer cops and/or args_r may have changed, or when
  * the session has been detached from the peer.
  *
- * Works out what cops and/or args should be passed to the session, and if
+ * Works out what cops and/or args_r should be passed to the session, and if
  * those have changed since what we last sent, we send them.
  *
  * The cops include csRun and csTrack, which are set according to the
@@ -749,7 +751,7 @@ static void bgp_session_args_update(bgp_session session,
  * and this is the mechanism for stopping a running session !
  *
  * If the peer is pEstablished, then we (a) do not send any changes to the
- * args -- once we are pEstablished, changes here require a full reset of
+ * args_r -- once we are pEstablished, changes here require a full reset of
  * the session; and (b) any changes to cops are passed with the
  * 'peer_established' flag set -- which inhibits the application of the cops
  * to the session, unless is !csRun.
@@ -770,8 +772,8 @@ bgp_session_prod(bgp_session session, bgp_note note, bool force)
   bool             peer_established ;
   bgp_note         note_copy ;
 
-  peer_established = (session->peer != NULL)
-                                 && (session->peer->state == bgp_pEstablished) ;
+  peer_established = (session->prun != NULL)
+                                 && (session->prun->state == bgp_pEstablished) ;
 
   /* See if we need to send an update for the connection options.
    *
@@ -923,7 +925,7 @@ bgp_session_do_prod(mqueue_block mqb, mqb_flag_t flag)
 
   UNLOCK_QATOMIC() ;
 
-  /* Now we update the session to the latest cops/args.
+  /* Now we update the session to the latest cops/args_r.
    */
   if (flag == mqb_action)
     {
@@ -987,11 +989,11 @@ bgp_session_do_delete(mqueue_block mqb, mqb_flag_t flag)
 
   if (flag == mqb_action)
     {
-      bgp_peer peer ;
+      bgp_prun prun ;
 
-      peer = qa_get_ptr((void**)&session->peer) ;
+      prun = qa_get_ptr((void**)&session->prun) ;
 
-      qassert((peer == NULL) && (session->state == bgp_sDeleting)) ;
+      qassert((prun == NULL) && (session->state == bgp_sDeleting)) ;
 
       /* There should not be any other messages for this session, but we
        * clear them out if there are.
@@ -1016,7 +1018,7 @@ bgp_session_send_event(bgp_session session, bgp_conn_ord_t ord, bgp_fsm_eqb eqb)
 {
   struct bgp_session_event_args* args ;
   mqueue_block   mqb ;
-  bgp_peer       peer ;
+  bgp_prun       prun ;
 
   /* Belt and braces: if peer has been deleted, the peer pointer will have been
    * cleared, and we can no longer send any messages !!
@@ -1027,14 +1029,14 @@ bgp_session_send_event(bgp_session session, bgp_conn_ord_t ord, bgp_fsm_eqb eqb)
    *
    * The qa_get_ptr() synchronises memory.
    */
-  peer = qa_get_ptr((void**)&session->peer) ;
+  prun = qa_get_ptr((void**)&session->prun) ;
 
-  if (peer == NULL)
+  if (prun == NULL)
     return ;
 
   /* All is well, send message.
    */
-  mqb = mqb_init_new(NULL, bgp_session_do_event, peer) ;
+  mqb = mqb_init_new(NULL, bgp_session_do_event, prun) ;
 
   args = mqb_get_args(mqb) ;
 
@@ -1053,19 +1055,19 @@ bgp_session_send_event(bgp_session session, bgp_conn_ord_t ord, bgp_fsm_eqb eqb)
  * Receives notifications from the BGP Engine a session event occurs.
  *
  * -- arg0  = session
- *    args  =  bgp_session_event_args
+ *    args_r  =  bgp_session_event_args
  */
 static void
 bgp_session_do_event(mqueue_block mqb, mqb_flag_t flag)
 {
   struct bgp_session_event_args* args ;
-  bgp_peer    peer ;
+  bgp_prun    prun ;
   bgp_session session ;
 
   args  = mqb_get_args(mqb) ;
-  peer  = mqb_get_arg0(mqb) ;
+  prun  = mqb_get_arg0(mqb) ;
 
-  session = peer->session ;
+  session = prun->session ;
 
   if ((flag == mqb_action) && (session != NULL))
     {
@@ -1073,7 +1075,7 @@ bgp_session_do_event(mqueue_block mqb, mqb_flag_t flag)
        */
       bgp_peer_session_state_t  pss ;
 
-      pss = peer->session_state ;
+      pss = prun->session_state ;
 
       switch (args->state)
         {
@@ -1133,10 +1135,10 @@ bgp_session_do_event(mqueue_block mqb, mqb_flag_t flag)
 
 static void bgp_session_do_kick_re_read(mqueue_block mqb, mqb_flag_t flag) ;
 static void bgp_session_do_kick_be_read(mqueue_block mqb, mqb_flag_t flag) ;
-static void bgp_session_do_kick_read(bgp_peer peer) ;
+static void bgp_session_do_kick_read(bgp_prun prun) ;
 static void bgp_session_do_kick_be_write(mqueue_block mqb, mqb_flag_t flag) ;
 static void bgp_session_do_kick_re_write(mqueue_block mqb, mqb_flag_t flag) ;
-static void bgp_session_do_kick_write(bgp_peer peer) ;
+static void bgp_session_do_kick_write(bgp_prun prun) ;
 
 /*------------------------------------------------------------------------------
  * BGP Engine send message: kick the RE to empty out the read_rb.
@@ -1144,7 +1146,7 @@ static void bgp_session_do_kick_write(bgp_peer peer) ;
 extern void
 bgp_session_kick_re_read(bgp_session session)
 {
-  bgp_peer       peer ;
+  bgp_prun       prun ;
 
   /* Belt and braces: if peer has been deleted, the peer pointer will have been
    * cleared, and we can no longer send any messages !!
@@ -1155,10 +1157,10 @@ bgp_session_kick_re_read(bgp_session session)
    *
    * The qa_get_ptr() synchronises memory.
    */
-  peer = qa_get_ptr((void**)&session->peer) ;
+  prun = qa_get_ptr((void**)&session->prun) ;
 
-  if (peer == NULL)
-    bgp_session_do_kick_read(peer) ;
+  if (prun == NULL)
+    bgp_session_do_kick_read(prun) ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -1168,10 +1170,10 @@ bgp_session_kick_re_read(bgp_session session)
  *     will be ignored.
  */
 extern void
-bgp_session_kick_read(bgp_peer peer)
+bgp_session_kick_read(bgp_prun prun)
 {
-  if (rb_put_kick(peer->session->read_rb))
-    bgp_session_do_kick_read(peer) ;
+  if (rb_put_kick(prun->session->read_rb))
+    bgp_session_do_kick_read(prun) ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -1181,11 +1183,11 @@ bgp_session_kick_read(bgp_peer peer)
  *     will be ignored.
  */
 static void
-bgp_session_do_kick_read(bgp_peer peer)
+bgp_session_do_kick_read(bgp_prun prun)
 {
   mqueue_block   mqb ;
 
-  mqb = mqb_init_new(NULL, bgp_session_do_kick_re_read, peer) ;
+  mqb = mqb_init_new(NULL, bgp_session_do_kick_re_read, prun) ;
   bgp_to_routing_engine(mqb, mqb_ordinary, bgp_engine_log_xon) ;
 } ;
 
@@ -1201,18 +1203,18 @@ bgp_session_do_kick_read(bgp_peer peer)
 static void
 bgp_session_do_kick_re_read(mqueue_block mqb, mqb_flag_t flag)
 {
-  bgp_peer peer ;
+  bgp_prun prun ;
 
-  peer = mqb_get_arg0(mqb) ;
+  prun = mqb_get_arg0(mqb) ;
 
-  if ((flag == mqb_action) && (peer->state == bgp_pEstablished))
+  if ((flag == mqb_action) && (prun->state == bgp_pEstablished))
     {
       ring_buffer rb ;
 
-      rb = peer->session->read_rb ;
+      rb = prun->session->read_rb ;
 
       rb_get_prompt_clear(rb) ;
-      bgp_packet_read_stuff(peer, rb) ;
+      bgp_packet_read_stuff(prun, rb) ;
     } ;
 
   mqb_free(mqb) ;
@@ -1222,14 +1224,14 @@ bgp_session_do_kick_re_read(mqueue_block mqb, mqb_flag_t flag)
  * Routeing Engine send message: kick the BE to put more into the read_rb.
  */
 extern void
-bgp_session_kick_be_read(bgp_peer peer)
+bgp_session_kick_be_read(bgp_prun prun)
 {
   bgp_session    session ;
   mqueue_block   mqb ;
 
   /* Belt and braces -- do nothing if no session !!
    */
-  session = peer->session ;
+  session = prun->session ;
   if (session == NULL)
     return ;
 
@@ -1265,14 +1267,14 @@ bgp_session_do_kick_be_read(mqueue_block mqb, mqb_flag_t flag)
  * Routeing Engine send message: kick the BE to empty out the write_rb.
  */
 extern void
-bgp_session_kick_be_write(bgp_peer peer)
+bgp_session_kick_be_write(bgp_prun prun)
 {
   bgp_session    session ;
   mqueue_block   mqb ;
 
   /* Belt and braces -- do nothing if no session !!
    */
-  session = peer->session ;
+  session = prun->session ;
   if (session == NULL)
     return ;
 
@@ -1310,7 +1312,7 @@ bgp_session_do_kick_be_write(mqueue_block mqb, mqb_flag_t flag)
 extern void
 bgp_session_kick_re_write(bgp_session session)
 {
-  bgp_peer       peer ;
+  bgp_prun       prun ;
 
   /* Belt and braces: if peer has been deleted, the peer pointer will have been
    * cleared, and we can no longer send any messages !!
@@ -1321,10 +1323,10 @@ bgp_session_kick_re_write(bgp_session session)
    *
    * The qa_get_ptr() synchronises memory.
    */
-  peer = qa_get_ptr((void**)&session->peer) ;
+  prun = qa_get_ptr((void**)&session->prun) ;
 
-  if (peer != NULL)
-    bgp_session_do_kick_write(peer) ;
+  if (prun != NULL)
+    bgp_session_do_kick_write(prun) ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -1334,10 +1336,10 @@ bgp_session_kick_re_write(bgp_session session)
  *     will be ignored.
  */
 extern void
-bgp_session_kick_write(bgp_peer peer)
+bgp_session_kick_write(bgp_prun prun)
 {
-  if (rb_put_kick(peer->session->write_rb))
-    bgp_session_do_kick_write(peer) ;
+  if (rb_put_kick(prun->session->write_rb))
+    bgp_session_do_kick_write(prun) ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -1347,11 +1349,11 @@ bgp_session_kick_write(bgp_peer peer)
  *     will be ignored.
  */
 static void
-bgp_session_do_kick_write(bgp_peer peer)
+bgp_session_do_kick_write(bgp_prun prun)
 {
   mqueue_block   mqb ;
 
-  mqb = mqb_init_new(NULL, bgp_session_do_kick_re_write, peer) ;
+  mqb = mqb_init_new(NULL, bgp_session_do_kick_re_write, prun) ;
   bgp_to_routing_engine(mqb, mqb_ordinary, bgp_engine_log_xon) ;
 } ;
 
@@ -1364,18 +1366,18 @@ bgp_session_do_kick_write(bgp_peer peer)
 static void
 bgp_session_do_kick_re_write(mqueue_block mqb, mqb_flag_t flag)
 {
-  bgp_peer peer ;
+  bgp_prun prun ;
 
-  peer = mqb_get_arg0(mqb) ;
+  prun = mqb_get_arg0(mqb) ;
 
-  if ((flag == mqb_action) && (peer->state == bgp_pEstablished))
+  if ((flag == mqb_action) && (prun->state == bgp_pEstablished))
     {
       ring_buffer rb ;
 
-      rb = peer->session->write_rb ;
+      rb = prun->session->write_rb ;
 
       rb_put_prompt_clear(rb) ;
-      bgp_packet_write_stuff(peer, rb) ;
+      bgp_packet_write_stuff(prun, rb) ;
     } ;
 
   mqb_free(mqb) ;
@@ -1588,14 +1590,14 @@ bgp_session_cops_update(bgp_session session, bgp_cops cops_new, bgp_note note,
               if (will_accept && !did_accept)
                 {
                   qassert(session->connections[bc_accept] == NULL) ;
-                  bgp_fsm_start_connection(session, bc_accept) ;
+                  bgp_connection_start(session, bc_accept) ;
                   restart_accept = false ;
                 } ;
 
               if (will_connect && !did_connect)
                 {
                   qassert(session->connections[bc_connect] == NULL) ;
-                  bgp_fsm_start_connection(session, bc_connect) ;
+                  bgp_connection_start(session, bc_connect) ;
                   restart_connect = false ;
                 } ;
 
@@ -1736,10 +1738,10 @@ bgp_session_args_update(bgp_session session, bgp_session_args args_new,
  * Routeing Engine: decide whether session arguments change warrants a session
  *                                                                        reset.
  *
- * If the peer is pEstablished, then some session arguments....
+ * If the peer is pEstablished, then some session arguments....  TODO !!!
  */
 static bool
-bgp_peer_args_update(bgp_peer peer)
+bgp_peer_args_update(bgp_prun prun)
 {
   bgp_session_args  args_new, args_were ;
   bool restart ;
@@ -1747,7 +1749,7 @@ bgp_peer_args_update(bgp_peer peer)
   args_new = args_were = NULL ;
   restart = false ;
 
-  /* Now worry about whether the args changes have any effect on the session,
+  /* Now worry about whether the args_r changes have any effect on the session,
    * which (unless nothing has changed) is extremely likely, for connections
    * at fsOpenSent and beyond.
    *
@@ -1777,7 +1779,7 @@ bgp_peer_args_update(bgp_peer peer)
    *   * gr.has_preserved       -- change =>    restart     |      keep
    *
    *   * can_orf                -- change =>    restart     |     restart
-   *   * can_orf_pfx[]          -- change =>    restart     |     restart
+   *   * can_orf_pfx            -- change =>    restart     |     restart
    *
    *   * can_dynamic            -- change =>    restart     |      keep
    *   * can_dynamic_dep        -- change =>    restart     |      keep
@@ -1785,7 +1787,7 @@ bgp_peer_args_update(bgp_peer peer)
    *   * holdtime_secs          -- change =>    restart     |      keep
    *   * keepalive_secs         -- change =>    restart     |      keep
    */
-  if (peer->state == bgp_pEstablished)
+  if (prun->state == bgp_pEstablished)
     {
       qassert(args_were != NULL) ;
 
@@ -1801,8 +1803,8 @@ bgp_peer_args_update(bgp_peer peer)
              || (args_new->can_af          != args_were->can_af)
              || (args_new->can_rr          != args_were->can_rr)
              || (args_new->can_orf         != args_were->can_orf)
-             || (memcmp(args_new->can_orf_pfx, args_were->can_orf_pfx,
-                                          sizeof(args_new->can_orf_pfx)) != 0) ;
+             || (memcmp(&args_new->can_orf_pfx, &args_were->can_orf_pfx,
+                                                 sizeof(bgp_orf_caps_t)) != 0) ;
     } ;
 
   return restart ;

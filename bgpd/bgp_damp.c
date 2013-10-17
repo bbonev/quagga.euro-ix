@@ -27,12 +27,15 @@ Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
 #include "log.h"
 #include "thread.h"
 
+#include "bgpd/bgp_common.h"
 #include "bgpd/bgpd.h"
-#include "bgpd/bgp_peer.h"
 #include "bgpd/bgp_damp.h"
+#include "bgpd/bgp_run.h"
+#include "bgpd/bgp_prun.h"
 #include "bgpd/bgp_table.h"
 #include "bgpd/bgp_route.h"
 #include "bgpd/bgp_attr.h"
+#include "bgpd/bgp_vty.h"
 
 /* Global variable to access damping configuration */
 struct bgp_damp_config bgp_damp_cfg;
@@ -127,7 +130,8 @@ bgp_reuse_timer (struct thread *t)
 {
   struct bgp_damp_info *bdi;
   struct bgp_damp_info *next;
-  time_t t_now, t_diff;
+  time_t t_now  Unused ;
+  time_t t_diff  Unused ;
 
   damp->t_reuse = NULL;
   damp->t_reuse =
@@ -147,6 +151,7 @@ bgp_reuse_timer (struct thread *t)
   /* 3. if ( the saved list head pointer is non-empty ) */
   for (; bdi; bdi = next)
     {
+      next = NULL ;
 /* TODO reinstate route-flap damping            */
 #if 0
       bgp_inst bgp = bdi->binfo->peer->bgp;
@@ -204,8 +209,12 @@ bgp_damp_withdraw (struct bgp_info *binfo, bgp_node rn, qafx_t qafx,
 
   /* Processing Unreachable Messages.
    */
+#if 0
   if (binfo->extra)
     bdi = binfo->extra->damp_info;
+#else
+  bdi = NULL ;
+#endif
 
   if (bdi == NULL)
     {
@@ -259,7 +268,11 @@ bgp_damp_withdraw (struct bgp_info *binfo, bgp_node rn, qafx_t qafx,
 #endif
 
   /* Remove the route from a reuse list if it is on one.  */
+#if 0
   if (CHECK_FLAG (bdi->binfo->flags, BGP_INFO_DAMPED))
+#else
+  if (false)
+#endif
     {
       /* If decay rate isn't equal to 0, reinsert brn. */
       if (bdi->penalty != last_penalty)
@@ -293,7 +306,11 @@ bgp_damp_update (struct bgp_info *binfo, bgp_node rn)
   struct bgp_damp_info *bdi;
   int status;
 
+#if 0
   if (!binfo->extra || !((bdi = binfo->extra->damp_info)))
+#else
+  if (!(bdi = NULL))
+#endif
     return BGP_DAMP_USED;
 
   t_now = bgp_clock ();
@@ -305,11 +322,19 @@ bgp_damp_update (struct bgp_info *binfo, bgp_node rn)
   bdi->lastrecord = BGP_RECORD_UPDATE;
   bdi->penalty = bgp_damp_decay (t_now - bdi->t_updated, bdi->penalty);
 
+#if 0
   if (! CHECK_FLAG (bdi->binfo->flags, BGP_INFO_DAMPED)
       && (bdi->penalty < damp->suppress_value))
+#else
+  if (false)
+#endif
     status = BGP_DAMP_USED;
+#if 0
   else if (CHECK_FLAG (bdi->binfo->flags, BGP_INFO_DAMPED)
            && (bdi->penalty < damp->reuse_limit) )
+#else
+  else if (false)
+#endif
     {
 /* TODO reinstate route flap damping            */
 #if 0
@@ -340,12 +365,22 @@ bgp_damp_scan (struct bgp_info *binfo, qafx_t qafx)
   time_t t_now, t_diff;
   struct bgp_damp_info *bdi;
 
+#if 0
   assert (binfo->extra && binfo->extra->damp_info);
+#endif
 
   t_now = bgp_clock ();
+#if 0
   bdi = binfo->extra->damp_info;
+#else
+  bdi = NULL ;
+#endif
 
+#if 0
   if (CHECK_FLAG (binfo->flags, BGP_INFO_DAMPED))
+#else
+  if (false)
+#endif
     {
       t_diff = t_now - bdi->suppress_time;
 
@@ -388,15 +423,21 @@ bgp_damp_scan (struct bgp_info *binfo, qafx_t qafx)
 extern void
 bgp_damp_info_free (struct bgp_damp_info *bdi, bool withdraw)
 {
-  struct bgp_info *binfo;
+  struct bgp_info *binfo  Unused;
 
   if (! bdi)
     return;
 
   binfo = bdi->binfo;
+#if 0
   binfo->extra->damp_info = NULL;
+#endif
 
+#if 0
   if (CHECK_FLAG (binfo->flags, BGP_INFO_DAMPED))
+#else
+  if (false)
+#endif
     bgp_reuse_list_delete (bdi);
   else
     BGP_DAMP_LIST_DEL (damp, bdi);
@@ -473,7 +514,11 @@ extern int
 bgp_damp_enable (bgp_inst bgp, qafx_t qafx, time_t half,
                  unsigned int reuse, unsigned int suppress, time_t max)
 {
-  if (CHECK_FLAG (bgp->af_flags[qafx], BGP_CONFIG_DAMPING))
+#if 0
+  if (bafcs_is_on(bgp->c->afc[qafx], bafcs_DAMPING))
+#else
+  if (false)
+#endif
     {
       if (damp->half_life == half
           && damp->reuse_limit == reuse
@@ -484,7 +529,9 @@ bgp_damp_enable (bgp_inst bgp, qafx_t qafx, time_t half,
       bgp_damp_disable (bgp, qafx);
     }
 
-  SET_FLAG (bgp->af_flags[qafx], BGP_CONFIG_DAMPING);
+#if 0
+  bgp->config->c_af_flags[qafx] |= BGP_AFF_DAMPING ;
+#endif
   bgp_damp_parameter_set (half, reuse, suppress, max);
 
   /* Register reuse timer.  */
@@ -552,7 +599,9 @@ bgp_damp_disable (bgp_inst bgp, qafx_t qafx)
   /* Clear configuration */
   bgp_damp_config_clean (&bgp_damp_cfg);
 
-  UNSET_FLAG (bgp->af_flags[qafx], BGP_CONFIG_DAMPING);
+#if 0
+  bgp->config->c_af_flags[qafx] &= ~BGP_AFF_DAMPING ;
+#endif
   return 0;
 }
 
@@ -621,8 +670,8 @@ bgp_damp_info_vty (struct vty *vty, route_info ri)
 {
   struct bgp_damp_info *bdi;
   time_t t_now, t_diff;
-  char timebuf[BGP_UPTIME_LEN];
   int penalty;
+  char timebuf[50] ;
 
   if (ri->extra == NULL)
     return;
@@ -647,13 +696,12 @@ bgp_damp_info_vty (struct vty *vty, route_info ri)
   penalty = bgp_damp_decay (t_diff, bdi->penalty);
 
   vty_out (vty, "      Dampinfo: penalty %d, flapped %d times in %s",
-           penalty, bdi->flap,
-           peer_uptime (bdi->start_time, timebuf, BGP_UPTIME_LEN));
+           penalty, bdi->flap, peer_uptime(bdi->start_time).str);
 
   if (CHECK_FLAG (ri->current.flags, BGP_INFO_DAMPED)
       && ! CHECK_FLAG (ri->current.flags, BGP_INFO_HISTORY))
     vty_out (vty, ", reuse in %s",
-             bgp_get_reuse_time (penalty, timebuf, BGP_UPTIME_LEN));
+             bgp_get_reuse_time (penalty, timebuf, sizeof(timebuf)));
 
   vty_out (vty, "%s", VTY_NEWLINE);
 }
@@ -690,3 +738,293 @@ bgp_damp_reuse_time_vty (struct vty *vty, route_info ri,
 
   return  bgp_get_reuse_time (penalty, timebuf, len);
 }
+
+/*==============================================================================
+ *
+ */
+
+extern cmd_ret_t
+bgp_damp_warning(vty vty)
+{
+  vty_out (vty, "%% Route Flap Damping is not implemented -- TBD\n");
+  return CMD_WARNING;
+} ;
+
+/* Display specified route of BGP table. */
+static cmd_ret_t
+bgp_clear_damp_route (vty vty, chs_c view_name,
+                      chs_c ip_str, afi_t q_afi, safi_t q_safi,
+                      struct prefix_rd *prd, int prefix_check)
+{
+#if 1
+  return bgp_damp_warning(vty) ;
+#else
+  int ret;
+  struct prefix match;
+  struct bgp_node *rn;
+  struct bgp_node *rm;
+  struct bgp_info *ri;
+  struct bgp_info *ri_temp;
+  bgp_inst bgp;
+  struct bgp_table *table;
+  qafx_t qafx ;
+
+  qafx = qafx_from_q(q_afi, q_safi) ;
+
+  /* BGP structure lookup. */
+  if (view_name)
+    {
+      bgp = bgp_lookup_by_name (view_name);
+      if (bgp == NULL)
+        {
+          vty_out (vty, "%% Can't find BGP view %s%s", view_name, VTY_NEWLINE);
+          return CMD_WARNING;
+        }
+    }
+  else
+    {
+      bgp = bgp_get_default ();
+      if (bgp == NULL)
+        {
+          vty_out (vty, "%% No BGP process is configured%s", VTY_NEWLINE);
+          return CMD_WARNING;
+        }
+    }
+
+  /* Check IP address argument. */
+  ret = str2prefix (ip_str, &match);
+  if (! ret)
+    {
+      vty_out (vty, "%% address is malformed%s", VTY_NEWLINE);
+      return CMD_WARNING;
+    }
+
+  match.family = get_qafx_sa_family(qafx) ;
+
+  if (qafx_is_mpls_vpn(qafx))
+    {
+      for (rn = bgp_table_top (bgp->rib[qafx]); rn; rn = bgp_route_next (rn))
+        {
+          if (prd && memcmp (rn->p.u.val, prd->val, 8) != 0)
+            continue;
+
+          if ((table = rn->info) != NULL)
+            if ((rm = bgp_node_match (table, &match)) != NULL)
+              {
+                if (! prefix_check || rm->p.prefixlen == match.prefixlen)
+                  {
+                    ri = rm->info;
+                    while (ri)
+                      {
+                        if (ri->extra && ri->extra->damp_info)
+                          {
+                            ri_temp = ri->info.next;
+                            bgp_damp_info_free (ri->extra->damp_info, 1);
+                            ri = ri_temp;
+                          }
+                        else
+                          ri = ri->info.next;
+                      }
+                  }
+                bgp_unlock_node (rm);
+              }
+        }
+    }
+  else
+    {
+      if ((rn = bgp_node_match (bgp->rib[qafx][rib_main], &match)) != NULL)
+        {
+          if (! prefix_check || rn->p.prefixlen == match.prefixlen)
+            {
+              ri = rn->info;
+              while (ri)
+                {
+                  if (ri->extra && ri->extra->damp_info)
+                    {
+                      ri_temp = ri->info.next;
+                      bgp_damp_info_free (ri->extra->damp_info, 1);
+                      ri = ri_temp;
+                    }
+                  else
+                    ri = ri->info.next;
+                }
+            }
+          bgp_unlock_node (rn);
+        }
+    }
+
+  return CMD_SUCCESS;
+#endif
+}
+
+DEFUN (clear_ip_bgp_dampening,
+       clear_ip_bgp_dampening_cmd,
+       "clear ip bgp dampening",
+       CLEAR_STR
+       IP_STR
+       BGP_STR
+       "Clear route flap dampening information\n")
+{
+  bgp_damp_info_clean ();
+  return CMD_SUCCESS;
+}
+
+DEFUN (clear_ip_bgp_dampening_prefix,
+       clear_ip_bgp_dampening_prefix_cmd,
+       "clear ip bgp dampening A.B.C.D/M",
+       CLEAR_STR
+       IP_STR
+       BGP_STR
+       "Clear route flap dampening information\n"
+       "IP prefix <network>/<length>, e.g., 35.0.0.0/8\n")
+{
+  return bgp_clear_damp_route (vty, NULL, argv[0], AFI_IP,
+                               SAFI_UNICAST, NULL, 1);
+}
+
+DEFUN (clear_ip_bgp_dampening_address,
+       clear_ip_bgp_dampening_address_cmd,
+       "clear ip bgp dampening A.B.C.D",
+       CLEAR_STR
+       IP_STR
+       BGP_STR
+       "Clear route flap dampening information\n"
+       "Network to clear damping information\n")
+{
+  return bgp_clear_damp_route (vty, NULL, argv[0], AFI_IP,
+                               SAFI_UNICAST, NULL, 0);
+}
+
+DEFUN (clear_ip_bgp_dampening_address_mask,
+       clear_ip_bgp_dampening_address_mask_cmd,
+       "clear ip bgp dampening A.B.C.D A.B.C.D",
+       CLEAR_STR
+       IP_STR
+       BGP_STR
+       "Clear route flap dampening information\n"
+       "Network to clear damping information\n"
+       "Network mask\n")
+{
+  int ret;
+  char prefix_str[BUFSIZ];
+
+  ret = netmask_str2prefix_str (argv[0], argv[1], prefix_str);
+  if (! ret)
+    {
+      vty_out (vty, "%% Inconsistent address and mask%s", VTY_NEWLINE);
+      return CMD_WARNING;
+    }
+
+  return bgp_clear_damp_route (vty, NULL, prefix_str, AFI_IP,
+                               SAFI_UNICAST, NULL, 0);
+}
+
+DEFUN (bgp_damp_set,
+       bgp_damp_set_cmd,
+       "bgp dampening <1-45> <1-20000> <1-20000> <1-255>",
+       "BGP Specific commands\n"
+       "Enable route-flap dampening\n"
+       "Half-life time for the penalty\n"
+       "Value to start reusing a route\n"
+       "Value to start suppressing a route\n"
+       "Maximum duration to suppress a stable route\n")
+{
+  bgp_inst bgp;
+  int half = DEFAULT_HALF_LIFE * 60;
+  int reuse = DEFAULT_REUSE;
+  int suppress = DEFAULT_SUPPRESS;
+  int max = 4 * half;
+
+  return bgp_damp_warning(vty) ;
+
+  if (argc == 4)
+    {
+      half = atoi (argv[0]) * 60;
+      reuse = atoi (argv[1]);
+      suppress = atoi (argv[2]);
+      max = atoi (argv[3]) * 60;
+    }
+  else if (argc == 1)
+    {
+      half = atoi (argv[0]) * 60;
+      max = 4 * half;
+    }
+
+  bgp = vty->index;
+  return bgp_damp_enable (bgp, bgp_node_qafx(vty), half, reuse, suppress, max);
+}
+
+ALIAS (bgp_damp_set,
+       bgp_damp_set2_cmd,
+       "bgp dampening <1-45>",
+       "BGP Specific commands\n"
+       "Enable route-flap dampening\n"
+       "Half-life time for the penalty\n")
+
+ALIAS (bgp_damp_set,
+       bgp_damp_set3_cmd,
+       "bgp dampening",
+       "BGP Specific commands\n"
+       "Enable route-flap dampening\n")
+
+DEFUN (bgp_damp_unset,
+       bgp_damp_unset_cmd,
+       "no bgp dampening",
+       NO_STR
+       "BGP Specific commands\n"
+       "Enable route-flap dampening\n")
+{
+  bgp_inst bgp;
+
+  return bgp_damp_warning(vty) ;
+
+  bgp = vty->index;
+  return bgp_damp_disable (bgp, bgp_node_qafx(vty));
+}
+
+ALIAS (bgp_damp_unset,
+       bgp_damp_unset2_cmd,
+       "no bgp dampening <1-45> <1-20000> <1-20000> <1-255>",
+       NO_STR
+       "BGP Specific commands\n"
+       "Enable route-flap dampening\n"
+       "Half-life time for the penalty\n"
+       "Value to start reusing a route\n"
+       "Value to start suppressing a route\n"
+       "Maximum duration to suppress a stable route\n")
+
+/*------------------------------------------------------------------------------
+ * Table of damping commands
+ */
+CMD_INSTALL_TABLE(static, bgp_damping_cmd_table, BGPD) =
+{
+  /* IPv4 BGP commands. */
+ /* BGP dampening clear commands */
+  { ENABLE_NODE,     &clear_ip_bgp_dampening_cmd                        },
+  { ENABLE_NODE,     &clear_ip_bgp_dampening_prefix_cmd                 },
+  { ENABLE_NODE,     &clear_ip_bgp_dampening_address_cmd                },
+  { ENABLE_NODE,     &clear_ip_bgp_dampening_address_mask_cmd           },
+
+  { BGP_NODE,        &bgp_damp_set_cmd                                  },
+  { BGP_NODE,        &bgp_damp_set2_cmd                                 },
+  { BGP_NODE,        &bgp_damp_set3_cmd                                 },
+  { BGP_NODE,        &bgp_damp_unset_cmd                                },
+  { BGP_NODE,        &bgp_damp_unset2_cmd                               },
+  { BGP_IPV4_NODE,   &bgp_damp_set_cmd                                  },
+  { BGP_IPV4_NODE,   &bgp_damp_set2_cmd                                 },
+  { BGP_IPV4_NODE,   &bgp_damp_set3_cmd                                 },
+  { BGP_IPV4_NODE,   &bgp_damp_unset_cmd                                },
+  { BGP_IPV4_NODE,   &bgp_damp_unset2_cmd                               },
+
+  CMD_INSTALL_END
+} ;
+
+
+extern void
+bgp_damping_cmd_init (void)
+{
+  cmd_install_table(bgp_damping_cmd_table) ;
+}
+
+
+

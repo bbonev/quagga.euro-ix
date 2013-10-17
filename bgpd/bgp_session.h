@@ -75,6 +75,56 @@ struct bgp_session_stats
 };
 
 /*------------------------------------------------------------------------------
+ * The state of the session, as far as the session is concerned.
+ *
+ * The session->state belongs to the BGP Engine (BE), and is updated as
+ * messages are sent to and arrive from the Routeing Engine (RE).
+ *
+ *   * sReset       -- means that the session has been initialised, ready to
+ *                     run.
+ *
+ *                     The acceptor will be running,
+ *
+ *   * sAcquiring   -- means that the session has been started, so the fsm(s)
+ *                     are running and trying to acquire and establish a
+ *                     session.
+ *
+ *                     The acceptor will be running.
+ *
+ *   * sEstablished -- means an fsm is running and the session has established.
+ *
+ *                     The acceptor will be running.
+ *
+ *   * sStopped     -- means that the session is stopped, so the fsm(s) are
+ *                     not running.
+ *
+ *                     The acceptor will be running.
+ *
+ *   * sDeleting    -- means the session is in the process of being deleted,
+ *                     by the BE.
+ *
+ *                     The session is no longer attached to the parent peer,
+ *                     or referred to by the peer_index.
+ *
+ *                     The acceptor is not running or will be stopped.
+ */
+typedef enum bgp_session_state bgp_session_state_t ;
+enum bgp_session_state
+{
+  bgp_session_state_min     = 0,
+
+  bgp_sReset        = 0,
+  bgp_sAcquiring,
+  bgp_sEstablished,
+  bgp_sStopped,
+
+  bgp_sDeleting,
+
+  bgp_session_state_count,
+  bgp_session_state_max     = bgp_session_state_count - 1,
+} ;
+
+/*------------------------------------------------------------------------------
  * The Session structure
  *
  * The session structure represents a peer as far as the BGP Engine (BE) is
@@ -107,7 +157,7 @@ struct bgp_session
    * the BE to destroy the session.  (So peer can read this without locking,
    * but BE must read atomically.)
    */
-  bgp_peer              peer ;
+  bgp_prun              prun ;
 
   /* These are private to the RE, and are set each time a session event message
    * is received from the BE.
@@ -357,16 +407,16 @@ inline static void BGP_SESSION_UNLOCK(bgp_session session)
 /*==============================================================================
  * Functions
  */
-extern bgp_session bgp_session_init_new(bgp_peer peer) ;
+extern bgp_session bgp_session_init_new(bgp_prun prun) ;
 extern void bgp_session_start(bgp_session session) ;
 extern bgp_note bgp_session_recharge(bgp_session session, bgp_note note) ;
 
 
 
 
-extern void bgp_session_config(bgp_peer peer) ;
-extern bool bgp_session_disable(bgp_peer peer, bgp_note note) ;
-extern void bgp_session_delete(bgp_peer peer);
+extern void bgp_session_config(bgp_prun prun) ;
+extern bool bgp_session_disable(bgp_prun prun, bgp_note note) ;
+extern void bgp_session_delete(bgp_prun prun);
 
 
 
@@ -374,12 +424,12 @@ extern void bgp_session_send_event(bgp_session session, bgp_conn_ord_t ord,
                                                               bgp_fsm_eqb eqb) ;
 
 extern void bgp_session_kick_re_read(bgp_session session) ;
-extern void bgp_session_kick_be_read(bgp_peer peer) ;
-extern void bgp_session_kick_be_write(bgp_peer peer) ;
+extern void bgp_session_kick_be_read(bgp_prun prun) ;
+extern void bgp_session_kick_be_write(bgp_prun prun) ;
 extern void bgp_session_kick_re_write(bgp_session session) ;
 
-extern void bgp_session_kick_write(bgp_peer peer) ;
-extern void bgp_session_kick_read(bgp_peer peer) ;
+extern void bgp_session_kick_write(bgp_prun prun) ;
+extern void bgp_session_kick_read(bgp_prun prun) ;
 
 
 extern void bgp_session_get_stats(bgp_session_stats stats,

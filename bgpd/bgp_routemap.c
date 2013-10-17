@@ -18,7 +18,20 @@ along with GNU Zebra; see the file COPYING.  If not, write to the Free
 Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
 02111-1307, USA.  */
 
-#include <zebra.h>
+#include "misc.h"
+
+#include "bgpd/bgp_common.h"
+#include "bgpd/bgp_routemap.h"
+#include "bgpd/bgp_prun.h"
+#include "bgpd/bgp_session.h"
+#include "bgpd/bgp_connection.h"
+#include "bgpd/bgp_route.h"
+#include "bgpd/bgp_table.h"
+#include "bgpd/bgp_attr_store.h"
+#include "bgpd/bgp_filter.h"
+#include "bgpd/bgp_clist.h"
+#include "bgpd/bgp_mplsvpn.h"
+#include "bgpd/bgp_vty.h"
 
 #include "prefix.h"
 #include "filter.h"
@@ -39,18 +52,6 @@ Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
 #endif /* HAVE_LIBPCREPOSIX */
 #include "buffer.h"
 #include "sockunion.h"
-
-#include "bgpd/bgpd.h"
-#include "bgpd/bgp_peer.h"
-#include "bgpd/bgp_session.h"
-#include "bgpd/bgp_connection.h"
-#include "bgpd/bgp_route.h"
-#include "bgpd/bgp_table.h"
-#include "bgpd/bgp_attr_store.h"
-#include "bgpd/bgp_filter.h"
-#include "bgpd/bgp_clist.h"
-#include "bgpd/bgp_mplsvpn.h"
-#include "bgpd/bgp_vty.h"
 
 /* Memo of route-map commands.
 
@@ -154,30 +155,11 @@ route_match_peer(void* value, prefix_c pfx, route_map_object_t type,
         return RMAP_NOT_MATCH;
     } ;
 
-  /* value must be a sockunion -- we look for a match to the given peer, or
-   * to any peer in the given peer group.
+  /* value must be a sockunion -- we look for a match to the given peer.
    */
   su = value ;
-  if (brm->peer->type == PEER_TYPE_REAL)
-    {
-      if (sockunion_same (su, brm->peer->su_name))
-        return RMAP_MATCH;
-    }
-  else
-    {
-      bgp_peer_group group;
-      bgp_peer peer;
-
-      group = brm->peer->group ;
-
-      for (peer = ddl_head(group->members) ;
-           peer != NULL ;
-           peer = ddl_next(peer, member_list))
-        {
-          if (sockunion_same (su, peer->su_name))
-            return RMAP_MATCH;
-        } ;
-    } ;
+  if (sockunion_same (su, brm->prun->su_name))
+    return RMAP_MATCH;
 
   return RMAP_NOT_MATCH;
 }
@@ -434,11 +416,11 @@ route_match_ip_route_source (void* value, prefix_c pfx, route_map_object_t type,
 
   brm = object ;
 
-  if ((brm->peer == NULL) || (sockunion_family(brm->peer->su_name) != AF_INET))
+  if ((brm->prun == NULL) || (sockunion_family(brm->prun->su_name) != AF_INET))
     return RMAP_NOT_MATCH;
 
   p.family    = AF_INET;
-  p.prefix    = brm->peer->su_name->sin.sin_addr;
+  p.prefix    = brm->prun->su_name->sin.sin_addr;
   p.prefixlen = IPV4_MAX_BITLEN;
 
   if (access_list_apply (*(access_list*)value, &p) == FILTER_PERMIT)
@@ -472,11 +454,11 @@ route_match_ip_route_source_prefix_list (void* value, prefix_c pfx,
 
   brm = object ;
 
-  if ((brm->peer == NULL) || (sockunion_family(brm->peer->su_name) != AF_INET))
+  if ((brm->prun == NULL) || (sockunion_family(brm->prun->su_name) != AF_INET))
     return RMAP_NOT_MATCH;
 
   p.family    = AF_INET;
-  p.prefix    = brm->peer->su_name->sin.sin_addr;
+  p.prefix    = brm->prun->su_name->sin.sin_addr;
   p.prefixlen = IPV4_MAX_BITLEN;
 
   if (prefix_list_apply (*(prefix_list*)value, &p) == PREFIX_PERMIT)
@@ -1162,9 +1144,9 @@ route_set_ip_nexthop (void* value, prefix_c pfx,
 
       if (brm->rmap_type & (BGP_RMAP_TYPE_IN | BGP_RMAP_TYPE_RS_IN
                                              | BGP_RMAP_TYPE_IMPORT) )
-        su = &brm->peer->session->cops->su_remote ;
+        su = &brm->prun->session->cops->su_remote ;
       else if (brm->rmap_type & BGP_RMAP_TYPE_OUT)
-        su = &brm->peer->session->cops->su_local ;
+        su = &brm->prun->session->cops->su_local ;
       else
         return RMAP_OKAY ;
 

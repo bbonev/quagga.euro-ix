@@ -122,11 +122,12 @@ static vhash_free_func  prefix_id_vhash_free ;
 
 static const vhash_params_t prefix_id_vhash_params =
 {
-  .hash   = prefix_id_vhash_hash,
-  .equal  = prefix_id_vhash_equal,
-  .new    = prefix_id_vhash_new,
-  .free   = prefix_id_vhash_free,
-  .orphan = vhash_orphan_null,
+  .hash         = prefix_id_vhash_hash,
+  .equal        = prefix_id_vhash_equal,
+  .new          = prefix_id_vhash_new,
+  .free         = prefix_id_vhash_free,
+  .orphan       = vhash_orphan_null,
+  .table_free   = vhash_table_free_simple,
 } ;
 
 /*------------------------------------------------------------------------------
@@ -139,11 +140,12 @@ static vhash_free_func  prefix_rd_id_vhash_free ;
 
 static const vhash_params_t prefix_rd_id_vhash_params =
 {
-  .hash   = prefix_rd_id_vhash_hash,
-  .equal  = prefix_rd_id_vhash_equal,
-  .new    = prefix_rd_id_vhash_new,
-  .free   = prefix_rd_id_vhash_free,
-  .orphan = vhash_orphan_null,
+  .hash         = prefix_rd_id_vhash_hash,
+  .equal        = prefix_rd_id_vhash_equal,
+  .new          = prefix_rd_id_vhash_new,
+  .free         = prefix_rd_id_vhash_free,
+  .orphan       = vhash_orphan_null,
+  .table_free   = vhash_table_free_simple,
 } ;
 
 /*------------------------------------------------------------------------------
@@ -229,8 +231,8 @@ prefix_id_finish(void)
    * point, however if not any remaining items will be orphaned.  The items
    * are freed en-masse when the chunks are freed, below.
    */
-  prefix_id_table    = vhash_table_reset(prefix_id_table, free_it) ;
-  prefix_rd_id_table = vhash_table_reset(prefix_rd_id_table, free_it) ;
+  prefix_id_table    = vhash_table_reset(prefix_id_table) ;
+  prefix_rd_id_table = vhash_table_reset(prefix_rd_id_table) ;
 
   /* Reset the indexes.
    */

@@ -53,11 +53,12 @@ static vhash_item   attr_cluster_vhash_free(vhash_item item,
 
 static const vhash_params_t attr_cluster_vhash_params =
 {
-    .hash   = attr_cluster_hash,
-    .equal  = attr_cluster_equal,
-    .new    = attr_cluster_vhash_new,
-    .free   = attr_cluster_vhash_free,
-    .orphan = vhash_orphan_null,
+    .hash       = attr_cluster_hash,
+    .equal      = attr_cluster_equal,
+    .new        = attr_cluster_vhash_new,
+    .free       = attr_cluster_vhash_free,
+    .orphan     = vhash_orphan_null,
+    .table_free = vhash_table_free_parent,
 } ;
 
 /*------------------------------------------------------------------------------
@@ -95,8 +96,9 @@ static const qlump_type_t attr_cluster_list_qt[1] =
 extern void
 attr_cluster_start(void)
 {
-  attr_cluster_vhash = vhash_table_new(NULL, 1000 /* chain bases */,
-                                             200 /* % density   */,
+  attr_cluster_vhash = vhash_table_new(&attr_cluster_vhash,
+                                       1000 /* chain bases */,
+                                        200 /* % density   */,
                                                    &attr_cluster_vhash_params) ;
   qlump_register_type(MTYPE_CLUSTER_VAL, attr_cluster_list_qt,
                                                        false /* not a test */) ;
@@ -117,7 +119,7 @@ attr_cluster_start(void)
 extern void
 attr_cluster_finish(void)
 {
-  attr_cluster_vhash = vhash_table_reset(attr_cluster_vhash, free_it) ;
+  attr_cluster_vhash = vhash_table_reset(attr_cluster_vhash) ;
 } ;
 
 /*------------------------------------------------------------------------------

@@ -52,11 +52,12 @@ static vhash_item   attr_community_vhash_free(vhash_item item,
 
 static const vhash_params_t attr_community_vhash_params =
 {
-    .hash   = attr_community_hash,
-    .equal  = attr_community_vhash_equal,
-    .new    = attr_community_vhash_new,
-    .free   = attr_community_vhash_free,
-    .orphan = vhash_orphan_null,
+    .hash       = attr_community_hash,
+    .equal      = attr_community_vhash_equal,
+    .new        = attr_community_vhash_new,
+    .free       = attr_community_vhash_free,
+    .orphan     = vhash_orphan_null,
+    .table_free = vhash_table_free_parent,
 } ;
 
 /*------------------------------------------------------------------------------
@@ -118,8 +119,9 @@ static const qlump_type_t attr_community_enc_qt[1] =
 extern void
 attr_community_start(void)
 {
-  attr_community_vhash = vhash_table_new(NULL, 1000 /* chain bases */,
-                                                200 /* % density   */,
+  attr_community_vhash = vhash_table_new(&attr_community_vhash,
+                                                1000 /* chain bases */,
+                                                 200 /* % density   */,
                                                  &attr_community_vhash_params) ;
 
   qlump_register_type(MTYPE_COMMUNITY_VAL, attr_community_list_qt,
@@ -143,7 +145,7 @@ attr_community_start(void)
 extern void
 attr_community_finish(void)
 {
-  attr_community_vhash = vhash_table_reset(attr_community_vhash, free_it) ;
+  attr_community_vhash = vhash_table_reset(attr_community_vhash) ;
 } ;
 
 /*------------------------------------------------------------------------------

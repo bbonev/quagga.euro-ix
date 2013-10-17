@@ -330,11 +330,12 @@ static vhash_orphan_func prefix_list_vhash_orphan ;
 
 static const vhash_params_t prefix_list_vhash_params =
 {
-  .hash   = vhash_hash_string,
-  .equal  = prefix_list_vhash_equal,
-  .new    = prefix_list_vhash_new,
-  .free   = prefix_list_vhash_free,
-  .orphan = prefix_list_vhash_orphan,
+  .hash         = vhash_hash_string,
+  .equal        = prefix_list_vhash_equal,
+  .new          = prefix_list_vhash_new,
+  .free         = prefix_list_vhash_free,
+  .orphan       = prefix_list_vhash_orphan,
+  .table_free   = vhash_table_free_simple,
 } ;
 
 static void prefix_list_flush(prefix_list plist) ;
@@ -380,10 +381,10 @@ prefix_list_reset (free_keep_b free)
 
       if (pm != NULL)
         {
-          vhash_table_reset(pm->table, free) ;
-
           if (free)
-            pm->table = NULL ;
+            pm->table = vhash_table_reset(pm->table) ;
+          else
+            vhash_table_ream(pm->table) ;
 
           pm->seqnum_flag = true ;      /* restore default    */
 
@@ -494,7 +495,7 @@ prefix_list_vhash_new(vhash_table table, vhash_data_c data)
    */
   confirm(VECTOR_INIT_ALL_ZEROS) ;
 
-  new->table  = vhash_table_inc_ref(table) ;
+  new->table  = table ;
   new->master = table->parent ;
   new->name   = XSTRDUP(MTYPE_PREFIX_LIST_STR, name) ;
 
@@ -581,7 +582,6 @@ prefix_list_vhash_free(vhash_item item, vhash_table table)
   qassert(plist->table == table) ;
 
   prefix_list_flush(plist) ;            /* make sure    */
-  vhash_table_dec_ref(table) ;
 
   XFREE (MTYPE_PREFIX_LIST_STR, plist->name) ;
   XFREE (MTYPE_PREFIX_LIST, plist) ;
@@ -603,7 +603,7 @@ prefix_list_vhash_orphan(vhash_item item, vhash_table table)
 
   prefix_list_flush(plist) ;
 
-  return vhash_unset(plist, table) ;
+  return vhash_drop(plist, table) ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -895,7 +895,7 @@ prefix_list_flush(prefix_list plist)
 
   /* Clear the "set" state -- but do NOT delete, even if reference count == 0
    */
-  vhash_clear_set(plist) ;
+  vhash_clear_held(plist) ;
 
   if (qdebug)
     prefix_list_verify(plist, false /* not show_tree */) ;
@@ -1126,9 +1126,9 @@ prefix_list_entry_insert(prefix_list plist, prefix_list_entry temp)
   if (qdebug)
     prefix_list_verify(plist, false /* not show_tree */) ;
 
-  /* Whatever else happens, the result is not empty and hence is "set"
+  /* Whatever else happens, the result is not empty and hence is set ('held')
    */
-  vhash_set(plist) ;
+  vhash_set_held(plist) ;
 
   /* If do not have a sequence number, allocate next -- in steps of 5.
    *
@@ -2176,7 +2176,7 @@ prefix_list_verify(prefix_list plist, bool show)
     } ;
 
   /* If there is at least one entries or there is a description, then should be
-   * "set", otherwise, not.
+   * set ('held'), otherwise, not.
    */
   if ((index_count != 0) || (plist->desc != NULL))
     qassert(vhash_is_set(plist)) ;
@@ -2332,7 +2332,7 @@ prefix_list_verify_show_entry(prefix_list_entry pe, qAFI_t afi)
  * Fill given bgp_orf_name -- given address of peer and qafx
  */
 extern void
-prefix_bgp_orf_name_set(bgp_orf_name name, sockunion su, uint16_t qafx)
+prefix_bgp_orf_name_set(bgp_orf_name name, sockunion_c su, uint16_t qafx)
 {
   qf_str_t qfs ;
 
@@ -2446,7 +2446,7 @@ prefix_bgp_orf_remove_all (bgp_orf_name name)
  * Delete given orf list
  *
  * If the prefix-list has any remaining entries or any remaining description,
- * discard them.  Clear the "set" state.
+ * discard them.  Clear the 'held' state.
  *
  * Invoke the delete_hook() if any.
  *
@@ -2592,7 +2592,7 @@ prefix_list_print (prefix_list plist)
 /*------------------------------------------------------------------------------
  * Look up given prefix_list -- complain if not found.
  *
- * NB: is not found if is not "set".
+ * NB: is not found if is not 'held' (no value has been set).
  */
 static struct prefix_list*
 vty_prefix_list_lookup(struct vty *vty, afi_t afi, const char* name)
@@ -2864,7 +2864,7 @@ vty_prefix_list_desc_set (struct vty *vty, qAFI_t afi, const char *name,
     XFREE (MTYPE_PREFIX_LIST_STR, plist->desc) ;
 
   plist->desc = XSTRDUP(MTYPE_PREFIX_LIST_STR, desc) ;
-  vhash_set(plist) ;                    /* Has description => is "set"  */
+  vhash_set_held(plist) ;               /* Has description => is "set"  */
 
   XFREE(MTYPE_TMP, desc) ;
   return CMD_SUCCESS;

@@ -58,6 +58,7 @@ extern bool _zlog_critical (const char *mess, const char *file,
 /* Assert iff QDEBUG
  */
 #define qassert(EX) zassert(!qdebug || (EX))
+#define qassert_if(IF, EX) zassert((qdebug && (IF)) ? (EX) : true)
 
 /* Abort with message
  */

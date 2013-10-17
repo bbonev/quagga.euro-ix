@@ -49,6 +49,7 @@ struct elstring
 
 typedef struct elstring  elstring_t[1] ;
 typedef struct elstring* elstring ;
+typedef struct elstring const* elstring_c ;
 
 typedef struct elstring  elstring_s ;
 

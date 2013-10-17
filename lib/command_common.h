@@ -529,7 +529,7 @@ typedef struct cmd_command* cmd_command ;
 
 typedef const char* const argv_t[] ;
 
-#define DEFUN_CMD_ARG_UNUSED __attribute__ ((unused))
+#define DEFUN_CMD_ARG_UNUSED Unused
 #define DEFUN_CMD_FUNCTION(name) \
   cmd_ret_t name(cmd_command self   DEFUN_CMD_ARG_UNUSED, \
                  struct vty* vty    DEFUN_CMD_ARG_UNUSED, \

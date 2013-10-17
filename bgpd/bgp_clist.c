@@ -1,31 +1,34 @@
 /* BGP community-list and extcommunity-list.
-   Copyright (C) 1999 Kunihiro Ishiguro
+ * Copyright (C) 1996, 97, 98 Kunihiro Ishiguro
+ *
+ * Recast: Copyright (C) 2013 Chris Hall (GMCH), Highwayman
+ *
+ * This file is part of GNU Zebra.
+ *
+ * GNU Zebra is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published
+ * by the Free Software Foundation; either version 2, or (at your
+ * option) any later version.
+ *
+ * GNU Zebra is distributed in the hope that it will be useful, but
+ * WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with GNU Zebra; see the file COPYING.  If not, write to the
+ * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
+ * Boston, MA 02111-1307, USA.
+ */
 
-This file is part of GNU Zebra.
-
-GNU Zebra is free software; you can redistribute it and/or modify it
-under the terms of the GNU General Public License as published by the
-Free Software Foundation; either version 2, or (at your option) any
-later version.
-
-GNU Zebra is distributed in the hope that it will be useful, but
-WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
-General Public License for more details.
-
-You should have received a copy of the GNU General Public License
-along with GNU Zebra; see the file COPYING.  If not, write to the Free
-Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
-02111-1307, USA.  */
-
-#include <zebra.h>
+#include "misc.h"
 
 #include "command.h"
 #include "prefix.h"
 #include "memory.h"
 #include "vector.h"
 
-#include "bgpd/bgpd.h"
+#include "bgpd/bgp_common.h"
 #include "bgpd/bgp_community.h"
 #include "bgpd/bgp_ecommunity.h"
 #include "bgpd/bgp_aspath.h"
@@ -78,11 +81,12 @@ static vhash_orphan_func community_list_vhash_orphan ;
 
 static const vhash_params_t bgp_clist_vhash_params =
 {
-  .hash   = vhash_hash_string,
-  .equal  = community_list_vhash_equal,
-  .new    = community_list_vhash_new,
-  .free   = community_list_vhash_free,
-  .orphan = community_list_vhash_orphan,
+  .hash         = vhash_hash_string,
+  .equal        = community_list_vhash_equal,
+  .new          = community_list_vhash_new,
+  .free         = community_list_vhash_free,
+  .orphan       = community_list_vhash_orphan,
+  .table_free   = vhash_table_free_simple,
 } ;
 
 /*------------------------------------------------------------------------------
@@ -122,7 +126,7 @@ community_list_terminate (community_list_handler ch)
   uint clt ;
 
   for (clt = 0 ; clt < CLIST_TYPE_COUNT ; ++clt)
-    ch->cl[clt] = vhash_table_reset(ch->cl[clt], free_it) ;
+    ch->cl[clt] = vhash_table_reset(ch->cl[clt]) ;
 
   XFREE (MTYPE_COMMUNITY_LIST_HANDLER, ch);
 }
@@ -148,7 +152,7 @@ community_list_vhash_new(vhash_table table, vhash_data_c data)
    *
    *   name      -- NULL      -- set below
    */
-  clist->table = vhash_table_inc_ref(table) ;
+  clist->table = table ;
 
   clist->name = XSTRDUP(MTYPE_COMMUNITY_LIST_NAME, name) ;
 
@@ -168,7 +172,7 @@ community_list_vhash_equal(vhash_item_c item, vhash_data_c data)
 } ;
 
 /*------------------------------------------------------------------------------
- * Free community list -- symbol_table func.free_body function
+ * Free community list -- vhash_free_func()
  *
  * Make sure is completely empty, first.
  */
@@ -182,15 +186,13 @@ community_list_vhash_free(vhash_item item, vhash_table table)
   XFREE(MTYPE_COMMUNITY_LIST_NAME, clist->name) ;
   XFREE(MTYPE_COMMUNITY_LIST, clist) ;
 
-  vhash_table_dec_ref(table) ;          /* table may vanish     */
-
   return NULL ;
 }
 
 /*------------------------------------------------------------------------------
- * Orphan the given community list -- symbol_table func.free_body function
+ * Orphan the given community list -- vhash_orphan_func()
  *
- * Make sure is empty and unset.
+ * Make sure is empty and then drop.
  */
 static vhash_item
 community_list_vhash_orphan(vhash_item item, vhash_table table)
@@ -199,7 +201,7 @@ community_list_vhash_orphan(vhash_item item, vhash_table table)
 
   community_list_flush_entries(clist) ;
 
-  return vhash_unset(item, table) ;
+  return vhash_drop(item, table) ;
 }
 
 /*------------------------------------------------------------------------------
@@ -228,7 +230,7 @@ community_list_lookup (community_list_handler ch, clist_type_t what,
  * Lookup and create if not found.
  *
  * If is "set", then we are about to set some part of the community list value,
- * so want to "symbol_set" the symbol.
+ * so want to set the vhash 'held'.
  */
 static community_list
 community_list_get (community_list_handler ch, clist_type_t what,
@@ -248,7 +250,7 @@ community_list_get (community_list_handler ch, clist_type_t what,
   clist = vhash_lookup(table, name, &added /* add if required */) ;
 
   if (set)
-    vhash_set(clist) ;           /* the clist has some value     */
+    vhash_set_held(clist) ;     /* the clist has some value     */
 
   return clist;
 }
@@ -256,7 +258,7 @@ community_list_get (community_list_handler ch, clist_type_t what,
 /*------------------------------------------------------------------------------
  * Get a reference to the community list of the given type and name.
  *
- * If a community-list has been defined, its symbol value will be "set".  If
+ * If a community-list has been defined, its symbol value will be 'held'.  If
  * a community-list has not (yet) been defined, then its symbol may be, and
  * if or when the community-list is defined, then all references to it will
  * see that.
@@ -299,7 +301,7 @@ static void
 community_list_delete(community_list clist)
 {
   community_list_flush_entries(clist) ;
-  vhash_unset(clist, clist->table) ;
+  vhash_drop(clist, clist->table) ;
 } ;
 
 /*==============================================================================

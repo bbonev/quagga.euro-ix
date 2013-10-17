@@ -45,6 +45,53 @@
  * This is a discrete structure so that the accept() handling can handle these
  * things without requiring the complete bgp_connection or bgp_session !
  */
+
+/* Whether the connection is prepared to accept and/or connect and/or track.
+ *
+ * This is the primary control over the connection handling in the BGP Engine,
+ * and lives in the connection options as transmitted to the BGP Engine.
+ *
+ *   * csMayAccept      -- is allowed to accept() a connection
+ *
+ *   * csMayConnect     -- is allowed to make a connect() connection
+ *
+ *   * csTrack          -- run the acceptor and track incoming connections
+ *
+ *                         Ignored if not csMay_Accept !
+ *
+ *                         This is cleared if the peer is pisDown
+ *
+ *   * csRun            -- run the session or session acquisition.
+ *
+ *                         Ignored if not csMay_Accept or csMay_Connect,
+ *                         unless a session is established already.
+ *
+ *                         This is cleared if the peer is not pisRunnable
+ *
+ * Note that may be csRun without either csMayAccept/Connect.  In particular,
+ * once a session is Established, changes to csMayAccept/Connect do not affect
+ * the session, but clearing csRun brings it down.
+ *
+ * When a peer is stopped, will clear csRun, and when it is down, will clear
+ * both csRun and csTrack.
+ */
+typedef enum bgp_conn_state bgp_conn_state_t ;
+enum bgp_conn_state
+{
+  bgp_csDown        = 0,
+
+  bgp_csMayAccept   = BIT(0),
+  bgp_csMayConnect  = BIT(1),
+
+  bgp_csMayMask     = bgp_csMayAccept | bgp_csMayConnect,
+  bgp_csMayBoth     = bgp_csMayAccept | bgp_csMayConnect,
+
+  bgp_csTrack       = BIT(4),
+  bgp_csRun         = BIT(5),
+
+  bgp_csCanTrack    = bgp_csTrack | bgp_csMayAccept,
+} ;
+
 typedef struct bgp_cops bgp_cops_t ;
 
 struct bgp_cops
@@ -75,12 +122,6 @@ struct bgp_cops
   /* Whether to connections are shutdown/disabled/enabled.
    */
   bgp_conn_state_t  conn_state ;
-
-#if 0
-  /* Whether to allow disallow inbound and/or outbound connections.
-   */
-  bgp_conn_let_t    conn_let ;
-#endif
 
   /* Flag so can suppress sending NOTIFICATION messages without first
    * sending an OPEN -- just in case, but default is to not send !
@@ -147,11 +188,26 @@ struct bgp_cops
 /*==============================================================================
  * BGP Connection Structure
  *
- * The BGP Connection is the main data structure for the BGP Engine.
+ * The BGP Connection is the main data structure for the FSM.
  *
  * When a session terminates, or a connection is shut it may have a short
  * independent life, if a NOTIFICATION message is pending.
+ *
+ * A session may have two connections -- connect() and accept(), one of which
+ * will (we sincerely hope) become the established connection.
  */
+typedef enum bgp_conn_ord bgp_conn_ord_t ;
+enum bgp_conn_ord
+{
+  bc_estd       = 0,
+  bc_connect    = 1,
+  bc_accept     = 2,
+
+  bc_first      = bc_connect,   /* for stepping through same !  */
+  bc_last       = bc_accept,
+
+  bc_count,
+} ;
 
 enum
 {
@@ -167,6 +223,17 @@ enum
 } ;
 
 CONFIRM(BGP_MSG_MAX_L == 4096) ;        /* if not, reconsider the above */
+
+/*------------------------------------------------------------------------------
+ * How to log stuff for given connection
+ */
+typedef struct bgp_connection_logging  bgp_connection_logging_t ;
+
+struct bgp_connection_logging
+{
+  char*             name ;              /* peer "name" (+ tag)          */
+  struct zlog*      log ;               /* where to log to              */
+} ;
 
 /*------------------------------------------------------------------------------
  * The Connection Structure
@@ -434,6 +501,8 @@ extern void bgp_connections_stop(void) ;
 
 extern bgp_connection bgp_connection_init_new(bgp_connection connection,
                                   bgp_session session, bgp_conn_ord_t ordinal) ;
+extern void bgp_connection_start(bgp_session session, bgp_conn_ord_t ord) ;
+
 extern void bgp_connection_free(bgp_connection connection) ;
 extern bgp_cops bgp_connection_prepare(bgp_connection connection) ;
 extern qfile bgp_connection_connecting(bgp_connection connection, int sock_fd) ;

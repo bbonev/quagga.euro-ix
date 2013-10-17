@@ -87,6 +87,52 @@ enum
 CONFIRM(bgp_binary_second    == 1073741824) ;
 CONFIRM(bgp_period_nano_secs ==  268435456) ;
 
+
+/*==============================================================================
+ * A bgp_route_type is a packed value:
+ *
+ *   * bits 1..0:  the bgp_route_subtype, as below
+ *
+ *   * bits 7..2:  the zebra route type (ZEBRA_ROUTE_XXX)
+ */
+typedef enum bgp_route_subtype bgp_route_subtype_t ;
+typedef uint bgp_zebra_route_t ;
+
+enum bgp_route_subtype
+{
+  /* BGP_ROUTE_NORMAL  -- learned from peer
+   *
+   */
+  BGP_ROUTE_NORMAL,
+  BGP_ROUTE_AGGREGATE,
+  BGP_ROUTE_REDISTRIBUTE,
+  BGP_ROUTE_STATIC,
+
+  BGP_ROUTE_SUBTYPE_COUNT
+};
+
+typedef enum bgp_route_type bgp_route_type_t ;
+enum bgp_route_type
+{
+  BGP_ZEBRA_ROUTE_SHIFT   = 2,
+
+  BGP_ROUTE_SUBTYPE_MASK  = BIT(BGP_ZEBRA_ROUTE_SHIFT)     - 1,
+  BGP_ZEBRA_ROUTE_MASK    = BIT(8 - BGP_ZEBRA_ROUTE_SHIFT) - 1,
+
+  bgp_route_type_null     = 0,
+
+  bgp_route_type_normal   = (ZEBRA_ROUTE_BGP << BGP_ZEBRA_ROUTE_SHIFT)
+                                                             | BGP_ROUTE_NORMAL,
+
+  bgp_route_type_t_max    = BGP_ROUTE_SUBTYPE_MASK | BGP_ZEBRA_ROUTE_MASK,
+} ;
+
+CONFIRM((BGP_ROUTE_SUBTYPE_COUNT - 1) <= BGP_ROUTE_SUBTYPE_MASK) ;
+CONFIRM((ZEBRA_ROUTE_MAX         - 1) <= BGP_ZEBRA_ROUTE_MASK) ;
+CONFIRM(bgp_route_type_null == ((ZEBRA_ROUTE_SYSTEM << BGP_ZEBRA_ROUTE_SHIFT)
+                                                          | BGP_ROUTE_NORMAL)) ;
+CONFIRM(bgp_route_type_t_max <= 255) ;  /* byte         */
+
 /*==============================================================================
  * The bgp-rib -- RIB.
  *
@@ -97,19 +143,21 @@ typedef struct bgp_rib bgp_rib_t ;
 
 struct bgp_rib
 {
-  bgp_inst      bgp ;                   /* parent bgp instance          */
+  bgp_run       brun ;                  /* parent bgp running instance */
 
   /* State of the RIB and various flags which we have here for convenience
    */
   qafx_t        qafx ;
   bool          real_rib ;
 
-  bool          always_compare_med ;    /* BGP_FLAG_ALWAYS_COMPARE_MED  */
-  bool          deterministic_med ;     /* BGP_FLAG_DETERMINISTIC_MED
+  bool          do_always_compare_med ; /* BGP_FLAG_ALWAYS_COMPARE_MED  */
+  bool          do_deterministic_med ;  /* BGP_FLAG_DETERMINISTIC_MED
                                            and ! always_compare_med     */
-  bool          confed_compare_med ;    /* BGP_FLAG_MED_CONFED          */
-  bool          aspath_ignore ;         /* BGP_FLAG_ASPATH_IGNORE       */
-  bool          aspath_confed ;         /* BGP_FLAG_ASPATH_CONFED       */
+  bool          do_confed_compare_med ; /* BGP_FLAG_MED_CONFED          */
+  bool          do_aspath_ignore ;      /* BGP_FLAG_ASPATH_IGNORE       */
+  bool          do_aspath_confed ;      /* BGP_FLAG_ASPATH_CONFED       */
+
+  bool          do_damping ;            /* BGP_AFF_DAMPING              */
 
   uint32_t      default_local_pref ;    /* copy of bgp entry            */
   uint          lock;
@@ -133,7 +181,7 @@ struct bgp_rib
 
   /* The pribs known to this RIB.
    */
-  struct dl_base_pair(bgp_prib) known_pribs ;
+  struct dl_base_pair(bgp_prib) pribs ;
 
   /* The nodes_table is an ihash by prefix_id_t, for all the prefixes in this
    * RIB.  Each prefix has a bgp_rib_node.
@@ -175,6 +223,14 @@ struct bgp_rib
    */
   bgp_prib      update_view_peers ;
   svec4_t       update_peers[1] ;
+
+  /* Static route configuration.
+   */
+  bgp_table route ;
+
+  /* Aggregate address configuration.
+   */
+  bgp_table aggregate ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -782,7 +838,7 @@ struct route_info
 /*==============================================================================
  * Functions
  */
-extern bgp_rib bgp_rib_new(bgp_inst bgp, qafx_t qafx) ;
+extern bgp_rib bgp_rib_new(bgp_run brun, qafx_t qafx) ;
 extern bgp_rib bgp_rib_destroy(bgp_rib rib) ;
 
 extern bgp_rib_node bgp_rib_node_get(bgp_rib rib, prefix_id_entry pie) ;
@@ -806,18 +862,45 @@ extern prefix_rd_id_entry bgp_rib_rd_seek(bgp_rib rib, prefix_rd prd) ;
 extern int bgp_rib_node_cmp(const bgp_rib_node_c* p_a,
                             const bgp_rib_node_c* p_b) ;
 
-extern bgp_prib peer_rib_new(bgp_peer peer, qafx_t qafx) ;
-extern bgp_prib peer_rib_free(bgp_prib prib) ;
-extern bgp_prib peer_rib_set_rs(bgp_peer peer, qafx_t qafx) ;
-extern bgp_prib peer_rib_unset_rs(bgp_peer peer, qafx_t qafx) ;
 
-
+Inline bgp_route_subtype_t bgp_route_subtype(bgp_route_type_t type)
+                                                                 Always_Inline ;
+Inline bgp_zebra_route_t bgp_zebra_route(bgp_route_type_t type)  Always_Inline ;
+Inline bgp_route_type_t bgp_route_type(bgp_zebra_route_t ztype,
+                                    bgp_route_subtype_t stype)   Always_Inline ;
 Inline bgp_lcontext bgp_lcontext_get(bgp_rib rib, bgp_lc_id_t lc_id) ;
 
 
 /*==============================================================================
  * The inlines
  */
+
+/*------------------------------------------------------------------------------
+ * Extract bgp_route_subtype_t from given bgp_route_type_t
+ */
+Inline bgp_route_subtype_t
+bgp_route_subtype(bgp_route_type_t type)
+{
+  return type & BGP_ROUTE_SUBTYPE_MASK ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Extract bgp_zebra_route_t from given bgp_route_type_t
+ */
+Inline bgp_zebra_route_t
+bgp_zebra_route(bgp_route_type_t type)
+{
+  return type >> BGP_ZEBRA_ROUTE_SHIFT ;
+}
+
+/*------------------------------------------------------------------------------
+ * Construct bgp_route_type_t from given bgp_zebra_route_t + bgp_route_subtype_t
+ */
+Inline bgp_route_type_t
+bgp_route_type(bgp_zebra_route_t ztype, bgp_route_subtype_t stype)
+{
+  return (ztype << BGP_ZEBRA_ROUTE_SHIFT) | stype ;
+} ;
 
 /*------------------------------------------------------------------------------
  * Get the lcontext associated with the given lc-id, in the given rib.

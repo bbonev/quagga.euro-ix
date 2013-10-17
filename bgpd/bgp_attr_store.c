@@ -22,6 +22,7 @@
 #include <misc.h>
 
 #include "bgpd/bgp_attr_store.h"
+#include "bgpd/bgp_adj_out.h"
 #include "lib/prefix.h"
 
 /*==============================================================================
@@ -991,11 +992,12 @@ static vhash_item   bgp_attr_set_vhash_free(vhash_item item,
                                                             vhash_table table) ;
 static const vhash_params_t bgp_attr_set_vhash_params =
 {
-    .hash   = bgp_attr_set_hash,
-    .equal  = bgp_attr_set_equal,
-    .new    = bgp_attr_set_vhash_new,
-    .free   = bgp_attr_set_vhash_free,
-    .orphan = vhash_orphan_null,
+    .hash       = bgp_attr_set_hash,
+    .equal      = bgp_attr_set_equal,
+    .new        = bgp_attr_set_vhash_new,
+    .free       = bgp_attr_set_vhash_free,
+    .orphan     = vhash_orphan_null,
+    .table_free = vhash_table_free_parent,
 } ;
 
 /*------------------------------------------------------------------------------
@@ -1009,12 +1011,13 @@ static const vhash_params_t bgp_attr_set_vhash_params =
 static void
 bgp_attr_set_start(void)
 {
-  bgp_attr_vhash = vhash_table_new(NULL, 1000 /* chain bases */,
-                                          200 /* % density   */,
+  bgp_attr_vhash = vhash_table_new(&bgp_attr_vhash,
+                                    1000 /* chain bases */,
+                                     200 /* % density   */,
                                                   &bgp_attr_set_vhash_params) ;
   bgp_attr_null = XCALLOC(MTYPE_ATTR, sizeof(attr_set_t)) ;
 
-  vhash_set(bgp_attr_null) ;    /* is a 'set' or stored attribute set   */
+  vhash_set_held(bgp_attr_null) ;       /* 'held' <=> stored    */
 } ;
 
 /*------------------------------------------------------------------------------
@@ -1031,7 +1034,7 @@ bgp_attr_set_start(void)
 static void
 bgp_attr_set_finish(void)
 {
-  bgp_attr_vhash = vhash_table_reset(bgp_attr_vhash, free_it) ;
+  bgp_attr_vhash = vhash_table_reset(bgp_attr_vhash) ;
 
   XFREE(MTYPE_ATTR, bgp_attr_null) ;
 } ;
@@ -1243,10 +1246,10 @@ bgp_attr_set_store(attr_set set, attr_new_bits_t new_subs)
       if ((set->transitive != NULL) && !(new_subs & atnb_transitive))
         attr_unknown_lock(set->transitive) ;
 
-      /* The set is now stored -- all stored attribute sets are "set" in vhash
+      /* The set is now stored -- all stored attribute sets are 'held' in vhash
        * terms.
        */
-      vhash_set(set) ;
+      vhash_set_held(set) ;
     }
   else
     {

@@ -32,7 +32,9 @@ Boston, MA 02111-1307, USA.  */
 #include "qafi_safi.h"
 
 #include "bgpd/bgpd.h"
-#include "bgpd/bgp_peer.h"
+//#include "bgpd/bgp_inst.h"
+#include "bgpd/bgp_run.h"
+#include "bgpd/bgp_prun.h"
 #include "bgpd/bgp_session.h"
 #include "bgpd/bgp_connection.h"
 #include "bgpd/bgp_route.h"
@@ -59,8 +61,7 @@ static int
 bgp_router_id_update (int command, struct zclient *zclient, zebra_size_t length)
 {
   struct prefix router_id;
-  struct listnode *node, *nnode;
-  bgp_inst bgp;
+  bgp_run brun ;
 
   zebra_router_id_update_read(zclient->ibuf,&router_id);
 
@@ -69,10 +70,13 @@ bgp_router_id_update (int command, struct zclient *zclient, zebra_size_t length)
 
   router_id_zebra = router_id.u.prefix4;
 
-  for (ALL_LIST_ELEMENTS (bm->bgp, node, nnode, bgp))
+  for (brun = ddl_head(bm->bruns) ; brun != NULL ;
+                                    brun = ddl_next(brun, brun_list))
     {
+#if 0
       if (!(bgp->config & BGP_CONFIG_ROUTER_ID))
-        bgp_router_id_set (bgp, 0, false /* unset */);
+        bgp_router_id_set (brun, 0, false /* unset */);
+#endif
     } ;
 
   return 0;
@@ -153,28 +157,30 @@ bgp_interface_down (int command, struct zclient *zclient, zebra_size_t length)
 
   /* Fast external-failover (Currently IPv4 only) */
   {
-    struct listnode *mnode;
-    bgp_inst bgp;
-    bgp_peer peer;
+    bgp_run brun ;
     struct interface *peer_if;
 
-    for (ALL_LIST_ELEMENTS_RO (bm->bgp, mnode, bgp))
+    for (brun = ddl_head(bm->bruns) ; brun != NULL ;
+                                      brun = ddl_next(brun, brun_list))
       {
-        if (CHECK_FLAG (bgp->flags, BGP_FLAG_NO_FAST_EXT_FAILOVER))
+        bgp_prun  prun ;
+
+        if (brun->no_fast_ext_failover)
           continue;
 
-        for (ALL_LIST_ELEMENTS (bgp->peer, node, nnode, peer))
+        for (prun = ddl_head(brun->pruns) ; prun != NULL
+                                          ; prun = ddl_next(prun, prun_list))
           {
-            if (peer->cops.ttl != 1)
+            if (prun->cops_r.ttl != 1)
               continue;
 
-            if (peer->su_name->sa.sa_family == AF_INET)
-              peer_if = if_lookup_by_ipv4 (&peer->su_name->sin.sin_addr);
+            if (prun->su_name->sa.sa_family == AF_INET)
+              peer_if = if_lookup_by_ipv4 (&prun->su_name->sin.sin_addr);
             else
               continue;
 
             if (ifp == peer_if)
-              bgp_peer_down(peer, PEER_DOWN_INTERFACE_DOWN);
+              bgp_peer_down(prun, PEER_DOWN_INTERFACE_DOWN);
           }
       }
   }
@@ -371,7 +377,7 @@ zebra_read_ipv6 (int command, struct zclient *zclient, zebra_size_t length)
 #endif /* HAVE_IPV6 */
 
 struct interface *
-if_lookup_by_ipv4 (struct in_addr *addr)
+if_lookup_by_ipv4 (const struct in_addr *addr)
 {
   struct listnode *ifnode;
   struct listnode *cnode;
@@ -399,7 +405,7 @@ if_lookup_by_ipv4 (struct in_addr *addr)
 }
 
 struct interface *
-if_lookup_by_ipv4_exact (struct in_addr *addr)
+if_lookup_by_ipv4_exact (const struct in_addr *addr)
 {
   struct listnode *ifnode;
   struct listnode *cnode;
@@ -423,7 +429,7 @@ if_lookup_by_ipv4_exact (struct in_addr *addr)
 
 #ifdef HAVE_IPV6
 struct interface *
-if_lookup_by_ipv6 (struct in6_addr *addr)
+if_lookup_by_ipv6 (const struct in6_addr *addr)
 {
   struct listnode *ifnode;
   struct listnode *cnode;
@@ -451,7 +457,7 @@ if_lookup_by_ipv6 (struct in6_addr *addr)
 }
 
 struct interface *
-if_lookup_by_ipv6_exact (struct in6_addr *addr)
+if_lookup_by_ipv6_exact (const struct in6_addr *addr)
 {
   struct listnode *ifnode;
   struct listnode *cnode;
@@ -516,9 +522,9 @@ if_get_ipv6_local (struct interface *ifp, struct in6_addr *addr)
 }
 #endif /* HAVE_IPV6 */
 
-int
+extern int
 bgp_nexthop_set (sockunion local, sockunion remote,
-                 bgp_nexthop nexthop, bgp_peer peer)
+                 bgp_nexthop nexthop, bgp_prun prun)
 {
   int ret = 0;
   struct interface *ifp = NULL;
@@ -540,9 +546,9 @@ bgp_nexthop_set (sockunion local, sockunion remote,
     {
       if (IN6_IS_ADDR_LINKLOCAL (&local->sin6.sin6_addr))
         {
-          if (peer->cops.ifname)
+          if (prun->cops_r.ifname[0] != '\0')
             ifp = if_lookup_by_index (
-                                    if_nametoindex (peer->cops.ifname));
+                                    if_nametoindex (prun->cops_r.ifname));
         }
       else
         ifp = if_lookup_by_ipv6 (&local->sin6.sin6_addr);
@@ -577,8 +583,8 @@ bgp_nexthop_set (sockunion local, sockunion remote,
 
       /* IPv4 nexthop.  I don't care about it.
        */
-      if (peer->args.local_id != 0)
-        nexthop->v4.s_addr = peer->args.local_id;
+      if (prun->args_r.local_id != 0)
+        nexthop->v4.s_addr = prun->args_r.local_id;
 
       /* Global address*/
       if (! IN6_IS_ADDR_LINKLOCAL (&local->sin6.sin6_addr))
@@ -609,9 +615,9 @@ bgp_nexthop_set (sockunion local, sockunion remote,
 
   if (IN6_IS_ADDR_LINKLOCAL (&local->sin6.sin6_addr) ||
       if_lookup_by_ipv6 (&remote->sin6.sin6_addr))
-    peer->shared_network = true;
+    prun->shared_network = true;
   else
-    peer->shared_network = false ;
+    prun->shared_network = false ;
 
   /* KAME stack specific treatment.  */
 #ifdef KAME
@@ -644,7 +650,7 @@ bgp_nexthop_set (sockunion local, sockunion remote,
  *   * ifindex    -- zero;
  */
 static zroute
-bgp_zebra_route_set(zroute zr, bgp_peer peer, route_info ri)
+bgp_zebra_route_set(zroute zr, bgp_prun prun, route_info ri)
 {
   if (zr == NULL)
     zr = XCALLOC(0, sizeof(zroute_t)) ;
@@ -653,7 +659,7 @@ bgp_zebra_route_set(zroute zr, bgp_peer peer, route_info ri)
 
   zr->i_safi = get_iSAFI(ri->current.qafx) ;
 
-  switch (peer->sort)
+  switch (prun->sort)
     {
       case BGP_PEER_IBGP:
       case BGP_PEER_CBGP:
@@ -661,7 +667,7 @@ bgp_zebra_route_set(zroute zr, bgp_peer peer, route_info ri)
         break ;
 
       case BGP_PEER_EBGP:
-        if ((peer->cops.ttl != 1) || (peer->disable_connected_check))
+        if ((prun->cops_r.ttl != 1) || (prun->disable_connected_check))
           zr->flags |= ZEBRA_FLAG_INTERNAL ;
         break ;
 
@@ -684,7 +690,7 @@ extern zroute
 bgp_zebra_announce (zroute zr, bgp_rib_node rn, prefix_c pfx)
 {
   route_info    ri ;
-  bgp_peer      peer ;
+  bgp_prun      prun ;
   attr_next_hop nh ;
   bool          ok ;
 
@@ -696,8 +702,7 @@ bgp_zebra_announce (zroute zr, bgp_rib_node rn, prefix_c pfx)
   ri = svs_head(rn->aroutes[lc_view_id].base, rn->avail) ;
   nh = &ri->iroutes[lc_view_id].attr->next_hop ;
 
-  peer  = ri->prib->peer;
-  qassert(peer->type == PEER_TYPE_REAL) ;
+  prun  = ri->prib->prun;
 
   switch (pfx->family)
     {
@@ -714,7 +719,7 @@ bgp_zebra_announce (zroute zr, bgp_rib_node rn, prefix_c pfx)
             break ;             /* not an IPv5 next-hop         */
 
           ok = true ;
-          zr = bgp_zebra_route_set(zr, peer, ri) ;
+          zr = bgp_zebra_route_set(zr, prun, ri) ;
 
           zr->next_hop.ipv4 = nh->ip.v4 ;
 
@@ -734,7 +739,7 @@ bgp_zebra_announce (zroute zr, bgp_rib_node rn, prefix_c pfx)
           api.message     |= ZAPI_MESSAGE_METRIC ;
           api.metric       = zr->med;
 
-          api.distance     = bgp_distance_apply (peer, pfx) ;
+          api.distance     = bgp_distance_apply (prun, pfx) ;
           if (api.distance != 0)
             api.message   |= ZAPI_MESSAGE_DISTANCE ;
 
@@ -769,7 +774,7 @@ bgp_zebra_announce (zroute zr, bgp_rib_node rn, prefix_c pfx)
             break ;
 
           ok = true ;
-          zr = bgp_zebra_route_set(zr, peer, ri) ;
+          zr = bgp_zebra_route_set(zr, prun, ri) ;
 
           if (nh->type == nh_ipv6_1)
             {
@@ -784,22 +789,22 @@ bgp_zebra_announce (zroute zr, bgp_rib_node rn, prefix_c pfx)
                * Workaround for Cisco's nexthop bug.
                */
               if (IN6_IS_ADDR_UNSPECIFIED(&nh->ip.v6[in6_global])
-                 && (peer->session->cops->su_remote.sa.sa_family == AF_INET6))
+                 && (prun->session->cops->su_remote.sa.sa_family == AF_INET6))
                 zr->next_hop.ipv6.addr =
-                                peer->session->cops->su_remote.sin6.sin6_addr ;
+                                prun->session->cops->su_remote.sin6.sin6_addr ;
               else
                 zr->next_hop.ipv6.addr = nh->ip.v6[in6_link_local].addr ;
 
-              if (peer->nexthop.ifp)
-                zr->ifindex = peer->nexthop.ifp->ifindex;
+              if (prun->nexthop.ifp)
+                zr->ifindex = prun->nexthop.ifp->ifindex;
             } ;
 
           if ((zr->ifindex != 0) && IN6_IS_ADDR_LINKLOCAL (nexthop[0]))
             {
-              if (peer->cops.ifname)
-                zr->ifindex = if_nametoindex (peer->cops.ifname);
-              else if (peer->nexthop.ifp)
-                zr->ifindex = peer->nexthop.ifp->ifindex;
+              if (prun->cops_r.ifname[0] != '\0')
+                zr->ifindex = if_nametoindex (prun->cops_r.ifname);
+              else if (prun->nexthop.ifp)
+                zr->ifindex = prun->nexthop.ifp->ifindex;
             } ;
 
           memset(&api, 0, sizeof(struct zapi_ipv6)) ;
@@ -961,39 +966,45 @@ bgp_zebra_withdraw (zroute zr, prefix_c pfx)
   zr->i_safi = iSAFI_Reserved ;
 } ;
 
+#if 0
 /* Other routes redistribution into BGP. */
-int
-bgp_redistribute_set (bgp_inst bgp, afi_t afi, int type)
+extern int
+bgp_redistribute_set (bgp_run brun, afi_t afi, int type)
 {
-  /* Set flag to BGP instance. */
-  bgp->redist[afi][type] = true ;
+#if 0
+  /* Set flag to BGP instance.
+   */
+  bconf->c_redist[afi][type] = true ;
 
-  /* Return if already redistribute flag is set. */
+  /* Return if already redistribute flag is set.
+   */
   if (zclient->redist[type])
     return CMD_WARNING;
 
   zclient->redist[type] = true ;
 
-  /* Return if zebra connection is not established. */
+  /* Return if zebra connection is not established.
+   */
   if (zclient->sock < 0)
     return CMD_WARNING;
 
   if (BGP_DEBUG(zebra, ZEBRA))
     zlog_debug("Zebra send: redistribute add %s", zebra_route_string(type));
 
-  /* Send distribute add message to zebra. */
+  /* Send distribute add message to zebra.
+   */
   zebra_redistribute_send (ZEBRA_REDISTRIBUTE_ADD, zclient, type);
-
+#endif
   return CMD_SUCCESS;
 }
 
 /* Redistribute with route-map specification.  */
-int
-bgp_redistribute_rmap_set (bgp_inst bgp, afi_t afi, int type,
-                           const char *name)
+extern int
+bgp_redistribute_rmap_set (bgp_run brun, afi_t afi, int type, const char *name)
 {
-  if (bgp->rmap[afi][type].name
-      && (strcmp (bgp->rmap[afi][type].name, name) == 0))
+#if 0
+  if (bconf->c_rmap[afi][type].name
+      && (strcmp (bconf->c_rmap[afi][type].name, name) == 0))
     return 0;
 
   if (bgp->rmap[afi][type].name)
@@ -1002,29 +1013,34 @@ bgp_redistribute_rmap_set (bgp_inst bgp, afi_t afi, int type,
   bgp->rmap[afi][type].map = route_map_lookup (name);
 
   return 1;
+#endif
+  return CMD_SUCCESS;
 }
 
 /* Redistribute with metric specification.  */
-int
-bgp_redistribute_metric_set (bgp_inst bgp, afi_t afi, int type,
-                             u_int32_t metric)
+extern int
+bgp_redistribute_metric_set (bgp_run brun, afi_t afi, int type, uint32_t metric)
 {
-  if (bgp->redist_metric_set[afi][type]
-      && bgp->redist_metric[afi][type] == metric)
+#if 0
+  if (bconf->c_redist_metric_set[afi][type]
+      && bconf->c_redist_metric[afi][type] == metric)
     return 0;
 
-  bgp->redist_metric_set[afi][type] = true ;
-  bgp->redist_metric[afi][type] = metric;
+  bconf->c_redist_metric_set[afi][type] = true ;
+  bconf->c_redist_metric[afi][type] = metric;
 
   return 1;
+#endif
+  return CMD_SUCCESS;
 }
 
 /*------------------------------------------------------------------------------
  * Unset redistribution.
  */
 extern cmd_ret_t
-bgp_redistribute_unset (bgp_inst bgp, qAFI_t q_afi, int type)
+bgp_redistribute_unset (bgp_run brun, afi_t afi, int type)
 {
+#if 0
   /* Unset flag from BGP instance. */
   bgp->redist[q_afi][type] = false ;
 
@@ -1055,14 +1071,15 @@ bgp_redistribute_unset (bgp_inst bgp, qAFI_t q_afi, int type)
 
   /* Withdraw redistributed routes from current BGP's routing table. */
   bgp_redistribute_withdraw_all (bgp, q_afi, type);
-
+#endif
   return CMD_SUCCESS;
 }
 
 /* Unset redistribution route-map configuration.  */
-int
-bgp_redistribute_routemap_unset (bgp_inst bgp, afi_t afi, int type)
+extern int
+bgp_redistribute_routemap_unset (bgp_run brun, afi_t afi, int type)
 {
+#if 0
   if (! bgp->rmap[afi][type].name)
     return 0;
 
@@ -1070,23 +1087,26 @@ bgp_redistribute_routemap_unset (bgp_inst bgp, afi_t afi, int type)
   free (bgp->rmap[afi][type].name);
   bgp->rmap[afi][type].name = NULL;
   bgp->rmap[afi][type].map = NULL;
-
+#endif
   return 1;
 }
 
 /* Unset redistribution metric configuration.  */
-int
-bgp_redistribute_metric_unset (bgp_inst bgp, afi_t afi, int type)
+extern int
+bgp_redistribute_metric_unset (bgp_run brun, afi_t afi, int type)
 {
+#if 0
   if (! bgp->redist_metric_set[afi][type])
     return 0;
 
   /* Unset metric. */
   bgp->redist_metric_set[afi][type] = false ;
   bgp->redist_metric[afi][type] = 0;
-
+#endif
   return 1;
 }
+#endif
+
 
 void
 bgp_zclient_reset (void)

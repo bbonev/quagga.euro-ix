@@ -21,10 +21,12 @@
 
 #include "bgpd/bgp_common.h"
 #include "bgpd/bgpd.h"
+#include "bgpd/bgp_run.h"
 #include "bgpd/bgp_adj_out.h"
-#include "bgpd/bgp_peer.h"
+#include "bgpd/bgp_prun.h"
 #include "bgpd/bgp_session.h"
 #include "bgpd/bgp_rib.h"
+#include "bgpd/bgp_attr_store.h"
 
 #include "list_util.h"
 #include "qtime.h"
@@ -38,7 +40,7 @@
 inline static pfifo_period_t bgp_adj_out_set_now(bgp_prib prib) ;
 static void bgp_adj_out_unset_dispatcher(bgp_prib prib) ;
 static void bgp_adj_out_delay_dispatcher(bgp_prib prib, pfifo_period_t dt) ;
-static vhash_table bgp_attr_flux_hash_new(void) ;
+static vhash_table bgp_attr_flux_hash_new(bgp_prib prib) ;
 static vhash_table bgp_attr_flux_hash_delete(vhash_table af_hash) ;
 static void bgp_attr_flux_hash_flush(vhash_table af_hash) ;
 static void bgp_adj_out_dispatch(qtimer qtr, void* timer_info,
@@ -58,9 +60,9 @@ static void bgp_adj_out_add_batch(bgp_prib prib, route_flux rf,
  *
  * Sets:
  *
- *    batch_delay        -- value depends on peer->sort -- see below
+ *    batch_delay        -- value depends on prun->sort -- see below
  *    batch_delay_extra  -- value depends on mrai
- *    announce_delay     -- value depends on peer->sort -- see below
+ *    announce_delay     -- value depends on prun->sort -- see below
  *    mrai_delay         -- from peer configuration
  *    mrai_delay_left    -- mrai_delay - batch_delay -- or zero
 
@@ -85,7 +87,7 @@ bgp_adj_out_init(bgp_prib prib)
 {
   pfifo_period_t periods ;
 
-  /* Set up the various periods, depending on the peer->sort and its MRAI
+  /* Set up the various periods, depending on the prun->sort and its MRAI
    *
    *  * batch_delay          -- as set below
    *
@@ -110,12 +112,11 @@ bgp_adj_out_init(bgp_prib prib)
    *    This is the peer's MRAI *less* the batch_delay, or zero if the MRAI is
    *    less than the batch_delay.
    */
-  prib->mrai_delay = qt_periods(QTIME(peer_get_mrai(prib->peer)),
-                                                            bgp_period_shift) ;
+  prib->mrai_delay = qt_periods(QTIME(prib->prun->mrai), bgp_period_shift) ;
   if (prib->mrai_delay > aob_mrai_max)
     prib->mrai_delay = aob_mrai_max ;   /* clamp        */
 
-  if (prib->peer->sort == BGP_PEER_EBGP)
+  if (prib->prun->sort == BGP_PEER_EBGP)
     {
       prib->batch_delay       = aob_batch_delay_ebgp ;
       prib->announce_delay    = aob_announce_delay_ebgp ;
@@ -225,7 +226,7 @@ bgp_adj_out_init(bgp_prib prib)
 
   /* Set up an empty vhash for the aggregation of prefixes by attributes.
    */
-  prib->attr_flux_hash = bgp_attr_flux_hash_new() ;
+  prib->attr_flux_hash = bgp_attr_flux_hash_new(prib) ;
 
   /* Set up the dispatch timer -- not, yet, running.  By default will schedule
    * timer to run dispatch process as soon as first update is queued on the
@@ -1836,11 +1837,11 @@ bgp_adj_out_add_announce(bgp_prib prib, route_flux rf, pfifo_period_t st,
        * route_flux is the owner of a lock on the attr -- the attr_flux does
        * does not need one.
        *
-       * The attr_flux is "set" from a vhash perspective, until the fifo is
+       * The attr_flux is 'held' from a vhash perspective, until the fifo is
        * emptied...
        */
       af->attr = attr ;
-      vhash_set(af) ;
+      vhash_set_held(af) ;
 
       qassert(af->vhash.ref_count == aob_attr_flux) ;
     } ;
@@ -2680,7 +2681,7 @@ bgp_adj_out_dispatch(qtimer qtr, void* timer_info, qtime_mono_t when)
    */
   if ((prib->withdraw_queue.head != NULL) ||
                                     (prib->announce_queue->ex.head != NULL))
-    bgp_session_kick_write(prib->peer) ;
+    bgp_session_kick_write(prib->prun) ;
 
   /* If required, schedule the next dispatch run
    */
@@ -3136,7 +3137,7 @@ bgp_adj_out_done_eor(bgp_prib prib)
 
   pfifo_item_next_ex(prib->announce_queue) ;
 
-  prib->af_status |= PEER_AFS_EOR_SENT ;
+  prib->eor_sent = true ;
 
   XFREE(MTYPE_BGP_ATTR_FLUX, prib->eor) ;       /* prib->eor = NULL     */
 
@@ -3290,20 +3291,21 @@ static vhash_item   bgp_attr_flux_vhash_free(vhash_item item,
                                                             vhash_table table) ;
 static const vhash_params_t bgp_attr_flux_vhash_params =
 {
-    .hash   = bgp_attr_flux_hash,
-    .equal  = bgp_attr_flux_equal,
-    .new    = bgp_attr_flux_vhash_new,
-    .free   = bgp_attr_flux_vhash_free,
-    .orphan = vhash_orphan_null,
+    .hash       = bgp_attr_flux_hash,
+    .equal      = bgp_attr_flux_equal,
+    .new        = bgp_attr_flux_vhash_new,
+    .free       = bgp_attr_flux_vhash_free,
+    .orphan     = vhash_orphan_null,
+    .table_free = vhash_table_free_simple,
 } ;
 
 /*------------------------------------------------------------------------------
  * Create a new attr_flux hash
  */
 static vhash_table
-bgp_attr_flux_hash_new(void)
+bgp_attr_flux_hash_new(bgp_prib prib)
 {
-  return vhash_table_new(NULL, 500 /* chain bases */,
+  return vhash_table_new(prib, 500 /* chain bases */,
                                200 /* % density   */,
                                                   &bgp_attr_flux_vhash_params) ;
 } ;
@@ -3314,7 +3316,7 @@ bgp_attr_flux_hash_new(void)
  * This is done when the owning peer's adj_out is being dismantled, *after*
  * the announce_queue queue has been emptied out.
  *
- * If the table is not empty, any items in it will be "set", and that is
+ * If the table is not empty, any items in it will be 'held', and that is
  * handled in bgp_attr_flux_vhash_free(), below: by leaving the object as an
  * orphan (but leaking memory).
  *
@@ -3330,7 +3332,7 @@ bgp_attr_flux_hash_new(void)
 static vhash_table
 bgp_attr_flux_hash_delete(vhash_table af_hash)
 {
-  return vhash_table_reset(af_hash, free_it) ;
+  return vhash_table_reset(af_hash) ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -3345,7 +3347,8 @@ bgp_attr_flux_hash_delete(vhash_table af_hash)
 static void
 bgp_attr_flux_hash_flush(vhash_table af_hash)
 {
-  vhash_table_reset(af_hash, keep_it) ;
+  vhash_table_ream(af_hash) ;
+  vhash_table_reset_bases(af_hash, 0) ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -3411,16 +3414,16 @@ bgp_attr_flux_vhash_new(vhash_table table, vhash_data_c data)
  * vhash will have been emptied out, so this will not be called.
  *
  * So: in theory nothing can be pointing at the item which we are about to
- * free.  However, if the attr_flux object is still "set" -- which it will
+ * free.  However, if the attr_flux object is still 'held' -- which it will
  * be if this is called during bgp_attr_flux_hash_delete() -- we do not
  * actually free the object.  This may leak memory, but will avoid being
  * tripped up by dangling reference(s).  Note that bgp_attr_flux_hash_delete()
- * frees the vhash table structure, so that any future "unset" of the object
+ * frees the vhash table structure, so that any future "drop" of the object
  * is safe (but empty).
  *
  * The attr_flux object does not use the reference count, and in any case
  * this would not be called if the reference count were not zero.  But, we only
- * actually free the item if it is not "set" and the reference count is zero.
+ * actually free the item if it is not 'held' and the reference count is zero.
  *
  * Returns:  NULL <=> the item has been freed
  *
@@ -3442,14 +3445,11 @@ bgp_attr_flux_vhash_free(vhash_item item, vhash_table table)
 
 /*------------------------------------------------------------------------------
  * Free the given attr_flux.
- *
- * Returns:  the attribute set associated with the attr_flux.
  */
 static void
 bgp_attr_flux_free(bgp_prib prib, attr_flux af)
 {
   af->attr = NULL ;                     /* tidy                 */
   af->vhash.ref_count = aob_attr_flux ; /* discard times        */
-  vhash_unset(af, prib->attr_flux_hash) ;
+  vhash_drop(af, prib->attr_flux_hash) ;
 } ;
-

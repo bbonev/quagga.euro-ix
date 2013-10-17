@@ -487,7 +487,9 @@ extern const char *zserv_command_string (unsigned int command);
 /* AFI/SAFI types and numbers. */
 #include "qafi_safi.h"
 
-/* Filter direction.  */
+/* Filter direction.
+ */
+typedef enum filter_direction filter_direction_t ;
 enum filter_direction
 {
   FILTER_IN    = 0,
@@ -495,7 +497,6 @@ enum filter_direction
 
   FILTER_MAX,
 } ;
-typedef enum filter_direction filter_direction_t ;
 
 /* Default Administrative Distance of each protocol. */
 #define ZEBRA_KERNEL_DISTANCE_DEFAULT      0

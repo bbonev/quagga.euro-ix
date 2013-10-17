@@ -31,13 +31,13 @@ Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
 
 #include "bgpd/bgpd.h"
 
-#include "bgpd/bgp_peer.h"
+#include "bgpd/bgp_prun.h"
 #include "bgpd/bgp_rib.h"
 #include "bgpd/bgp_adj_out.h"
 #include "bgpd/bgp_adj_in.h"
+#include "bgpd/bgp_attr.h"
 
 #include "bgpd/bgp_dump.h"
-#include "bgpd/bgp_attr.h"
 #include "bgpd/bgp_debug.h"
 #include "bgpd/bgp_fsm.h"
 #include "bgpd/bgp_route.h"
@@ -61,13 +61,13 @@ static bool bgp_packet_write_withdraw(bgp_prib prib, ring_buffer rb,
                                                       route_out_parcel parcel) ;
 static bool bgp_packet_write_eor(bgp_prib prib, ring_buffer rb,
                                                       route_out_parcel parcel) ;
-static bool bgp_packet_write_rr(bgp_peer peer, ring_buffer rb) ;
+static bool bgp_packet_write_rr(bgp_prun prun, ring_buffer rb) ;
 
 static qstring bgp_packet_attrs_string(bgp_prib prib, route_out_parcel parcel) ;
 static qstring bgp_packet_prefix_string(qstring qs_pfx, bgp_prib prib,
                                                       route_out_parcel parcel) ;
 static bool bgp_packet_write_rr_orf_part(blower br, bgp_route_refresh rr,
-                                               bgp_form_t form, bgp_peer peer) ;
+                                               bgp_form_t form, bgp_prun prun) ;
 
 /*------------------------------------------------------------------------------
  * Write what can be written from adj-out to the given peer.
@@ -78,7 +78,7 @@ static bool bgp_packet_write_rr_orf_part(blower br, bgp_route_refresh rr,
  * and try to fill the write_rb ring-buffer.
  */
 extern void
-bgp_packet_write_stuff(bgp_peer peer, ring_buffer rb)
+bgp_packet_write_stuff(bgp_prun prun, ring_buffer rb)
 {
   bgp_prib     prib ;
   bgp_prib     running[qafx_count] ;
@@ -105,8 +105,8 @@ bgp_packet_write_stuff(bgp_peer peer, ring_buffer rb)
    *
    *      This is certainly convenient.
    */
-  while ((dsl_head(peer->rr_pending) != NULL) && !full)
-    full = bgp_packet_write_rr(peer, rb) ;
+  while ((dsl_head(prun->rr_pending) != NULL) && !full)
+    full = bgp_packet_write_rr(prun, rb) ;
 
   /* Flush withdraw queues for all qafx, before considering announcements.
    *
@@ -118,10 +118,10 @@ bgp_packet_write_stuff(bgp_peer peer, ring_buffer rb)
    * We will remain in this loop, sending out withdraws, until there are no
    * more or the ring-buffer fills.
    */
-  n = peer->prib_running_count ;
+  n = prun->prib_running_count ;
   for (i = 0 ; (i <= n) && !full ; ++i)
     {
-      prib = peer->prib_running[i] ;
+      prib = prun->prib_running[i] ;
 
       running[i] = prib ;               /* copy for announcements       */
 
@@ -211,7 +211,7 @@ bgp_packet_write_stuff(bgp_peer peer, ring_buffer rb)
    * not now empty, prompt the BGP Engine.
    */
   if (rb_get_prompt(rb, false /* not if empty */))
-    bgp_session_kick_be_write(prib->peer) ;
+    bgp_session_kick_be_write(prun) ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -538,8 +538,8 @@ bgp_packet_write_announce(bgp_prib prib, ring_buffer rb,
     {
       if (qs_updates != NULL)
         {
-          zlog (prib->peer->log, LOG_DEBUG, "%s send %u UPDATE(S) %s/%s:%s%s",
-                prib->peer->host, count,
+          zlog (prib->prun->log, LOG_DEBUG, "%s send %u UPDATE(S) %s/%s:%s%s",
+                prib->prun->name, count,
                 map_direct(bgp_afi_name_map, get_iAFI(prib->qafx)).str,
                 map_direct(bgp_safi_name_map, get_iSAFI(prib->qafx)).str,
                                    qs_string(qs_attrs), qs_string(qs_updates)) ;
@@ -548,10 +548,10 @@ bgp_packet_write_announce(bgp_prib prib, ring_buffer rb,
 
       if (qs_withdraws != NULL)
         {
-          zlog (prib->peer->log, LOG_WARNING,
+          zlog (prib->prun->log, LOG_WARNING,
                  "%s unable to send %u UPDATE(S) - %u bytes of attributes"
                                                                " - %s/%s:%s%s",
-                prib->peer->host, no_count, start_body_len - BGP_UPM_ATTR,
+                prib->prun->name, no_count, start_body_len - BGP_UPM_ATTR,
                 map_direct(bgp_afi_name_map, get_iAFI(prib->qafx)).str,
                 map_direct(bgp_safi_name_map, get_iSAFI(prib->qafx)).str,
                                  qs_string(qs_attrs), qs_string(qs_withdraws)) ;
@@ -578,7 +578,7 @@ bgp_packet_attrs_string(bgp_prib prib, route_out_parcel parcel)
   else
     mp_next_hop = &parcel->attr->next_hop ;
 
-  return bgp_dump_attr(prib->peer, parcel->attr, next_hop, mp_next_hop) ;
+  return bgp_dump_attr(prib->prun, parcel->attr, next_hop, mp_next_hop) ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -826,8 +826,8 @@ bgp_packet_write_withdraw(bgp_prib prib, ring_buffer rb,
    */
   if (qs_withdraws != NULL)
     {
-      zlog (prib->peer->log, LOG_DEBUG, "%s send %u WITHDRAW(S) %s/%s:%s",
-                prib->peer->host, count,
+      zlog (prib->prun->log, LOG_DEBUG, "%s send %u WITHDRAW(S) %s/%s:%s",
+                prib->prun->name, count,
                 map_direct(bgp_afi_name_map, get_iAFI(prib->qafx)).str,
                 map_direct(bgp_safi_name_map, get_iSAFI(prib->qafx)).str,
                                                       qs_string(qs_withdraws)) ;
@@ -920,7 +920,7 @@ bgp_packet_write_eor(bgp_prib prib, ring_buffer rb, route_out_parcel parcel)
 
   if (BGP_DEBUG (normal, NORMAL))
     zlog_debug ("send End-of-RIB for %s to %s", get_qafx_name(prib->qafx),
-                                                             prib->peer->host) ;
+                                                           prib->prun->name) ;
 
   return false ;                /* not full     */
 } ;
@@ -934,7 +934,7 @@ bgp_packet_write_eor(bgp_prib prib, ring_buffer rb, route_out_parcel parcel)
  *          false -> ring-buffer is not full -- can keep going !
  */
 static bool
-bgp_packet_write_rr(bgp_peer peer, ring_buffer rb)
+bgp_packet_write_rr(bgp_prun prun, ring_buffer rb)
 {
   bgp_route_refresh rr ;
   ulen        msg_size ;
@@ -946,13 +946,13 @@ bgp_packet_write_rr(bgp_peer peer, ring_buffer rb)
 
   /* Pick up the first pending Route-Refresh, if any.
    */
-  rr = ddl_head(peer->rr_pending) ;
+  rr = ddl_head(prun->rr_pending) ;
   if (rr == NULL)
     return false ;                      /* not full             */
 
   /* We prefer the RFC ORF Prefix type, if we allowed to send any at all.
    */
-  orf_cap_bits = peer->session->args->can_orf_pfx[rr->qafx] ;
+  orf_cap_bits = prun->session->args->can_orf_pfx.af[rr->qafx] ;
 
   if      (orf_cap_bits & ORF_SM)
     form = bgp_form_rfc ;
@@ -998,7 +998,7 @@ bgp_packet_write_rr(bgp_peer peer, ring_buffer rb)
   /* Append as many (remaining) ORF entries as can into message
    */
   if (form != bgp_form_none)
-    done = bgp_packet_write_rr_orf_part(br, rr, form, peer) ;
+    done = bgp_packet_write_rr_orf_part(br, rr, form, prun) ;
   else
     done = true ;
 
@@ -1012,7 +1012,7 @@ bgp_packet_write_rr(bgp_peer peer, ring_buffer rb)
    */
   if (done)
     {
-      dsl_del_head(peer->rr_pending, next) ;
+      dsl_del_head(prun->rr_pending, next) ;
       bgp_route_refresh_free(rr) ;
     } ;
 
@@ -1048,7 +1048,7 @@ bgp_packet_write_rr_orf_part_length(ptr_t p_collection, ptr_t p_end)
  */
 static bool
 bgp_packet_write_rr_orf_part(blower br, bgp_route_refresh rr, bgp_form_t form,
-                                                                  bgp_peer peer)
+                                                                  bgp_prun prun)
 {
   bgp_orf_entry entry ;
   uint  next_index ;
@@ -1206,12 +1206,12 @@ bgp_packet_write_rr_orf_part(blower br, bgp_route_refresh rr, bgp_form_t form,
            */
           if (entry == NULL)
             zlog_err("%s called %s() after said was done",
-                                                         peer->host, __func__) ;
+                                                       prun->name, __func__) ;
           else if (entry->unknown)
             zlog_err("%s sending REFRESH_REQ with impossible length (%d) ORF",
-                                   peer->host, entry->body.orf_unknown.length) ;
+                                 prun->name, entry->body.orf_unknown.length) ;
           else
-            zlog_err("%s failed to put even one ORF entry", peer->host) ;
+            zlog_err("%s failed to put even one ORF entry", prun->name) ;
 
           done = true ;
         } ;
@@ -1265,12 +1265,12 @@ bgp_route_refresh_send (bgp_prib prib, byte orf_type,
           orf_refresh = true ;
           if (remove)
             {
-              prib->af_status &= ~PEER_AFS_ORF_PFX_SENT ;
-
               bgp_orf_add_remove_all(rr, BGP_ORF_T_PFX);
+              prib->orf_pfx_sent = false ;
+
               if (BGP_DEBUG (normal, NORMAL))
                 zlog_debug ("%s sending REFRESH_REQ to remove ORF (%s)"
-                            " for afi/safi: %u/%u", prib->peer->host,
+                            " for afi/safi: %u/%u", prib->prun->name,
                                            rr->defer ? "defer" : "immediate",
                                                         rr->i_afi, rr->i_safi) ;
             }
@@ -1278,8 +1278,6 @@ bgp_route_refresh_send (bgp_prib prib, byte orf_type,
             {
               orf_prefix_value_t orfpv;
               vector_index_t i;
-
-              prib->af_status |= PEER_AFS_ORF_PFX_SENT ;
 
               for (i = 0; prefix_bgp_orf_get(&orfpv, plist, i); ++i)
                 {
@@ -1290,9 +1288,11 @@ bgp_route_refresh_send (bgp_prib prib, byte orf_type,
                   orfpe->body.orfpv = orfpv;
                 } ;
 
+              prib->orf_pfx_sent = true ;
+
               if (BGP_DEBUG (normal, NORMAL))
                 zlog_debug ("%s sending REFRESH_REQ with pfxlist ORF "
-                            "(%s) for afi/safi: %u/%u", prib->peer->host,
+                            "(%s) for afi/safi: %u/%u", prib->prun->name,
                                             rr->defer ? "defer" : "immediate",
                                                         rr->i_afi, rr->i_safi);
             } ;
@@ -1303,14 +1303,14 @@ bgp_route_refresh_send (bgp_prib prib, byte orf_type,
     {
       if (!orf_refresh)
         zlog_debug("%s sending REFRESH_REQ for afi/safi: %u/%u",
-                                      prib->peer->host, rr->i_afi, rr->i_safi) ;
+                                    prib->prun->name, rr->i_afi, rr->i_safi) ;
     } ;
 
   /* Append to queue for the peer and prompt the I/O side of things.
    */
-  dsl_append(prib->peer->rr_pending, rr, next) ;
+  dsl_append(prib->prun->rr_pending, rr, next) ;
 
-  bgp_session_kick_write(prib->peer) ;
+  bgp_session_kick_write(prib->prun) ;
 } ;
 
 /*==============================================================================
@@ -1323,12 +1323,12 @@ bgp_route_refresh_send (bgp_prib prib, byte orf_type,
  *   * BGP_MT_ROUTE_REFRESH
  *   * BGP_MT_ROUTE_REFRESH_pre
  */
-static void bgp_packet_read_update(bgp_peer peer, sucker sr) ;
-static void bgp_packet_read_rr(bgp_peer peer, sucker sr) ;
+static void bgp_packet_read_update(bgp_prun prun, sucker sr) ;
+static void bgp_packet_read_rr(bgp_prun peer, sucker sr) ;
 
-static void bpd_packet_update_nlri (bgp_peer peer, attr_set attr,
+static void bpd_packet_update_nlri (bgp_prun prun, attr_set attr,
                                                   bgp_nlri nlri, bool refused) ;
-static bgp_route_refresh bgp_packet_parse_rr(bgp_peer peer, sucker sr) ;
+static bgp_route_refresh bgp_packet_parse_rr(bgp_prun prun, sucker sr) ;
 
 /*------------------------------------------------------------------------------
  * Process the ring buffer until it is empty.
@@ -1338,7 +1338,7 @@ static bgp_route_refresh bgp_packet_parse_rr(bgp_peer peer, sucker sr) ;
  * Each time this is called will attempt to empty the read_rb ring-buffer.
  */
 extern void
-bgp_packet_read_stuff(bgp_peer peer, ring_buffer rb)
+bgp_packet_read_stuff(bgp_prun prun, ring_buffer rb)
 {
   ptr_t       p_seg ;
 
@@ -1350,12 +1350,12 @@ bgp_packet_read_stuff(bgp_peer peer, ring_buffer rb)
       switch (rb_set_sucker(sr, rb))
         {
           case bgp_rbm_in_update:
-            bgp_packet_read_update(peer, sr) ;
+            bgp_packet_read_update(prun, sr) ;
             break ;
 
           case bgp_rbm_in_rr:
           case bgp_rbm_in_rr_pre:
-            bgp_packet_read_rr(peer, sr) ;
+            bgp_packet_read_rr(prun, sr) ;
             break ;
 
           default:
@@ -1366,14 +1366,14 @@ bgp_packet_read_stuff(bgp_peer peer, ring_buffer rb)
     } ;
 
   if (rb_put_prompt(rb, 10000))
-    bgp_session_kick_be_write(peer) ;
+    bgp_session_kick_be_write(prun) ;
 } ;
 
 /*------------------------------------------------------------------------------
  * Parse BGP Update packet and make attribute object.
  */
 static void
-bgp_packet_read_update(bgp_peer peer, sucker sr)
+bgp_packet_read_update(bgp_prun prun, sucker sr)
 {
   bgp_size_t attribute_len;
 
@@ -1385,19 +1385,19 @@ bgp_packet_read_update(bgp_peer peer, sucker sr)
 
   /* Status must be Established.
    */
-  if (peer->state != bgp_pEstablished)
+  if (prun->state != bgp_pEstablished)
     {
       zlog_err ("%s [FSM] Update packet received under status %s",
-                peer->host, map_direct(bgp_peer_status_map, peer->state).str);
+                prun->name, map_direct(bgp_peer_status_map, prun->state).str);
 
-      bgp_peer_down_error (peer, BGP_NOMC_FSM, BGP_NOMS_UNSPECIFIC) ;
+      bgp_peer_down_error (prun, BGP_NOMC_FSM, BGP_NOMS_UNSPECIFIC) ;
 
       return ;
     } ;
 
   /* Set initial values in args:
    *
-   *   * peer               -- X      -- set below
+   *   * prun               -- X      -- set below
    *   * sort               -- X      -- set below
    *   * as4                -- X      -- set below
    *
@@ -1441,10 +1441,10 @@ bgp_packet_read_update(bgp_peer peer, sucker sr)
 
   confirm(BGP_ATTR_PARSE_OK == 0) ;
 
-  args->peer = peer ;
+  args->prun = prun ;
 
-  args->sort = peer->sort ;
-  args->as4  = peer->session->args->can_as4 ;
+  args->sort = prun->sort ;
+  args->as4  = prun->session->args->can_as4 ;
 
   bgp_attr_pair_load_new(args->attrs) ;
 
@@ -1461,7 +1461,7 @@ bgp_packet_read_update(bgp_peer peer, sucker sr)
     {
       zlog_err ("%s [Error] Update packet error"
                 " (packet unfeasible length overflow %u)",
-                peer->host, args->withdraw.length);
+                prun->name, args->withdraw.length);
 
       args->notify_code    = BGP_NOMC_UPDATE ;
       args->notify_subcode = BGP_NOMS_U_MAL_ATTR ;
@@ -1478,7 +1478,7 @@ bgp_packet_read_update(bgp_peer peer, sucker sr)
     {
       zlog_warn ("%s [Error] Packet Error"
                    " (update packet attribute length overflow %u)",
-                   peer->host, attribute_len);
+                   prun->name, attribute_len);
 
       args->notify_code    = BGP_NOMC_UPDATE ;
       args->notify_subcode = BGP_NOMS_U_MAL_ATTR ;
@@ -1499,9 +1499,9 @@ bgp_packet_read_update(bgp_peer peer, sucker sr)
       args->withdraw.in.i_afi  = iAFI_IP ;
       args->withdraw.in.i_safi = iSAFI_Unicast ;
 
-      if (!bgp_nlri_sanity_check (peer, &args->withdraw))
+      if (!bgp_nlri_sanity_check (prun, &args->withdraw))
         {
-          zlog_info ("%s withdraw NLRI fails sanity check", peer->host) ;
+          zlog_info ("%s withdraw NLRI fails sanity check", prun->name) ;
 
           args->notify_code    = BGP_NOMC_UPDATE ;
           args->notify_subcode = BGP_NOMS_U_NETWORK ;
@@ -1512,7 +1512,7 @@ bgp_packet_read_update(bgp_peer peer, sucker sr)
         } ;
 
       if (BGP_DEBUG (packet, PACKET_RECV))
-        zlog_debug ("%s [Update:RECV] Unfeasible NLRI received", peer->host);
+        zlog_debug ("%s [Update:RECV] Unfeasible NLRI received", prun->name);
     } ;
 
   /* Check that any NLRI stuff is well formed.
@@ -1523,9 +1523,9 @@ bgp_packet_read_update(bgp_peer peer, sucker sr)
       args->update.in.i_afi  = iAFI_IP;
       args->update.in.i_safi = iSAFI_Unicast ;
 
-      if (!bgp_nlri_sanity_check (peer, &args->update))
+      if (!bgp_nlri_sanity_check (prun, &args->update))
         {
-          zlog_info ("%s update NLRI fails sanity check", peer->host) ;
+          zlog_info ("%s update NLRI fails sanity check", prun->name) ;
 
           args->notify_code    = BGP_NOMC_UPDATE ;
           args->notify_subcode = BGP_NOMS_U_NETWORK ;
@@ -1581,10 +1581,10 @@ bgp_packet_read_update(bgp_peer peer, sucker sr)
            */
           lvl = LOG_ERR ;
 
-          zlog (peer->log, lvl,
+          zlog (prun->log, lvl,
             "%s rcvd UPDATE with fatal errors in attr(s)!!"
                                                       " Dropping session",
-                                                               peer->host) ;
+                                                               prun->name) ;
         }
       else if (args->aret & BGP_ATTR_PARSE_SERIOUS)
         {
@@ -1592,10 +1592,10 @@ bgp_packet_read_update(bgp_peer peer, sucker sr)
            */
           lvl = LOG_ERR ;
 
-          zlog (peer->log, lvl,
+          zlog (prun->log, lvl,
             "%s rcvd UPDATE with errors in attr(s)!!"
                                                   " Withdrawing route(s)",
-                                                               peer->host) ;
+                                                               prun->name) ;
 
           refused = true ;              /* not so good  */
         }
@@ -1605,10 +1605,10 @@ bgp_packet_read_update(bgp_peer peer, sucker sr)
            */
           lvl = LOG_WARNING ;
 
-          zlog (peer->log, lvl,
+          zlog (prun->log, lvl,
             "%s rcvd UPDATE with errors in trivial attr(s)!!"
                                             " Ignoring those attributes.",
-                                                               peer->host) ;
+                                                               prun->name) ;
           args->aret = BGP_ATTR_PARSE_OK ;
         }
       else if (args->aret & BGP_ATTR_PARSE_RECOVERED)
@@ -1617,10 +1617,10 @@ bgp_packet_read_update(bgp_peer peer, sucker sr)
            */
           lvl = LOG_DEBUG ;
 
-          zlog (peer->log, lvl,
+          zlog (prun->log, lvl,
             "%s rcvd UPDATE with recoverable errors in attr(s)!!"
                                             " Recovered those attributes.",
-                                                               peer->host) ;
+                                                               prun->name) ;
           args->aret = BGP_ATTR_PARSE_OK ;
         }
       else
@@ -1630,10 +1630,10 @@ bgp_packet_read_update(bgp_peer peer, sucker sr)
            */
           lvl = LOG_CRIT ;
 
-          zlog (peer->log, lvl,
+          zlog (prun->log, lvl,
             "[BUG] %s rcvd UPDATE: attribute parser return code=%u!!"
                                                       " Dropping session",
-                                                       peer->host, args->aret) ;
+                                                     prun->name, args->aret) ;
 
           args->aret = BGP_ATTR_PARSE_CRITICAL ;        /* crunch       */
 
@@ -1644,15 +1644,15 @@ bgp_packet_read_update(bgp_peer peer, sucker sr)
 
       /* Log attributes at the required level.
        */
-      qs = bgp_dump_attr (peer, args->attrs->working,
+      qs = bgp_dump_attr (prun, args->attrs->working,
           args->update.next_hop.type != nh_none    ? &args->update.next_hop
                                                    : NULL,
           args->mp_update.next_hop.type != nh_none ? &args->mp_update.next_hop
                                                    : NULL) ;
       if (qs != NULL)
         {
-          zlog (peer->log, lvl, "%s rcvd UPDATE w/ attr: %s",
-                                                peer->host, qs_string(qs)) ;
+          zlog (prun->log, lvl, "%s rcvd UPDATE w/ attr: %s",
+                                                prun->name, qs_string(qs)) ;
           qs_free(qs) ;
         } ;
 
@@ -1674,12 +1674,12 @@ bgp_packet_read_update(bgp_peer peer, sucker sr)
    * TODO we have to worry about activated..., because we need values in the
    *      prib...  should we worry about negotiated ??
    */
-  prib = peer_family_prib(peer, qafx_ipv4_unicast) ;
+  prib = prun->prib[qafx_ipv4_unicast] ;
 
   if (prib != NULL)
     {
       if (args->withdraw.length != 0)
-        bpd_packet_update_nlri(peer, NULL, &args->withdraw, false) ;
+        bpd_packet_update_nlri(prun, NULL, &args->withdraw, false) ;
 
       if (args->update.length != 0)
         {
@@ -1706,35 +1706,35 @@ bgp_packet_read_update(bgp_peer peer, sucker sr)
                                                      &args->update.next_hop.ip) ;
           set = bgp_attr_pair_store(args->attrs) ;
 
-          bpd_packet_update_nlri(peer, set, &args->update, refused) ;
+          bpd_packet_update_nlri(prun, set, &args->update, refused) ;
         }
       else if ((args->withdraw.length == 0) && (attribute_len == 0))
         {
           /* End-of-RIB received
            */
-          prib->af_status |= PEER_AFS_EOR_RECEIVED ;
+          prib->eor_received = true ;
 
           /* NSF delete stale route
            */
-          if (prib->nsf)
-            bgp_clear_stale_route (peer, qafx_ipv4_unicast);
+          if (prib->nsf_mode)
+            bgp_clear_stale_route (prun, qafx_ipv4_unicast);
 
           if (BGP_DEBUG (normal, NORMAL))
-            zlog (peer->log, LOG_DEBUG,
-                       "rcvd End-of-RIB for IPv4 Unicast from %s", peer->host) ;
+            zlog (prun->log, LOG_DEBUG,
+                     "rcvd End-of-RIB for IPv4 Unicast from %s", prun->name) ;
         } ;
     } ;
 
   if (args->mp_withdraw.length != 0)
     {
-      prib = peer_family_prib(peer, args->mp_withdraw.qafx) ;
+      prib = prun->prib[args->mp_withdraw.qafx] ;
       if (prib != NULL)
-        bpd_packet_update_nlri(peer, NULL, &args->mp_withdraw, false);
+        bpd_packet_update_nlri(prun, NULL, &args->mp_withdraw, false);
     } ;
 
   if (args->mp_update.length != 0)
     {
-      prib = peer_family_prib(peer, args->mp_update.qafx) ;
+      prib = prun->prib[args->mp_update.qafx] ;
       if (prib != NULL)
         {
           /* Now if we are going to use the attributes, it is time to store
@@ -1760,7 +1760,7 @@ bgp_packet_read_update(bgp_peer peer, sucker sr)
             } ;
 
           set = bgp_attr_pair_store(args->attrs) ;
-          bpd_packet_update_nlri (peer, set, &args->mp_update, refused) ;
+          bpd_packet_update_nlri (prun, set, &args->mp_update, refused) ;
         } ;
     } ;
 
@@ -1769,23 +1769,23 @@ bgp_packet_read_update(bgp_peer peer, sucker sr)
       qassert((args->mp_withdraw.length | args->mp_update.length |
                args->withdraw.length    | args->update.length    ) == 0) ;
 
-      prib = peer_family_prib(peer, args->mp_withdraw.qafx) ;
+      prib = prun->prib[args->mp_withdraw.qafx] ;
       if (prib != NULL)
         {
           /* End-of-RIB received
            */
           if (!qafx_is_mpls_vpn(args->mp_withdraw.qafx))
             {
-              prib->af_status |= PEER_AFS_EOR_RECEIVED ;
-              if (prib->nsf)
-                bgp_clear_stale_route (peer, args->mp_withdraw.qafx);
+              prib->eor_received = true ;
+              if (prib->nsf_mode)
+                bgp_clear_stale_route (prun, args->mp_withdraw.qafx);
             } ;
 
           if (BGP_DEBUG (normal, NORMAL))
-            zlog (peer->log, LOG_DEBUG, "rcvd End-of-RIB for %s/%s from %s",
+            zlog (prun->log, LOG_DEBUG, "rcvd End-of-RIB for %s/%s from %s",
            map_direct(bgp_afi_name_map, get_qAFI(args->mp_withdraw.qafx)).str,
            map_direct(bgp_safi_name_map, get_qSAFI(args->mp_withdraw.qafx)).str,
-                                                                   peer->host) ;
+                                                                 prun->name) ;
         } ;
     } ;
 
@@ -1812,7 +1812,7 @@ bgp_packet_read_update(bgp_peer peer, sucker sr)
    * down the curtain on the current session.
    */
  exit_bgp_update_critical:
-   bgp_peer_down_error_with_data(peer, args->notify_code,
+   bgp_peer_down_error_with_data(prun, args->notify_code,
                                        args->notify_subcode,
                                        args->notify_data,
                                        args->notify_data_len) ;
@@ -1830,7 +1830,7 @@ bgp_packet_read_update(bgp_peer peer, sucker sr)
  *     (small) duplication of effort here.
  */
 static void
-bpd_packet_update_nlri(bgp_peer peer, attr_set attr, bgp_nlri nlri,
+bpd_packet_update_nlri(bgp_prun prun, attr_set attr, bgp_nlri nlri,
                                                                   bool refused)
 {
   bgp_prib     prib ;
@@ -1847,7 +1847,7 @@ bpd_packet_update_nlri(bgp_peer peer, attr_set attr, bgp_nlri nlri,
 
   /* Check peer status and address family.
    */
-  if (peer->state != bgp_pEstablished)
+  if (prun->state != bgp_pEstablished)
     return ;
 
   mpls = false ;
@@ -1879,7 +1879,7 @@ bpd_packet_update_nlri(bgp_peer peer, attr_set attr, bgp_nlri nlri,
         return ;
   } ;
 
-  prib = peer->prib[nlri->qafx] ;
+  prib = prun->prib[nlri->qafx] ;
   if (prib == NULL)
     return ;
 
@@ -1960,10 +1960,10 @@ bpd_packet_update_nlri(bgp_peer peer, attr_set attr, bgp_nlri nlri,
           prd = pp ;
           if (!mpls_rd_known_type(prd))
             {
-              plog_err (peer->log,
+              plog_err (prun->log,
                  "%s [Error] Update packet error: "
                                     "unknown RD type %u for %s NLRI",
-                                             peer->host, mpls_rd_raw_type(pp),
+                                             prun->name, mpls_rd_raw_type(pp),
                                                     get_qafx_name(nlri->qafx)) ;
               continue ;
             } ;
@@ -1982,10 +1982,10 @@ bpd_packet_update_nlri(bgp_peer peer, attr_set attr, bgp_nlri nlri,
 
           if (parcel->tags >= mpls_tags_bad)
             {
-              plog_err (peer->log,
+              plog_err (prun->log,
                  "%s [Error] Update packet error: "
                                     "more than one label for %s NLRI",
-                                   peer->host, get_qafx_name(nlri->qafx)) ;
+                                   prun->name, get_qafx_name(nlri->qafx)) ;
               continue ;
             } ;
 
@@ -2016,7 +2016,7 @@ bpd_packet_update_nlri(bgp_peer peer, attr_set attr, bgp_nlri nlri,
                 * semantically incorrect (eg. an unexpected multicast IP
                 * address), it should ignore the prefix.
                 */
-                zlog (peer->log, LOG_ERR,
+                zlog (prun->log, LOG_ERR,
                       "IPv4 unicast NLRI is multicast address %s",
                                            siptoa (family, &pfx.u.prefix).str) ;
                 continue ;
@@ -2038,7 +2038,7 @@ bpd_packet_update_nlri(bgp_peer peer, attr_set attr, bgp_nlri nlri,
           case qafx_ipv6_unicast:
             if (IN6_IS_ADDR_LINKLOCAL (&pfx.u.prefix6))
               {
-                zlog (peer->log, LOG_WARNING,
+                zlog (prun->log, LOG_WARNING,
                       "IPv6 link-local NLRI received %s ignore this NLRI",
                                              siptoa (family, &pfx.u.prefix).str) ;
                 continue;
@@ -2094,7 +2094,7 @@ bpd_packet_update_nlri(bgp_peer peer, attr_set attr, bgp_nlri nlri,
  * Note that at this stage we have no interest in whether was RFC or not !
  */
 static void
-bgp_packet_read_rr(bgp_peer peer, sucker sr)
+bgp_packet_read_rr(bgp_prun prun, sucker sr)
 {
   bgp_route_refresh rr ;
   qafx_t qafx ;
@@ -2104,12 +2104,12 @@ bgp_packet_read_rr(bgp_peer peer, sucker sr)
    *
    * Establish which address family is affected, if any.
    */
-  rr = bgp_packet_parse_rr(peer, sr) ;
+  rr = bgp_packet_parse_rr(prun, sr) ;
   if (rr == NULL)
     return ;
 
   qafx = qafx_from_i(rr->i_afi, rr->i_safi) ;
-  prib = peer_family_prib(peer, qafx) ;
+  prib = prun->prib[qafx] ;
 
   if (prib == NULL)
     return ;
@@ -2121,7 +2121,7 @@ bgp_packet_read_rr(bgp_peer peer, sucker sr)
       vector_index_t i ;
       bgp_orf_name name ;
 
-      prefix_bgp_orf_name_set(name, peer->su_name, qafx) ;
+      prefix_bgp_orf_name_set(name, prun->su_name, qafx) ;
 
       for (i = 0; i < bgp_orf_get_count(rr) ; ++i)
         {
@@ -2140,7 +2140,7 @@ bgp_packet_read_rr(bgp_peer peer, sucker sr)
                 {
                   if (BGP_DEBUG (normal, NORMAL))
                     zlog_debug ("%s rcvd Remove-All pfxlist ORF request",
-                                                                   peer->host) ;
+                                                                 prun->name) ;
                   prefix_bgp_orf_remove_all (name);
                   break;
                 }
@@ -2154,7 +2154,7 @@ bgp_packet_read_rr(bgp_peer peer, sucker sr)
                 {
                   if (BGP_DEBUG (normal, NORMAL))
                     zlog_debug ("%s Received misformatted prefixlist ORF."
-                                             "Remove All pfxlist", peer->host) ;
+                                           "Remove All pfxlist", prun->name) ;
                   prefix_bgp_orf_remove_all (name);
                   break;
                 }
@@ -2164,7 +2164,7 @@ bgp_packet_read_rr(bgp_peer peer, sucker sr)
         } ;
 
       if (BGP_DEBUG (normal, NORMAL))
-        zlog_debug ("%s rcvd Refresh %s ORF request", peer->host,
+        zlog_debug ("%s rcvd Refresh %s ORF request", prun->name,
                                             rr->defer ? "Defer" : "Immediate") ;
       if (rr->defer)
         return;
@@ -2173,18 +2173,18 @@ bgp_packet_read_rr(bgp_peer peer, sucker sr)
   /* If we were deferring sending the RIB to the peer, then we stop doing
    * so, now.
    */
-  UNSET_FLAG (prib->af_status, PEER_AFS_ORF_PFX_WAIT) ;
+  prib->orf_pfx_wait = false ;
 
   /* Perform route refreshment to the peer
    */
-  bgp_announce_family(peer, qafx, 10);
+  bgp_announce_family(prun, qafx, 10);
 } ;
 
 /*==============================================================================
  * BGP ROUTE-REFRESH message parsing
  */
 static bool bgp_packet_orf_recv(bgp_route_refresh rr,
-                                    sa_family_t paf, sucker sr, bgp_peer peer) ;
+                                    sa_family_t paf, sucker sr, bgp_prun prun) ;
 
 /*------------------------------------------------------------------------------
  * Parse BGP ROUTE-REFRESH message
@@ -2198,7 +2198,7 @@ static bool bgp_packet_orf_recv(bgp_route_refresh rr,
  * NB: if the connection is not fsEstablished, then will not parse
  */
 static bgp_route_refresh
-bgp_packet_parse_rr(bgp_peer peer, sucker sr)
+bgp_packet_parse_rr(bgp_prun prun, sucker sr)
 {
   bgp_route_refresh rr ;
   ptr_t        p ;
@@ -2219,9 +2219,9 @@ bgp_packet_parse_rr(bgp_peer peer, sucker sr)
        * But we don't want to proceed with rubbish !
        */
       zlog_err ("%s Route Refresh message body too short at %u bytes",
-                                        peer->host, BGP_RRM_BODY_MIN_L + left) ;
+                                      prun->name, BGP_RRM_BODY_MIN_L + left) ;
 
-      bgp_peer_down_error (peer, BGP_NOMC_CEASE, BGP_NOMS_UNSPECIFIC) ;
+      bgp_peer_down_error (prun, BGP_NOMC_CEASE, BGP_NOMS_UNSPECIFIC) ;
       return NULL ;
     } ;
 
@@ -2235,16 +2235,16 @@ bgp_packet_parse_rr(bgp_peer peer, sucker sr)
 
   qb = qafx_bit_from_i(mp->i_afi, mp->i_safi) ;
 
-  if ((qb & peer->af_running) == qafx_set_empty)
+  if ((qb & prun->af_running) == qafx_empty_set)
     {
       /* This should not happen -- because is checked for in the BGP Engine.
        *
        * But we don't want to proceed with rubbish !
        */
       zlog_err ("%s Route Refresh message with unexpected afi/safi %u/%u",
-                                            peer->host, mp->i_afi, mp->i_safi) ;
+                                          prun->name, mp->i_afi, mp->i_safi) ;
 
-      bgp_peer_down_error (peer, BGP_NOMC_CEASE, BGP_NOMS_UNSPECIFIC) ;
+      bgp_peer_down_error (prun, BGP_NOMC_CEASE, BGP_NOMS_UNSPECIFIC) ;
       return NULL ;
     } ;
 
@@ -2272,9 +2272,9 @@ bgp_packet_parse_rr(bgp_peer peer, sucker sr)
             break ;
 
           default:
-            plog_warn(peer->log,
+            plog_warn(prun->log,
                "%s ORF route refresh invalid 'when' value %d (AFI/SAFI %u/%u)",
-                           peer->host, when_to_refresh, rr->i_afi, rr->i_safi) ;
+                         prun->name, when_to_refresh, rr->i_afi, rr->i_safi) ;
             defer = false ;
             ok    = false ;
             break ;
@@ -2291,7 +2291,7 @@ bgp_packet_parse_rr(bgp_peer peer, sucker sr)
           /* After the when to refresh, expect 1 or more ORFs           */
           do
             {
-              ok = bgp_packet_orf_recv(rr, paf, sr, peer) ;
+              ok = bgp_packet_orf_recv(rr, paf, sr, prun) ;
               left = suck_left(sr) ;
             } while ((left > 0) && ok) ;
         } ;
@@ -2300,7 +2300,7 @@ bgp_packet_parse_rr(bgp_peer peer, sucker sr)
   if ((left < 0) && !ok)
     {
       rr = bgp_route_refresh_free(rr) ;
-      bgp_peer_down_error (peer, BGP_NOMC_CEASE, BGP_NOMS_UNSPECIFIC) ;
+      bgp_peer_down_error (prun, BGP_NOMC_CEASE, BGP_NOMS_UNSPECIFIC) ;
     } ;
 
   return rr ;
@@ -2317,7 +2317,7 @@ bgp_packet_parse_rr(bgp_peer peer, sucker sr)
  */
 static bool
 bgp_packet_orf_recv(bgp_route_refresh rr,
-                                      sa_family_t paf, sucker sr, bgp_peer peer)
+                                      sa_family_t paf, sucker sr, bgp_prun prun)
 {
   bgp_session_args_c args ;
   sucker_t   ssr[1] ;
@@ -2344,16 +2344,16 @@ bgp_packet_orf_recv(bgp_route_refresh rr,
    */
   if ((orf_len == 0) || (left < orf_len))
     {
-      plog_warn(peer->log,
+      plog_warn(prun->log,
                   "%s ORF route refresh length error: %d when %d left"
                                        " (AFI/SAFI %d/%d, type %d length %d)",
-          peer->host, orf_len, left, rr->i_afi, rr->i_safi, orf_type, orf_len) ;
+        prun->name, orf_len, left, rr->i_afi, rr->i_safi, orf_type, orf_len) ;
       return false ;
     } ;
 
   if (BGP_DEBUG (normal, NORMAL))
-    plog_debug (peer->log, "%s rcvd ORF type %d length %d",
-                                                peer->host, orf_type, orf_len) ;
+    plog_debug (prun->log, "%s rcvd ORF type %d length %d",
+                                              prun->name, orf_type, orf_len) ;
 
   /* Sex the ORF type -- accept only if negotiated it
    *
@@ -2364,17 +2364,17 @@ bgp_packet_orf_recv(bgp_route_refresh rr,
    * received *either* Type, but ORF_RM_pre is set only if we only received
    * the pre-RFC type.
    */
-  args = peer->session->args ;
+  args = prun->session->args ;
   switch (orf_type)
     {
       case BGP_ORF_T_PFX:
-        can = (args->can_orf_pfx[rr->qafx] & (ORF_RM | ORF_RM_pre))
-                                          ==  ORF_RM ;
+        can = (args->can_orf_pfx.af[rr->qafx] & (ORF_RM | ORF_RM_pre))
+                                             ==  ORF_RM ;
         break ;
 
       case BGP_ORF_T_PFX_pre:
-        can = (args->can_orf_pfx[rr->qafx] & (ORF_RM | ORF_RM_pre))
-                                          == (ORF_RM | ORF_RM_pre);
+        can = (args->can_orf_pfx.af[rr->qafx] & (ORF_RM | ORF_RM_pre))
+                                             == (ORF_RM | ORF_RM_pre);
         break ;
 
       default:
@@ -2418,10 +2418,10 @@ bgp_packet_orf_recv(bgp_route_refresh rr,
                 break ;
 
               default:
-                plog_warn(peer->log,
+                plog_warn(prun->log,
                             "%s ORF route refresh invalid common byte: %u"
                                         " (AFI/SAFI %d/%d, type %d length %d)",
-                peer->host, common, rr->i_afi, rr->i_safi, orf_type, orf_len) ;
+              prun->name, common, rr->i_afi, rr->i_safi, orf_type, orf_len) ;
                 return false ;
             } ;
 
@@ -2473,10 +2473,10 @@ bgp_packet_orf_recv(bgp_route_refresh rr,
 
               if (left < 0)
                 {
-                  plog_info (peer->log,
+                  plog_info (prun->log,
                               "%s ORF route refresh invalid Prefix ORF entry"
                                        " (AFI/SAFI %d/%d, type %d length %d)",
-                         peer->host, rr->i_afi, rr->i_safi, orf_type, orf_len) ;
+                       prun->name, rr->i_afi, rr->i_safi, orf_type, orf_len) ;
                   return false ;
                 } ;
             } ;
@@ -2521,7 +2521,7 @@ bgp_capability_send (bgp_peer peer, qafx_t qafx, int capability_code,
 
       if (BGP_DEBUG (normal, NORMAL))
         zlog_debug ("%s sending CAPABILITY has %s MP_EXT CAP for afi/safi: %d/%d",
-                   peer->host, action == CAPABILITY_ACTION_SET ?
+                 prun->name, action == CAPABILITY_ACTION_SET ?
                    "Advertising" : "Removing", get_iAFI(qafx), get_iSAFI(qafx));
     }
 
@@ -2533,7 +2533,7 @@ bgp_capability_send (bgp_peer peer, qafx_t qafx, int capability_code,
 
   if (BGP_DEBUG (normal, NORMAL))
     zlog_debug ("%s send message type %d, length (incl. header) %d",
-                                         peer->host, BGP_MT_CAPABILITY, length);
+                                       prun->name, BGP_MT_CAPABILITY, length);
 
   /* Add packet to the peer.
    */
@@ -2599,7 +2599,7 @@ bgp_capability_msg_parse (bgp_peer peer, u_char *pnt, bgp_size_t length)
        */
       if (pnt + 3 > end)
         {
-          zlog_info ("%s Capability length error", peer->host);
+          zlog_info ("%s Capability length error", prun->name);
           /* xTODO: Is this the right notification ??           */
           bgp_peer_down_error (peer, BGP_NOMC_CEASE, 0);
           return -1;
@@ -2613,7 +2613,7 @@ bgp_capability_msg_parse (bgp_peer peer, u_char *pnt, bgp_size_t length)
            (action != CAPABILITY_ACTION_UNSET) )
         {
           zlog_info ("%s Capability Action Value error %d",
-                     peer->host, action);
+                     prun->name, action);
           /* xTODO: Is this the right notification ??           */
           bgp_peer_down_error (peer, BGP_NOMC_CEASE, 0);
           return -1;
@@ -2621,12 +2621,12 @@ bgp_capability_msg_parse (bgp_peer peer, u_char *pnt, bgp_size_t length)
 
       if (BGP_DEBUG (normal, NORMAL))
         zlog_debug ("%s CAPABILITY has action: %d, code: %u, length %u",
-                                   peer->host, action, hdr->code, hdr->length);
+                                 prun->name, action, hdr->code, hdr->length);
 
       /* Capability length check. */
       if ((pnt + hdr->length + 3) > end)
         {
-          zlog_info ("%s Capability length error", peer->host);
+          zlog_info ("%s Capability length error", prun->name);
           /* xTODO: Is this the right notification ??           */
           bgp_peer_down_error (peer, BGP_NOMC_CEASE, 0);
           return -1;
@@ -2654,7 +2654,7 @@ bgp_capability_msg_parse (bgp_peer peer, u_char *pnt, bgp_size_t length)
             {
               if (BGP_DEBUG (normal, NORMAL))
                 zlog_debug ("%s Dynamic Capability MP_EXT afi/safi invalid "
-                            "(%u/%u)", peer->host, i_afi, i_safi);
+                            "(%u/%u)", prun->name, i_afi, i_safi);
               continue;
             }
 
@@ -2666,7 +2666,7 @@ bgp_capability_msg_parse (bgp_peer peer, u_char *pnt, bgp_size_t length)
           /* Address family check.  */
           if (BGP_DEBUG (normal, NORMAL))
             zlog_debug ("%s CAPABILITY has %s MP_EXT CAP for afi/safi: %u/%u",
-                       peer->host,
+                       prun->name,
                        (action == CAPABILITY_ACTION_SET) ? "Advertising"
                                                          : "Removing",
                        i_afi , i_safi);
@@ -2685,7 +2685,7 @@ bgp_capability_msg_parse (bgp_peer peer, u_char *pnt, bgp_size_t length)
               peer->af_rcv &= ~qafx_bit(qafx) ;
               peer->af_use &= ~qafx_bit(qafx) ;
 
-              if (peer->af_use != qafx_set_empty)
+              if (peer->af_use != qafx_empty_set)
                 bgp_clear_routes (peer, qafx, false);
               else
                 {
@@ -2700,7 +2700,7 @@ bgp_capability_msg_parse (bgp_peer peer, u_char *pnt, bgp_size_t length)
       else
         {
           zlog_warn ("%s unrecognized capability code: %u - ignored",
-                     peer->host, hdr->code);
+                     prun->name, hdr->code);
         } ;
     }
   return 0;
@@ -2716,7 +2716,7 @@ int
 bgp_capability_receive (bgp_peer peer, bgp_size_t size)
 {
   if (BGP_DEBUG (normal, NORMAL))
-    zlog_debug ("%s rcv CAPABILITY", peer->host);
+    zlog_debug ("%s rcv CAPABILITY", prun->name);
 
   /* If peer does not have the capability, send notification.
    */
@@ -2725,7 +2725,7 @@ bgp_capability_receive (bgp_peer peer, bgp_size_t size)
       u_char *pnt;
 
       plog_err (peer->log, "%s [Error] BGP dynamic capability is not enabled",
-                                                                   peer->host) ;
+                                                                 prun->name) ;
 
       pnt = stream_get_data(peer->ibuf) + BGP_MH_TYPE ;
       bgp_peer_down_error_with_data(peer, BGP_NOMC_HEADER, BGP_NOMS_H_BAD_TYPE,
@@ -2739,7 +2739,7 @@ bgp_capability_receive (bgp_peer peer, bgp_size_t size)
     {
       plog_err (peer->log,
                 "%s [Error] Dynamic capability packet received under status %s",
-                peer->host, map_direct(bgp_peer_status_map, peer->state).str) ;
+              prun->name, map_direct(bgp_peer_status_map, peer->state).str) ;
       bgp_peer_down_error (peer, BGP_NOMC_FSM, BGP_NOMS_UNSPECIFIC) ;
 
       return -1;

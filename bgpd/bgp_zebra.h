@@ -31,24 +31,11 @@ extern zroute bgp_zebra_announce(zroute zr, bgp_rib_node rn, prefix_c pfx) ;
 extern zroute bgp_zebra_discard(zroute zr, prefix_c pfx);
 extern void bgp_zebra_withdraw(zroute zr, prefix_c pfx);
 
-
-
-extern int bgp_redistribute_set (bgp_inst , afi_t, int);
-extern int bgp_redistribute_rmap_set (bgp_inst , afi_t, int, const char *);
-extern int bgp_redistribute_metric_set (bgp_inst , afi_t, int, u_int32_t);
-extern cmd_ret_t bgp_redistribute_unset (bgp_inst bgp, qAFI_t q_afi,
-                                                                     int type) ;
-extern int bgp_redistribute_routemap_unset (bgp_inst , afi_t, int);
-extern int bgp_redistribute_metric_unset (bgp_inst , afi_t, int);
-
-
-
-
-extern struct interface *if_lookup_by_ipv4 (struct in_addr *);
-extern struct interface *if_lookup_by_ipv4_exact (struct in_addr *);
+extern struct interface *if_lookup_by_ipv4 (const struct in_addr *);
+extern struct interface *if_lookup_by_ipv4_exact (const struct in_addr *);
 #ifdef HAVE_IPV6
-extern struct interface *if_lookup_by_ipv6 (struct in6_addr *);
-extern struct interface *if_lookup_by_ipv6_exact (struct in6_addr *);
+extern struct interface *if_lookup_by_ipv6 (const struct in6_addr *);
+extern struct interface *if_lookup_by_ipv6_exact (const struct in6_addr *);
 #endif /* HAVE_IPV6 */
 
 #endif /* _QUAGGA_BGP_ZEBRA_H */

@@ -163,11 +163,12 @@ static vhash_orphan_func route_map_vhash_orphan ;
 
 static const vhash_params_t route_map_vhash_params =
 {
-  .hash   = vhash_hash_string,
-  .equal  = route_map_vhash_equal,
-  .new    = route_map_vhash_new,
-  .free   = route_map_vhash_free,
-  .orphan = route_map_vhash_orphan,
+  .hash         = vhash_hash_string,
+  .equal        = route_map_vhash_equal,
+  .new          = route_map_vhash_new,
+  .free         = route_map_vhash_free,
+  .orphan       = route_map_vhash_orphan,
+  .table_free   = vhash_table_free_simple,
 } ;
 
 static void route_map_flush(route_map rmap) ;
@@ -191,7 +192,7 @@ route_map_finish (void)
 {
   /* Empty out the embedded route-map table.
    */
-  vhash_table_reset(route_maps->table, keep_it) ;
+  vhash_table_reset(route_maps->table) ;
 
   /* Discard the "match" and "set" vectors -- full of const items.
    */
@@ -301,7 +302,7 @@ route_map_vhash_orphan(vhash_item item, vhash_table table)
 
   route_map_flush(rmap) ;
 
-  return vhash_unset(rmap, table) ;
+  return vhash_drop(rmap, table) ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -512,7 +513,7 @@ route_map_flush(route_map rmap)
 
   /* Clear the "set" state -- but do NOT delete, even if reference count == 0
    */
-  vhash_clear_set(rmap) ;
+  vhash_clear_held(rmap) ;
 } ;
 
 /*==============================================================================
@@ -1212,7 +1213,7 @@ route_map_apply (route_map rmap, prefix_c pfx,
        */
       if (do_set)
         for (set = ddl_head(re->set_list) ; set != NULL ;
-                                               set = ddl_next(set, list))
+                                            set = ddl_next(set, list))
           {
             /* We expect a 'set' operation to return RMAP_OKAY or RMAP_ERROR.
              *
@@ -1339,7 +1340,7 @@ DEFUN_ATTR (route_map_start,
       if (route_maps->add_hook != NULL)
           route_maps->add_hook(rmap->name) ;
 
-      vhash_set(rmap) ;
+      vhash_set_held(rmap) ;
     } ;
 
   /* Get route-map -- creates a new one if required -- then add route-map

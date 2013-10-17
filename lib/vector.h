@@ -32,7 +32,9 @@
  *
  * NB: an entirely zero structure represents an entirely empty vector.
  */
-typedef void*   p_vector_item ;
+typedef void*       p_vector_item ;
+typedef void const* p_vector_item_c ;
+
 typedef uint    vector_index_t ;
 typedef uint    vector_length_t ;
 
@@ -171,6 +173,7 @@ Inline vector vector_set_length(vector v, vector_length_t len) ;
 
 Inline vector_length_t vector_length(vector v) ;
 #define                vector_end(v) vector_length(v)
+Inline vector_index_t vector_last(vector v) ;
 Inline bool vector_is_empty(vector v) ;
 
 Inline vector_body_t vector_body(vector v) ;
@@ -205,11 +208,17 @@ Inline p_vector_item vector_shift_item(vector v) ;
 extern void vector_insert(vector v, vector_index_t i, vector_length_t n) ;
 extern void vector_delete(vector v, vector_index_t i, vector_length_t n) ;
 
-typedef int vector_bsearch_cmp(const cvp* pp_val, const cvp* item) ;
-vector_index_t vector_bsearch(vector v, vector_bsearch_cmp* cmp,
-                                              const void* p_val, int* result) ;
 typedef sort_cmp vector_sort_cmp ;
-void vector_sort(vector v, vector_sort_cmp* cmp) ;
+typedef int vector_bsearch_cmp(const cvp* pp_val, const cvp* item) ;
+
+extern vector_index_t vector_bsearch(vector v, vector_bsearch_cmp* cmp,
+                                              const void* p_val, int* result) ;
+extern p_vector_item vector_bseek(vector v, vector_bsearch_cmp* cmp,
+                                                            const void* p_val) ;
+extern vector_index_t vector_binsert(vector v, vector_sort_cmp* cmp,
+                                                            p_vector_item p_v) ;
+extern bool vector_bdelete(vector v, vector_sort_cmp* cmp, p_vector_item p_v) ;
+extern void vector_sort(vector v, vector_sort_cmp* cmp) ;
 
 extern vector vector_copy_here(vector dst, vector src) ;
 extern vector vector_move_here(vector dst, vector src) ;
@@ -310,6 +319,20 @@ vector_set_length(vector v, vector_length_t len)
     v->end = len ;                      /* chop                         */
 
   return v ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Return index of last item -- if any
+ *
+ * NB: returns 0 if the vector is, in fact, empty -- caveat empty.
+ */
+Inline vector_index_t
+vector_last(vector v)
+{
+  if (v->end == 0)
+    return 0 ;
+
+  return v->end - 1 ;
 } ;
 
 /*------------------------------------------------------------------------------
