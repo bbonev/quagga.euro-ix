@@ -256,10 +256,55 @@ test_vhash_table_ream() {
   return;
 }
 
+// Add 
+static void
+test_vhash_drop(void) {
+  fprintf(stderr, "test_vhash_drop... \t\t\t");
+
+  vhash_table table;
+  table = new_table();
+  if (table == NULL) {
+    fprintf(stderr, "Failed\n");
+    fprintf(stderr, "Table failed to be allocated.\n");
+    return;
+  }
+
+  const vhash_data* key;
+  key = (const vhash_data*)"3pin";
+
+  vhash_item item;
+  bool ok;
+  item = vhash_lookup(table, key, &ok);
+
+  vhash_item result;
+  result = vhash_drop(item, table);
+  if (result != NULL) {
+    fprintf(stderr, "Failed\n");
+    fprintf(stderr, "Item failed to dropped from table.\n");
+    return;
+  }
+  if (result != item) {
+    fprintf(stderr, "Failed\n");
+    fprintf(stderr, "Item pointer returned was different than originaly added.\n");
+    return;
+  }
+
+  fprintf(stderr, "OK\n");
+  return;
+}
+
+static void
+test_vhash_drop_delete(void) {
+  fprintf(stderr, "test_vhash_drop_delte... \t\t\t");
+
+  fprintf(stderr, "OK\n");
+  return;
+}
+
 
 static void
 test_vhash_delete(void) {
-  fprintf(stderr, "test_vhash_table_reset... \t\t\t");
+  fprintf(stderr, "test_vhash_table_delte... \t\t\t");
   vhash_table table;
   table = new_table();
   if (table == NULL) {
@@ -427,5 +472,6 @@ main(int argc, char* argv[]) {
   //test_vhash_table_ream();
   //test_vhash_table_reset();
   //test_vhash_table_free();
-  test_vhash_delete();
+  //test_vhash_delete();
+  test_vhash_drop();
 }
