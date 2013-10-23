@@ -53,10 +53,10 @@ orphan_func(vhash_item item, vhash_table table) {
   return NULL;
 }
 
+static vhash_params_t params;
 
 static vhash_table
 new_table() {
-  vhash_params_t params;
   params.hash = &hash_func;
   params.equal = &equal_func;
   params.new = &new_func;
@@ -75,7 +75,7 @@ new_table() {
 // value of item to be equal to first item.
 static void
 test_vhash_lookup() {
-  fprintf(stderr, "test_vhash_lookup... \t\t\t");
+  fprintf(stderr, "test_vhash_lookup... \t\t\t\t");
   vhash_table table;
   table = new_table();
 
@@ -259,7 +259,7 @@ test_vhash_table_ream() {
 // Add 
 static void
 test_vhash_drop(void) {
-  fprintf(stderr, "test_vhash_drop... \t\t\t");
+  fprintf(stderr, "test_vhash_drop... \t\t\t\t");
 
   vhash_table table;
   table = new_table();
@@ -302,7 +302,7 @@ test_vhash_drop(void) {
 
 static void
 test_vhash_drop_delete(void) {
-  fprintf(stderr, "test_vhash_drop_delte... \t\t\t");
+  fprintf(stderr, "test_vhash_drop_delete... \t\t\t");
 
   fprintf(stderr, "OK\n");
   return;
@@ -311,7 +311,7 @@ test_vhash_drop_delete(void) {
 
 static void
 test_vhash_delete(void) {
-  fprintf(stderr, "test_vhash_table_delte... \t\t\t");
+  fprintf(stderr, "test_vhash_table_delete... \t\t\t");
   vhash_table table;
   table = new_table();
   if (table == NULL) {
@@ -341,7 +341,7 @@ test_vhash_delete(void) {
   vhash_item result;
   result = vhash_delete(item, table);
   if (result != NULL) {
-    fprintf(stderr, "Failed?\n");
+    fprintf(stderr, "Failed\n");
     fprintf(stderr, "Item returned from vhash_lookup was not null.\n");
     if (result == item) {
       fprintf(stderr, "vhash_delete returned the address of added item.\n");
@@ -357,8 +357,7 @@ test_vhash_delete(void) {
     return;
   }
 
-  fprintf(stderr, "OK???\n");
-  fprintf(stderr, "Item returned from vhash_lookup was NULL.\n");
+  fprintf(stderr, "OK\n");
   return;
 }
 
@@ -473,12 +472,12 @@ test_vhash_table_free(void) {
 
 int
 main(int argc, char* argv[]) {
-  //test_vhash_lookup();
-  //test_vhash_table_set_parent();
-  //test_vhash_table_get_parent();
-  //test_vhash_table_ream();
-  //test_vhash_table_reset();
-  //test_vhash_table_free();
-  //test_vhash_delete();
+  test_vhash_lookup();
+  test_vhash_table_set_parent();
+  test_vhash_table_get_parent();
+  test_vhash_table_ream();
+  test_vhash_table_reset();
+  test_vhash_table_free();
+  test_vhash_delete();
   test_vhash_drop();
 }
