@@ -289,6 +289,13 @@ test_vhash_drop(void) {
     return;
   }
 
+  table = vhash_table_reset(table);
+  if (table != NULL) {
+    fprintf(stderr, "Failed\n");
+    fprintf(stderr, "Table failed to be de-allocated.\n");
+    return;
+  }
+
   fprintf(stderr, "OK\n");
   return;
 }
