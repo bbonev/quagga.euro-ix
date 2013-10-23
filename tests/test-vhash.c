@@ -111,7 +111,7 @@ test_vhash_lookup() {
   }
   if (item != item2) {
     fprintf(stderr, "Failed\n");
-    fprintf(stderr, "Item returned from vhash_lookup was not the item expected.\n");
+    fprintf(stderr, "Item returned from vhash_lookup was not item the expected.\n");
     return;
   }
 
@@ -306,6 +306,30 @@ test_vhash_table_reset(void) {
   return;
 }
 
+// Create a table. Ensure table != NULL. Then free table. Ensure
+// table == NULL.
+static void
+test_vhash_table_free(void) {
+  fprintf(stderr, "test_vhash_table_free... \t\t\t");
+  vhash_table table;
+  table = new_table();
+  if (table == NULL) {
+    fprintf(stderr, "Failed\n");
+    fprintf(stderr, "Table failed to be allocated.\n");
+    return;
+  }
+
+  table = vhash_table_free(table);
+  if (table != NULL) {
+    fprintf(stderr, "Failed\n");
+    fprintf(stderr, "Table failed to be deallocated and set to NULL.\n");
+    return;
+  }
+
+  fprintf(stderr, "OK\n");
+  return;
+}
+
 // test_vhash_table_reset_bases
 
 
@@ -340,5 +364,6 @@ main(int argc, char* argv[]) {
   //test_vhash_table_set_parent();
   //test_vhash_table_get_parent();
   //test_vhash_table_ream();
-  test_vhash_table_reset();
+  //test_vhash_table_reset();
+  test_vhash_table_free();
 }
