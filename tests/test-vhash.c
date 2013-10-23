@@ -257,6 +257,60 @@ test_vhash_table_ream() {
 }
 
 
+static void
+test_vhash_delete(void) {
+  fprintf(stderr, "test_vhash_table_reset... \t\t\t");
+  vhash_table table;
+  table = new_table();
+  if (table == NULL) {
+    fprintf(stderr, "Failed\n");
+    fprintf(stderr, "Table failed to be allocated.\n");
+    return;
+  }
+
+  const vhash_data* key;
+  key = (const vhash_data*)"3pin";
+
+  vhash_item item;
+  bool ok;
+  item = vhash_lookup(table, key, &ok);
+  
+  if (ok != true) {
+    fprintf(stderr, "Failed\n");
+    fprintf(stderr, "Value wasn't added to vhash.\n");
+    return;
+  }
+  if (item == NULL) {
+    fprintf(stderr, "OK\n");
+    fprintf(stderr, "Item returned from vhash_lookup was NULL.\n");
+    return;
+  }
+
+  vhash_item result;
+  result = vhash_delete(item, table);
+  if (result != NULL) {
+    fprintf(stderr, "Failed?\n");
+    fprintf(stderr, "Item returned from vhash_lookup was not null.\n");
+    if (result == item) {
+      fprintf(stderr, "vhash_delete returned the address of added item.\n");
+    }
+    return;
+  }
+
+  // Cleanup Table
+  table = vhash_table_free(table);
+  if (table != NULL) {
+    fprintf(stderr, "Failed\n");
+    fprintf(stderr, "Table failed to be deallocated and set to NULL.\n");
+    return;
+  }
+
+  fprintf(stderr, "OK???\n");
+  fprintf(stderr, "Item returned from vhash_lookup was NULL.\n");
+  return;
+}
+
+
 //
 // What are the chain bases in vhash?
 //
@@ -269,6 +323,11 @@ test_vhash_table_reset(void) {
   fprintf(stderr, "test_vhash_table_reset... \t\t\t");
   vhash_table table;
   table = new_table();
+  if (table == NULL) {
+    fprintf(stderr, "Failed\n");
+    fprintf(stderr, "Table failed to be allocated.\n");
+    return;
+  }
 
   const vhash_data* key;
   key = (const vhash_data*)"3pin";
@@ -330,6 +389,8 @@ test_vhash_table_free(void) {
   return;
 }
 
+
+
 // test_vhash_table_reset_bases
 
 
@@ -365,5 +426,6 @@ main(int argc, char* argv[]) {
   //test_vhash_table_get_parent();
   //test_vhash_table_ream();
   //test_vhash_table_reset();
-  test_vhash_table_free();
+  //test_vhash_table_free();
+  test_vhash_delete();
 }
