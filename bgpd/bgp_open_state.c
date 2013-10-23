@@ -23,6 +23,7 @@
 
 #include "bgpd/bgp_open_state.h"
 #include "bgpd/bgp_session.h"
+#include "bgpd/bgp_run.h"
 
 #include "lib/memory.h"
 
@@ -62,7 +63,7 @@ bgp_open_state_init_new(bgp_open_state state)
   confirm(sizeof(state->unknowns) == sizeof(vector_t)) ;    /* embedded */
   confirm(VECTOR_INIT_ALL_ZEROS) ;
 
-  state->args = bgp_session_args_init_new(NULL) ;
+  state->sargs = bgp_sargs_init_new(NULL) ;
 
   return state ;
 } ;
@@ -88,7 +89,7 @@ bgp_open_state_reset(bgp_open_state state)
   if (state == NULL)
     return bgp_open_state_init_new(NULL) ;
 
-  state->args     = bgp_session_args_reset(state->args) ;
+  state->sargs     = bgp_sargs_reset(state->sargs) ;
 
   state->my_as2   = BGP_ASN_NULL ;
 
@@ -111,7 +112,7 @@ bgp_open_state_free(bgp_open_state state)
       bgp_cap_afi_safi  afi_safi ;
       bgp_cap_unknown   unknown ;
 
-      state->args = bgp_session_args_free(state->args) ;
+      state->sargs = bgp_sargs_free(state->sargs) ;
 
       while ((afi_safi = vector_ream(state->afi_safi, keep_it)) != NULL)
         XFREE(MTYPE_BGP_OPEN_STATE, afi_safi) ;
@@ -126,40 +127,63 @@ bgp_open_state_free(bgp_open_state state)
 } ;
 
 /*------------------------------------------------------------------------------
+ * Set pointer to open_state and unset source pointer
+ *
+ * Frees any existing open_state at the destination.
+ *
+ * NB: responsibility for the open_state structure passes to the destination.
+ */
+extern bgp_open_state
+bgp_open_state_set_mov(bgp_open_state dst, bgp_open_state* p_src)
+{
+  if (dst == NULL)
+    dst  = *p_src ;
+  else
+    *dst = **p_src ;
+
+  *p_src = NULL ;
+
+  return dst ;
+} ;
+
+/*==============================================================================
+ * Session Arguments stuff
+ */
+
+/*------------------------------------------------------------------------------
  * Initialise new set of session arguments -- allocate if required.
  *
- * If does not allocate, assumes never been kissed.
+ * If does not allocate, assumes never been kissed -- see bgp_sargs_reset()
  */
-extern bgp_session_args
-bgp_session_args_init_new(bgp_session_args args)
+extern bgp_sargs
+bgp_sargs_init_new(bgp_sargs args)
 {
   if (args == NULL)
-    args = XCALLOC(MTYPE_BGP_SESSION_ARGS, sizeof(bgp_session_args_t)) ;
+    args = XCALLOC(MTYPE_BGP_SESSION_ARGS, sizeof(bgp_sargs_t)) ;
   else
-    memset(args, 0, sizeof(bgp_session_args_t)) ;
+    memset(args, 0, sizeof(bgp_sargs_t)) ;
 
-  return args ;
+  return bgp_sargs_setup(args) ;
 } ;
 
 /*------------------------------------------------------------------------------
  * Unset a set of session arguments.
  *
- * Currently does nothing -- but if session arguments grow any pointers to
+ * Currently simply zeroizes -- but if session arguments grow any pointers to
  * things, then this will take care of same.
  */
 static void
-bgp_session_args_unset(bgp_session_args args)
+bgp_sargs_unset(bgp_sargs args)
 {
+  memset(args, 0, sizeof(bgp_sargs_t)) ;
 
+  confirm(BGP_ASN_NULL == 0) ;
 } ;
 
 /*------------------------------------------------------------------------------
- * Reset a set of session arguments.
+ * Setup a new set of session arguments.
  *
- * Zeroizes everything, leaving it in the base state -- as when no capabilities
- * at all are enabled... indeed as when not capable for sending capabilities.
- *
- * The args are already initialised to zero:
+ * The sargs must be zeroized *before* calling this, which sets:
  *
  *   * local_as                 -- BGP_ASN_NULL
  *   * local_id                 -- 0
@@ -194,20 +218,31 @@ bgp_session_args_unset(bgp_session_args args)
  *
  *   * holdtime_secs            -- 0
  *   * keepalive_secs           -- 0
+ *
+ * And currently there is nothing else to do.
  */
-extern bgp_session_args
-bgp_session_args_reset(bgp_session_args args)
+static bgp_sargs
+bgp_sargs_setup(bgp_sargs args)
+{
+  return args ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Reset a set of session arguments.
+ *
+ * Zeroizes everything, leaving it in the base state -- as when no capabilities
+ * at all are enabled... indeed as when not capable for sending capabilities.
+ *
+ */
+extern bgp_sargs
+bgp_sargs_reset(bgp_sargs args)
 {
   if (args == NULL)
-    return bgp_session_args_init_new(args) ;
+    return bgp_sargs_init_new(args) ;
 
-  bgp_session_args_unset(args) ;
+  bgp_sargs_unset(args) ;
 
-  memset(args, 0, sizeof(bgp_session_args_t)) ;
-
-  confirm(BGP_ASN_NULL == 0) ;
-
-  return args ;
+  return bgp_sargs_setup(args) ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -249,7 +284,7 @@ bgp_session_args_reset(bgp_session_args args)
  *              cap_strict      -- unless oriinally can_capability.
  */
 extern void
-bgp_session_args_suppress(bgp_session_args args)
+bgp_sargs_suppress(bgp_sargs args)
 {
   if (!args->can_capability)
     args->cap_strict     = false ;
@@ -278,11 +313,11 @@ bgp_session_args_suppress(bgp_session_args args)
  * Currently pretty trivial.  But if session args grows pointers to other
  * structures, then this will take care of things.
  */
-extern bgp_session_args
-bgp_session_args_copy(bgp_session_args dst, bgp_session_args_c src)
+extern bgp_sargs
+bgp_sargs_copy(bgp_sargs dst, bgp_sargs_c src)
 {
   if (dst == NULL)
-    dst = bgp_session_args_init_new(NULL) ;
+    dst = bgp_sargs_init_new(NULL) ;
 
   *dst = *src ;
 
@@ -295,10 +330,10 @@ bgp_session_args_copy(bgp_session_args dst, bgp_session_args_c src)
  * Currently pretty trivial.  But if session args grows pointers to other
  * structures, then this will take care of things.
  */
-extern bgp_session_args
-bgp_session_args_dup(bgp_session_args_c src)
+extern bgp_sargs
+bgp_sargs_dup(bgp_sargs_c src)
 {
-  return bgp_session_args_copy(NULL, src) ;
+  return bgp_sargs_copy(NULL, src) ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -306,36 +341,16 @@ bgp_session_args_dup(bgp_session_args_c src)
  *
  * Returns:  NULL
  */
-extern bgp_session_args
-bgp_session_args_free(bgp_session_args args)
+extern bgp_sargs
+bgp_sargs_free(bgp_sargs args)
 {
   if (args != NULL)
     {
-      bgp_session_args_unset(args) ;
+      bgp_sargs_unset(args) ;
       XFREE(MTYPE_BGP_SESSION_ARGS, args) ;
     } ;
 
   return NULL ;
-} ;
-
-/*------------------------------------------------------------------------------
- * Set pointer to open_state and unset source pointer
- *
- * Frees any existing open_state at the destination.
- *
- * NB: responsibility for the open_state structure passes to the destination.
- */
-extern bgp_open_state
-bgp_open_state_set_mov(bgp_open_state dst, bgp_open_state* p_src)
-{
-  if (dst == NULL)
-    dst  = *p_src ;
-  else
-    *dst = **p_src ;
-
-  *p_src = NULL ;
-
-  return dst ;
 } ;
 
 /*==============================================================================
@@ -791,7 +806,7 @@ bgp_open_make_cap_orf(blower br, uint8_t cap_code, uint count,
  * Create Graceful Restart capability
  */
 extern void
-bgp_open_make_cap_gr(blower br, bgp_session_args_gr cap_gr, qafx_set_t can_af,
+bgp_open_make_cap_gr(blower br, bgp_sargs_gr cap_gr, qafx_set_t can_af,
                                                                       bool wrap)
 {
   uint16_t restart_state ;

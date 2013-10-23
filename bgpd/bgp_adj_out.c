@@ -45,9 +45,10 @@ static vhash_table bgp_attr_flux_hash_delete(vhash_table af_hash) ;
 static void bgp_attr_flux_hash_flush(vhash_table af_hash) ;
 static void bgp_adj_out_dispatch(qtimer qtr, void* timer_info,
                                                             qtime_mono_t when) ;
-static route_flux bgp_adj_out_unset(bgp_prib prib, adj_out ao, bool stale) ;
+static route_flux bgp_adj_out_unset(bgp_prib prib, adj_out_ptr_t ao,
+                                                                   bool stale) ;
 static void bgp_adj_out_add_batch(bgp_prib prib, route_flux rf,
-                                                           prefix_id_t pfx_id) ;
+                                        attr_set new_attr, prefix_id_t pfx_id) ;
 
 /*------------------------------------------------------------------------------
  * Create new, empty adj_out elements for the given peer_rib.
@@ -112,11 +113,11 @@ bgp_adj_out_init(bgp_prib prib)
    *    This is the peer's MRAI *less* the batch_delay, or zero if the MRAI is
    *    less than the batch_delay.
    */
-  prib->mrai_delay = qt_periods(QTIME(prib->prun->mrai), bgp_period_shift) ;
+  prib->mrai_delay = qt_periods(QTIME(prib->prun->rp.mrai_secs), bgp_period_shift) ;
   if (prib->mrai_delay > aob_mrai_max)
     prib->mrai_delay = aob_mrai_max ;   /* clamp        */
 
-  if (prib->prun->sort == BGP_PEER_EBGP)
+  if (prib->prun->rp.sort == BGP_PEER_EBGP)
     {
       prib->batch_delay       = aob_batch_delay_ebgp ;
       prib->announce_delay    = aob_announce_delay_ebgp ;
@@ -253,7 +254,7 @@ extern void
 bgp_adj_out_discard(bgp_prib prib)
 {
   ihash_walker_t walk[1] ;
-  adj_out        ao ;
+  adj_out_ptr_t  ao ;
 
   /* Stop and discard the timer
    */
@@ -273,14 +274,14 @@ bgp_adj_out_discard(bgp_prib prib)
    */
   ihash_walk_start(prib->adj_out, walk) ;
 
-  while ((ao = ihash_walk_next(walk, &ao)) != NULL)
+  while ((ao.anon = ihash_walk_next(walk, (void*)&ao)) != NULL)
     {
       /* The walk returns all entries, even if the entry value is NULL.
        *
        * When we delete each entry we need to count down the prefix_id
        * reference count.
        */
-      if (ao != (adj_out)&ao)
+      if (ao.anon != (void*)&ao)
         bgp_adj_out_unset(prib, ao, false /* not stale */) ;
 
       ihash_del_item(prib->adj_out, walk->self, NULL) ;
@@ -314,7 +315,7 @@ extern void
 bgp_adj_out_set_stale(bgp_prib prib, uint delay)
 {
   ihash_walker_t    walk[1] ;
-  adj_out           ao ;
+  adj_out_ptr_t     ao ;
 
   /* Set the time now and stop the timer
    */
@@ -335,7 +336,7 @@ bgp_adj_out_set_stale(bgp_prib prib, uint delay)
    */
   ihash_walk_start(prib->adj_out, walk) ;
 
-  while ((ao = ihash_walk_next(walk, &ao)) != NULL)
+  while ((ao.anon = ihash_walk_next(walk, (void*)&ao)) != NULL)
     {
       /* The walk returns all entries, even if the entry value is NULL.
        *
@@ -343,17 +344,20 @@ bgp_adj_out_set_stale(bgp_prib prib, uint delay)
        * need to count down the prefix_id reference count.
        *
        * Where we set the entry, and add it to the batch_fifo, we already have
-       * a lock in the prefix_id, by virtue of the existing adj_out entry.
+       * a lock on the prefix_id, by virtue of the existing adj_out entry.
        */
       route_flux rf ;
 
-      if (ao == (adj_out)&ao)
+      if (ao.anon == (void*)&ao)
         rf = NULL ;
       else
         rf = bgp_adj_out_unset(prib, ao, true /* stale */) ;
 
       if (rf != NULL)
-        bgp_adj_out_add_batch(prib, rf, walk->self) ;
+        {
+          rf->current = bgp_attr_lock(bgp_attr_null) ;
+          bgp_adj_out_add_batch(prib, rf, NULL, walk->self) ;
+        }
       else
         {
           ihash_del_item(prib->adj_out, walk->self, NULL) ;
@@ -406,124 +410,89 @@ bgp_adj_out_attr(bgp_prib prib, adj_out_ptr_t ao)
 {
   adj_out_type_t type ;
 
-  while (1)                     /* loops back if aob_flux       */
+  if (ao.anon == NULL)
+    return NULL ;           /* easy !               */
+
+  /* If the entry is in steady-state, then we have the attributes in our
+   * hand, or we have an MPLS entry.
+   *
+   * If the entry is not steady state, then the flux.current has what we
+   * want, and we loop back !
+   */
+  type = (ao.anon->bits >> aob_type_shift) & aob_type_mask ;
+  switch (type)
     {
-      if (ao.anon == NULL)
-        return NULL ;           /* easy !               */
-
-      /* If the entry is in steady-state, then we have the attributes in our
-       * hand, or we have an MPLS entry.
-       *
-       * If the entry is not steady state, then the flux.current has what we
-       * want, and we loop back !
+      /* Not steady state.
        */
-      type = (ao.anon->bits >> aob_type_shift) & aob_type_mask ;
-      switch (type)
-        {
-          /* Not steady state.
-           */
-          case aob_flux:
-            ao.anon = ao.flux->current ;
+      case aob_flux:
+        return ao.flux->current ;
 
-            qassert((ao.anon == NULL) ||
-            (((ao.anon->bits >> aob_type_shift) & aob_type_mask) != aob_flux)) ;
+      /* Steady state -- with simple attribute set.
+       *
+       * If the request is withdraw, exit now.  Otherwise continue and
+       * schedule a change.
+       */
+      default:
+        if (!(type & aob_attr_set))
+          {
+            /* Unrecognised type
+             */
+            qassert(false) ;
+            return NULL ;           /* <<<< exit: safety            */
+          } ;
 
-            continue ;
-
-          /* Steady state -- with an mpls route
-           *
-           * If the request makes no difference, exit now.  Otherwise continue
-           * and schedule a change.
-           *
-           * Note that in steady state we never have mpls->atp == NULL, because
-           * that would imply a redundant route_mpls object !
-           */
-          case aob_mpls:
-            qassert(prib->is_mpls) ;
-
-            qassert(ao.mpls->atp != NULL) ;
-            qassert(((adj_out)ao.mpls->atp)->bits & aob_attr_set) ;
-
-            return ao.mpls->atp ;
-
-          /* Steady state -- with simple attribute set.
-           *
-           * If the request is withdraw, exit now.  Otherwise continue and
-           * schedule a change.
-           */
-          default:
-            if (!(type & aob_attr_set))
-              {
-                /* Unrecognised type
-                 */
-                qassert(false) ;
-                return NULL ;           /* <<<< exit: safety            */
-              } ;
-
-            qassert(!prib->is_mpls) ;
-
-            return ao.attr ;
-        } ;
+        return ao.attr ;
     } ;
 } ;
 
 /*==============================================================================
  * The adj_out spaghetti.
  *
- *                       *->NULL
- *   adj_out             |                       attr_set
- *   *-->+->------------>+->+->------------>+->+---------+
- *       |               ^  |               ^  .         .
- *       |  route_flux   |  |  route_mpls   |  .         .
- *       +->+---------+  |  +->+---------+  |  +---------+
- *          | current-|->+     | atp-----|->+
- *          .         .        .         .
- *          .         .        +---------+
- *          .         .
- *     ...->|--list---|->... list of route_flux when hung from attr_flux
- *          .         .
- *          .         .                  *->NULL
- *          .         .                  |                       attr_set
- *          | pending-|->+->------------>+->+->------------>+->+---------+
- *          +---------+  |               |  |               ^  .         .
- *                       |  route_mpls   |  |  attr_flux    |  .         .
- *                       +->+---------+  |  +->+---------+  |  +---------+
- *                          | atp-----|->+     | attr----|->+
- *                          .         .        .         .
- *                          +---------+        | fifo----|-> list of route_flux
- *                                             +---------+
+ *
+ *   adj_out                                              attr_set
+ *   *-->+->-------------------->+--->+------------------>+---------+
+ *       |                       ^    |                   .         .
+ *       |  route_flux           |    *--->NULL           .         .
+ *       +->+---------+          |                        +---------+
+ *          | current-|--------->+
+ *          .         .                                   attr_set
+ *          | pending-|--------->+--->+------------->+--->+---------+
+ *          .         .          |    |              ^    .         .
+ *          .         .          |    *--->NULL      |    .         .
+ *     ...->|--list---|->...     |                   |    +---------+
+ *          +---------+          |    attr_flux      |
+ *                               +--->+---------+    |
+ *                                    | attr----|--->+
+ *                                    .         .
+ *                               ...->|--list---|->...
+ *                                    |  fifo---|->... list of route_flux
+ *                                    +---------+
+ *
+ *
+ *
+ *
  *
  * Note that adj_out and rf->current are NULL for withdrawn (or never announced)
- * for ordinary and MPLS prefixes.
+ * routes.
  *
- * In steady-state, the adj_out points at the attr_set, and owns a lock.  Or
- * points at the route_mpls, which points at the attr_set, and owns a lock.
- * Note that in steady state the route_mpls atp pointer is never NULL.
+ * In steady-state, the adj_out points at the attr_set, and owns a lock.
  *
- * When a route_flux is created, the adj_out attributes or route_mpls pointer
- * is copied to 'current', retaining the lock, to be replaced by the pointer
- * to the route_flux.
+ * When a route_flux is created, the adj_out attributes pointer is copied to
+ * 'current', retaining the lock, to be replaced by the pointer to the
+ * route_flux.
  *
  * When there is a new pending update, the 'pending' pointer points at an
- * attr_set, and owns a lock.  Or points at a route_mpls, which points at the
- * attr_set and owns a lock.
+ * attr_set, and owns a lock.
  *
  * When marshalling updates for the same attributes together, an attr_flux
- * object is created.  The pointer to the attributes moves from 'pending'
- * or 'atp', into the route_flux.  NB: 'pending' or 'atp' *retain* their
- *
+ * object is created.  The pointer to the attributes moves from 'pending' into
+ * the route_flux -- retaining the lock.
  *
  * Note that where we have a pending withdraw we may have:
  *
  *   a) rf->pending -> NULL                -- there is nothing else
  *
- *   b) rf->pending -> route_mpls -> NULL  -- there is nothing else
- *
- *      This is the case when an announce was pending, but has been followed
- *      by a withdraw -- we keep the route_mpls in case something else changes.
- *
- *   c) rf->pending -> attr_set            -- there is an announce pending
- *               or -> route_mpls -> attr_set
+ *   b) rf->pending -> attr_set            -- there is an announce pending
  *
  *      In this case there is an announce pending after the withdraw is output.
  *      (This can happen once a withdraw has been dispatched.)
@@ -535,11 +504,11 @@ bgp_adj_out_attr(bgp_prib prib, adj_out_ptr_t ao)
  * object has a queue of route_flux objects.
  *
  * The adj_out owns a lock on the current attr_set (if any) -- which it points
- * to either directly or via a route_flux and/or route_mpls.
+ * to either directly or via a route_flux.
  *
  * The rf->pending owns a lock on the pending attr_set (if any) -- which it
- * points to either directly or via a route_mpls and/or attr_flux.   Note that
- * the attr_flux does *not* have a lock.
+ * points to either directly or via an attr_flux.   Note that the attr_flux
+ * does *not* have a lock.
  *
  * This means that when a route_flux object is created, the then adj_out
  * pointer can simply be moved to rf->current.  Similarly, when an update is
@@ -548,23 +517,20 @@ bgp_adj_out_attr(bgp_prib prib, adj_out_ptr_t ao)
  *
  */
 static void bgp_adj_out_update_again(bgp_prib prib, route_flux rf,
-                                            attr_set attr, mpls_tags_t tag) ;
+                                                                attr_set attr) ;
 static void bgp_adj_out_update_revert(bgp_prib prib, route_flux rf,
-                                               attr_set attr_pending,
-                                                route_mpls mpls, attr_flux af) ;
-static void bgp_adj_out_set_steady(bgp_prib prib, route_flux rf,
-                                                      route_mpls mpls_pending) ;
+                                                                 attr_flux af) ;
+static void bgp_adj_out_set_steady(bgp_prib prib, route_flux rf) ;
 static void bgp_adj_out_change_batch(bgp_prib prib, route_flux rf) ;
 static void bgp_adj_out_change_announce(bgp_prib prib, route_flux rf,
-                                                 attr_flux af, attr_set* p_ap) ;
+                                                                 attr_flux af) ;
 
 static void bgp_adj_out_mrai_withdraw(bgp_prib prib, route_flux rf) ;
 static void bgp_adj_out_mrai_announce(bgp_prib prib, route_flux rf) ;
-static void bgp_adj_out_mrai_revert(bgp_prib prib, route_flux rf,
-                                                      route_mpls mpls_pending) ;
+static void bgp_adj_out_mrai_revert(bgp_prib prib, route_flux rf) ;
 
 static void bgp_adj_out_add_announce(bgp_prib prib, route_flux rf,
-                                            pfifo_period_t st, attr_set* p_ap) ;
+                                                            pfifo_period_t st) ;
 static pfifo_period_t bgp_adj_out_del_announce(bgp_prib prib, route_flux rf,
                                                                  attr_flux af) ;
 
@@ -814,12 +780,10 @@ static void bgp_adj_out_dispatch_queue(bgp_prib prib, route_flux rf_next,
  * batch-delay overlays the tail end of MRAI.
  */
 extern void
-bgp_adj_out_update (bgp_prib prib, prefix_id_entry pie, attr_set attr,
-                                                             mpls_tags_t tag)
+bgp_adj_out_update (bgp_prib prib, prefix_id_entry pie, attr_set attr)
 {
-  void*         ao ;
+  adj_out_ptr_t ao ;
   route_flux    rf ;
-  route_mpls    mpls ;
   adj_out_type_t type ;
   pfifo_period_t dt ;
 
@@ -827,7 +791,7 @@ bgp_adj_out_update (bgp_prib prib, prefix_id_entry pie, attr_set attr,
    */
   bgp_adj_out_set_now(prib) ;
 
-  ao = ihash_get_item(prib->adj_out, pie->id, &ao) ;
+  ao.anon = ihash_get_item(prib->adj_out, pie->id, (void*)&ao) ;
 
   /* Discover whether we are in steady state or in flux.
    *
@@ -836,7 +800,7 @@ bgp_adj_out_update (bgp_prib prib, prefix_id_entry pie, attr_set attr,
    *
    * If not in steady state, update and reschedule the route_flux as required.
    */
-  if ((ao == NULL) || (ao == &ao))
+  if ((ao.anon == NULL) || (ao.anon == (void*)&ao))
     {
       /* Steady state -- prefix withdrawn (or never announced).
        *
@@ -846,19 +810,18 @@ bgp_adj_out_update (bgp_prib prib, prefix_id_entry pie, attr_set attr,
       if (attr == NULL)
         return ;                        /* <<<< exit: no actual change  */
 
-      if (ao == &ao)
+      if (ao.anon == (void*)&ao)
         {
           /* The prefix is not present in the adj_out, so will be making a
            * new entry below, which calls for a lock on the prefix.
            */
           prefix_id_entry_inc_ref(pie) ;
-
-          ao = NULL ;
+          ao.anon = NULL ;
         } ;
     }
   else
     {
-      type = (((adj_out)ao)->bits >> aob_type_shift) & aob_type_mask ;
+      type = (ao.anon->bits >> aob_type_shift) & aob_type_mask ;
       switch (type)
         {
           /* Not steady state -- adjust the pending/dispatched state of the
@@ -867,34 +830,13 @@ bgp_adj_out_update (bgp_prib prib, prefix_id_entry pie, attr_set attr,
            * NB: xxx  ..................................................................
            */
           case aob_flux:
-            qassert(((route_flux)ao)->pfx_id == pie->id) ;
+            qassert(ao.flux->pfx_id == pie->id) ;
 
-            bgp_adj_out_update_again(prib, ao, attr, tag) ;
+            bgp_adj_out_update_again(prib, ao.flux, attr) ;
 
             return ;                    /* <<<< exit here               */
 
-          /* Steady state -- with an mpls route
-           *
-           * If the request makes no difference, exit now.  Otherwise continue and
-           * schedule a change.
-           *
-           * Note that in steady state we never have mpls->atp == NULL, because
-           * that would imply a redundant route_mpls object !
-           */
-          case aob_mpls:
-            qassert(prib->is_mpls) ;
-
-            mpls = ao ;
-
-            qassert(mpls->atp != NULL) ;
-            qassert(((adj_out)mpls->atp)->bits & aob_attr_set) ;
-
-            if ((mpls->atp == attr) && (mpls->tag == tag))
-              return ;                  /* <<<< exit: no actual change  */
-
-            break ;
-
-          /* Steady state -- with simple attribute set.
+          /* Steady state
            *
            * If the request is withdraw, exit now.  Otherwise continue and
            * schedule a change.
@@ -908,9 +850,7 @@ bgp_adj_out_update (bgp_prib prib, prefix_id_entry pie, attr_set attr,
                 return ;                /* <<<< exit: safety            */
               } ;
 
-            qassert(!prib->is_mpls) ;
-
-            if (ao == attr)
+            if (ao.attr == attr)
               return ;                  /* <<<< exit: no actual change  */
 
             break ;                     /* steady state, announce change */
@@ -919,9 +859,8 @@ bgp_adj_out_update (bgp_prib prib, prefix_id_entry pie, attr_set attr,
 
   /* We are in steady state and we need to change.
    *
-   * At this point:  ao    -- NULL <=> previously withdrawn
-   *                          otherwise: either previous attr_set
-   *                                         or previous route_mpls
+   * At this point:  ao.attr -- NULL <=> previously withdrawn
+   *                            otherwise: current attr_set
    *
    * Also: if attr == NULL then ao != NULL and vice versa.
    *       ie: both cannot be NULL together.
@@ -941,30 +880,11 @@ bgp_adj_out_update (bgp_prib prib, prefix_id_entry pie, attr_set attr,
    *
    *  * list      -- NULLs
    */
-  rf->current = ao ;
-
-  if (attr != NULL)
-    {
-      if (!(prib->is_mpls))
-        rf->pending = bgp_attr_lock(attr) ;
-      else
-        {
-          /* We set all entries in the route_mpls, but zeroise it to start
-           * with to be tidy
-           */
-          mpls = XCALLOC(MTYPE_BGP_ROUTE_MPLS, sizeof(route_mpls_t)) ;
-
-          mpls->atp = bgp_attr_lock(attr) ;
-          mpls->tag = tag ;
-          mpls->bits = aob_mpls ;
-
-          rf->pending = mpls ;
-        } ;
-    } ;
+  rf->current = ao.attr ;
 
   /* Now schedule on the fifo_batch and update the adj_out.
    */
-  bgp_adj_out_add_batch(prib, rf, pie->id) ;
+  bgp_adj_out_add_batch(prib, rf, attr, pie->id) ;
 
   /* Now, if the first item in the fifo_batch has a schedule-time which is less
    * than the current dispatch_time, then may well need to reschedule the
@@ -983,7 +903,15 @@ bgp_adj_out_update (bgp_prib prib, prefix_id_entry pie, attr_set attr,
 /*------------------------------------------------------------------------------
  * Unset the given prib->adj_out entry -- where the entry is NOT NULL.
  *
+ * NB: by the time we get here, all the pfifos and queues have been emptied out,
+ *     except for the announce_queue.
+ *
+ *     So, where we have a route-flux, in rf_act_announce state, we unpick it
+ *     from the attr-flux, and as the attr-flux empty out, they will be
+ *     removed from the announce queue.
+ *
  * If the entry is "in flux", then discard any pending update.
+ *
  * In all cases, discard the current (steady) state of the route.
  *
  * For 'stale', if the current state is not withdrawn, set it to be "unknown",
@@ -998,135 +926,85 @@ bgp_adj_out_update (bgp_prib prib, prefix_id_entry pie, attr_set attr,
  *                      added to the batch_fifo.
  */
 static route_flux
-bgp_adj_out_unset(bgp_prib prib, adj_out ao, bool stale)
+bgp_adj_out_unset(bgp_prib prib, adj_out_ptr_t ao, bool stale)
 {
-  route_flux     rf ;
-  route_mpls     mpls ;
-  adj_out_type_t type ;
-  attr_set       attr ;
+  route_flux        rf ;
+  adj_out_type_t    type ;
+  attr_set          attr ;
 
-  qassert(ao != NULL) ;
+  qassert(ao.anon != NULL) ;
 
-  type = (((adj_out)ao)->bits >> aob_type_shift) & aob_type_mask ;
+  type = (ao.anon->bits >> aob_type_shift) & aob_type_mask ;
 
   switch (type)
     {
       /* Not steady state --
        */
       case aob_flux:
-        rf = (route_flux)ao ;
+        rf = ao.flux ;
 
         /* If there is a pending action, then now is the time to discard it.
          *
-         * If we are setting the adj_out to stale, then preserve any
-         * mpls_pending, and set the pending to a pending withdraw.
+         * Note that all queue
+         *
+         * If we are setting the adj_out to stale, then set a pending withdraw.
          *
          * Otherwise, discard all parts of the pending action.
          */
-        if (rf->pending != NULL)
+        if (rf->pending.anon != NULL)
           {
             /* We have something pending, which we discard.
              */
-            route_flux_action_t action ;
+            route_flux_action_t   action ;
             attr_set   attr_pending ;
 
             action = (rf->bits >> aob_action_shift) & aob_action_mask ;
 
-            if (!prib->is_mpls)
-              {
-                if (action != rf_act_announce)
-                  attr_pending = rf->pending ;
-                else
-                  {
-                    attr_flux  af_pending ;
-
-                    af_pending   = (attr_flux)rf->pending ;
-                    attr_pending = af_pending->attr ;
-                    bgp_adj_out_del_announce(prib, rf, af_pending) ;
-                  } ;
-
-                rf->pending = NULL ;
-              }
+            if (action != rf_act_announce)
+              attr_pending = rf->pending.attr ;
             else
               {
-                route_mpls  mpls_pending ;
+                attr_flux  af_pending ;
 
-                mpls_pending = (route_mpls)rf->pending ;
-
-                if (action != rf_act_announce)
-                  attr_pending = mpls_pending->atp ;
-                else
-                  {
-                    attr_flux  af_pending ;
-
-                    af_pending   = mpls_pending->atp ;
-                    attr_pending = af_pending->attr ;
-                    bgp_adj_out_del_announce(prib, rf, af_pending) ;
-                  } ;
-
-                if (stale)
-                  {
-                    mpls_pending->atp = NULL ;
-                    mpls_pending->tag = 0 ;
-                  }
-                else
-                  {
-                    XFREE(MTYPE_BGP_ROUTE_MPLS, mpls_pending) ;
-                    rf->pending = NULL ;
-                  } ;
+                af_pending   = rf->pending.flux ;
+                attr_pending = af_pending->attr ;
+                bgp_adj_out_del_announce(prib, rf, af_pending) ;
               } ;
 
             if (attr_pending != NULL)
+              bgp_attr_lock(attr_pending) ;
+
+            rf->pending.anon = NULL ;
+          } ;
+
+        attr = rf->current ;
+        if (attr != NULL)
+          {
+            /* We have a current value, which we no longer need.
+             */
+            bgp_attr_unlock(attr) ;
+
+            /* If we are setting "stale", then we keep the current route-flux,
+             * which will become a withdraw.
+             */
+            if (stale)
               {
-                qassert(((adj_out)attr_pending)->bits & aob_attr_set) ;
-                bgp_attr_unlock(attr_pending) ;
+                memset(rf, 0, sizeof(route_flux_t)) ;   /* tidy */
+                return rf ;
               } ;
           } ;
 
-        /* If there is a current value, then we discard it.
-         *
-         * When setting stale, we replace the value by the bgp_attr_null dummy
-         * attributes.
+        /* There were no advertised current attributes, or we are discarding
+         * everything in any case.
          */
-        if (!prib->is_mpls)
-          {
-            mpls = NULL ;
-            attr = (attr_set)rf->current ;
-          }
-        else
-          {
-            mpls = (route_mpls)rf->current ;
-            if (mpls != NULL)
-              attr = (attr_set)mpls->atp ;
-            else
-              attr = NULL ;
-          } ;
+        XFREE(MTYPE_BGP_ROUTE_FLUX, rf) ;
+        return NULL ;
 
-        break ;
-
-      /* Steady state -- with an mpls route
+      /* Steady state -- with an attribute set.
        *
-       * If setting stale, construct a route-flux, ready to withdraw.
-       *
-       * Otherwise, discard the route_mpls and attribute.
-       */
-      case aob_mpls:
-        qassert(prib->is_mpls) ;
-
-        rf   = NULL ;
-        mpls = (route_mpls)ao ;
-
-        qassert(mpls->atp != NULL) ;
-        qassert(((adj_out)mpls->atp)->bits & aob_attr_set) ;
-
-        attr = (attr_set)mpls->atp ; ;
-
-        break ;
-
-      /* Steady state -- with simple attribute set.
-       *
-       * If the request is withdraw, exit now.  Otherwise continue and
-       * schedule a change.
+       * If discard, then then we are done, once have unlocked the
+       * attributes.  Otherwise, we need to set a "needs to be withdrawn"
+       * route-flux.
        */
       default:
         if (!(type & aob_attr_set))
@@ -1137,77 +1015,17 @@ bgp_adj_out_unset(bgp_prib prib, adj_out ao, bool stale)
             return NULL ;               /* <<<< exit: safety            */
           } ;
 
-        qassert(!prib->is_mpls) ;
+        /* We have a current, steady state value which we can now discard.
+         *
+         * If we are setting stale, need a new route flux !
+         */
+        bgp_attr_unlock(ao.attr) ;
 
-        rf   = NULL ;
-        mpls = NULL ;
-        attr = (attr_set)ao ;
-        break ;
+        if (stale)
+          return XCALLOC(MTYPE_BGP_ROUTE_FLUX, sizeof(route_flux_t)) ;
+        else
+          return NULL ;
     } ;
-
-  /* We now have:
-   *
-   *    rf    -- NULL <=> was steady state
-   *
-   *             not NULL <=> in flux:
-   *
-   *               if 'stale': pending change has been cleared to be withdraw.
-   *                           If is MPLS, will have retained route_mpls if
-   *                           there is one.
-   *
-   *                otherwise: pending change has been discarded.
-   *
-   *    attr  -- current (steady state) attributes (if any)
-   *
-   *    mpls  -- NULL <=> not MPLS or attr == NULL
-   */
-  if (attr != NULL)
-    {
-      qassert(((adj_out)attr)->bits & aob_attr_set) ;
-      bgp_attr_unlock(attr) ;
-
-      if (stale)
-        {
-          attr_set* p_ac ;
-
-          if (rf == NULL)
-            rf = XCALLOC(MTYPE_BGP_ROUTE_FLUX, sizeof(route_flux_t)) ;
-
-          if (!prib->is_mpls)
-            {
-              qassert(mpls == NULL) ;
-              p_ac = (attr_set*)&rf->current ;
-            }
-          else
-            {
-              if (mpls == NULL)
-                mpls = XCALLOC(MTYPE_BGP_ROUTE_MPLS, sizeof(route_mpls_t)) ;
-              else
-                mpls->tag = 0 ;
-
-              rf->current = mpls ;
-              p_ac = (attr_set*)&mpls->atp ;
-            } ;
-
-          *p_ac = bgp_attr_lock(bgp_attr_null) ;
-          return rf ;
-        } ;
-    } ;
-
-  /* For whatever reason we are not interested in keeping the current state
-   * of this route.
-   *
-   *   * if 'stale', then that's because the current state is withdrawn.
-   *
-   *   * otherwise, it's because we are discarding everything.
-   */
-  if (rf != NULL)
-    XFREE(MTYPE_BGP_ROUTE_FLUX, rf) ;
-
-  if (mpls != NULL)
-    XFREE(MTYPE_BGP_ROUTE_MPLS, mpls) ;
-
-  return NULL ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -1271,26 +1089,17 @@ bgp_adj_out_unset(bgp_prib prib, adj_out ao, bool stale)
  *                        * update the pending state, otherwise.
  */
 static void
-bgp_adj_out_update_again(bgp_prib prib, route_flux rf, attr_set attr,
-                                                            mpls_tags_t tag)
+bgp_adj_out_update_again(bgp_prib prib, route_flux rf, attr_set attr)
 {
   route_flux_action_t action ;
   attr_flux     af ;
-  attr_set      attr_pending ;
-  route_mpls    mpls ;
-  attr_set*     p_ap ;
-
-  action = (rf->bits >> aob_action_shift) & aob_action_mask ;
-
-  mpls = NULL ;                         /* assume not MPLS              */
-  af   = NULL ;                         /* assume not rf_act_announce   */
 
   /* Worry about the route_flux state and this change and decide whether:
    *
    *   * to do nothing at all
    *
-   *     if the given attr and tag are the same as the current pending update
-   *     (if any), then nothing needs to be done.
+   *     if the given attr is the same as the current pending update (if any),
+   *     then nothing needs to be done.
    *
    *   * to revert to steady state or (for aob_mrai_wait) to waiting for MRAI.
    *
@@ -1300,247 +1109,102 @@ bgp_adj_out_update_again(bgp_prib prib, route_flux rf, attr_set attr,
    *   * to change the pending and/or other state
    *
    *     ie. this update changes the pending state of the prefix
-   *
-   * Set up: mpls = address of route_mpls, if there is one -- for pending
-   *
-   *                Note that if is MPLS, but pending is withdraw or nothing,
-   *                then this may be NULL.
-   *
-   *         p_ap = pointer to rf->pending or mpls->atp
-   *
-   *                For all but rf_act_announce, this points to the pointer to
-   *                the pending attribute set.
-   *
-   *                For rf_act_announce, this points to the pointer to the
-   *                pending attr_flux.
-   *
-   *         af   = address of attr_flux, if any -- for pending rf_act_announce
-   *
-   *         attr_pending  = current pending attributes
-   *
-   *           -- NULL if nothing pending, or a only a withdraw is pending.
-   *
-   *           -- the attributes for a pending announce.
-   *
-   *              note that for rf_act_withdraw there is always a withdraw
-   *              pending.  These attributes are for the update which is
-   *              pending after the withdraw.
    */
-  if (!prib->is_mpls)
+  action = (rf->bits >> aob_action_shift) & aob_action_mask ;
+  af     = NULL ;               /* assume not rf_act_announce   */
+
+  if (rf->pending.anon == NULL)
     {
-      /* Not MPLS, so: rf->current is NULL or attr_set
-       *               rf->pending is NULL or attr_set
-       *                                   or attr_flux
-       */
-      if (rf->pending == NULL)
-        {
-          /* A withdraw (or possibly nothing, if rf_act_mrai) is pending.
-           *
-           *   rf_act_batch     -- waiting for delay schedule-time
-           *
-           *                       if is aob_
-           *
-           *   rf_act_withdraw  -- waiting for I/O
-           *
-           *   rf_act_announce  -- impossible !
-           *
-           *   rf_act_mrai      -- waiting for delay or MRAI
-           *
-           *                       if is not aob_mrai_wait, then attr_pending
-           *                       of NULL means that a withdraw is pending, in
-           *                       the usual way.
-           *
-           *                       if is aob_mrai_wait, then attr_pending of
-           *                       NULL means that is waiting for the end of
-           *                       MRAI period -- nothing is pending.
-           */
-          qassert(action != rf_act_announce) ;
-
-          if ((attr == NULL) && !(rf->bits & aob_mrai_wait))
-            return ;
-
-          attr_pending = NULL ;
-        }
-      else
-        {
-          /* An announce is pending -- in the case of rf_act_withdraw, that
-           * may be pending the withdraw.
-           *
-           *   rf_act_batch     -- waiting for delay schedule-time
-           *
-           *   rf_act_withdraw  -- waiting for I/O
-           *
-           *                       has a an announce pending after the I/O
-           *                       has sent the withdraw.
-           *
-           *   rf_act_announce  -- waiting for aggregation delay or I/O
-           *
-           *                       NB: rf->pending is an attr_flux.
-           *
-           *   rf_act_mrai      -- waiting for delay or MRAI
-           *
-           *                       NB: !aob_mrai_wait
-           */
-          qassert(!(rf->bits & aob_mrai_wait)) ;
-
-          if (action == rf_act_announce)
-            {
-              af = (attr_flux)rf->pending ;
-              attr_pending = af->attr ;
-
-              qassert(attr_pending != NULL) ;
-            }
-          else
-            attr_pending = rf->pending ;
-
-          if (attr == attr_pending)
-            return ;
-        } ;
-
-      qassert((attr != attr_pending) || (rf->bits & aob_mrai_wait)) ;
-
-      /* If the attributes to be set are the same as the current (steady state)
-       * then we revert to the current state.
+      /* A withdraw (or possibly nothing, if rf_act_mrai) is pending.
        *
-       * Note that for aob_mrai_wait, the current state is waiting on the mrai
-       * queue.
+       *   rf_act_batch     -- waiting for delay schedule-time
+       *
+       *                       if is aob_
+       *
+       *   rf_act_withdraw  -- waiting for I/O
+       *
+       *   rf_act_announce  -- impossible !
+       *
+       *   rf_act_mrai      -- waiting for delay or MRAI
+       *
+       *                       if is not aob_mrai_wait, then attr_pending
+       *                       of NULL means that a withdraw is pending, in
+       *                       the usual way.
+       *
+       *                       if is aob_mrai_wait, then attr_pending of
+       *                       NULL means that is waiting for the end of
+       *                       MRAI period -- nothing is pending.
        */
-      if (attr == rf->current)
-        return bgp_adj_out_update_revert(prib, rf, attr_pending, mpls, af) ;
+      qassert(action != rf_act_announce) ;
+
+      if ((attr == NULL) && !(rf->bits & aob_mrai_wait))
+        return ;
     }
   else
     {
-      /* is MPLS, so: rf->current is: NULL or route_mpls -> attr_set
-       *              rf->pending is: NULL or route_mpls -> NULL
-       *                                              or -> attr_set
-       *                                              or -> attr_flux
+      /* An announce is pending -- in the case of rf_act_withdraw, that
+       * may be pending the withdraw.
+       *
+       *   rf_act_batch     -- waiting for delay schedule-time
+       *
+       *   rf_act_withdraw  -- waiting for I/O
+       *
+       *                       has a an announce pending after the I/O
+       *                       has sent the withdraw.
+       *
+       *   rf_act_announce  -- waiting for aggregation delay or I/O
+       *
+       *                       NB: rf->pending is an attr_flux.
+       *
+       *   rf_act_mrai      -- waiting for delay or MRAI
+       *
+       *                       NB: !aob_mrai_wait
        */
-      route_mpls mpls_current ;
-      bool       tag_change ;
+      attr_set attr_pending ;
 
-      tag_change   = false ;
+      qassert(!(rf->bits & aob_mrai_wait)) ;
 
-      mpls = rf->pending ;
-      if ((mpls == NULL) || (mpls->atp == NULL))
+      if (action == rf_act_announce)
         {
-          /* A withdraw (or possibly nothing, if rf_act_mrai) is pending.
-           */
-          qassert(action != rf_act_announce) ;
+          af = rf->pending.flux ;
+          attr_pending = af->attr ;
 
-          if ((attr == NULL) && !(rf->bits & aob_mrai_wait))
-            return ;
-
-          attr_pending = NULL ;
+          qassert(attr_pending != NULL) ;
         }
       else
-        {
-          /* An announce is pending -- in the case of rf_act_withdraw, that
-           * may be pending the withdraw.
-           *
-           * NB: the special case where the attribute is unchanged, but the
-           *     tag does change -- for which we need only to update the tag
-           *     in the route_mpls, and we are done !
-           */
-          if (action == rf_act_announce)
-            {
-              af = (attr_flux)mpls->atp ;
-              attr_pending = af->attr ;
-            }
-          else
-            attr_pending = mpls->atp ;
+        attr_pending = rf->pending.attr ;
 
-          if (attr == attr_pending)
-            {
-              if (tag == mpls->tag)
-                return ;
-
-              tag_change = true ;
-            } ;
-        } ;
-
-      /* If the attributes and tag to be set are the same as the current
-       * (steady state) then we revert to the current state.
-       *
-       * Note that for aob_mrai_wait, the current state is waiting on the mrai
-       * queue.
-       */
-      mpls_current = rf->current ;
-      if (attr == NULL)
-        {
-          if ((mpls_current == NULL) || (mpls_current->atp == NULL))
-            return bgp_adj_out_update_revert(prib, rf, attr_pending, mpls, af) ;
-        }
-      else
-        {
-          if ((attr == mpls_current->atp) && (tag == mpls_current->tag))
-            return bgp_adj_out_update_revert(prib, rf, attr_pending, mpls, af) ;
-        } ;
-
-      /* Final, special case where the attribute is unchanged, but the tag has
-       * changed -- for which we need only to update the tag in the route_mpls,
-       * and we are done !
-       */
-      if (tag_change)
-        {
-          mpls->tag = tag ;
-          return ;
-        } ;
-    } ;
-
-  /* The requested change does change the attr_pending state, and does not
-   * revert to the current (steady) state.
-   *
-   * So discard any existing state and set the new pending state.  Then
-   * adjust scheduling, as required.
-   */
-  if (attr_pending != NULL)
-    {
-      /* We have a current pending state, which we now clear.
-       *
-       * Note that we do not discard the route_mpls -- we might need it
-       * again !
-       */
       qassert(((adj_out)attr_pending)->bits & aob_attr_set) ;
 
+      if (attr == attr_pending)
+        return ;                /* no change !          */
+
+      /* We are about to replace the current pending announcement.  We
+       * have af -> attr_flux if there is one.  We no longer want the
+       * attributes, and now is a good time to clear the pending stuff.
+       */
       bgp_attr_unlock(attr_pending) ;
+      rf->pending.anon = NULL ;
     } ;
 
-  p_ap = (attr_set*)&rf->pending ;      /* Assume no route_mpls */
+  /* The new attributes are not the same as the previous pending ones, or
+   * we are in mrai_wait state (which means there are no pending).
+   *
+   * If the attributes to be set are the same as the current (steady state)
+   * then we revert to the current state.
+   *
+   * Note that for aob_mrai_wait, the current state is waiting on the mrai
+   * queue.
+   */
+  if (attr == rf->current)
+    return bgp_adj_out_update_revert(prib, rf, af) ;
 
+  /* The new attributes require a new pending state to be set.
+   */
   if (attr != NULL)
-    {
-      /* Set new pending attribute set and tag (if required).
-       */
-      if (prib->is_mpls)
-        {
-          if (mpls == NULL)
-            {
-              mpls = XCALLOC(MTYPE_BGP_ROUTE_MPLS, sizeof(route_mpls_t)) ;
-              mpls->bits = aob_mpls ;
-
-              rf->pending = mpls ;
-            } ;
-
-          p_ap = (attr_set*)&mpls->atp ;
-          mpls->tag = tag ;
-        } ;
-
-      *p_ap = bgp_attr_lock(attr) ;     /* set pending attributes       */
-    }
+    rf->pending.attr = bgp_attr_lock(attr) ;
   else
-    {
-      /* Set pending withdraw.
-       *
-       * We retain any route_mpls -- may be useful later.
-       */
-       if (mpls != NULL)
-         {
-           p_ap = (attr_set*)&mpls->atp ;
-           mpls->tag = 0 ;
-         } ;
-
-       *p_ap = NULL ;                   /* clear pending attributes     */
-    } ;
+    qassert(rf->pending.attr == NULL) ;
 
   /* We have updated the pending state, so now need to reschedule as
    * required.
@@ -1565,9 +1229,16 @@ bgp_adj_out_update_again(bgp_prib prib, route_flux rf, attr_set attr,
       /* For dispatched announce, we need to remove the route_flux from
        * its current attr_flux, and then reschedule as an announce or
        * as a withdraw.
+       *
+       * NB: the af attr_flux we have is the attr_flux for the *previous*
+       *     pending announcement.  This tidies that up, using the *previous*
+       *     schedule time for the announcement (which is why did not deal with
+       *     the aattr_flux earlier).
        */
       case rf_act_announce:
-        bgp_adj_out_change_announce(prib, rf, af, p_ap) ;
+        qassert(af != NULL) ;
+
+        bgp_adj_out_change_announce(prib, rf, af) ;
         break ;
 
       /* For item in MRAI, we now have something pending, either withdraw
@@ -1594,7 +1265,7 @@ bgp_adj_out_update_again(bgp_prib prib, route_flux rf, attr_set attr,
 /*------------------------------------------------------------------------------
  * Revert the given not-steady-state prefix to its current (advertised) state.
  *
- * Discard any attr_pending state.
+ * Requires that any pending state has been cleared already.
  *
  * If not MRAI and not Stale, this will send the prefix back to steady state.
  *
@@ -1606,61 +1277,69 @@ bgp_adj_out_update_again(bgp_prib prib, route_flux rf, attr_set attr,
  * to steady state.
  */
 static void
-bgp_adj_out_update_revert(bgp_prib prib, route_flux rf, attr_set attr_pending,
-                                          route_mpls mpls_pending, attr_flux af)
+bgp_adj_out_update_revert(bgp_prib prib, route_flux rf, attr_flux af)
 {
-  if (attr_pending != NULL)
-    {
-      qassert(((adj_out)attr_pending)->bits & aob_attr_set) ;
-
-      bgp_attr_unlock(attr_pending) ;
-    } ;
-
   switch ((rf->bits >> aob_action_shift) & aob_action_mask)
     {
       /* Is waiting on the fifo_batch, so remove from there and set back
        * into steady state.
+       *
+       * May be reverting back to NULL, but in any case we have cleared out
+       * whatever was pending.
        */
       case rf_act_batch:
+        qassert(rf->pending.attr == NULL) ;
+
         pfifo_item_del(prib->fifo_batch, rf,
                          bgp_adj_out_get_index(prib->fifo_batch, (adj_out)rf)) ;
-        bgp_adj_out_set_steady(prib, rf, mpls_pending) ;
+        bgp_adj_out_set_steady(prib, rf) ;
         break ;
 
       /* Is waiting on the withdraw_queue, so remove from there and set
        * back into steady state.
+       *
+       * NB: if we are reverting from withdraw queue, current MUST be NULL.
+       *
+       *     Not entirely clear how we get into this state.
        */
       case rf_act_withdraw:
+        qassert(rf->current      == NULL) ;
+        qassert(rf->pending.attr == NULL) ;
+
         ddl_del(prib->withdraw_queue, rf, list) ;
-        bgp_adj_out_set_steady(prib, rf, mpls_pending) ;
+        bgp_adj_out_set_steady(prib, rf) ;
         break ;
 
       /* Is waiting on the announce_queue, so remove from there and set
        * back into steady state.
+       *
+       * The route-flux is still attached to the attr-flux, but the pending
+       * pointer has been cleared and the lock on the af->attr owned by the rf
+       * has been cleared.
        */
       case rf_act_announce:
+        qassert(af               != NULL) ;
+        qassert(rf->pending.flux == NULL) ;
+
         bgp_adj_out_del_announce(prib, rf, af) ;
-        bgp_adj_out_set_steady(prib, rf, mpls_pending) ;
+        bgp_adj_out_set_steady(prib, rf) ;
         break ;
 
       /* Is waiting on the fifo_batch, for MRAI.
        *
        * The change reverts to the current state -- which is waiting for
        * MRAI to expire.  If that has now expired, drop to steady state.
+       *
+       *
        */
       case rf_act_mrai:
-        if (mpls_pending == NULL)
-          rf->pending = NULL ;
-        else
-          {
-            mpls_pending->atp = NULL ;
-            mpls_pending->tag = 0 ;
-          } ;
+        qassert(rf->pending.attr == NULL) ;
 
-        bgp_adj_out_mrai_revert(prib, rf, mpls_pending) ;
+        bgp_adj_out_mrai_revert(prib, rf) ;
         break ;
 
       default:
+        qassert(false) ;
         break ;
     } ;
 } ;
@@ -1717,19 +1396,15 @@ bgp_adj_out_eor(bgp_prib prib)
 /*------------------------------------------------------------------------------
  * Set steady state from given route_flux and delete the route_flux.
  *
- * Will have discarded any pending state, but may have what was the pending
- * route_mpls to now be discarded.
+ * Will have discarded any pending state -- so rf->pending == NULL
  *
  * NB: if is setting NULL, does NOT remove the adj_out entry -- garbage
  *     collection will do that later.
  */
 static void
-bgp_adj_out_set_steady(bgp_prib prib, route_flux rf, route_mpls mpls_pending)
+bgp_adj_out_set_steady(bgp_prib prib, route_flux rf)
 {
   ihash_set_item(prib->adj_out, rf->pfx_id, rf->current) ;
-
-  if (mpls_pending != NULL)
-    XFREE(MTYPE_BGP_ROUTE_MPLS, mpls_pending) ;
 
   XFREE(MTYPE_BGP_ROUTE_FLUX, rf) ;
 } ;
@@ -1737,19 +1412,34 @@ bgp_adj_out_set_steady(bgp_prib prib, route_flux rf, route_mpls mpls_pending)
 /*------------------------------------------------------------------------------
  * Add a new rf_act_batch route_flux
  *
- * Fills in: rf->pfx_id and set the rf->bits.
+ * Overwrites any existing adj-out entry with the given route-flux, once filled
+ * in and queued in the batch_delay pfifo.
+ *
+ * Requires:  rf = route-flux object with:
+ *
+ *             * current   -- set as required (copy of steady state)
+ *
+ *             * pfx_id    -- X      -- set below
+ *             * bits      -- X      -- set below
+ *             * pending   -- X      -- set below
+ *             * list      -- X      -- set below
  *
  * Schedules the route_flux on the prib->fifo_batch and sets the adj_out entry.
  *
  * Note that we schedule one period ahead of the current period -- rounds up.
  */
 static void
-bgp_adj_out_add_batch(bgp_prib prib, route_flux rf, prefix_id_t pfx_id)
+bgp_adj_out_add_batch(bgp_prib prib, route_flux rf, attr_set new_attr,
+                                                             prefix_id_t pfx_id)
 {
   pfifo_index_t i ;
 
-  rf->pfx_id  = pfx_id ;
-  rf->bits    = (rf_act_batch << aob_action_shift) | aob_flux ;
+  if (new_attr != NULL)
+    bgp_attr_lock(new_attr) ;
+
+  rf->pfx_id       = pfx_id ;
+  rf->bits         = (rf_act_batch << aob_action_shift) | aob_flux ;
+  rf->pending.attr = new_attr ;
 
   i = pfifo_item_add(prib->fifo_batch, rf, prib->now + prib->batch_delay + 1) ;
   bgp_adj_out_set_index_dl((adj_out)rf, i, prib->batch_delay_extra) ;
@@ -1800,36 +1490,25 @@ bgp_adj_out_change_batch(bgp_prib prib, route_flux rf)
  * If the attr_flux already exists, reschedule to schedule-time for the
  * route-flux, if the route_flux has an earlier schedule-time.
  *
- * Requires: rf   -- route_flux with pending set to new attributes
+ * Requires: rf   -- route_flux to be added
+ *
+ *                   rf->pending.attr == new (not NULL) attr !
  *
  *           st   -- schedule-time for the route_flux
- *
- *           p_ap -- pointer to attribute set pointer
- *
- *                     if not MPLS, this is &pf->pending
- *
- *                     if is MPLS, this is ((route_mpls)pf->pending)->atp
- *
- *                   So... this points to the current pending attributes, and
- *                   to where the attr_flux pointer belongs.
- *
- * Replaces the *p_ap pointer to attribute set by a pointer to the relevant
- * attr_flux.
  */
 static void
-bgp_adj_out_add_announce(bgp_prib prib, route_flux rf, pfifo_period_t st,
-                                                                 attr_set* p_ap)
+bgp_adj_out_add_announce(bgp_prib prib, route_flux rf, pfifo_period_t st)
 {
-  attr_set      attr ;
   pfifo_index_t i ;
   attr_flux     af ;
   bool          added ;
 
+  qassert(rf->pending.attr != NULL) ;
+
   /* Find or create the required attr_flux.
    */
-  attr  = *p_ap ;
   added = false ;
-  af = vhash_lookup(prib->attr_flux_hash, attr, &added) ;
+  af = vhash_lookup(prib->attr_flux_hash, rf->pending.attr, &added) ;
 
   if (added)
     {
@@ -1840,7 +1519,7 @@ bgp_adj_out_add_announce(bgp_prib prib, route_flux rf, pfifo_period_t st,
        * The attr_flux is 'held' from a vhash perspective, until the fifo is
        * emptied...
        */
-      af->attr = attr ;
+      af->attr = rf->pending.attr ;
       vhash_set_held(af) ;
 
       qassert(af->vhash.ref_count == aob_attr_flux) ;
@@ -1871,18 +1550,26 @@ bgp_adj_out_add_announce(bgp_prib prib, route_flux rf, pfifo_period_t st,
    * it is related to, and then add the route_flux to the attr_flux's list of
    * same.
    */
-  *(attr_flux*)p_ap = af ;
+  rf->pending.flux = af ;
   ddl_append(af->fifo, rf, list) ;
 } ;
 
 /*------------------------------------------------------------------------------
  * Delete given route_flux from the given attr_flux.
  *
- * If the attr_flux empties out, remove it from the announce_queue queue.
+ * If the attr_flux empties out, remove it from the announce_queue queue and
+ * *free* it.
  *
  * Returns:  the attr_flux's schedule.
  *
- * NB: the route_flux is the owner of a lock on the attribute set returned.
+ * NB: this does not care about the state of rf->pending.  The caller may:
+ *
+ *       * already have copied the af->attr back to rf->pending.attr
+ *
+ *       * or undone the rf's lock on the af->attr and cleared rf->pending.
+ *
+ *     In any case, the caller is responsible for the attributes and the lock,
+ *     and MUST NOT expected the attr_flux to still exist on return.
  */
 static pfifo_period_t
 bgp_adj_out_del_announce(bgp_prib prib, route_flux rf, attr_flux af)
@@ -1912,21 +1599,14 @@ bgp_adj_out_del_announce(bgp_prib prib, route_flux rf, attr_flux af)
  * or a withdraw.
  *
  * Requires:  rf   = route_flux, currently attached to given af
- *                   but with rf->pending set to the *new* state.
  *
- *            af   = attr_flux the route_flux is currently attached to.
+ *                   BUT with rf->pending.attr set to the new attr (if any)
  *
- *            p_ap = pointer to attribute set pointer
+ *            af   = attr_flux the route_flux is currently attached to
  *
- *                     if not MPLS, this is &pf->pending
- *
- *                     if is MPLS, this is &pf->pending iff we now have a
- *                                                             withdraw pending
- *                     otherwise, this is ((route_mpls)pf->pending)->atp
- *
- *                   So... this points to the current pending attributes, and
- *                   if those are not NULL, to where the attr_flux pointer
- *                   belongs.
+ *                   this is used to schedule the new attr_flux, so that
+ *                   rapid changes to a given prefix cannot indefinitely
+ *                   delay updates !
  *
  * NB: the new state != old state
  *
@@ -1934,20 +1614,19 @@ bgp_adj_out_del_announce(bgp_prib prib, route_flux rf, attr_flux af)
  * as a withdraw.
  */
 static void
-bgp_adj_out_change_announce(bgp_prib prib, route_flux rf, attr_flux af,
-                                                                 attr_set* p_ap)
+bgp_adj_out_change_announce(bgp_prib prib, route_flux rf, attr_flux af)
 {
   pfifo_period_t  st ;
 
   st = bgp_adj_out_del_announce(prib, rf, af) ;
 
-  if (*p_ap == NULL)
+  if (rf->pending.attr != NULL)
+    bgp_adj_out_add_announce(prib, rf, st) ;
+  else
     {
       rf->bits = (rf_act_withdraw << aob_action_shift) | aob_flux ;
       ddl_append(prib->withdraw_queue, rf, list) ;
-    }
-  else
-    bgp_adj_out_add_announce(prib, rf, st, p_ap) ;
+    } ;
 } ;
 
 
@@ -1959,7 +1638,7 @@ bgp_adj_out_change_announce(bgp_prib prib, route_flux rf, attr_flux af,
  * MRAI pfifo handling.
  *
  * After sending an update for a given prefix it enters rf_act_mrai state,
- * where the prefix waits for MRAI - batch_delay, before falling back to
+ * where the prefix waits for (MRAI - batch_delay), before falling back to
  * steady state.  Note that does not wait for the full MRAI, so that if a
  * change rolls up immediately after returning to steady state, the batch_delay
  * it will then experience overlaps the end of the full MRAI.
@@ -2077,12 +1756,12 @@ bgp_adj_out_change_announce(bgp_prib prib, route_flux rf, attr_flux af,
  * Sets the the current state from what was the pending state -- clearing the
  * previous current state.
  *
- * If the update was a withdraw, leave any now pending announce.
+ * If the update was a withdraw, leave any now pending announce attributes.
  *
  * Enters state (1) or state (3) of MRAI.
  */
 static void
-bgp_adj_out_set_mrai(bgp_prib prib, route_flux rf, bool announce)
+bgp_adj_out_set_mrai(bgp_prib prib, route_flux rf, attr_set new_current_attr)
 {
   pfifo_period_t  nst, dl ;
   pfifo_index_t   i ;
@@ -2093,38 +1772,21 @@ bgp_adj_out_set_mrai(bgp_prib prib, route_flux rf, bool announce)
   dl  = prib->now + prib->mrai_delay + 1 ;
   nst = dl - prib->batch_delay ;        /* state (1) schedule-time      */
 
-  /* Whatever else, the current is now out of date
+  /* Whatever else, we can now update the current.
    */
-  if (!prib->is_mpls)
-    {
-      if (rf->current != NULL)
-        bgp_attr_unlock(rf->current) ;
-    }
-  else
-    {
-      route_mpls mpls ;
+  if (rf->current != NULL)
+    bgp_attr_unlock(rf->current) ;
 
-      mpls = rf->current ;
-      qassert((mpls != NULL) && (mpls->atp != NULL)) ;
-
-      bgp_attr_unlock(mpls->atp) ;
-      XFREE(MTYPE_BGP_ROUTE_MPLS, mpls) ;
-    } ;
+  rf->current = new_current_attr ;
 
   /* Deal with updating current and pending
    */
-  if (announce)
+  if (new_current_attr != NULL)
     {
-      /* After an announce, the current is the previous pending, and we have
-       * nothing pending -- so aob_mrai_wait.
+      /* After an announce, the new current is the previous pending, and we
+       * have nothing pending -- so aob_mrai_wait.
        */
-      qassert(rf->pending != NULL) ;
-      if (!prib->is_mpls)
-        qassert(((route_mpls)rf->pending)->atp != NULL) ;
-
-      rf->current = rf->pending ;
-      rf->pending = NULL ;
-
+      rf->pending.attr = NULL ;
       bits |= aob_mrai_wait ;           /* state (1)                    */
     }
   else
@@ -2135,28 +1797,10 @@ bgp_adj_out_set_mrai(bgp_prib prib, route_flux rf, bool announce)
        * If we do have an announce pending, then set the schedule-time to the
        * end of the full MRAI -- ie as per state (3).
        */
-      rf->current = NULL ;
-
-      if (rf->pending != NULL)
-        {
-          /* We have a (possible) pending announce.
-           */
-          if (!prib->is_mpls)
-            announce = true ;
-          else
-            {
-              route_mpls mpls ;
-
-              mpls = rf->pending ;
-              if (mpls->atp != NULL)
-                announce = true ;
-            } ;
-        } ;
-
-      if (announce)
-        nst = dl ;                      /* state (3) schedule-time      */
-      else
+      if (rf->pending.attr == NULL)
         bits |= aob_mrai_wait ;         /* state (1)                    */
+      else
+        nst = dl ;                      /* state (3) schedule-time      */
     } ;
 
   rf->bits = bits ;
@@ -2333,17 +1977,18 @@ bgp_adj_out_mrai_announce(bgp_prib prib, route_flux rf)
  *
  * Enters state (1) of MRAI or drops to steady state.
  *
- * Will have discarded any pending state, but may have what was the pending
- * route_mpls to now be discarded.
+ * Will have discarded any pending state.
  *
  * NB: this can change prefix from rf_act_mrai to steady state -- discarding
- *     the route_flux and any route_mpls.
+ *     the route_flux.
  */
 static void
-bgp_adj_out_mrai_revert(bgp_prib prib, route_flux rf, route_mpls mpls_pending)
+bgp_adj_out_mrai_revert(bgp_prib prib, route_flux rf)
 {
   pfifo_index_t   i ;
   pfifo_period_t  nst, dl ;
+
+  qassert(rf->pending.anon == NULL) ;           /* nothing pending      */
 
   nst = prib->now + prib->batch_delay + 1 ;
 
@@ -2388,7 +2033,7 @@ bgp_adj_out_mrai_revert(bgp_prib prib, route_flux rf, route_mpls mpls_pending)
        */
       pfifo_item_del(prib->fifo_mrai, rf, i) ;
 
-      bgp_adj_out_set_steady(prib, rf, mpls_pending) ;
+      bgp_adj_out_set_steady(prib, rf) ;
     }
   else
     {
@@ -2701,8 +2346,6 @@ bgp_adj_out_dispatch_queue(bgp_prib prib, route_flux rf_next, pfifo pf)
   do
     {
       route_flux   rf ;
-      route_mpls   mpls ;
-      attr_set*    p_ap ;
       route_flux_action_t action ;
 
       rf      = rf_next ;
@@ -2714,41 +2357,21 @@ bgp_adj_out_dispatch_queue(bgp_prib prib, route_flux rf_next, pfifo pf)
       action = (rf->bits >> aob_action_shift) & aob_action_mask ;
       qassert((action == rf_act_batch) || (action == rf_act_mrai)) ;
 
-      if (!prib->is_mpls)
-        {
-          /* Not MPLS, so: rf->pending is NULL or attr_set
-           */
-          mpls = NULL ;
-          p_ap = (attr_set*)&rf->pending ;
-        }
-      else
-        {
-          /* is MPLS, so: rf->pending is: NULL
-           *                          or: route_mpls -> NULL
-           *                                      or -> attr_set
-           */
-          mpls = rf->pending ;
-          if (mpls != NULL)
-            p_ap = (attr_set*)&mpls->atp ;
-          else
-            p_ap = (attr_set*)&rf->pending ;
-        } ;
-
-      if      (*p_ap != NULL)
+      if (rf->pending.attr != NULL)
         {
           /* Dispatch to an attr_flux on the announce_queue.
            */
          rf->bits = (rf_act_announce << aob_action_shift) | aob_flux ;
 
-         bgp_adj_out_add_announce(prib, rf, prib->now + prib->announce_delay + 1,
-                                                                         p_ap) ;
+         bgp_adj_out_add_announce(prib, rf,
+                                         prib->now + prib->announce_delay + 1) ;
        }
       else if (rf->bits & aob_mrai_wait)
         {
           /* MRAI expired.
            */
           qassert(action == rf_act_mrai) ;
-          bgp_adj_out_set_steady(prib, rf, mpls) ;
+          bgp_adj_out_set_steady(prib, rf) ;
         }
       else
         {
@@ -2927,7 +2550,6 @@ bgp_adj_out_next_update(bgp_prib prib, route_out_parcel parcel)
  *   * attr                     -- NULL
  *
  *   * pfx_id                   -- from route_flux
- *   * tag                      -- mpls_tags_null
  *
  *   * qafx                     -- from prib
  *   * action                   -- ra_out_withdraw
@@ -2937,7 +2559,6 @@ bgp_adj_out_ret_withdraw(bgp_prib prib, route_out_parcel parcel, route_flux rf)
 {
   parcel->attr   = NULL ;
   parcel->pfx_id = rf->pfx_id ;
-  parcel->tag    = mpls_tags_null ;
   parcel->qafx   = prib->qafx ;
   parcel->action = ra_out_withdraw ;
 
@@ -2952,8 +2573,6 @@ bgp_adj_out_ret_withdraw(bgp_prib prib, route_out_parcel parcel, route_flux rf)
  *   * attr                     -- from attr_flux
  *
  *   * pfx_id                   -- from route_flux
- *   * tag                      -- if prib->mpls: from route_mpls
- *                                     otherwise: mpls_tags_null
  *
  *   * qafx                     -- from prib
  *   * action                   -- ra_out_initial/ra_out_update
@@ -2970,21 +2589,6 @@ bgp_adj_out_ret_announce(bgp_prib prib, route_out_parcel parcel,
   parcel->action = (rf->current == NULL) ? ra_out_initial
                                          : ra_out_update ;
 
-  if (prib->is_mpls)
-    {
-      route_mpls  mpls ;
-
-      mpls = rf->pending ;
-      parcel->tag = mpls->tag ;
-
-      qassert(mpls->atp == af) ;
-    }
-  else
-    {
-      parcel->tag = mpls_tags_null ;
-      qassert(rf->pending == af) ;
-    } ;
-
   return parcel ;
 } ;
 
@@ -2996,7 +2600,6 @@ bgp_adj_out_ret_announce(bgp_prib prib, route_out_parcel parcel,
  *   * attr                     -- NULL
  *
  *   * pfx_id                   -- prefix_id_null
- *   * tag                      -- mpls_tags_null
  *
  *   * qafx                     -- from prib
  *   * action                   -- ra_out_eor
@@ -3006,7 +2609,6 @@ bgp_adj_out_ret_eor(bgp_prib prib, route_out_parcel parcel)
 {
   parcel->attr   = NULL ;
   parcel->pfx_id = prefix_id_null ;
-  parcel->tag    = mpls_tags_null ;
 
   parcel->qafx   = prib->qafx ;
   parcel->action = ra_out_eor ;
@@ -3040,7 +2642,7 @@ bgp_adj_out_done_withdraw(bgp_prib prib, route_out_parcel parcel)
     return NULL ;               /* no idea what else to do      */
 
   ddl_del_head(prib->withdraw_queue, list) ;
-  bgp_adj_out_set_mrai(prib, rf, false /* withdraw */) ;
+  bgp_adj_out_set_mrai(prib, rf, NULL) ;
 
   rf = prib->withdraw_queue.head ;
 
@@ -3084,18 +2686,14 @@ bgp_adj_out_done_announce(bgp_prib prib, route_out_parcel parcel)
        *
        * Remove the route_flux object from the list, and stick it into mrai.
        *
-       * The route_flux or the route_mpls own a lock on the attributes.  The
-       * attr_flux does not.  Having detached from the attr_flux, we restore
-       * the route_flux or route_mpls 'pending'/'atp' by the attr_set pointer.
+       * The route_flux owns a lock on the attributes.  The attr_flux does not.
+       * Having detached from the attr_flux, we set route_flux 'pending' to
+       * point at the
+       * 'pending' by the attr_set pointer.
        */
       ddl_del_head(af->fifo, list) ;
 
-      if (!prib->is_mpls)
-        rf->pending = af->attr ;
-      else
-        ((route_mpls)rf->pending)->atp = af->attr ;
-
-      bgp_adj_out_set_mrai(prib, rf, true /* announce */) ;
+      bgp_adj_out_set_mrai(prib, rf, af->attr) ;
     }
   else
     {
@@ -3177,24 +2775,10 @@ bgp_adj_out_done_no_announce(bgp_prib prib, route_out_parcel parcel)
        * Clear the rf's reference to the af, and since we no longer need the
        * attributes, undo the lock on those.
        */
-      route_mpls  mpls_pending ;
-
-      if (!prib->is_mpls)
-        {
-          qassert(rf->pending == af) ;
-          rf->pending  = NULL ;
-          mpls_pending = NULL ;
-        }
-      else
-        {
-          mpls_pending      = rf->pending ;
-          qassert( mpls_pending->atp == af) ;
-          mpls_pending->atp = NULL ;
-        } ;
-
+      ddl_del_head(af->fifo, list) ;
       bgp_attr_unlock(af->attr) ;
 
-      ddl_del_head(af->fifo, list) ;
+      rf->pending.anon = NULL ;
 
       /* Now withdraw or revert to steady (nothing announced) state.
        */
@@ -3205,7 +2789,7 @@ bgp_adj_out_done_no_announce(bgp_prib prib, route_out_parcel parcel)
         }
       else
         {
-          bgp_adj_out_set_steady(prib, rf, mpls_pending) ;
+          bgp_adj_out_set_steady(prib, rf) ;
         } ;
     }
   else

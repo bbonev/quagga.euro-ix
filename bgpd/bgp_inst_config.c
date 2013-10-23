@@ -38,6 +38,7 @@ static bool bgp_config_write_redistribute (vty vty, bgp_inst bgp, qafx_t qafx,
                                                                  bool done_af) ;
 static bool bgp_config_write_network (vty vty, bgp_inst bgp, qafx_t qafx,
                                                                  bool done_af) ;
+static int bgp_config_write_distance (vty vty, bgp_inst bgp) ;
 static bgp_peer bgp_get_ith_peer(bgp_inst bgp, uint i) ;
 
 /*------------------------------------------------------------------------------
@@ -92,25 +93,29 @@ bgp_config_write (vty vty)
 
       if (bgp_option_check (BGP_OPT_MULTIPLE_INSTANCE))
         {
-          if (bgp->name != NULL)
-            vty_out (vty, " view %s", bgp->name);
+          chs_c view_name ;
+
+          view_name = bgp_nref_name(bgp->name) ;
+
+          if ((view_name != NULL) && (view_name[0] != '\0'))
+            vty_out (vty, " view %s", view_name);
         }
       vty_out (vty, "\n");
 
       if (bgp_option_check (BGP_OPT_CONFIG_CISCO))
         vty_out (vty, " no synchronization\n");
 
-      if (bcs_is_on(bc, bcs_NO_FAST_EXT_FAILOVER))
+      if (bcs_is_set_on(bc, bcs_NO_FAST_EXT_FAILOVER))
         vty_out (vty, " no bgp fast-external-failover\n");
 
-      if (bcs_is_on(bc, bcs_router_id))
+      if (bcs_is_set_on(bc, bcs_router_id))
         vty_out (vty, " bgp router-id %s\n",
                                  siptoa(AF_INET, &bc->router_id).str);
 
-      if (bcs_is_on(bc, bcs_LOG_NEIGHBOR_CHANGES))
+      if (bcs_is_set_on(bc, bcs_LOG_NEIGHBOR_CHANGES))
         vty_out (vty, " bgp log-neighbor-changes\n");
 
-      if (bcs_is_on(bc, bcs_ALWAYS_COMPARE_MED))
+      if (bcs_is_set_on(bc, bcs_ALWAYS_COMPARE_MED))
         vty_out (vty, " bgp always-compare-med\n");
 
       if (bcs_is_set(bc, bcs_DEFAULT_IPV4))
@@ -122,20 +127,20 @@ bgp_config_write (vty vty)
            * If the state is unset, then the default is "no", but that may
            * be overridden by command line.
            */
-          if (bcs_is_on(bc, bcs_DEFAULT_IPV4))
+          if (bcs_is_set_on(bc, bcs_DEFAULT_IPV4))
             vty_out (vty, " bgp default ipv4-unicast\n") ;
           else
             vty_out (vty, " no bgp default ipv4-unicast\n") ;
         } ;
 
-      if (bcs_is_on(bc, bcs_local_pref))
+      if (bcs_is_set_on(bc, bcs_local_pref))
         vty_out (vty, " bgp default local-preference %d\n",
-                                                           bc->args.local_pref);
+                                                           bc->defs.local_pref);
 
-      if (bcs_is_on(bc, bcs_NO_CLIENT_TO_CLIENT))
+      if (bcs_is_set_on(bc, bcs_NO_CLIENT_TO_CLIENT))
         vty_out (vty, " no bgp client-to-client reflection\n");
 
-      if (bcs_is_on(bc, bcs_cluster_id))
+      if (bcs_is_set_on(bc, bcs_cluster_id))
         vty_out (vty, " bgp cluster-id %s\n",
                                           siptoa(AF_INET, &bc->cluster_id).str);
 
@@ -152,39 +157,39 @@ bgp_config_write (vty vty)
           vty_out (vty, "\n");
         }
 
-      if (bcs_is_on(bc, bcs_confed_id))
+      if (bcs_is_set_on(bc, bcs_confed_id))
        vty_out (vty, " bgp confederation identifier %u\n", bc->confed_id);
 
-      if (bcs_is_on(bc, bcs_ENFORCE_FIRST_AS))
+      if (bcs_is_set_on(bc, bcs_ENFORCE_FIRST_AS))
         vty_out (vty, " bgp enforce-first-as\n");
 
-      if (bcs_is_on(bc, bcs_DETERMINISTIC_MED))
+      if (bcs_is_set_on(bc, bcs_DETERMINISTIC_MED))
         vty_out (vty, " bgp deterministic-med\n");
 
-      if (bcs_is_on(bc, bcs_stalepath_time_secs))
+      if (bcs_is_set_on(bc, bcs_stalepath_time_secs))
         vty_out (vty, " bgp graceful-restart stalepath-time %d\n",
-                                                 bc->args.stalepath_time_secs);
-      if (bcs_is_on(bc, bcs_GRACEFUL_RESTART))
+                                                 bc->defs.stalepath_time_secs);
+      if (bcs_is_set_on(bc, bcs_GRACEFUL_RESTART))
        vty_out (vty, " bgp graceful-restart\n") ;
 
-      if (bcs_is_on(bc, bcs_ASPATH_IGNORE))
+      if (bcs_is_set_on(bc, bcs_ASPATH_IGNORE))
         vty_out (vty, " bgp bestpath as-path ignore\n");
-      if (bcs_is_on(bc, bcs_ASPATH_CONFED))
+      if (bcs_is_set_on(bc, bcs_ASPATH_CONFED))
         vty_out (vty, " bgp bestpath as-path confed\n");
-      if (bcs_is_on(bc, bcs_COMPARE_ROUTER_ID))
+      if (bcs_is_set_on(bc, bcs_COMPARE_ROUTER_ID))
         vty_out (vty, " bgp bestpath compare-routerid\n");
-      if (bcs_is_on(bc, bcs_MED_CONFED) ||
-          bcs_is_on(bc, bcs_MED_MISSING_AS_WORST))
+      if (bcs_is_set_on(bc, bcs_MED_CONFED) ||
+          bcs_is_set_on(bc, bcs_MED_MISSING_AS_WORST))
         {
           vty_out (vty, " bgp bestpath med");
-          if (bcs_is_on(bc, bcs_MED_CONFED))
+          if (bcs_is_set_on(bc, bcs_MED_CONFED))
             vty_out (vty, " confed");
-          if (bcs_is_on(bc, bcs_MED_MISSING_AS_WORST))
+          if (bcs_is_set_on(bc, bcs_MED_MISSING_AS_WORST))
             vty_out (vty, " missing-as-worst");
           vty_out (vty, "\n");
         }
 
-      if (bcs_is_on(bc, bcs_IMPORT_CHECK))
+      if (bcs_is_set_on(bc, bcs_IMPORT_CHECK))
         vty_out (vty, " bgp network import-check\n");
 
       bgp_config_write_scan_time (vty);
@@ -192,11 +197,11 @@ bgp_config_write (vty vty)
       if (bafcs_is_on(bc->afc[qafx_ipv4_unicast], bafcs_DAMPING))
         bgp_config_write_damp (vty);
 
-      if (bcs_is_on(bc, bcs_holdtime_secs) ||
-          bcs_is_on(bc, bcs_keepalive_secs))
+      if (bcs_is_set_on(bc, bcs_holdtime_secs) ||
+          bcs_is_set_on(bc, bcs_keepalive_secs))
         vty_out (vty, " timers bgp %d %d\n",
-                                           bc->args.keepalive_secs,
-                                           bc->args.holdtime_secs);
+                                           bc->defs.keepalive_secs,
+                                           bc->defs.holdtime_secs);
 
       bgp_config_write_distance (vty, bgp);
 
@@ -480,7 +485,7 @@ bgp_config_write_redistribute (vty vty, bgp_inst bgp, qafx_t qafx, bool done_af)
         vty_out (vty, " metric %d", redist->metric);
 
       if (redist->rmap_name != NULL)
-        vty_out (vty, " route-map %s", ni_nref_name(redist->rmap_name));
+        vty_out (vty, " route-map %s", bgp_nref_name(redist->rmap_name));
 
       vty_out (vty, "\n");
     } ;
@@ -488,12 +493,49 @@ bgp_config_write_redistribute (vty vty, bgp_inst bgp, qafx_t qafx, bool done_af)
   return done_af ;
 } ;
 
+/*------------------------------------------------------------------------------
+ * Write away the distance settings
+ */
+static int
+bgp_config_write_distance (vty vty, bgp_inst bgp)
+{
+  bgp_defaults args_c ;
+
+  /* Distance configuration.
+   */
+  args_c = &bgp->c->args ;
+  if (   (   (args_c->distance_ebgp   != 0)
+          && (args_c->distance_ibgp   != 0)
+          && (args_c->distance_local  != 0) )
+      && (   (args_c->distance_ebgp  != ZEBRA_EBGP_DISTANCE_DEFAULT)
+          || (args_c->distance_ibgp  != ZEBRA_IBGP_DISTANCE_DEFAULT)
+          || (args_c->distance_local != ZEBRA_IBGP_DISTANCE_DEFAULT) ) )
+    vty_out (vty, " distance bgp %d %d %d\n",
+             args_c->distance_ebgp,
+             args_c->distance_ibgp,
+             args_c->distance_local);
+#if 0
+  struct bgp_node *rn;
+  struct bgp_distance *bdistance;
+
+  for (rn = bgp_table_top (bgp_distance_table); rn; rn = bgp_route_next (rn))
+    if ((bdistance = rn->info) != NULL)
+      {
+        vty_out (vty, " distance %d %s/%d %s%s", bdistance->distance,
+                 safe_inet_ntoa (rn->p.u.prefix4), rn->p.prefixlen,
+                 bdistance->access_list ? bdistance->access_list : "",
+                 VTY_NEWLINE);
+      }
+#endif
+
+  return 0;
+}
+
 /*==============================================================================
  * Creation and destruction of BGP Instances.
  *
  *
  */
-static bgp_inst bgp_lookup_by_name (chs_c name) ;
 static bgp_inst bgp_inst_create (as_t as, chs_c name) ;
 
 /*------------------------------------------------------------------------------
@@ -610,7 +652,8 @@ bgp_inst_get(bgp_inst* p_bgp, chs_c name, as_t* p_as)
 extern bgp_ret_t
 bgp_inst_delete (bgp_inst bgp)
 {
-  ;
+
+  return BGP_SUCCESS ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -653,8 +696,7 @@ bgp_inst_create (as_t as, chs_c name)
   bconf = XCALLOC (MTYPE_BGP_CONFIG, sizeof(bgp_bconfig_t)) ;
   bgp->c = bconf ;
 
-  if ((name != NULL) && (name[0] != '\0'))
-    bgp->name = XSTRDUP(MTYPE_BGP_NAME, name) ;
+  bgp->name = bgp_nref_get(name) ;      /* NULL if name NULL or empty   */
 
   /* Zeroising the bgp_bconfig sets:
    *
@@ -777,7 +819,7 @@ bgp_inst_lookup(chs_c name, as_t as)
 
   for (bgp = ddl_head(bm->bgps) ; bgp != NULL ; bgp = ddl_next(bgp, bgp_list))
     {
-      if (bgp_name_match(bgp->name, name))
+      if (bgp_name_match(bgp_nref_name(bgp->name), name))
         {
           if ((as == BGP_ASN_NULL) || (bgp->c->my_as == as))
             return bgp;
@@ -873,6 +915,11 @@ bgp_config_bcs_change(bgp_bconfig bc, bgp_bc_setting_t bcs, bgp_sc_t bsc)
    */
   switch (bcs)
     {
+      case bcs_MED_MISSING_AS_WORST:
+      case bcs_med:
+        if (bsc == bsc_set_on)
+          mask = bcs_bit(bcs_MED_MISSING_AS_WORST) | pafcs_bit(bcs_med) ;
+        break ;
 
       default:
         break ;
@@ -882,9 +929,9 @@ bgp_config_bcs_change(bgp_bconfig bc, bgp_bc_setting_t bcs, bgp_sc_t bsc)
   if (bsc & bsc_set)
     bc->set    |= set ;                 /* set setting if required      */
 
-  bc->set_on &= bc->set ;               /* unset => off                 */
+  bc->on &= bc->set ;                   /* unset => off                 */
   if (bsc == bsc_set_on)
-    bc->set_on |= set ;                 /* set "on" if required         */
+    bc->on |= set ;                     /* set "on" if required         */
 
   return BGP_SUCCESS ;
 } ;
@@ -1281,7 +1328,7 @@ bgp_confed_id_set (bgp_inst bgp, as_t confed_id, bgp_sc_t bsc)
 
           pc = peer->c ;
 
-          if (pcs_is_on(pc, pcs_remote_as))
+          if (pcs_is_set_on(pc, pcs_remote_as))
             {
               /* May not set the confed_id if it is not a "local" ASN and an
                * eBGP peer is using the ASN
@@ -1293,11 +1340,11 @@ bgp_confed_id_set (bgp_inst bgp, as_t confed_id, bgp_sc_t bsc)
                * and that peer has change-local-as set.
                */
               if (asn_set_contains(bgp->c->confed_peers, pc->remote_as) &&
-                                            pcs_is_on(pc, pcs_change_local_as))
+                                            pcs_is_set_on(pc, pcs_change_local_as))
                 return BGP_ERR_NO_CBGP_WITH_LOCAL_AS ;
             } ;
 
-          if (pcs_is_on(pc, pcs_change_local_as))
+          if (pcs_is_set_on(pc, pcs_change_local_as))
             {
               /* May not set confed-id if that ASN is in use by any change-
                * local-as
@@ -1891,7 +1938,7 @@ bgp_confed_peer_set(bgp_inst bgp, as_t asn, bgp_sc_t bsc)
 
   if (bsc == bsc_set_on)
     {
-      if (bcs_is_on(bc, bcs_confed_id))
+      if (bcs_is_set_on(bc, bcs_confed_id))
         {
           /* We have a confed-id, so any new confed-peer needs to be checked.
            *
@@ -1908,11 +1955,11 @@ bgp_confed_peer_set(bgp_inst bgp, as_t asn, bgp_sc_t bsc)
 
               pc = peer->c ;
 
-              if (pcs_is_on(pc, pcs_change_local_as))
+              if (pcs_is_set_on(pc, pcs_change_local_as))
                 {
                   /* Cannot change to cBGP if with change-local-as set.
                    */
-                  if (pcs_is_on(pc, pcs_remote_as) && (pc->remote_as == asn))
+                  if (pcs_is_set_on(pc, pcs_remote_as) && (pc->remote_as == asn))
                     return BGP_ERR_LOCAL_AS_ALREADY_SET ;
 
                   /* Cannot change-local-as to a confed-peer.
@@ -1963,10 +2010,10 @@ bgp_timers_set (bgp_inst bgp, uint keepalive, uint holdtime, bgp_sc_t bsc)
       holdtime   = 0 ;
     } ;
 
-  bc->args.keepalive_secs = keepalive ;
+  bc->defs.keepalive_secs = keepalive ;
   ret1 = bgp_config_bcs_change(bc, bcs_keepalive_secs, bsc) ;
 
-  bc->args.holdtime_secs  = holdtime ;
+  bc->defs.holdtime_secs  = holdtime ;
   ret2 = bgp_config_bcs_change(bc, bcs_holdtime_secs, bsc) ;
 
   return (ret1 != BGP_SUCCESS) ? ret1 : ret2 ;
@@ -1994,7 +2041,7 @@ bgp_stalepath_time_set (bgp_inst bgp, uint stalepath_time_secs, bgp_sc_t bsc)
       stalepath_time_secs  = 0 ;
     } ;
 
-  bc->args.stalepath_time_secs = stalepath_time_secs ;
+  bc->defs.stalepath_time_secs = stalepath_time_secs ;
 
   return bgp_config_bcs_change(bc, bcs_stalepath_time_secs, bsc) ;
 } ;
@@ -2019,7 +2066,7 @@ bgp_local_pref_set (bgp_inst bgp, uint local_pref, bgp_sc_t bsc)
       local_pref = 0 ;
     } ;
 
-  bc->args.local_pref = local_pref ;
+  bc->defs.local_pref = local_pref ;
 
   return bgp_config_bcs_change(bc, bcs_local_pref, bsc) ;
 } ;
@@ -2048,7 +2095,7 @@ bgp_connect_retry_time_set(bgp_inst bgp, uint connect_retry_secs, bgp_sc_t bsc)
       connect_retry_secs = 0 ;
     } ;
 
-  bc->args.connect_retry_secs = connect_retry_secs ;
+  bc->defs.connect_retry_secs = connect_retry_secs ;
 
   return bgp_config_bcs_change(bc, bcs_connect_retry_secs, bsc) ;
 } ;
@@ -2077,7 +2124,7 @@ bgp_accept_retry_time_set (bgp_inst bgp, uint accept_retry_secs, bgp_sc_t bsc)
       accept_retry_secs = 0 ;
     } ;
 
-  bc->args.accept_retry_secs = accept_retry_secs ;
+  bc->defs.accept_retry_secs = accept_retry_secs ;
 
   return bgp_config_bcs_change(bc, bcs_accept_retry_secs, bsc) ;
 } ;
@@ -2106,7 +2153,7 @@ bgp_open_hold_time_set (bgp_inst bgp, uint open_hold_secs, bgp_sc_t bsc)
       open_hold_secs = 0 ;
     } ;
 
-  bc->args.open_hold_secs = open_hold_secs ;
+  bc->defs.open_hold_secs = open_hold_secs ;
 
   return bgp_config_bcs_change(bc, bcs_open_hold_secs, bsc) ;
 } ;
@@ -2145,9 +2192,9 @@ bgp_mrai_set (bgp_inst bgp, uint ibgp_mrai, uint cbgp_mrai,
       ebgp_mrai = 0 ;
     } ;
 
-  bc->args.ibgp_mrai_secs = ibgp_mrai ;
-  bc->args.cbgp_mrai_secs = cbgp_mrai ;
-  bc->args.ebgp_mrai_secs = ebgp_mrai ;
+  bc->defs.ibgp_mrai_secs = ibgp_mrai ;
+  bc->defs.cbgp_mrai_secs = cbgp_mrai ;
+  bc->defs.ebgp_mrai_secs = ebgp_mrai ;
 
   /* We don't expect any of this to fail... but returns the first failure
    * encountered.
@@ -2191,7 +2238,7 @@ bgp_restart_time_set (bgp_inst bgp, uint restart_time_secs, bgp_sc_t bsc)
       restart_time_secs = 0 ;
     } ;
 
-  bc->args.restart_time_secs = restart_time_secs ;
+  bc->defs.restart_time_secs = restart_time_secs ;
 
   return bgp_config_bcs_change(bc, bcs_restart_time_secs, bsc) ;
 } ;
@@ -2216,7 +2263,7 @@ bgp_default_med_set (bgp_inst bgp, uint med, bgp_sc_t bsc)
       med = 0 ;
     } ;
 
-  bc->args.med = med ;
+  bc->defs.med = med ;
 
   return bgp_config_bcs_change(bc, bcs_med, bsc) ;
 } ;
@@ -2264,7 +2311,7 @@ bgp_redistribute_set(bgp_inst bgp, qafx_t qafx, bgp_redist_type_t r_type,
         return BGP_ERR_INVALID_VALUE ;
     } ;
 
-  bafc   = &bc->afc[qafx] ;
+  bafc   = bc->afc[qafx] ;
   redist = &bafc->redist[r_type] ;
 
   if (what & redist_set_metric)
@@ -2282,12 +2329,7 @@ bgp_redistribute_set(bgp_inst bgp, qafx_t qafx, bgp_redist_type_t r_type,
     } ;
 
   if (what & redist_set_rmap)
-    {
-      if (bsc == bsc_set_on)
-        ni_nref_set_c(&redist->rmap_name, bgp_config_name_index, rmap_name) ;
-      else
-        ni_nref_clear(&redist->rmap_name) ;
-    } ;
+    bgp_nref_set(&redist->rmap_name, (bsc == bsc_set_on) ? rmap_name : NULL) ;
 
   ret = BGP_SUCCESS ;
 

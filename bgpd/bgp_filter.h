@@ -21,6 +21,8 @@ Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
 #ifndef _QUAGGA_BGP_FILTER_H
 #define _QUAGGA_BGP_FILTER_H
 
+#include "bgpd/bgp_common.h"
+
 enum as_filter_type
 {
   AS_FILTER_DENY,

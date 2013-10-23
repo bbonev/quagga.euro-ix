@@ -455,7 +455,7 @@ bgp_listeners_set_md5(bgp_listener_list listener_list, sockunion_c su_password,
 
   while (listener != NULL)
     {
-      if (sockunion_family(&listener->su) == sockunion_family(&cops->su_remote))
+      if (sockunion_family(&listener->su) == sockunion_family(&cops->remote_su))
         bgp_md5_set_socket(qfile_fd_get(&listener->qf), &listener->su,
                                                                      password) ;
       listener = dsl_next(listener, next) ;
@@ -968,7 +968,7 @@ bgp_listen_set(bgp_cops_c cops)
 
   listener_list->use_count += 1 ;
 
-  bgp_listeners_set_md5(listener_list, &cops->su_remote, cops, on) ;
+  bgp_listeners_set_md5(listener_list, &cops->remote_su, cops, on) ;
   return true ;
 } ;
 
@@ -989,7 +989,7 @@ bgp_listen_set_password(bgp_cops_c cops)
   listener_list = bgp_listeners_find_list(cops->port, false /* no make */) ;
 
   if (listener_list != NULL)
-    bgp_listeners_set_md5(listener_list, &cops->su_remote, cops, on) ;
+    bgp_listeners_set_md5(listener_list, &cops->remote_su, cops, on) ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -1107,9 +1107,9 @@ bgp_accept_action(qfile qf, void* file_info)
    * We arrange for an IPv4 listener *and* an IPv6 one (assuming have IPv6),
    * and we arrange for AF_INET6 listener to be IPV6_V6ONLY.  This means that
    * should NOT get an IPv4 mapped address.  However, should we get such an
-   * address, the su_remote will be set to the actual IPv4 address.
+   * address, the remote_su will be set to the actual IPv4 address.
    *
-   * This means: the address family of su_remote is the address family of the
+   * This means: the address family of remote_su is the address family of the
    * underlying connection, NOT NECESSARILY the socket -- should that matter.
    */
   sock_fd = sockunion_accept(qfile_fd_get(qf), sock_su) ;
@@ -1229,7 +1229,7 @@ bgp_connect(bgp_connection connection)
 
   /* Make socket for the connect connection.
    */
-  sock_fd = sockunion_socket(&cops->su_remote, SOCK_STREAM, 0) ;
+  sock_fd = sockunion_socket(&cops->remote_su, SOCK_STREAM, 0) ;
   if (sock_fd <= 0)
     err = errno ;
 
@@ -1253,7 +1253,7 @@ bgp_connect(bgp_connection connection)
    */
   if (err== 0)
     if (cops->password[1] != '\0')
-      err = bgp_md5_set_socket(sock_fd, &cops->su_remote, cops->password) ;
+      err = bgp_md5_set_socket(sock_fd, &cops->remote_su, cops->password) ;
 
   /* Bind socket to given interface, if any and if possible.
    *
@@ -1270,7 +1270,7 @@ bgp_connect(bgp_connection connection)
   /* Connect to the remote peer.
    */
   if (err == 0)
-    err = sockunion_connect(sock_fd, &cops->su_remote, cops->port,
+    err = sockunion_connect(sock_fd, &cops->remote_su, cops->port,
                                                        cops->ifindex) ;
                           /* does not report EINPROGRESS as an error.   */
 
@@ -1352,7 +1352,7 @@ bgp_connect_action(qfile qf, void* file_info)
 
   /* See if connection successful or not.
    *
-   * If successful, set the connection->cops->su_local and ->su_remote
+   * If successful, set the connection->cops->local_su and ->remote_su
    */
   if (getsockopt_so_error(sock_fd) < 0)
     err = errno ;
@@ -1507,11 +1507,11 @@ bgp_get_names(int sock_fd, bgp_cops cops)
 
   err = 0 ;
 
-  ret = sockunion_getsockname(sock_fd, &cops->su_local) ;
+  ret = sockunion_getsockname(sock_fd, &cops->local_su) ;
   if (ret < 0)
     err = errno ;
 
-  ret = sockunion_getpeername(sock_fd, &cops->su_remote) ;
+  ret = sockunion_getpeername(sock_fd, &cops->remote_su) ;
   if ((ret < 0) && (err == 0))
     err = errno ;
 
@@ -1558,7 +1558,7 @@ bgp_bind_ifname(int sock_fd, bgp_cops cops)
       if (cops->ifindex == 0)
         {
           zlog_warn("Cannot bind to unknown interface %s for %s",
-                                    cops->ifname, sutoa(&cops->su_remote).str) ;
+                                    cops->ifname, sutoa(&cops->remote_su).str) ;
         }
       else if (can_so_bindtodevice)
         {
@@ -1588,7 +1588,7 @@ bgp_bind_ifname(int sock_fd, bgp_cops cops)
             {
               err = errno ;
               zlog_warn("bind to interface %s failed for %s (%s)",
-                                    cops->ifname, sutoa(&cops->su_remote).str,
+                                    cops->ifname, sutoa(&cops->remote_su).str,
                                                            errtoa(err, 0).str) ;
               cops->ifindex = 0 ;
             } ;
@@ -1598,7 +1598,7 @@ bgp_bind_ifname(int sock_fd, bgp_cops cops)
       else
         {
           zlog_warn("Cannot SO_BINDTODEVICE, so bind to %s for %s ignored",
-                                    cops->ifname, sutoa(&cops->su_remote).str) ;
+                                    cops->ifname, sutoa(&cops->remote_su).str) ;
         } ;
     } ;
 
@@ -1617,12 +1617,12 @@ bgp_bind_ifname(int sock_fd, bgp_cops cops)
 static int
 bgp_bind_ifaddress(int sock_fd, bgp_cops cops)
 {
-  if (sockunion_family(&cops->su_local) != AF_UNSPEC)
+  if (sockunion_family(&cops->local_su) != AF_UNSPEC)
     {
       sockunion_t su[1] ;
       int ret ;
 
-      sockunion_new_sockaddr(su, &cops->su_local.sa) ;
+      sockunion_new_sockaddr(su, &cops->local_su.sa) ;
       ret = sockunion_bind(sock_fd, su, 0 /* no port number */,
                                                         false /* not 'any' */) ;
       if (ret < 0)

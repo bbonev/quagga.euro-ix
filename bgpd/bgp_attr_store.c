@@ -190,7 +190,7 @@ bgp_attr_pair_load_new(attr_pair pair)
  * Sets stored and working pointers the same and not NULL, which => have a
  * stored and locked set of attributes.
  *
- * Returns:  address of the working set
+ * Returns:  address of the working set -- same as the stored set !
  */
 extern attr_set
 bgp_attr_pair_load(attr_pair pair, attr_set set)
@@ -237,13 +237,14 @@ bgp_attr_pair_load_default(attr_pair pair, byte origin)
  *
  * Returns:  address of stored set
  *
- * NB: the returned stored set is locked by virtue of the pointer which remains
- *     in the attribute pair.
+ * NB: the attr_pair is now in the same state as if it had just been loaded
+ *     from the stored set.  So attribute pair owns a lock on the stored
+ *     set (by virtue of its pointer to it).
  *
- *     The caller must lock the set again before saving the returned pointer.
- *     (Or must avoid unloading the attribute pair !)
+ *     Unloading the attribute pair releases its lock on the stored set.
  *
- *     Unloading the attribute pair looks after the lock which it owns.
+ *     So, the caller must lock the set again before saving the returned
+ *     pointer -- OR avoid unloading the attribute pair !
  *
  * NB: the pair MUST have been loaded -- by bgp_attr_pair_load_new()/_load()/
  *     _load_default() -- so pair->working is not NULL and is valid.
@@ -727,22 +728,47 @@ bgp_attr_pair_set_local_pref(attr_pair pair, uint32_t local_pref)
 } ;
 
 /*------------------------------------------------------------------------------
- * Clear local pref attribute -- debouncing no change
+ * Set default local_pref attribute -- debouncing if no change
  *
- * NB: clears atb_local_pref -- so no local_pref != local_pref == 0.
+ * Does nothing if has a local-pref, or the given setting is the same as the
+ * current value.
+ *
+ * NB: a set of attributes with a local preference 'set' is different to a
+ *     set of attributes with it 'unset', even if the value is the same.
  */
 extern attr_set
-bgp_attr_pair_clear_local_pref(attr_pair pair)
+bgp_attr_pair_default_local_pref(attr_pair pair, uint32_t local_pref)
 {
   attr_set current, working ;
 
   current = pair->working ;
-  if (!(current->have & atb_local_pref))
+  if ((current->local_pref == local_pref) || (current->have & atb_local_pref))
     return current ;            /* debounce     */
 
   working = bgp_attr_get_working(pair) ;
 
-  working->local_pref = 0 ;
+  working->local_pref = local_pref ;
+
+  return working ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Clear local pref attribute -- debouncing no change
+ *
+ * NB: clears atb_local_pref and sets the given default value.
+ */
+extern attr_set
+bgp_attr_pair_clear_local_pref(attr_pair pair, uint32_t local_pref)
+{
+  attr_set current, working ;
+
+  current = pair->working ;
+  if ((current->local_pref == local_pref) && !(current->have & atb_local_pref))
+    return current ;            /* debounce     */
+
+  working = bgp_attr_get_working(pair) ;
+
+  working->local_pref = local_pref ;
   working->have      &= ~atb_local_pref ;
 
   return working ;
@@ -793,17 +819,42 @@ bgp_attr_pair_set_med(attr_pair pair, uint32_t med)
 } ;
 
 /*------------------------------------------------------------------------------
- * Clear med attribute -- debouncing no change
+ * Set default med attribute -- debouncing no change
  *
- * NB: clears atb_med -- so no med != med == 0.
+ * Does nothing if has a med, or the given setting is the same as the
+ * current value.
+ *
+ * NB: a set of attributes with a med 'set' is different to a set of attributes
+ *     with it 'unset', even if the value is the same.
  */
 extern attr_set
-bgp_attr_pair_clear_med(attr_pair pair)
+bgp_attr_pair_default_med(attr_pair pair, uint32_t med)
 {
   attr_set current, working ;
 
   current = pair->working ;
-  if (!(current->have & atb_med))
+  if ((current->med == med) || (current->have & atb_med))
+    return current ;            /* debounce     */
+
+  working = bgp_attr_get_working(pair) ;
+
+  working->med   = med ;
+
+  return working ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Clear med attribute -- debouncing no change
+ *
+ * NB: clears atb_med and sets the given default value.
+ */
+extern attr_set
+bgp_attr_pair_clear_med(attr_pair pair, uint32_t med)
+{
+  attr_set current, working ;
+
+  current = pair->working ;
+  if ((current->med == med) && !(current->have & atb_med))
     return current ;            /* debounce     */
 
   working = bgp_attr_get_working(pair) ;
@@ -974,6 +1025,29 @@ bgp_attr_pair_set_aggregator(attr_pair pair, as_t as, in_addr_t ip)
   working->aggregator_ip = ip ;
 
   return working ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Set tags attribute -- debouncing no change
+ *
+ * NB: this is taking an attribute set and returns an attribute set, with an
+ *     extra lock taken -- as by
+ */
+extern attr_set
+bgp_attr_set_tags(attr_set attr, mpls_tags_t tags)
+{
+  attr_pair_t pair[1] ;
+  attr_set    working ;
+
+  if (attr->tags == tags)
+    return bgp_attr_lock(attr) ;
+
+  bgp_attr_pair_load(pair, attr) ;
+  working = bgp_attr_get_working(pair) ;
+
+  working->tags = tags ;
+
+  return bgp_attr_pair_store(pair) ;
 } ;
 
 /*==============================================================================

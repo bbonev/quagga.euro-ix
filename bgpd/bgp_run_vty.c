@@ -185,14 +185,15 @@ bgp_clear (vty vty, bgp_run brun, qafx_t qafx,
   union sockunion su;
   as_t as ;
   bool found ;
+  uint   i ;
 
   cret = CMD_SUCCESS ;
 
   switch (sort)
     {
       case clear_all:
-        for (prun = ddl_head(brun->pruns) ; prun != NULL ;
-                                            prun = ddl_next(prun, prun_list))
+        i = 0 ;
+        while ((prun = vector_get_item(brun->pruns, i++)) != NULL)
           {
             if (stype == BGP_CLEAR_HARD)
               peer_clear (prun);
@@ -265,10 +266,10 @@ bgp_clear (vty vty, bgp_run brun, qafx_t qafx,
 
 
       case clear_external:
-        for (prun = ddl_head(brun->pruns) ; prun != NULL ;
-                                            prun = ddl_next(prun, prun_list))
+        i = 0 ;
+        while ((prun = vector_get_item(brun->pruns, i++)) != NULL)
           {
-            if (prun->sort == BGP_PEER_IBGP)
+            if (prun->rp.sort == BGP_PEER_IBGP)
               continue;
 
             if (stype == BGP_CLEAR_HARD)
@@ -288,10 +289,10 @@ bgp_clear (vty vty, bgp_run brun, qafx_t qafx,
 
         found = false ;
 
-        for (prun = ddl_head(brun->pruns) ; prun != NULL ;
-                                            prun = ddl_next(prun, prun_list))
+        i = 0 ;
+        while ((prun = vector_get_item(brun->pruns, i++)) != NULL)
           {
-            if (prun->args_r.remote_as != as)
+            if (prun->rp.sargs_conf.remote_as != as)
               continue;
 
             found = true;

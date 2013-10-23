@@ -499,7 +499,9 @@ main (int argc, char **argv)
 
   vty_read_config_new(config_ignore_warnings, false /* show_warnings */) ;
 
-  bm->as2_speaker = config_as2_speaker ;
+  if (config_as2_speaker)
+    bgp_option_set (BGP_OPT_AS2_SPEAKER);
+;
 
 
   /* At the last possible moment, we check whether the

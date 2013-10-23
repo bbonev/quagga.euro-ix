@@ -23,6 +23,7 @@
 #include <misc.h>
 
 #include "bgpd/bgp_common.h"
+#include "bgpd/bgpd.h"
 #include "bgpd/bgp_prun.h"
 #include "bgpd/bgp_run.h"
 #include "bgpd/bgp_rib.h"
@@ -90,26 +91,245 @@
  */
 
 /*------------------------------------------------------------------------------
- * Create a new, empty bgp_prun object.
+ * Create a new bgp_prun object.
+ *
+ * Returns with:  running params *unset*, no name, no pribs and no session
+ *
+ *                delta         = brd_null
+ *                state         = pInitial
+ *                idle          = pisConfiguring
+ *                session_state = pssInitial
+ *
+ * Returns:  new bgp_prun
  */
 extern bgp_prun
-bgp_prun_new(void)
+bgp_prun_new(bgp_run brun, bgp_prun_param prp)
 {
   bgp_prun  prun ;
 
   prun = XCALLOC(MTYPE_BGP_PEER, sizeof(bgp_prun_t)) ;
 
-  /*
+  /* Zeroizing has set:
    *
+   *   * brun                   -- X            -- set below
+   *   * name                   -- NULL
+   *
+   *   * rp                     -- empty
+   *   * delta                  -- brd_null
+   *
+   *   * state                  -- pInitial
+   *   * idle                   -- X            -- set pisConfiguring below
+   *
+   *   * nsf_enabled            -- false
+   *   * nsf_restarting         -- false
+   *
+   *   * session                -- NULL         -- none yet
+   *   * session_state          -- pssInitial
+   *
+   *   * uptime                 -- 0
+   *   * readtime               -- 0
+   *   * resettime              -- 0
+   *
+   *   * zlog                   -- NULL         -- none
+   *
+   *   * shared_network         -- false
+   *   * nexthop                -- unset        -- none
+   *
+   *   * last_reset             -- PEER_DOWN_NULL
+   *
+   *   * note                   -- NULL         -- none
+   *
+   *   * af_set_up              -- qafx_empty_set
+   *   * af_running             -- qafx_empty_set
+   *
+   *   * prib                   -- NULLs        )
+   *   * prib_running_count     -- 0            )  none, yet
+   *   * prib_running           -- NULLs        )
+   *   * rr_pending             -- NULLs        )
+   *   * qt_restart             -- NULL         )
+   *
+   *   * idle_hold_time         -- 0            -- none
+   *
+   *   * v_asorig               -- 0
+   *   * v_gr_restart           -- 0
+   *
+   *   * t_gr_restart           -- NULL         -- none
+   *   * t_gr_stale             -- NULL         -- none
+   *
+   *   * established            -- 0            -- none
+   *   * dropped                -- 0            -- none
+   *
+   *   * table_dump_index       -- 0            -- unset
    */
+  confirm(brd_null       == 0) ;
+  confirm(bgp_pInitial   == 0) ;
+  confirm(bgp_pssInitial == 0) ;
+  confirm(PEER_DOWN_NULL == 0) ;
+  confirm(qafx_empty_set == 0) ;
 
-
-
+  prun->brun = brun ;
+  prun->idle = bgp_pisConfiguring ;
 
   return prun ;
 } ;
 
 
+/*------------------------------------------------------------------------------
+ * Create new, empty peer_rib structure.
+ *
+ * Requires that there is currently no peer_rib for the given qafx.  (Will leak
+ * memory if there is, and the peer_rib will simply be cast loose.)
+ *
+ * Creates a completely empty 'rib_main' peer_rib.
+ *
+ * If there is no 'rib_main' bgp_rib, creates an empty one.
+ *
+ * Returns:  address of the new peer_rib
+ */
+extern bgp_prib
+bgp_prib_new(bgp_prun prun, qafx_t qafx)
+{
+  bgp_prib prib ;
+
+  qassert(prun->prib[qafx] == NULL) ;
+
+  prib = XCALLOC(MTYPE_BGP_PEER_RIB, sizeof(bgp_prib_t)) ;
+
+  /* Zeroising has set:
+   *
+   *   * prun                   -- X            -- set below
+   *
+   *   * rp                     -- empty
+   *   * delta                  -- brd_null
+   *
+   *   * rib                    -- NULL         -- none, yet
+   *   * prib_list              -- NULLs        -- none, yet
+   *
+   *   * lc_id                  -- lc_id_null   -- none, yet
+   *   * lc_list                -- NULLs        -- none, yet
+   *
+   *   * walker                 -- NULL         -- none yet
+   *   * walk_list              -- NULLs        -- none, yet
+   *
+   *   * refresh                -- false        -- not, yet
+   *   * eor_required           -- false        -- not, yet
+   *
+   *   * qafx                   -- X            -- set below
+   *   * i_afi                  -- X            -- set below
+   *   * i_safi                 -- X            -- set below
+   *   * is_mpls                -- X            -- set below
+   *
+   *   * real_rib               -- false
+   *   * session_up             -- false        -- not, yet
+   *
+   *   * dlist                  -- NULLs        -- none, yet
+   *   * plist                  -- NULLs        -- none, yet
+   *   * flist                  -- NULLs        -- none, yet
+   *   * rmap                   -- NULLs        -- none, yet
+   *   * us_rmap                -- NULL         -- none, yet
+   *   * default_rmap           -- NULL         -- none, yet
+   *   * orf_plist              -- NULL         -- none, yet
+   *
+   *   The following are also cleared by bgp_prib_reset():
+   *
+   *   * pmax                   -- X            -- reset, below
+   *
+   *   * nsf_mode               -- false
+   *
+   *   * default_sent           -- false
+   *   * eor_sent               -- false
+   *   * eor_received           -- false
+   *
+   *   * max_prefix_threshold   -- false
+   *   * max_prefix_limit       -- false
+   *
+   *   * gr_can_preserve        -- false
+   *   * gr_has_preserved       -- false
+   *
+   *   * orf_pfx_can_send       -- false
+   *   * orf_pfx_sent           -- false
+   *   * orf_pfx_may_recv       -- false
+   *   * orf_pfx_wait           -- false
+   *
+   *   * pcount_recv            -- 0
+   *   * pcount_in              -- 0
+   *   * pcount_sent            -- 0
+   *
+   *   The following are set up by bgp_adj_in_init().
+   *
+   *   * adj_in                 -- NULL         -- none, yet
+   *   * stale_routes           -- NULLs        -- none, yet
+   *   * pending_routes         -- NULLs        -- none, yet
+   *   * in_state               -- ai_next
+   *   * in_attrs               -- NULL         -- none, yet
+   *
+   *   The following are set up by bgp_adj_out_init()
+   *
+   *   * adj_out                -- NULL
+   *   * batch_delay            -- 0
+   *   * batch_delay_extra      -- 0
+   *   * announce_delay         -- 0
+   *   * mrai_delay             -- 0
+   *   * mrai_delay_left        -- 0
+   *   * period_origin          -- 0
+   *   * now                    -- 0
+   *   * t0                     -- 0
+   *   * tx                     -- 0
+   *
+   *   * fifo_batch             -- NULL
+   *   * fifo_mrai              -- NULL
+   *   * announce_queue         -- NULL
+   *   * withdraw_queue         -- NULLs
+   *   * attr_flux_hash         -- NULL
+   *   * eor                    -- NULL
+   *   * dispatch_delay         -- 0
+   *   * dispatch_time          -- 0
+   *   * dispatch_qtr           -- NULL
+   */
+  confirm(brd_null   == 0) ;
+  confirm(lc_id_null == 0) ;
+  confirm(ai_next    == 0) ;
+
+  prib->prun    = prun ;
+  prib->qafx    = qafx ;
+  prib->i_afi   = get_iAFI(qafx) ;
+  prib->i_safi  = get_iSAFI(qafx) ;
+
+  prib->is_mpls = qafx_is_mpls_vpn(qafx) ;
+
+  bgp_prib_pmax_reset(prib) ;
+
+  /* Set and return the new prib.
+   */
+  return prun->prib[qafx] = prib ;
+} ;
+
+
+
+
+
+
+
+
+
+
+
+ /*------------------------------------------------------------------------------
+  * Discard peer_rib structure.
+  */
+ extern bgp_prib
+ bgp_prib_free(bgp_prib prib)
+ {
+
+
+   XFREE(MTYPE_BGP_PEER_RIB, prib) ;
+   return NULL ;
+ } ;
+
+
+
+
+#if 0
 
 
 /*------------------------------------------------------------------------------
@@ -228,7 +448,7 @@ bgp_peer_new(bgp_inst bgp, bgp_peer_type_t type, chs_c name)
 
   peer->c = bgp_peer_config_new() ;
 
-  bgp_session_args_init_new(&peer->args) ;
+  bgp_sargs_init_new(&peer->sargs) ;
 
   peer->idle = bgp_pisDeconfigured ;    /* so far       */
 
@@ -414,7 +634,7 @@ bgp_peer_create(sockunion su, bgp_inst bgp, as_t remote_as, qafx_t qafx)
    *   * args                   -- set local_as
    *
    *   * cops
-   *         .su_remote         -- copy of peer->su_name (by default)
+   *         .remote_su         -- copy of peer->su_name (by default)
    *         .port              -- set to default
    *         .can_notify_before_open   -- set true (by default)
    *         .idle_hold_max_secs       -- set to default
@@ -436,16 +656,16 @@ bgp_peer_create(sockunion su, bgp_inst bgp, as_t remote_as, qafx_t qafx)
    *   * peer->cops.gtsm         values for the new sort.
    */
   peer->su_name         = sockunion_dup(su) ;
-  peer->host            = sockunion_su2str (su, MTYPE_BGP_PEER_HOST) ;
-  peer->args.remote_as  = remote_as;
-  peer->args.local_id   = bgp->router_id;
+  peer->host            = sockunion_su2str (su, MTYPE_BGP_NAME) ;
+  peer->sargs.remote_as  = remote_as;
+  peer->sargs.local_id   = bgp->router_id;
 
   qassert(peer->sort            == BGP_PEER_UNSPECIFIED) ;
-  qassert(peer->args.remote_as  != BGP_ASN_NULL) ;
-  qassert(peer->args.local_as   == BGP_ASN_NULL) ;
+  qassert(peer->sargs.remote_as  != BGP_ASN_NULL) ;
+  qassert(peer->sargs.local_as   == BGP_ASN_NULL) ;
   qassert(peer->change_local_as == BGP_ASN_NULL) ;
 
-  sockunion_copy (&peer->cops.su_remote, peer->su_name) ;
+  sockunion_copy (&peer->cops.remote_su, peer->su_name) ;
 
   peer_sort_set(peer, peer_sort(peer)) ;
   peer_global_config_reset (peer) ;
@@ -631,7 +851,7 @@ bgp_peer_free (bgp_peer peer)
   peer->su_name = sockunion_free(peer->su_name);
 
   if (peer->host != NULL)
-    XFREE (MTYPE_BGP_PEER_HOST, peer->host) ;   /* sets peer->host NULL */
+    XFREE (MTYPE_BGP_NAME, peer->host) ;   /* sets peer->host NULL */
 
 
   // TODO full dismantle of bgp_peer structure etc....
@@ -687,28 +907,28 @@ peer_set_af(bgp_peer peer, qafx_t qafx, bool enable)
       peer->af_configured |= qb ;
     } ;
 
-  if ((qafx != qafx_ipv4_unicast) && !peer->args.can_capability
-                                  && !peer->args.cap_af_override)
+  if ((qafx != qafx_ipv4_unicast) && !peer->sargs.can_capability
+                                  && !peer->sargs.cap_af_override)
     enable = false ;
 
   if (peer->ptype == PEER_TYPE_REAL)
     {
       qafx_set_t af_was_enabled ;       /* old value    */
 
-      af_was_enabled = peer->args.can_af ;
+      af_was_enabled = peer->sargs.can_af ;
 
       if (enable)
         {
           prib->af_status &= ~PEER_AFS_DISABLED ;
-          peer->args.can_af = af_was_enabled |  qb ;
+          peer->sargs.can_af = af_was_enabled |  qb ;
         }
       else
         {
           prib->af_status |=  PEER_AFS_DISABLED ;
-          peer->args.can_af = af_was_enabled & ~qb ;
+          peer->sargs.can_af = af_was_enabled & ~qb ;
         } ;
 
-      if (peer->args.can_af != af_was_enabled)
+      if (peer->sargs.can_af != af_was_enabled)
         {
           /* The enabled state of one or more address families has changed.
            *
@@ -723,7 +943,7 @@ peer_set_af(bgp_peer peer, qafx_t qafx, bool enable)
                */
               peer->idle &= ~bgp_pisNoAF ;
             }
-          else if (peer->args.can_af == qafx_empty_set)
+          else if (peer->sargs.can_af == qafx_empty_set)
             {
               /* We had something, and now we have nothing.
                */
@@ -886,175 +1106,7 @@ peer_deactivate_family (bgp_prun prun, qafx_t qafx)
   prun->prib[qafx] = bgp_prib_free(prib) ;
 } ;
 
-
-
-/*==============================================================================
- * Creation and destruction of peer_rib structures.
- */
-
-/*------------------------------------------------------------------------------
- * Create new, empty peer_rib structure.
- *
- * Requires that there is currently no peer_rib for the given qafx.  (Will leak
- * memory if there is, and the peer_rib will simply be cast loose.)
- *
- * Creates a completely empty 'rib_main' peer_rib.
- *
- * If there is no 'rib_main' bgp_rib, creates an empty one.
- *
- * Returns:  address of the new peer_rib
- */
-extern bgp_prib
-bgp_prib_new(bgp_prun prun, qafx_t qafx)
-{
-  bgp_prib prib ;
-
-  qassert(prun->prib[qafx] == NULL) ;
-
-  prib = XCALLOC(MTYPE_BGP_PEER_RIB, sizeof(bgp_prib_t)) ;
-
-  /* Zeroising has set:
-   *
-   *   * prun                   -- X            -- set below
-   *
-   *   * rib                    -- NULL         -- none, yet
-   *   * prib_list              -- NULLs        -- none, yet
-   *
-   *   * lc_id                  -- lc_id_null   -- none, yet
-   *   * lc_list                -- NULLs        -- none, yet
-   *
-   *   * walker                 -- NULL         -- none yet
-   *   * walk_list              -- NULLs        -- none, yet
-   *
-   *   * refresh                -- false        -- not, yet
-   *   * eor_required           -- false        -- not, yet
-   *
-   *   * qafx                   -- X            -- set below
-   *   * i_afi                  -- X            -- set below
-   *   * i_safi                 -- X            -- set below
-   *   * is_mpls                -- X            -- set below
-   *
-   *   * real_rib               -- false
-   *   * session_up             -- false        -- not, yet
-   *
-   *   * soft_reconfig          -- false        )
-   *   * route_server_client    -- false        )  empty initial config
-   *   * route_reflector_client -- false        )
-   *   * send_community         -- false        )
-   *   * send_ecommunity        -- false        )
-   *   * next_hop_self          -- false        )
-   *   * next_hop_unchanged     -- false        )
-   *   * next_hop_local_unchanged  -- false     )
-   *   * as_path_unchanged      -- false        )
-   *   * remove_private_as      -- false        )
-   *
-   *   * med_unchanged          -- false        )
-   *   * default_originate      -- false        )
-   *   * allow_as_in             -- 0            )
-   *
-   *   * dlist                  -- NULLs        -- none, yet
-   *   * plist                  -- NULLs        -- none, yet
-   *   * flist                  -- NULLs        -- none, yet
-   *   * rmap                   -- NULLs        -- none, yet
-   *   * us_rmap                -- NULL         -- none, yet
-   *   * default_rmap           -- NULL         -- none, yet
-   *   * orf_plist              -- NULL         -- none, yet
-   *
-   *   * pmax                   -- X            -- reset, below
-   *
-   *   * nsf_mode               -- false        )  empty initial state
-   *   * default_sent           -- false        )
-   *   * eor_sent               -- false        )
-   *   * eor_received           -- false        )
-   *   * max_prefix_threshold   -- false        )
-   *   * max_prefix_limit       -- false        )
-   *   * gr_can_preserve        -- false        )
-   *   * gr_has_preserved       -- false        )
-   *   * orf_pfx_can_send       -- false        )
-   *   * orf_pfx_sent           -- false        )
-   *   * orf_pfx_may_recv       -- false        )
-   *   * orf_pfx_wait           -- 0            )
-   *   * pcount_recv            -- 0            )
-   *   * pcount_in              -- 0            )
-   *   * pcount_sent            -- 0            )
-   *
-   *   The following are set up by bgp_adj_in_init().
-   *
-   *   * adj_in                 -- NULL         -- none, yet
-   *   * stale_routes           -- NULLs        -- none, yet
-   *   * pending_routes         -- NULLs        -- none, yet
-   *   * in_state               -- ai_next
-   *   * in_attrs               -- NULL         -- none, yet
-   *
-   *   The following are set up by bgp_adj_out_init()
-   *
-   *   * adj_out                -- ihash_table
-   *   * batch_delay            -- 0
-   *   * batch_delay_extra      -- 0
-   *   * announce_delay         -- 0
-   *   * mrai_delay             -- 0
-   *   * mrai_delay_left        -- 0
-   *   * period_origin          -- 0
-   *   * now                    -- 0
-   *   * t0                     -- 0
-   *   * tx                     -- 0
-   *
-   *   * fifo_batch             -- NULL
-   *   * fifo_mrai              -- NULL
-   *   * announce_queue         -- NULL
-   *   * withdraw_queue         -- NULLs
-   *   * attr_flux_hash         -- NULL
-   *   * eor                    -- 0's
-   *   * dispatch_delay         -- 0
-   *   * dispatch_time          -- 0
-   *   * dispatch_qtr           -- NULL
-   */
-  confirm(ai_next == 0) ;
-
-  prib->prun    = prun ;
-  prib->qafx    = qafx ;
-  prib->i_afi   = get_iAFI(qafx) ;
-  prib->i_safi  = get_iSAFI(qafx) ;
-
-  prib->is_mpls = qafx_is_mpls_vpn(qafx) ;
-
-  bgp_prib_pmax_reset(prib) ;
-
-#if 0
-  /* Now worry about the bgp->rib.
-   *
-   * The peer_rib is automatically associated with the Main bgp_rib.  If there
-   * is no such rib, then we create an empty one here and now.
-   *
-   * If the peer is later set to be a Route-Server Client, then the peer_rib
-   * will be associated with the RS bgp_rib (and that will be created, if
-   * necessary).  Note that even if there are no Main RIB peers, there is
-   * always a Main RIB.
-   */
-  rib =  prun->brun->rib[qafx] ;
-  if (rib == NULL)
-    rib = prun->brun->rib[qafx] = bgp_rib_new(prun->brun, qafx) ;
-  prib->rib = rib ;
-
-  rib->peer_count += 1 ;
 #endif
-
-  /* Set and return the new prib.
-   */
-  return prun->prib[qafx] = prib ;
-} ;
-
-/*------------------------------------------------------------------------------
- * Discard peer_rib structure.
- */
-extern bgp_prib
-bgp_prib_free(bgp_prib prib)
-{
-
-
-  XFREE(MTYPE_BGP_PEER_RIB, prib) ;
-  return NULL ;
-} ;
 
 
 #if 0
@@ -2144,7 +2196,7 @@ peer_clear (bgp_prun prun)
 
   /* Overrides any idle hold timer
    */
-  prun->idle_hold_time = QTIME(prun->bgp_args_r.idle_hold_min_secs) ;
+  prun->idle_hold_time = QTIME(prun->brun->rp.defs.idle_hold_min_secs) ;
 
   bgp_peer_down(prun, PEER_DOWN_USER_RESET) ;
 } ;
@@ -2214,7 +2266,7 @@ peer_clear_soft (bgp_prun prun, qafx_t qafx, bgp_clear_type_t stype)
         break ;                         /* nothing to do        */
 
       case BGP_CLEAR_SOFT_RSCLIENT:
-        if (prib->route_server_client)
+        if (prib->rp.is_route_server_client)
           {
 #if 0
             bgp_check_local_routes_rsclient (prun, qafx);
@@ -2284,9 +2336,9 @@ peer_clear_soft (bgp_prun prun, qafx_t qafx, bgp_clear_type_t stype)
          * If neighbor has route refresh capability, send route refresh
          * message to the peer.
          */
-        if      (prib->soft_reconfig)
+        if      (prib->rp.do_soft_reconfig)
           bgp_soft_reconfig_in (prun, qafx);
-        else if (prun->session->args->can_rr != bgp_form_none)
+        else if (prun->session->sargs->can_rr != bgp_form_none)
           bgp_route_refresh_send (prib, 0, 0, 0);
         else
           return BGP_ERR_SOFT_RECONFIG_UNCONFIGURED;
@@ -2321,6 +2373,155 @@ peer_rsclient_active (bgp_peer peer)
 /*==============================================================================
  * Enabling and disabling a peer.
  */
+
+/*------------------------------------------------------------------------------
+ * Shut-down the given prun.
+ *
+ * Bring to a dead stop and dismantle the prun.
+ */
+extern void
+bgp_prun_shutdown(bgp_prun prun, peer_down_t why_down)
+{
+  qafx_t qafx ;
+
+  bgp_session_shutdown(prun, why_down) ;
+
+  for (qafx = qafx_first ; qafx <= qafx_last ; ++qafx)
+    {
+      bgp_prib prib ;
+
+      /* NB: we do *not* use the prun->prib_running at this stage, because
+       *     that may have been dismantled (eg if we are shutting down because
+       *     no address families are runnable).
+       */
+
+      prib = prun->prib[qafx] ;
+      if (prib == NULL)
+        continue ;
+
+      bgp_prib_shutdown(prib) ;
+    } ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Execute the given prun.
+ *
+ *   * link in all required ribs for all qafx
+ *
+ *   * link in all required filters for qafx
+ *
+ */
+extern void
+bgp_prun_execute(bgp_prun prun, peer_down_t why_down)
+{
+  qafx_t qafx ;
+
+  bgp_session_shutdown(prun, why_down) ;
+
+  for (qafx = qafx_first ; qafx <= qafx_last ; ++qafx)
+    {
+      bgp_prib prib ;
+
+      /* NB: we do *not* use the prun->prib_running at this stage, because
+       *     that may have been dismantled (eg if we are shutting down because
+       *     no address families are runnable).
+       */
+
+      prib = prun->prib[qafx] ;
+      if (prib == NULL)
+        continue ;
+
+      bgp_prib_shutdown(prib) ;
+    } ;
+} ;
+
+
+/*------------------------------------------------------------------------------
+ * Administrative BGP peer stop event -- stop pEstablished peer.
+ *
+ * MUST be pEstablished.
+ *
+ * Sets pDown and clears down all routes etc, subject to the required NSF.
+ *
+ * NB: Leaves any Max Prefix Timer running.
+ *
+ *     Starts Graceful Restart and Stale Route timers iff NSF and at least one
+ *     afi/safi is enabled for NSF.
+ */
+static void
+bgp_peer_stop (bgp_prun prun, bool nsf)
+{
+  assert( (prun->state == bgp_pStarted) ||
+          (prun->state == bgp_pEstablished) ) ;
+
+  /* bgp log-neighbor-changes of neighbor Down
+   */
+  if (prun->state == bgp_pEstablished)
+    if (prun->rp.do_log_neighbor_changes)
+      zlog_info ("%%ADJCHANGE: neighbor %s Down %s", prun->name,
+                          map_direct(bgp_peer_down_map, prun->last_reset).str) ;
+
+  /* Change state to pDown -- turns off all timers.
+   */
+  bgp_peer_change_status(prun, bgp_pDown) ;
+
+  prun->dropped++ ;
+  prun->resettime = bgp_clock () ;
+
+  /* Clear out routes, with NSF if required.
+   *
+   * Sets PEER_STATUS_NSF_WAIT iff NSF and at least one afi/safi is enabled
+   * for NSF.  Clears PEER_STATUS_NSF_WAIT otherwise.
+   */
+  bgp_clear_routes(prun, nsf) ;
+
+  /* graceful restart
+   */
+  if (prun->nsf_restarting)
+    {
+      if (BGP_DEBUG (events, EVENTS))
+        {
+          zlog_debug ("%s graceful restart timer started for %d sec",
+                      prun->name, prun->v_gr_restart);
+          zlog_debug ("%s graceful restart stalepath timer started for %d sec",
+                      prun->name, prun->brun->rp.defs.stalepath_time_secs);
+        } ;
+
+      BGP_TIMER_ON (prun->t_gr_restart, bgp_graceful_restart_timer_expire,
+                    prun->v_gr_restart) ;
+
+      if (nsf)
+        BGP_TIMER_ON (prun->t_gr_stale, bgp_graceful_stale_timer_expire,
+                                      prun->brun->rp.defs.stalepath_time_secs) ;
+    } ;
+
+  /* Reset uptime.
+   */
+  prun->uptime = bgp_clock ();
+
+#ifdef HAVE_SNMP
+  bgpTrapBackwardTransition (prun);
+#endif /* HAVE_SNMP */
+} ;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 static void bgp_peer_stop (bgp_prun prun, bool nsf) ;
 static void bgp_peer_reset_enable(bgp_prun prun) ;
 static void bgp_peer_down_notify(bgp_prun prun, peer_down_t why_down,
@@ -2369,7 +2570,7 @@ bgp_peer_enable(bgp_prun prun)
   switch (prun->state)
     {
       case bgp_pDown:
-        if (prun->args.can_af == qafx_empty_set)
+        if (prun->sargs.can_af == qafx_empty_set)
           {
             break ;
           } ;
@@ -2386,7 +2587,7 @@ bgp_peer_enable(bgp_prun prun)
          * If no address family is enabled, will do nothing and will remain
          * pDown.
          */
-        if (prun->args.can_af == qafx_empty_set)
+        if (prun->sargs.can_af == qafx_empty_set)
           break ;
 
         qassert(!peer_is_disabled(prun)) ;
@@ -2710,74 +2911,6 @@ bgp_peer_down_notify(bgp_prun prun, peer_down_t why_down, bgp_note note)
 } ;
 
 /*------------------------------------------------------------------------------
- * Administrative BGP peer stop event -- stop pEstablished peer.
- *
- * MUST be pEstablished.
- *
- * Sets pDown and clears down all routes etc, subject to the required NSF.
- *
- * NB: Leaves any Max Prefix Timer running.
- *
- *     Starts Graceful Restart and Stale Route timers iff NSF and at least one
- *     afi/safi is enabled for NSF.
- */
-static void
-bgp_peer_stop (bgp_prun prun, bool nsf)
-{
-  assert( (prun->state == bgp_pStarted) ||
-          (prun->state == bgp_pEstablished) ) ;
-
-  /* bgp log-neighbor-changes of neighbor Down
-   */
-  if (prun->state == bgp_pEstablished)
-    if (prun->do_log_neighbor_changes_r)
-      zlog_info ("%%ADJCHANGE: neighbor %s Down %s", prun->name,
-                          map_direct(bgp_peer_down_map, prun->last_reset).str) ;
-
-  /* Change state to pDown -- turns off all timers.
-   */
-  bgp_peer_change_status(prun, bgp_pDown) ;
-
-  prun->dropped++ ;
-  prun->resettime = bgp_clock () ;
-
-  /* Clear out routes, with NSF if required.
-   *
-   * Sets PEER_STATUS_NSF_WAIT iff NSF and at least one afi/safi is enabled
-   * for NSF.  Clears PEER_STATUS_NSF_WAIT otherwise.
-   */
-  bgp_clear_routes(prun, nsf) ;
-
-  /* graceful restart
-   */
-  if (prun->nsf_restarting)
-    {
-      if (BGP_DEBUG (events, EVENTS))
-        {
-          zlog_debug ("%s graceful restart timer started for %d sec",
-                      prun->name, prun->v_gr_restart);
-          zlog_debug ("%s graceful restart stalepath timer started for %d sec",
-                      prun->name, prun->bgp_args_r.stalepath_time_secs);
-        } ;
-
-      BGP_TIMER_ON (prun->t_gr_restart, bgp_graceful_restart_timer_expire,
-                    prun->v_gr_restart) ;
-
-      if (nsf)
-        BGP_TIMER_ON (prun->t_gr_stale, bgp_graceful_stale_timer_expire,
-                                         prun->bgp_args_r.stalepath_time_secs) ;
-    } ;
-
-  /* Reset uptime.
-   */
-  prun->uptime = bgp_clock ();
-
-#ifdef HAVE_SNMP
-  bgpTrapBackwardTransition (prun);
-#endif /* HAVE_SNMP */
-} ;
-
-/*------------------------------------------------------------------------------
  * Clear out any stale routes, cancel any Graceful Restart timers.
  *
  * NB: may still be pResetting from when peer went down leaving these stale
@@ -2852,22 +2985,6 @@ bgp_peer_nsf_stop (bgp_prun prun)
 } ;
 
 /*------------------------------------------------------------------------------
- * Set the PEER_FLAG_SHUTDOWN flag and also:
- *
- *   - turn off any NSF and related timers.
- *
- *   - turn off any Max Prefix overflow and related timers.
- */
-static void
-bgp_peer_shutdown(bgp_prun prun)
-{
-  peer_flag_modify(prun, cgs_SHUTDOWN, true) ;
-  bgp_peer_restart_timer_cancel(prun) ;
-
-  bgp_peer_nsf_stop (prun) ;
-} ;
-
-/*------------------------------------------------------------------------------
  * Reset peer "active" state -- tidies things up, ready for peer to be enabled.
  *
  * NB: can be called any number of times.
@@ -2917,7 +3034,7 @@ extern void
 bgp_session_has_established(bgp_session session)
 {
   bgp_prun         prun ;
-  bgp_session_args args ;
+  bgp_sargs args ;
   qafx_t           qafx ;
   int  nsf_af_count ;
 
@@ -2940,9 +3057,9 @@ bgp_session_has_established(bgp_session session)
    * spin-lock should now be visible in this pthread.  [This may not be
    * essential, but does not hurt.]
    */
-  args = qa_get_ptr((void**)&session->args) ;
+  args = qa_get_ptr((void**)&session->sargs) ;
 
-  prun->args_r.remote_id = session->open_recv->args->remote_id;
+  prun->rp.sargs_conf.remote_id = session->open_recv->sargs->remote_id;
   prun->af_running = args->can_af ;
 
   /* Clear down the state of all known address families, and set anything
@@ -2992,8 +3109,8 @@ bgp_session_has_established(bgp_session session)
 
   /* Install next hop, as required.
    */
-  bgp_nexthop_set(&session->cops->su_local,
-                  &session->cops->su_remote, &prun->nexthop, prun) ;
+  bgp_nexthop_set(&session->cops->local_su,
+                  &session->cops->remote_su, &prun->nexthop, prun) ;
 
   /* Clear last notification data -- Routing Engine private field
    *
@@ -3007,7 +3124,7 @@ bgp_session_has_established(bgp_session session)
 
   /* bgp log-neighbor-changes of neighbor Up
    */
-  if (prun->do_log_neighbor_changes_r)
+  if (prun->rp.do_log_neighbor_changes)
     zlog_info ("%%ADJCHANGE: neighbor %s Up", prun->name);
 
   /* graceful restart
@@ -3271,7 +3388,7 @@ bgp_session_has_stopped(bgp_session session, bgp_note note)
        *     process altogether !
        */
       t = QTIME(bgp_clock() - prun->uptime) ;
-      m = QTIME(prun->bgp_args_r.idle_hold_max_secs) ;
+      m = QTIME(prun->brun->rp.defs.idle_hold_max_secs) ;
 
       n = (t + m) * 2 / m ;
       if (n > 3)
@@ -3282,8 +3399,8 @@ bgp_session_has_stopped(bgp_session session, bgp_note note)
       if (h > m)
         h = m ;
 
-      if (h < QTIME(prun->bgp_args_r.idle_hold_min_secs))
-        h = QTIME(prun->bgp_args_r.idle_hold_min_secs) ;
+      if (h < QTIME(prun->brun->rp.defs.idle_hold_min_secs))
+        h = QTIME(prun->brun->rp.defs.idle_hold_min_secs) ;
 
       prun->idle_hold_time = h ;
     } ;
@@ -3457,17 +3574,17 @@ bgp_peer_get_ifaddress(bgp_prun prun, const char* ifname, sa_family_t af)
   prefix_t peer_prefix[1] ;
   int   best, this ;
 
-  if (prun->cops_r.ifname[0] == '\0')
+  if (prun->rp.cops_conf.ifname[0] == '\0')
     return NULL ;
 
-  ifp = if_lookup_by_name (prun->cops_r.ifname) ;
+  ifp = if_lookup_by_name (prun->rp.cops_conf.ifname) ;
   if (ifp == NULL)
     {
       zlog_err("Peer %s interface %s is not known", prun->name, ifname) ;
       return NULL ;
     } ;
 
-  prefix_from_sockunion(peer_prefix, prun->su_name) ;
+  prefix_from_sockunion(peer_prefix, &prun->rp.cops_conf.remote_su) ;
   best_prefix = NULL ;
   best = -1 ;
 

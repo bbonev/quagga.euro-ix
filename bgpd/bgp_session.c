@@ -134,9 +134,9 @@ bgp_session_init_new(bgp_prun prun)
   bgp_session_set_lox(session) ;
 
   session->cops_sent   = bgp_cops_init_new(NULL) ;
-  session->cops_config = bgp_cops_init_new(NULL) ;
+  session->cops_conf = bgp_cops_init_new(NULL) ;
 
-  qassert(session->cops_config->conn_state == bgp_csDown) ;
+  qassert(session->cops_conf->conn_state == bgp_csDown) ;
 
   /* Register the peer and set: peer->peer_ie and peer->session.
    */
@@ -265,12 +265,12 @@ bgp_session_clear(bgp_session session)
 
   session->lox.log      = NULL;
   if (session->lox.name != NULL)
-    XFREE(MTYPE_BGP_PEER_HOST, session->lox.name) ;
+    XFREE(MTYPE_BGP_NAME, session->lox.name) ;
                                         /* sets session->lox.host NULL  */
 
-  session->args_sent    = bgp_session_args_free(session->args_sent) ;
-  session->args_config  = bgp_session_args_free(session->args_config) ;
-  session->args         = bgp_session_args_free(session->args) ;
+  session->sargs_sent    = bgp_sargs_free(session->sargs_sent) ;
+  session->sargs_conf  = bgp_sargs_free(session->sargs_conf) ;
+  session->sargs         = bgp_sargs_free(session->sargs) ;
   session->open_sent    = bgp_open_state_free(session->open_sent) ;
 
   session->read_rb      = rb_destroy(session->read_rb) ;
@@ -304,7 +304,7 @@ bgp_session_destroy(bgp_session session)
    *
    *   * acceptor                   -- now discard
    */
-  session->cops_config = bgp_cops_free(session->cops_config) ;
+  session->cops_conf = bgp_cops_free(session->cops_conf) ;
 
   qassert(session->mqb_tx == NULL) ;
   qassert(session->connections[bc_estd]    == NULL) ;
@@ -331,9 +331,9 @@ bgp_session_set_lox(bgp_session session)
   session->lox.log = (prun != NULL) ? prun->log : NULL ;
 
   if (session->lox.name != NULL)
-    XFREE(MTYPE_BGP_PEER_HOST, session->lox.name) ;
+    XFREE(MTYPE_BGP_NAME, session->lox.name) ;
 
-  session->lox.name = XSTRDUP(MTYPE_BGP_PEER_HOST,
+  session->lox.name = XSTRDUP(MTYPE_BGP_NAME,
               ( ((prun != NULL) && (prun->name != NULL)) ? prun->name
                                                          : "<unknown-host>" )) ;
 } ;
@@ -436,10 +436,10 @@ bgp_session_start(bgp_session session)
 
   idle_hold_time = prun->idle_hold_time ;
 
-  if (idle_hold_time > QTIME(prun->bgp_args_r.idle_hold_max_secs))
-    idle_hold_time = QTIME(prun->bgp_args_r.idle_hold_max_secs) ;
-  if (idle_hold_time < QTIME(prun->bgp_args_r.idle_hold_min_secs))
-    idle_hold_time = QTIME(prun->bgp_args_r.idle_hold_min_secs) ;
+  if (idle_hold_time > QTIME(prun->brun->rp.defs.idle_hold_max_secs))
+    idle_hold_time = QTIME(prun->brun->rp.defs.idle_hold_max_secs) ;
+  if (idle_hold_time < QTIME(prun->brun->rp.defs.idle_hold_min_secs))
+    idle_hold_time = QTIME(prun->brun->rp.defs.idle_hold_min_secs) ;
 
   session->idle_hold_time = idle_hold_time ;
 
@@ -540,9 +540,9 @@ bgp_session_cops_make(bgp_session session, bool force)
     {
       /* We have an attached prun.
        *
-       * Clear down the unused entries in the original prun->cops.
+       * Clear down the unused entries in the original prun->rp.cops_conf.
        */
-      p_cops = &prun->cops_r ;
+      p_cops = &prun->rp.cops_conf ;
 
       p_cops->ttl_out = p_cops->ttl_min = 0 ;
       p_cops->ifindex = 0 ;
@@ -624,10 +624,10 @@ bgp_session_cops_make(bgp_session session, bool force)
  * Returns:  true <=> args_r changed since session->args_sent or 'force'
  */
 static bool
-bgp_session_args_make(bgp_session session, bool force)
+bgp_session_sargs_make(bgp_session session, bool force)
 {
   bgp_prun   prun ;
-  bgp_session_args_t args[1] ;
+  bgp_sargs_t sargs[1] ;
   qafx_t     qafx ;
   bgp_form_t can_orf ;
 
@@ -642,15 +642,13 @@ bgp_session_args_make(bgp_session session, bool force)
        *
        * If !can_capability, flush out everything that depends on same !
        */
-      memcpy(args, &prun->args_r, sizeof(args)) ;
+      memcpy(sargs, &prun->rp.sargs_conf, sizeof(sargs)) ;
 
-      args->remote_id       = 0 ;
-      args->cap_suppressed  = false ;
+      sargs->remote_id       = 0 ;
+      sargs->cap_suppressed  = false ;
 
-      args->gr.can = prun->do_graceful_restart ;
-
-      if (!args->can_capability)
-        bgp_session_args_suppress(args) ;
+      if (!sargs->can_capability)
+        bgp_sargs_suppress(sargs) ;
     }
   else
     {
@@ -658,7 +656,7 @@ bgp_session_args_make(bgp_session session, bool force)
        *
        * Treat as having a very empty set of arguments.
        */
-      bgp_session_args_reset(args) ;
+      bgp_sargs_reset(sargs) ;
     } ;
 
   /* We have the Prefix ORF wishes -- but not for pre-RFC, if that is being
@@ -673,9 +671,9 @@ bgp_session_args_make(bgp_session session, bool force)
     {
       bgp_orf_cap_bits_t orf_pfx, orf_wish ;
 
-      orf_wish = args->can_orf_pfx.af[qafx] & (ORF_SM | ORF_RM) ;
+      orf_wish = sargs->can_orf_pfx.af[qafx] & (ORF_SM | ORF_RM) ;
       orf_pfx  = 0 ;
-      if ((args->can_af & qafx_bit(qafx)) && (orf_wish != 0))
+      if ((sargs->can_af & qafx_bit(qafx)) && (orf_wish != 0))
         {
           /* For the families we are going to advertise, see if we wish to
            * send or are prepared to receive Prefix ORF.
@@ -683,7 +681,7 @@ bgp_session_args_make(bgp_session session, bool force)
            * Note that we set both the RFC Type and the pre-RFC one, so we
            * arrange to send the RFC Capability and the pre-RFC one.
            */
-          can_orf = args->can_orf ;
+          can_orf = sargs->can_orf ;
 
           if (can_orf & bgp_form_rfc)
             orf_pfx = orf_wish ;
@@ -695,32 +693,32 @@ bgp_session_args_make(bgp_session session, bool force)
           confirm(ORF_RM_pre == (ORF_RM << 4)) ;
         } ;
 
-      args->can_orf_pfx.af[qafx] = orf_pfx ;
+      sargs->can_orf_pfx.af[qafx] = orf_pfx ;
     } ;
 
-  args->can_orf = can_orf ;
+  sargs->can_orf = can_orf ;
 
   /* Graceful restart capability
    */
-  if (args->gr.can)
-    args->gr.restart_time  = prun->bgp_args_r.restart_time_secs ;
+  if (sargs->gr.can)
+    sargs->gr.restart_time  = prun->brun->rp.defs.restart_time_secs ;
 
   /* TODO: check not has restarted and not preserving forwarding open_send (?)
    */
-  args->gr.can_preserve    = 0 ;        /* cannot preserve forwarding   */
-  args->gr.has_preserved   = 0 ;        /* has not preserved forwarding */
-  args->gr.restarting      = false ;    /* is not restarting            */
+  sargs->gr.can_preserve    = 0 ;        /* cannot preserve forwarding   */
+  sargs->gr.has_preserved   = 0 ;        /* has not preserved forwarding */
+  sargs->gr.restarting      = false ;    /* is not restarting            */
 
   /* Now... if the result differs from the args_sent, or a refresh is forced,
    * we need to prepare a copy to replace same.
    */
-  if (!force && (session->args_sent != NULL)
-             && memsame(args, session->args_sent, sizeof(args)))
+  if (!force && (session->sargs_sent != NULL)
+             && memsame(sargs, session->sargs_sent, sizeof(sargs)))
     return false ;                      /* no change            */
 
   /* Update (or create) session->args_sent.
    */
-  session->args_sent = bgp_session_args_copy(session->args_sent, args) ;
+  session->sargs_sent = bgp_sargs_copy(session->sargs_sent, sargs) ;
   return true ;                        /* changed or forced     */
 } ;
 
@@ -734,8 +732,8 @@ static void bgp_session_do_delete(mqueue_block mqb, mqb_flag_t flag) ;
 static void bgp_session_cops_update(bgp_session session, bgp_cops cops_new,
                                          bgp_note note, bool peer_established) ;
 
-static void bgp_session_args_update(bgp_session session,
-                                     bgp_session_args args_new, bgp_note note) ;
+static void bgp_session_sargs_update(bgp_session session,
+                                     bgp_sargs sargs_new, bgp_note note) ;
 
 /*------------------------------------------------------------------------------
  * Routeing Engine: prod the session if required.
@@ -766,7 +764,7 @@ static bgp_note
 bgp_session_prod(bgp_session session, bgp_note note, bool force)
 {
   mqueue_block mqb ;
-  bgp_session_args args_new, args_swap ;
+  bgp_sargs args_new, args_swap ;
   bgp_cops         cops_new, cops_swap ;
   bool             send ;
   bool             peer_established ;
@@ -788,8 +786,8 @@ bgp_session_prod(bgp_session session, bgp_note note, bool force)
     cops_new = NULL ;
 
   if (!peer_established && (session->cops_sent->conn_state & bgp_csRun)
-                        && bgp_session_args_make(session, force))
-    args_new = bgp_session_args_dup(session->args_sent) ;
+                        && bgp_session_sargs_make(session, force))
+    args_new = bgp_sargs_dup(session->sargs_sent) ;
   else
     args_new = NULL ;
 
@@ -865,7 +863,7 @@ bgp_session_prod(bgp_session session, bgp_note note, bool force)
       mqba->note = note_copy ;
       mqba->peer_established = peer_established ;
 
-      mqba->args    = bgp_session_args_dup(session->args_sent) ;
+      mqba->args    = bgp_sargs_dup(session->sargs_sent) ;
       mqba->cops    = bgp_cops_dup(session->cops_sent) ;
 
       qa_set_ptr((void**)&session->mqb_tx, mqb) ;
@@ -874,7 +872,7 @@ bgp_session_prod(bgp_session session, bgp_note note, bool force)
     }
   else
     {
-      bgp_session_args_free(args_swap) ;
+      bgp_sargs_free(args_swap) ;
       bgp_cops_free(cops_swap) ;
 
       /* If we still have a copy of the 'note' in hand, that means that we
@@ -941,7 +939,7 @@ bgp_session_do_prod(mqueue_block mqb, mqb_flag_t flag)
 
       if ((mqba->args != NULL) && !mqba->peer_established)
         {
-          bgp_session_args_update(session, mqba->args, mqba->note) ;
+          bgp_session_sargs_update(session, mqba->args, mqba->note) ;
           mqba->args = NULL ;
         } ;
     } ;
@@ -949,7 +947,7 @@ bgp_session_do_prod(mqueue_block mqb, mqb_flag_t flag)
   /* Done... noting that we need to discard any remaining payload.
    */
   bgp_cops_free(mqba->cops) ;
-  bgp_session_args_free(mqba->args) ;
+  bgp_sargs_free(mqba->args) ;
 
   bgp_note_free(mqba->note) ;
   mqb_free(mqb) ;
@@ -1429,8 +1427,8 @@ bgp_session_cops_update(bgp_session session, bgp_cops cops_new, bgp_note note,
 {
   bgp_cops  cops_were ;
 
-  cops_were = session->cops_config ;
-  session->cops_config = cops_new ;
+  cops_were = session->cops_conf ;
+  session->cops_conf = cops_new ;
 
   /* Pass the new cops to the acceptor, which may or may not care, and will
    * take a copy if it wants.
@@ -1490,8 +1488,8 @@ bgp_session_cops_update(bgp_session session, bgp_cops cops_new, bgp_note note,
        * We bring down an sEstablished session iff !peer_established and there
        * is a material change in the cops.
        *
-       *   su_remote            -- change => restart accept/connect
-       *   su_local             -- change => restart connect
+       *   remote_su            -- change => restart accept/connect
+       *   local_su             -- change => restart connect
        *
        *   port                 -- change => restart accept/connect
        *
@@ -1529,7 +1527,7 @@ bgp_session_cops_update(bgp_session session, bgp_cops cops_new, bgp_note note,
       /* For accept we need to restart if any of these are true.
        */
       restart_accept =
-            !sockunion_same(&cops_new->su_remote, &cops_were->su_remote)
+            !sockunion_same(&cops_new->remote_su, &cops_were->remote_su)
          || (cops_new->port != cops_were->port)
          || (cops_new->ttl  != cops_were->ttl)
          || (cops_new->gtsm != cops_were->gtsm)
@@ -1539,7 +1537,7 @@ bgp_session_cops_update(bgp_session session, bgp_cops cops_new, bgp_note note,
        * or for established session.
        */
       restart_connect = restart_accept
-         || !sockunion_same(&cops_new->su_local, &cops_were->su_local)
+         || !sockunion_same(&cops_new->local_su, &cops_were->local_su)
          || (strcmp(cops_new->ifname, cops_were->ifname) != 0) ;
 
       /* Check if how we may make connections has changed.
@@ -1668,34 +1666,34 @@ bgp_session_cops_update(bgp_session session, bgp_cops cops_new, bgp_note note,
  * NB: takes responsibility for the given session arguments.
  */
 static void
-bgp_session_args_update(bgp_session session, bgp_session_args args_new,
+bgp_session_sargs_update(bgp_session session, bgp_sargs sargs_new,
                                                                   bgp_note note)
 {
-  bgp_session_args args_old ;
+  bgp_sargs sargs_old ;
 
   /* Swap in the new configuration -- suppressing items which are not part of
    * the configuration.
    */
-  args_old = session->args_config ;
-  session->args_config = args_new ;
+  sargs_old = session->sargs_conf ;
+  session->sargs_conf = sargs_new ;
 
-  args_new->remote_id      = 0 ;
-  args_new->cap_suppressed = false ;
+  sargs_new->remote_id      = 0 ;
+  sargs_new->cap_suppressed = false ;
 
   if ( (session->state == bgp_sAcquiring) ||
        (session->state == bgp_sEstablished) )
     {
       /* If the arguments have changed, may need to do something with them.
        */
-      qassert(args_old != NULL) ;
+      qassert(sargs_old != NULL) ;
 
       /* Make sure irrelevant items are suppressed in the old arguments,
        * and then compare old and new.
        */
-      args_old->remote_id      = 0 ;
-      args_old->cap_suppressed = false ;
+      sargs_old->remote_id      = 0 ;
+      sargs_old->cap_suppressed = false ;
 
-      if (!memsame(args_new, args_old, sizeof(*args_new)))
+      if (!memsame(sargs_new, sargs_old, sizeof(*sargs_new)))
         {
           if (session->state == bgp_sEstablished)
             {
@@ -1731,7 +1729,7 @@ bgp_session_args_update(bgp_session session, bgp_session_args args_new,
         } ;
     } ;
 
-  bgp_session_args_free(args_old) ;
+  bgp_sargs_free(sargs_old) ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -1741,9 +1739,9 @@ bgp_session_args_update(bgp_session session, bgp_session_args args_new,
  * If the peer is pEstablished, then some session arguments....  TODO !!!
  */
 static bool
-bgp_peer_args_update(bgp_prun prun)
+bgp_peer_sargs_update(bgp_prun prun)
 {
-  bgp_session_args  args_new, args_were ;
+  bgp_sargs  args_new, args_were ;
   bool restart ;
 
   args_new = args_were = NULL ;

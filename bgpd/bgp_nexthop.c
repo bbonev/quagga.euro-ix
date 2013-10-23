@@ -447,6 +447,7 @@ bgp_scan (qAFI_t q_afi)
   bgp_rib_node rn;
   qafx_t       qafx ;
   ihash_walker_t walk[1] ;
+  uint         i ;
 
   /* Change cache.
    */
@@ -467,8 +468,8 @@ bgp_scan (qAFI_t q_afi)
 
   /* Maximum prefix check
    */
-  for (prun = ddl_head(brun->pruns) ; prun != NULL ;
-                                      prun = ddl_next(prun, prun_list))
+  i = 0 ;
+  while ((prun = vector_get_item(brun->pruns, i++)) != NULL)
     {
       qSAFI_t q_safi ;
 
@@ -520,7 +521,8 @@ bgp_scan (qAFI_t q_afi)
 
               prun = ri->prib->prun ;
 
-              if ((prun->sort == BGP_PEER_EBGP) && (prun->cops_r.ttl == 1))
+              if ((prun->rp.sort == BGP_PEER_EBGP)
+                                               && (prun->rp.cops_conf.ttl == 1))
                 valid = bgp_nexthop_onlink (q_afi,
                                           &ri->iroutes[lc_view_id].attr->next_hop);
               else
@@ -1119,7 +1121,7 @@ bgp_import (struct thread *t)
                 metric  = bgp_static->igpmetric;
                 nexthop = bgp_static->igpnexthop;
 
-                if (rib->brun->do_import_check && qafx_is_unicast(qafx))
+                if (rib->brun->rp.do_import_check && qafx_is_unicast(qafx))
                   {
                     bgp_static->valid = bgp_import_check (&rn->p,
                                                       &bgp_static->igpmetric,

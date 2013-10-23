@@ -32,45 +32,6 @@
 #include "vty.h"
 
 /*==============================================================================
- * BGP Instances and their Configuration
- */
-
-/*------------------------------------------------------------------------------
- * BGP instance structure.
- */
-typedef struct bgp_inst bgp_inst_t ;
-
-struct bgp_inst
-{
-  bgp_env       parent_env ;
-
-  struct dl_list_pair(bgp_inst) bgp_list ;
-
-  /* The the 'view' name is an essential part of the bgp_inst, and *cannot* be
-   * changed once the bgp_inst has been created.
-   */
-  chs_t         name;
-
-  /* BGP Peers and Groups.
-   *
-   * All the peers and groups associated with this bgp instance.  The vectors
-   * are held in group-name and peer-ip order:
-   *
-   *   * to find a group within a view, does a vector_bsearch() in this vector.
-   *
-   *   * for output of configuration etc, the output is in order.
-   */
-  vector_t      groups[1] ;
-  vector_t      peers[1] ;      /* real peers           */
-
-  bgp_run       brun ;
-
-  /* The configuration for this bgp_inst.
-   */
-  bgp_bconfig   c ;
-};
-
-/*==============================================================================
  * The BGP Instance Configuration
  *
  * The bgp instance configuration items.
@@ -192,7 +153,7 @@ struct bgp_bconfig
   /* BGP flags.
    */
   bgp_bc_set_t  set ;
-  bgp_bc_set_t  set_on ;
+  bgp_bc_set_t  on ;
 
   /* The route-id, as set by configuration.
    *
@@ -202,7 +163,7 @@ struct bgp_bconfig
 
   /* Confederation ID, confederation peers.
    *
-   * In the running state there is also ebgp_as, which is a copy of my_as
+   * In the running state there is also my_as_ebgp, which is a copy of my_as
    * unless have confed_id, when is a copy of that.
    */
   as_t      confed_id ;
@@ -212,9 +173,9 @@ struct bgp_bconfig
    */
   in_addr_t cluster_id ;
 
-  /* Configured arguments
+  /* Configured Defaults
    */
-  bgp_args_t    args ;
+  bgp_defaults_t  defs ;
 
   /* BGP Per AF flags and redistribution.
    */
@@ -228,21 +189,21 @@ bcs_is_set(bgp_bconfig bc, bgp_bc_setting_t bcs)
 } ;
 
 Inline bool
-bcs_is_on(bgp_bconfig bc, bgp_bc_setting_t bcs)
+bcs_is_set_on(bgp_bconfig bc, bgp_bc_setting_t bcs)
 {
-  return (bc->set & bc->set_on & bcs_bit(bcs)) ;
+  return (bc->set & bc->on & bcs_bit(bcs)) ;
 } ;
 
 Inline bool
 bcs_qafx_config(bgp_bconfig bc, qafx_t qafx)
 {
-  return (bc->set & bc->set_on & bcs_qafx_bit(bcs_qafx_bit(qafx))) ;
+  return (bc->set & bc->on & bcs_qafx_bit(bcs_qafx_bit(qafx))) ;
 } ;
 
 Inline qafx_set_t
 bcs_qafxs(bgp_bconfig bc)
 {
-  return ((bc->set_on & bc->set) >> bcs_qafx_first) & qafx_known_bits ;
+  return ((bc->on & bc->set) >> bcs_qafx_first) & qafx_known_bits ;
 
   confirm((bcs_qafx_bit(qafx_first) >> bcs_qafx_first) == qafx_first_bit) ;
 }
@@ -250,12 +211,6 @@ bcs_qafxs(bgp_bconfig bc)
 /*==============================================================================
  * The redistribution configuration.
  */
-typedef enum bgp_redist_type bgp_redist_type_t ;
-enum bgp_redist_type
-{
-  redist_type_count  = ZEBRA_ROUTE_MAX
-};
-
 typedef struct bgp_redist_config  bgp_redist_config_t ;
 typedef struct bgp_redist_config* bgp_redist_config ;
 
@@ -263,8 +218,8 @@ struct bgp_redist_config
 {
   bool        set ;
   bool        metric_set ;
-  uint32_t    metric ;
-  nref_c      rmap_name ;
+  uint        metric ;
+  bgp_nref    rmap_name ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -320,8 +275,6 @@ struct bgp_baf_config
 
   /* BGP redistribute
    */
-  bool          redist_changed ;
-
   bgp_redist_config_t  redist[redist_type_count] ;
 };
 

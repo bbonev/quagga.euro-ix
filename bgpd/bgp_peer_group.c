@@ -28,7 +28,7 @@
 /*==============================================================================
  * Peer Group Configuration handling
  */
-
+#if 0
 /*------------------------------------------------------------------------------
  * Peer Group comparison function for sorting.
  *
@@ -692,3 +692,4 @@ peer_group2peer_config_copy (bgp_peer peer, bgp_peer_group group, qafx_t qafx)
   route_map_clear_ref(prib->us_rmap) ;
   prib->us_rmap = route_map_set_ref(g_prib->us_rmap) ;
 } ;
+#endif

@@ -235,7 +235,7 @@ bgp_msg_read_get_temp(bgp_msg_reader reader, uint size)
     {
       reader->temp_buff_size = uround_up(size, 512) ;
 
-      reader->temp_buff = XREALLOC(MTYPE_BGP_MSG_BUFF, reader->temp_buff,
+      reader->temp_buff = XREALLOC(MTYPE_BGP_READER, reader->temp_buff,
                                                        reader->temp_buff_size) ;
     } ;
 
@@ -256,7 +256,7 @@ bgp_msg_reader_free(bgp_msg_reader reader)
 {
   if (reader != NULL)
     {
-      XFREE(MTYPE_BGP_MSG_BUFF, reader->temp_buff) ;
+      XFREE(MTYPE_BGP_READER, reader->temp_buff) ;
       XFREE(MTYPE_BGP_READER, reader->buffer) ;
       XFREE(MTYPE_BGP_READER, reader) ;
     } ;
@@ -1599,10 +1599,10 @@ static bgp_note bgp_msg_open_bad_as(as_t asn, bool as4) ;
 extern bgp_note
 bgp_msg_open_parse(bgp_connection connection, bgp_msg_reader reader)
 {
-  bgp_open_state     open_recv ;
-  bgp_session_args   args_recv ;        /* pointer into open_recv       */
-  bgp_session_args_c args_config ;      /* pointer from session         */
-  bgp_note           reject ;
+  bgp_open_state    open_recv ;
+  bgp_sargs         sargs_recv ;        /* pointer into open_recv       */
+  bgp_sargs_c       sargs_conf ;        /* pointer from session         */
+  bgp_note          reject ;
   bgp_connection_logging plox ;
   sucker_t    sr[1] ;
   u_char      version;
@@ -1634,19 +1634,19 @@ bgp_msg_open_parse(bgp_connection connection, bgp_msg_reader reader)
 
   open_recv = connection->open_recv
                               = bgp_open_state_init_new(connection->open_recv) ;
-  args_recv = connection->open_recv->args ;
+  sargs_recv = connection->open_recv->sargs ;
 
-  args_config = connection->session->args_config ;
+  sargs_conf = connection->session->sargs_conf ;
 
   /* Parse fixed part of the open packet
    */
   suck_init(sr, reader->msg_body, reader->msg_body_length) ;
 
   version = suck_b(sr) ;
-  args_recv->remote_as =
+  sargs_recv->remote_as =
          open_recv->my_as2 = suck_w(sr) ;
-  args_recv->holdtime_secs = suck_w(sr) ;
-  args_recv->remote_id     = suck_ipv4(sr) ;
+  sargs_recv->holdtime_secs = suck_w(sr) ;
+  sargs_recv->remote_id     = suck_ipv4(sr) ;
 
   optlen = suck_b(sr) ;
 
@@ -1659,8 +1659,8 @@ bgp_msg_open_parse(bgp_connection connection, bgp_msg_reader reader)
     plog_debug (plox->log,
          "%s rcv OPEN, version %d, remote-as (in open) %u, holdtime %d, id %s",
                 plox->name, version,
-                   args_recv->remote_as, args_recv->holdtime_secs,
-                                  siptoa(AF_INET, &args_recv->remote_id ).str) ;
+                   sargs_recv->remote_as, sargs_recv->holdtime_secs,
+                                  siptoa(AF_INET, &sargs_recv->remote_id ).str) ;
 
   /* Peer BGP version check.
    */
@@ -1677,13 +1677,13 @@ bgp_msg_open_parse(bgp_connection connection, bgp_msg_reader reader)
 
   /* Remote bgp_id must be valid unicast and must not be the same as here
    */
-  if ( IPV4_NET0 (ntohl(args_recv->remote_id ))         ||
-       IPV4_CLASS_DE (ntohl(args_recv->remote_id ))     ||
-       (args_recv->remote_id  == args_config->local_id) )
+  if ( IPV4_NET0 (ntohl(sargs_recv->remote_id ))         ||
+       IPV4_CLASS_DE (ntohl(sargs_recv->remote_id ))     ||
+       (sargs_recv->remote_id  == sargs_conf->local_id) )
     {
       plog_debug (plox->log, "%s rcv OPEN, multicast or our id %s",
-                      plox->name, siptoa(AF_INET, &args_recv->remote_id ).str) ;
-      return bgp_msg_open_bad_id(args_recv->remote_id ) ;
+                      plox->name, siptoa(AF_INET, &sargs_recv->remote_id ).str) ;
+      return bgp_msg_open_bad_id(sargs_recv->remote_id ) ;
     } ;
 
   /* RFC4271: "...a BGP speaker MUST calculate the value of the Hold Timer by
@@ -1698,10 +1698,10 @@ bgp_msg_open_parse(bgp_connection connection, bgp_msg_reader reader)
    * We set the args_recv->keepalive_secs to the implied default, but we don't
    * really use this... see below.
    */
-  if ((args_recv->holdtime_secs < 3) && (args_recv->holdtime_secs != 0))
+  if ((sargs_recv->holdtime_secs < 3) && (sargs_recv->holdtime_secs != 0))
     return bgp_msg_open_error(BGP_NOMS_O_H_TIME) ;
 
-  args_recv->keepalive_secs = args_recv->holdtime_secs / 3 ;
+  sargs_recv->keepalive_secs = sargs_recv->holdtime_secs / 3 ;
 
   /* Open option part parse
    */
@@ -1724,9 +1724,9 @@ bgp_msg_open_parse(bgp_connection connection, bgp_msg_reader reader)
    *
    * ASN == 0 is an error !
    */
-  if (args_recv->remote_as == 0)
+  if (sargs_recv->remote_as == 0)
     {
-      if (args_recv->can_as4)
+      if (sargs_recv->can_as4)
         {
           plog_err (plox->log, "%s [AS4] bad OPEN, got AS4 capability, "
                                                "but AS4 set to 0", plox->name) ;
@@ -1743,9 +1743,9 @@ bgp_msg_open_parse(bgp_connection connection, bgp_msg_reader reader)
 
   /* ASN = BGP_AS_TRANS is odd for AS2, error for AS4
    */
-  if (args_recv->remote_as == BGP_ASN_TRANS)
+  if (sargs_recv->remote_as == BGP_ASN_TRANS)
     {
-      if (args_recv->can_as4)
+      if (sargs_recv->can_as4)
         {
           plog_err(plox->log, "%s [AS4] NEW speaker using AS_TRANS for AS4, "
                                                     "not allowed", plox->name) ;
@@ -1761,34 +1761,34 @@ bgp_msg_open_parse(bgp_connection connection, bgp_msg_reader reader)
 
   /* For AS4 speaker: worry about my_as2, if as2 != as4
    */
-  if ((args_recv->can_as4) && (args_recv->remote_as != open_recv->my_as2))
+  if ((sargs_recv->can_as4) && (sargs_recv->remote_as != open_recv->my_as2))
     {
       if (open_recv->my_as2 == BGP_ASN_TRANS)
         {
-          if ((args_recv->remote_as <= BGP_AS2_MAX) && BGP_DEBUG(as4, AS4))
+          if ((sargs_recv->remote_as <= BGP_AS2_MAX) && BGP_DEBUG(as4, AS4))
             plog_debug(plox->log, "%s [AS4] OPEN remote_as is AS_TRANS,"
                                " but AS4 (%u) fits in 2-bytes, very odd peer",
-                                             plox->name, args_recv->remote_as) ;
+                                             plox->name, sargs_recv->remote_as) ;
         }
       else
         {
           plog_err(plox->log, "%s bad OPEN, got AS4 capability, "
                                      "but remote_as %u != 'my asn' %u in open",
-                          plox->name, args_recv->remote_as, open_recv->my_as2) ;
+                          plox->name, sargs_recv->remote_as, open_recv->my_as2) ;
 
-          return bgp_msg_open_bad_as(args_recv->remote_as, true) ;
+          return bgp_msg_open_bad_as(sargs_recv->remote_as, true) ;
         } ;
     } ;
 
   /* Finally -- require the AS to be the configured AS
    */
-  if (args_recv->remote_as != args_config->remote_as)
+  if (sargs_recv->remote_as != sargs_conf->remote_as)
     {
       if (BGP_DEBUG (normal, NORMAL))
         plog_debug (plox->log, "%s bad OPEN, remote AS is %u, expected %u",
-                    plox->name, args_recv->remote_as, args_config->remote_as) ;
+                    plox->name, sargs_recv->remote_as, sargs_conf->remote_as) ;
 
-      return bgp_msg_open_bad_as(args_recv->remote_as, args_recv->can_as4) ;
+      return bgp_msg_open_bad_as(sargs_recv->remote_as, sargs_recv->can_as4) ;
     } ;
 
   /* Success !
@@ -1934,7 +1934,7 @@ bgp_msg_open_option_parse(bgp_open_state open_recv, sucker sr,
           return bgp_msg_open_error(BGP_NOMS_O_AUTH) ;
 
         case BGP_OPT_CAPS:
-          open_recv->args->can_capability = true ;       /* did => can   */
+          open_recv->sargs->can_capability = true ;       /* did => can   */
 
           note = bgp_msg_capability_option_parse(open_recv, ssr, plox) ;
           if (note != NULL)
@@ -1959,7 +1959,7 @@ bgp_msg_open_option_parse(bgp_open_state open_recv, sucker sr,
    *
    *     Also arranges for open_recv->can_af to be IPc4 Unicast.
    */
-  if (!open_recv->args->can_mp_ext)
+  if (!open_recv->sargs->can_mp_ext)
     {
       iAFI_SAFI_t mp[1] ;
 
@@ -2008,17 +2008,17 @@ bgp_msg_open_option_parse(bgp_open_state open_recv, sucker sr,
               /* Collect the afi/safi capability,
                *                      includes implied IPv4 Unicast if required.
                */
-              open_recv->args->can_af |= qb ;
+              open_recv->sargs->can_af |= qb ;
 
               /* Collect Graceful Restart ability to preserve forwarding state
                * for the afi/safi and whether actually has done so this time.
                */
               if (cap->gr.seen)
                 {
-                  open_recv->args->gr.can_preserve |= qb ;
+                  open_recv->sargs->gr.can_preserve |= qb ;
 
                   if (cap->gr.has_preserved)
-                    open_recv->args->gr.has_preserved |= qb ;
+                    open_recv->sargs->gr.has_preserved |= qb ;
                 } ;
 
               /* Collect Prefix ORF state, if any.
@@ -2085,7 +2085,7 @@ bgp_msg_open_option_parse(bgp_open_state open_recv, sucker sr,
                             orf |= ORF_RM_pre ;
                         } ;
 
-                      open_recv->args->can_orf_pfx.af[cap->qafx] = orf;
+                      open_recv->sargs->can_orf_pfx.af[cap->qafx] = orf;
                     } ;
                 } ;
             } ;
@@ -2112,8 +2112,8 @@ bgp_msg_open_option_parse(bgp_open_state open_recv, sucker sr,
         } ;
     } ;
 
-  if (!open_recv->args->can_mp_ext)
-    qassert(open_recv->args->can_af == qafx_ipv4_unicast_bit) ;
+  if (!open_recv->sargs->can_mp_ext)
+    qassert(open_recv->sargs->can_af == qafx_ipv4_unicast_bit) ;
 
   return NULL ;
 } ;
@@ -2320,17 +2320,17 @@ bgp_msg_capability_option_parse(bgp_open_state open_recv,
       switch (cap_code)
         {
           case BGP_CAN_MP_EXT:
-            open_recv->args->can_mp_ext = true ;
+            open_recv->sargs->can_mp_ext = true ;
 
             ret = bgp_msg_capability_mp(open_recv, ssr, plox) ;
             break;
 
           case BGP_CAN_R_REFRESH:
-            open_recv->args->can_rr |= bgp_form_rfc ;
+            open_recv->sargs->can_rr |= bgp_form_rfc ;
             break ;
 
           case BGP_CAN_R_REFRESH_pre:
-            open_recv->args->can_rr |= bgp_form_pre ;
+            open_recv->sargs->can_rr |= bgp_form_pre ;
             break;
 
           case BGP_CAN_ORF:
@@ -2346,11 +2346,11 @@ bgp_msg_capability_option_parse(bgp_open_state open_recv,
             break;
 
           case BGP_CAN_DYNAMIC_CAP_dep:
-            open_recv->args->can_dynamic_dep = true ;
+            open_recv->sargs->can_dynamic_dep = true ;
             break;
 
           case BGP_CAN_DYNAMIC_CAP:
-            open_recv->args->can_dynamic = true ;
+            open_recv->sargs->can_dynamic = true ;
             break;
 
           case BGP_CAN_AS4:
@@ -2516,7 +2516,7 @@ bgp_msg_capability_orf(bgp_open_state open_recv, bgp_form_t form, sucker sr,
 {
   cap_ret_t ret ;
 
-  open_recv->args->can_orf |= form ;
+  open_recv->sargs->can_orf |= form ;
 
   ret = cap_ret_ok ;
   while (suck_left(sr) > 0)
@@ -2755,7 +2755,7 @@ bgp_msg_capability_gr(bgp_open_state open_recv,
   /* Issue complaint if we have already seen one of these, and purge what we
    * know about it !
    */
-  if (open_recv->args->gr.can)
+  if (open_recv->sargs->gr.can)
     {
       uint i ;
 
@@ -2781,14 +2781,14 @@ bgp_msg_capability_gr(bgp_open_state open_recv,
 
   /* Set all Graceful Restart state -- overwriting any previous.
    */
-  open_recv->args->gr.can = true ;
+  open_recv->sargs->gr.can = true ;
 
-  open_recv->args->gr.restarting   = (restart_flag_time & BGP_CAP_GR_T_R_FLAG)
+  open_recv->sargs->gr.restarting   = (restart_flag_time & BGP_CAP_GR_T_R_FLAG)
                                                                           != 0 ;
-  open_recv->args->gr.restart_time =  restart_flag_time & BGP_CAP_GR_T_MASK ;
+  open_recv->sargs->gr.restart_time =  restart_flag_time & BGP_CAP_GR_T_MASK ;
 
-  open_recv->args->gr.can_preserve  = 0 ;
-  open_recv->args->gr.has_preserved = 0 ;
+  open_recv->sargs->gr.can_preserve  = 0 ;
+  open_recv->sargs->gr.has_preserved = 0 ;
 
   if (BGP_DEBUG (normal, NORMAL))
     {
@@ -2796,8 +2796,8 @@ bgp_msg_capability_gr(bgp_open_state open_recv,
                      "%s OPEN has Graceful Restart capability", plox->name) ;
       plog_debug (plox->log,
                      "%s Peer has%srestarted. Restart Time : %u", plox->name,
-                               open_recv->args->gr.restarting ? " " : " not ",
-                               open_recv->args->gr.restart_time);
+                               open_recv->sargs->gr.restarting ? " " : " not ",
+                               open_recv->sargs->gr.restart_time);
     } ;
 
   /* Now process all the afi/safi.
@@ -2869,12 +2869,12 @@ static cap_ret_t
 bgp_msg_capability_as4 (bgp_open_state open_recv,
                                          sucker sr, bgp_connection_logging plox)
 {
-  open_recv->args->can_as4   = true ;
-  open_recv->args->remote_as = suck_l(sr) ;
+  open_recv->sargs->can_as4   = true ;
+  open_recv->sargs->remote_as = suck_l(sr) ;
 
   if (BGP_DEBUG (as4, AS4))
     plog_debug (plox->log, "%s [AS4] received AS4 Capability ASN=%u",
-                                       plox->name, open_recv->args->remote_as) ;
+                                       plox->name, open_recv->sargs->remote_as) ;
   return cap_ret_ok ;
 } ;
 
@@ -2922,7 +2922,7 @@ bgp_msg_route_refresh_parse(bgp_connection connection, bgp_msg_reader reader)
         break ;
     } ;
 
-  if ((connection->session->args->can_rr & form) == bgp_form_none)
+  if ((connection->session->sargs->can_rr & form) == bgp_form_none)
     return bgp_msg_read_bad_type(reader) ;
 
   qa_add_to_uint(&connection->session->stats.refresh_in, 1) ;
@@ -2941,7 +2941,7 @@ bgp_msg_route_refresh_parse(bgp_connection connection, bgp_msg_reader reader)
         qafx_ipv6_unicast_bit | qafx_ipv6_multicast_bit |
         qafx_ipv4_mpls_vpn_bit ;
 
-  if ((qb & connection->session->args->can_af) == qafx_empty_set)
+  if ((qb & connection->session->sargs->can_af) == qafx_empty_set)
     {
       plog_warn (reader->plox->log,
             "%s rcvd REFRESH_REQ for %s afi/safi: %u/%u", reader->plox->name,
@@ -3013,7 +3013,7 @@ bgp_msg_route_refresh_parse(bgp_route_refresh* p_rr,
         break ;
     } ;
 
-  if ((connection->session->args->can_rr & form) == bgp_form_none)
+  if ((connection->session->sargs->can_rr & form) == bgp_form_none)
     return bgp_msg_read_bad_type(reader) ;
 
   qa_add_to_uint(&connection->session->stats.refresh_in, 1) ;
@@ -3105,7 +3105,7 @@ static bool
 bgp_msg_orf_recv(bgp_connection connection, bgp_route_refresh rr,
                           qafx_bit_t qb, sucker sr, bgp_connection_logging plox)
 {
-  bgp_session_args args ;
+  bgp_sargs sargs ;
   sucker_t   ssr[1] ;
   int        left ;
   uint8_t    orf_type ;
@@ -3150,16 +3150,16 @@ bgp_msg_orf_recv(bgp_connection connection, bgp_route_refresh rr,
    * received *either* Type, but ORF_RM_pre is set only if we only received
    * the pre-RFC type.
    */
-  args = connection->session->args ;
+  sargs = connection->session->sargs ;
   switch (orf_type)
     {
       case BGP_ORF_T_PFX:
-        can = (args->can_orf_pfx[rr->qafx] & (ORF_RM | ORF_RM_pre))
+        can = (sargs->can_orf_pfx[rr->qafx] & (ORF_RM | ORF_RM_pre))
                                           ==  ORF_RM ;
         break ;
 
       case BGP_ORF_T_PFX_pre:
-        can = (args->can_orf_pfx[rr->qafx] & (ORF_RM | ORF_RM_pre))
+        can = (sargs->can_orf_pfx[rr->qafx] & (ORF_RM | ORF_RM_pre))
                                           == (ORF_RM | ORF_RM_pre);
         break ;
 

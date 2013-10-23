@@ -31,6 +31,7 @@ Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
 
 #include "bgpd/bgpd.h"
 
+#include "bgpd/bgp_run.h"
 #include "bgpd/bgp_prun.h"
 #include "bgpd/bgp_rib.h"
 #include "bgpd/bgp_adj_out.h"
@@ -374,7 +375,7 @@ bgp_packet_write_announce(bgp_prib prib, ring_buffer rb,
 
       /* Generate NLRI at the current buffer position, and check for a fit.
        */
-      pfx_len = bgp_blow_prefix(br, prib, parcel->pfx_id, parcel->tag) ;
+      pfx_len = bgp_blow_prefix(br, prib, parcel->pfx_id, parcel->attr->tags) ;
 
       if ((mp_len <= 255) && ((mp_len + pfx_len) > 255))
         extend = 1 ;
@@ -596,7 +597,7 @@ bgp_packet_prefix_string(qstring qs_pfx, bgp_prib prib,
 
   if (prib->is_mpls)
     qs_pfx = qs_printf_a(qs_pfx, " %s/%s/",
-                            stgtoa(parcel->tag).str,
+                            stgtoa(parcel->attr->tags).str,
                             srdtoa(prefix_rd_id_get_val(pie->pfx->rd_id)).str) ;
   else
     qs_pfx = qs_append_str(qs_pfx, " ") ;
@@ -695,7 +696,7 @@ bgp_packet_write_withdraw(bgp_prib prib, ring_buffer rb,
 
       /* Generate NLRI at the current buffer position, and check for a fit.
        */
-      pfx_len = bgp_blow_prefix(br, prib, parcel->pfx_id, parcel->tag) ;
+      pfx_len = bgp_blow_prefix(br, prib, parcel->pfx_id, parcel->attr->tags) ;
 
       if ((mp_len <= 255) && ((mp_len + pfx_len) > 255))
         extend = 1 ;
@@ -952,7 +953,7 @@ bgp_packet_write_rr(bgp_prun prun, ring_buffer rb)
 
   /* We prefer the RFC ORF Prefix type, if we allowed to send any at all.
    */
-  orf_cap_bits = prun->session->args->can_orf_pfx.af[rr->qafx] ;
+  orf_cap_bits = prun->session->sargs->can_orf_pfx.af[rr->qafx] ;
 
   if      (orf_cap_bits & ORF_SM)
     form = bgp_form_rfc ;
@@ -1443,8 +1444,8 @@ bgp_packet_read_update(bgp_prun prun, sucker sr)
 
   args->prun = prun ;
 
-  args->sort = prun->sort ;
-  args->as4  = prun->session->args->can_as4 ;
+  args->sort = prun->rp.sort ;
+  args->as4  = prun->session->sargs->can_as4 ;
 
   bgp_attr_pair_load_new(args->attrs) ;
 
@@ -1842,6 +1843,7 @@ bpd_packet_update_nlri(bgp_prun prun, attr_set attr, bgp_nlri nlri,
   bool         mpls ;
   ulen         plen_max ;
   iroute_state_t parcel[1] ;
+  mpls_tags_t  tags ;
 
   qassert(!(refused && (attr == NULL))) ;       /* cannot refuse withdraw ! */
 
@@ -1889,7 +1891,6 @@ bpd_packet_update_nlri(bgp_prun prun, attr_set attr, bgp_nlri nlri,
    * Zeroizing sets:
    *
    *   * attr                   -- NULL     -- set below, if required
-   *   * tags                   -- mpls_tags_null
    *
    *   * flags                  -- 0        -- sets RINFO_REFUSED if required
    *                                        -- sets RINFO_WITHDRAWN if required
@@ -1901,6 +1902,7 @@ bpd_packet_update_nlri(bgp_prun prun, attr_set attr, bgp_nlri nlri,
    * iroute_state_t
    */
   memset(parcel, 0, sizeof(iroute_state_t)) ;
+  tags = mpls_tags_null ;
 
   if (attr == NULL)
     parcel->flags     = RINFO_WITHDRAWN ;
@@ -1978,9 +1980,9 @@ bpd_packet_update_nlri(bgp_prun prun, attr_set attr, bgp_nlri nlri,
            *
            * Log, but otherwise ignore more than one tag.
            */
-          parcel->tags = mpls_tags_decode(pp + 8, 3) ;
+          tags = mpls_tags_decode(pp + 8, 3) ;
 
-          if (parcel->tags >= mpls_tags_bad)
+          if (tags >= mpls_tags_bad)
             {
               plog_err (prun->log,
                  "%s [Error] Update packet error: "
@@ -2067,7 +2069,7 @@ bpd_packet_update_nlri(bgp_prun prun, attr_set attr, bgp_nlri nlri,
        */
       pie = prefix_id_find_entry(&pfx, prd) ;     /* locks the entry      */
 
-      bgp_adj_in_update_prefix(prib, pie, parcel) ;
+      bgp_adj_in_update_prefix(prib, pie, parcel, tags) ;
 
       prefix_id_entry_dec_ref(pie) ;
     } ;
@@ -2121,7 +2123,7 @@ bgp_packet_read_rr(bgp_prun prun, sucker sr)
       vector_index_t i ;
       bgp_orf_name name ;
 
-      prefix_bgp_orf_name_set(name, prun->su_name, qafx) ;
+      prefix_bgp_orf_name_set(name, &prun->rp.cops_conf.remote_su, qafx) ;
 
       for (i = 0; i < bgp_orf_get_count(rr) ; ++i)
         {
@@ -2319,7 +2321,7 @@ static bool
 bgp_packet_orf_recv(bgp_route_refresh rr,
                                       sa_family_t paf, sucker sr, bgp_prun prun)
 {
-  bgp_session_args_c args ;
+  bgp_sargs_c args ;
   sucker_t   ssr[1] ;
   int        left ;
   uint8_t    orf_type ;
@@ -2364,7 +2366,7 @@ bgp_packet_orf_recv(bgp_route_refresh rr,
    * received *either* Type, but ORF_RM_pre is set only if we only received
    * the pre-RFC type.
    */
-  args = prun->session->args ;
+  args = prun->session->sargs ;
   switch (orf_type)
     {
       case BGP_ORF_T_PFX:

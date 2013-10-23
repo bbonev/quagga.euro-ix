@@ -525,6 +525,22 @@ sockunion_su2str (sockunion_c su, mtype_t mtype)
 {
   return XSTRDUP (mtype, sutoa(su).str) ;
 }
+/*------------------------------------------------------------------------------
+ * Do we have an IPv4-Mapped address ?.
+ *
+ * Returns:  true <=> was IPv4-Mapped and has been unmapped to AF_INET
+ *           false => is not IPv4-Mapped (or do not HAVE_IPV6)
+ */
+extern bool
+sockunion_is_ipv4_mapped(sockunion_c su)
+{
+#ifdef HAVE_IPV6
+  return (sockunion_family(su) == AF_INET6)
+                                 && IN6_IS_ADDR_V4MAPPED (&su->sin6.sin6_addr) ;
+#else
+  return false ;
+#endif
+}
 
 /*------------------------------------------------------------------------------
  * If have an IPv6 mapped IPv4 address, convert it to an IPv4 address.
@@ -536,8 +552,7 @@ extern bool
 sockunion_unmap_ipv4 (sockunion su)
 {
 #ifdef HAVE_IPV6
-  if ( (sockunion_family(su) == AF_INET6)
-                                 && IN6_IS_ADDR_V4MAPPED (&su->sin6.sin6_addr) )
+  if (sockunion_is_ipv4_mapped(su))
     {
       union sockunion sux[1] ;
 
@@ -663,7 +678,7 @@ sockunion_stream_socket (sockunion su)
  *
  * Reports EINPROGRESS as success.
  *
- * The ifindex is used iff the su_remote is IPv6 Link-Local.  In that case, and
+ * The ifindex is used iff the remote_su is IPv6 Link-Local.  In that case, and
  * where possible, it sets the sin6_scope_id or otherwise adjusts the
  * socket address used in the connect().
  *
@@ -673,7 +688,7 @@ sockunion_stream_socket (sockunion su)
  * Logs a LOG_INFO message if fails.
  */
 extern int
-sockunion_connect(int sock_fd, sockunion su_remote, uint port, uint ifindex)
+sockunion_connect(int sock_fd, sockunion remote_su, uint port, uint ifindex)
 {
   enum
     {
@@ -703,7 +718,7 @@ sockunion_connect(int sock_fd, sockunion su_remote, uint port, uint ifindex)
   int   err, ret ;
   int   sa_len ;
 
-  memcpy(su, su_remote, sizeof(sockunion_t)) ;
+  memcpy(su, remote_su, sizeof(sockunion_t)) ;
 
 #ifdef HAVE_IPV6
   if (su->sa.sa_family == AF_INET6)
@@ -1107,9 +1122,9 @@ sockunion_getsockname(int sock_fd, sockunion su_local)
  * See: sockunion_get_name()
  */
 extern int
-sockunion_getpeername (int sock_fd, sockunion su_remote)
+sockunion_getpeername (int sock_fd, sockunion remote_su)
 {
-  return sockunion_get_name(sock_fd, su_remote, false,  /* false => remote */
+  return sockunion_get_name(sock_fd, remote_su, false,  /* false => remote */
                                                 true) ; /* true => unmap   */
 } ;
 

@@ -88,11 +88,14 @@ struct zebra_privs_t bgpd_privs =
 };
 
 /*------------------------------------------------------------------------------
- * The default arguments for a bgp instance
+ * The default arguments for a bgp instance -- extern in bgpd
  */
-static const bgp_args_t bgp_default_args =
+const bgp_defaults_t bgp_default_defaults =
 {
   .port                  = BGP_PORT_DEFAULT,
+  .ibgp_ttl              = 255,
+  .cbgp_ttl              = 255,
+  .ebgp_ttl              = 1,
 
   .local_pref            = BGP_DEFAULT_LOCAL_PREF,
   .med                   = BGP_MED_MIN,
@@ -117,6 +120,25 @@ static const bgp_args_t bgp_default_args =
   .distance_ibgp         = ZEBRA_IBGP_DISTANCE_DEFAULT,
   .distance_local        = ZEBRA_IBGP_DISTANCE_DEFAULT,
 };
+
+/*------------------------------------------------------------------------------
+ * A name index is used for most names in all configuration.
+ *
+ * The function of this name index is simply to facilitate establishing whether
+ * two configuration settings are the same.
+ */
+static name_index bgp_name_index       = NULL ;
+static qpt_mutex  bgp_name_index_mutex = NULL ;
+
+inline static void BGP_NAME_INDEX_LOCK(void)
+{
+  qpt_mutex_lock(bgp_name_index_mutex) ;
+} ;
+
+inline static void BGP_NAME_INDEX_UNLOCK(void)
+{
+  qpt_mutex_unlock(bgp_name_index_mutex) ;
+} ;
 
 /*==============================================================================
  * Initialisation and shut-down.
@@ -144,6 +166,9 @@ bgp_master_init (void)
    *   as2_speaker       = false  -- as4 speaker by default
    *   peer_linger_count = 0      -- no peers lingering
    */
+
+  bgp_name_index       = name_index_new() ;
+  bgp_name_index_mutex = NULL ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -289,6 +314,88 @@ bgp_option_unset (bgp_option_t flag)
  */
 
 /*------------------------------------------------------------------------------
+ * Get bgp_nref for the given name -- incrementing its refcount.
+ */
+extern bgp_nref
+bgp_nref_get(chs_c name)
+{
+  nref_c nref ;
+
+  if ((name == NULL) || (name[0] == '\0'))
+    return NULL ;
+
+  BGP_NAME_INDEX_LOCK() ;
+
+  nref = ni_nref_get_c(bgp_name_index, name) ;
+
+  BGP_NAME_INDEX_UNLOCK() ;
+
+  return nref ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Increment refcount for given nref (if any).
+ */
+extern bgp_nref
+bgp_nref_inc(bgp_nref nref)
+{
+  if (nref != NULL)
+    {
+      BGP_NAME_INDEX_LOCK() ;
+
+      ni_nref_inc(nref) ;
+
+      BGP_NAME_INDEX_UNLOCK() ;
+    } ;
+
+  return NULL ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Decrement refcount for given nref (if any).
+ */
+extern bgp_nref
+bgp_nref_dec(bgp_nref nref)
+{
+  if (nref != NULL)
+    {
+      BGP_NAME_INDEX_LOCK() ;
+
+      ni_nref_dec(nref) ;
+
+      BGP_NAME_INDEX_UNLOCK() ;
+    } ;
+
+  return NULL ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Set given pointer to nref to the given name.
+ */
+extern void
+bgp_nref_set(bgp_nref* p_nref, chs_c name)
+{
+  if ((name != NULL) && (name[0] == '\0'))
+    name = NULL ;
+
+  BGP_NAME_INDEX_LOCK() ;
+
+  ni_nref_set_c(p_nref, bgp_name_index, name) ;
+
+  BGP_NAME_INDEX_UNLOCK() ;
+} ;
+
+extern void
+bgp_nref_copy(bgp_nref* p_nref, bgp_nref nref)
+{
+  BGP_NAME_INDEX_LOCK() ;
+
+  ni_nref_set_copy(p_nref, nref) ;
+
+  BGP_NAME_INDEX_UNLOCK() ;
+} ;
+
+/*------------------------------------------------------------------------------
  *
  */
 /*------------------------------------------------------------------------------
@@ -308,17 +415,4 @@ bgp_name_match(chs_c name1, chs_c name2)
 
   return strsame(name1, name2) ;
 } ;
-
-/*==============================================================================
- * Table for Peers and Peer-Groups, used at Config and Run-Time.
- *
- * The
- */
-
-
-
-
-
-
-
 

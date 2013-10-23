@@ -52,7 +52,7 @@ struct bgp_peer_group
 /*==============================================================================
  *
  */
-
+#if 0
 
 extern bgp_peer_group peer_group_lookup (bgp_inst bgp, const char* name);
 extern bgp_peer_group peer_group_get (bgp_inst bgp, const char* name);
@@ -63,12 +63,7 @@ extern bgp_ret_t peer_group_bind (bgp_inst bgp, sockunion su,
                                bgp_peer_group group, qafx_t qafx, as_t* p_asn) ;
 extern bgp_ret_t peer_group_unbind (bgp_peer peer, bgp_peer_group group,
                                                                   qafx_t qafx) ;
-
-
-#if 0
-extern void bgp_withdraw_schedule(bgp_peer peer) ;
 #endif
-
 
 #endif /* _QUAGGA_BGP_PEER_GROUP_H */
 

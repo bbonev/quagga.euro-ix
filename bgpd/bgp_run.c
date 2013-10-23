@@ -122,6 +122,68 @@
  *
  *   * static and aggregate routes -- TBA TODO !!!
  *
+ *==============================================================================
+ * The scheduling of work.
+ *
+ * This is an overview of the process of receiving routes from a peer,
+ * processing those into the RIB, selecting routes and sending updates to all
+ * peers.
+ *
+ * 1) arrival of UPDATEs etc in the read ring-buffer
+ *
+ *    These arrive via the session->read_rb from the BGP Engine.
+ *
+ *    The ring-buffer has a mechanism to signal when the reader has emptied
+ *    out the ring-buffer, and should be kicked when something new is added.
+ *    That mechanism translates to a message queue message to prompt the
+ *    prun -- that message may be sent by the BGP Engine or by the Routeing
+ *    Engine to itself.
+ *
+ *    The message is ignored if the prun is no longer bgp_pEstablished.
+ *
+ *    TODO ... actual scheduling of work, so that it can be suspended and
+ *             later restarted or otherwise.
+ *
+ * 2) processing of messages out of the read ring-buffer
+ *
+ *    bgp_packet_read_stuff() takes messages out of the ring-buffer and
+ *    parses them into calls of:
+ *
+ *      * bgp_packet_update_nlri() which updates the state of the adj-in for
+ *        a given nlri, calling bgp_adj_in_update_prefix().
+ *
+ *        This adds prefixes to the adj-in's pending queue.
+ *
+ *      * bgp_announce_family() and other stuff for Route Refresh.
+ *
+ *    TODO scheduling of bgp_packet_read_stuff() ???
+ *
+ * 3) processing the adj-in pending queue
+ *
+ *    bgp_adj_in_process() runs the adj-in pending queue, and processes a
+ *    route_info into or out of the candidates for the rib_node.
+ *
+ *    Here we perform all the: 'in', 'inx', 'export' and 'import' filtering
+ *    etc. for all local contexts.  Updates the route merit and updates the
+ *    candidate list for each affected route context.
+ *
+ *    Local contexts which are
+ *
+ *    Where the route-merit requires it, schedule the rib-node for processing.
+ *    A rib-node is scheduled for processing by placing it at the end of the
+ *    rib-node queue, and handing over to the main rib-walker.
+ *
+ *    TODO ... actual scheduling of work and suspension of same.
+ *
+ * 4) processing the rib-node queue -- the main rib-walker
+ *
+ *    bgp_process_walker() for the main rib-walker will do bgp_process_node(),
+ *    which will -- for all changed local contexts -- do bgp_route_select_lc()
+ *    and then bgp_route_announce() to all peers in the context.
+ *
+ *
+ *
+ *
  * Each rib has a work-queue .... TODO
  *
  * Each peer

@@ -45,7 +45,7 @@ bgp_peer_config_write (vty vty, bgp_peer peer, bool done_peer)
   chs_c           pgn ;
   qafx_t          qafx ;
 
-  pgn  = peer->name ;           /* for group this is the group name     */
+  pgn  = bgp_nref_name(peer->name) ;     /* for group this is the group name  */
   pc   = peer->c ;
 
   /* Set: gc -> group configuration if is member of group
@@ -54,14 +54,14 @@ bgp_peer_config_write (vty vty, bgp_peer peer, bool done_peer)
 
   if (pc->ctype != BGP_CFT_MEMBER)
     {
-      qassert(pcs_is_off(pc, pcs_group)) ;
-      qassert(pc->gc == NULL) ;
+      qassert(pcs_is_set_off(pc, pcs_group)) ;
+      qassert(pc->group.c == NULL) ;
     }
   else
     {
-      qassert(pcs_is_on(pc, pcs_group)) ;
-      qassert(pc->gc != NULL) ;
-      gc = pc->gc ;
+      qassert(pcs_is_set_on(pc, pcs_group)) ;
+      qassert(pc->group.c != NULL) ;
+      gc = pc->group.c ;
     } ;
 
   /* Now either the neighbor or group heading
@@ -85,7 +85,7 @@ bgp_peer_config_write (vty vty, bgp_peer peer, bool done_peer)
       else
         qassert(pc->ctype == BGP_CFT_PEER) ;
 
-      if (pcs_is_on(pc, pcs_remote_as) || (pc->ctype == BGP_CFT_PEER))
+      if (pcs_is_set_on(pc, pcs_remote_as) || (pc->ctype == BGP_CFT_PEER))
         vty_out (vty, " neighbor %s remote-as %u\n", pgn, pc->remote_as) ;
       else
         qassert(pc->ctype == BGP_CFT_GROUP) ;
@@ -103,27 +103,27 @@ bgp_peer_config_write (vty vty, bgp_peer peer, bool done_peer)
        */
       qassert(pc->ctype == BGP_CFT_PEER) ;
 
-      if (!pcs_is_on(gc, pcs_remote_as))
+      if (!pcs_is_set_on(gc, pcs_remote_as))
         vty_out (vty, " neighbor %s remote-as %u\n", pgn, pc->remote_as) ;
 
       vty_out (vty, " neighbor %s peer-group %s\n", pgn,
-                                                        gc->parent_peer->name) ;
+                                          bgp_nref_name(gc->parent_peer->name)) ;
     } ;
 
   if (pcs_is_set(pc, pcs_change_local_as))
     vty_out (vty, " neighbor %s local-as %u%s\n", pgn,
                 pc->change_local_as,
-                pc->change_local_as_prepend ? "" : " no-prepend") ;
+                pc->local_as_prepend ? "" : " no-prepend") ;
 
   if (pcs_is_set(pc, pcs_description))
-    vty_out (vty, " neighbor %s description %s\n", pgn, pc->desc);
+    vty_out (vty, " neighbor %s description %s\n", pgn, bgp_nref_name(pc->desc));
 
   if (pcs_is_set(pc, pcs_SHUTDOWN))
     vty_out (vty, " neighbor %s shutdown\n", pgn);
 
   if (pcs_is_set(pc, pcs_password))      // TODO !!
     vty_out (vty, " neighbor %s password %s\n", pgn,
-                                              ni_nref_name(pc->password)) ;
+                                              bgp_nref_name(pc->password)) ;
 
   if (pcs_is_set(pc, pcs_port))
     vty_out (vty, " neighbor %s port %u\n", pgn, pc->port);
@@ -151,7 +151,7 @@ bgp_peer_config_write (vty vty, bgp_peer peer, bool done_peer)
 
   if (pcs_is_set(pc, pcs_update_source))
     vty_out (vty, " neighbor %s update-source %s\n", pgn,
-                                          ni_nref_name(pc->update_source)) ;
+                                          bgp_nref_name(pc->update_source)) ;
 
   if (pcs_is_set(pc, pcs_mrai))
     vty_out (vty, " neighbor %s advertisement-interval %u\n", pgn,
@@ -197,7 +197,7 @@ bgp_peer_af_config_write (vty vty, bgp_peer peer, qafx_t qafx)
   uint  i ;
   chs_c no ;
 
-  pgn  = peer->name ;           /* for group this is the group name     */
+  pgn  = bgp_nref_name(peer->name) ;     /* for group this is the group name */
 
   pc   = peer->c ;
   pafc = NULL ;
@@ -226,18 +226,24 @@ bgp_peer_af_config_write (vty vty, bgp_peer peer, qafx_t qafx)
    */
   gafc = NULL ;
 
-  if (pafc->ctype != BGP_CFT_MEMBER)
+  switch (pafc->ctype)
     {
-      qassert(!pafcs_is_on(pafc, pafcs_group)) ;
-      qassert(pafc->gafc == NULL) ;
-    }
-  else
-    {
-      qassert(pafcs_is_on(pafc, pafcs_group)) ;
+      case BGP_CFT_PEER:
+        qassert(!pafcs_is_set_on(pafc, pafcs_group)) ;
+        qassert(pafc->group.afc == NULL) ;
+        break ;
 
-      gafc = pafc->gafc ;
-      qassert((gafc != NULL) && (pcs_qafx_config(gafc->parent_pconf, qafx))
-                             && (gafc == gafc->parent_pconf->afc[qafx])) ;
+      case BGP_CFT_MEMBER:
+        qassert(pafcs_is_set_on(pafc, pafcs_group)) ;
+
+        gafc = pafc->group.afc ;
+        qassert((gafc != NULL) && (pcs_qafx_config(gafc->parent_pconf, qafx))
+                               && (gafc == gafc->parent_pconf->afc[qafx])) ;
+        break ;
+
+      default:
+        qassert(false) ;
+        break ;
     } ;
 
   /* Worry about the address family selection and activate the address family.
@@ -255,19 +261,19 @@ bgp_peer_af_config_write (vty vty, bgp_peer peer, qafx_t qafx)
   if (gafc != NULL)
     {
       vty_out (vty, " neighbor %s peer-group %s\n", pgn,
-                                         gafc->parent_pconf->parent_peer->name);
+                          bgp_nref_name(gafc->parent_pconf->parent_peer->name)) ;
 
-      qassert((pafc->set_on & gafc->set_on) == 0) ;
+      qassert((pafc->on & gafc->on) == 0) ;
 
-      pafc->set_on &= ~gafc->set_on ;
+      pafc->on &= ~gafc->on ;
     } ;
 
   /* So now the configuration....
    */
   i = 0 ;
-  if (pafcs_is_set(pafc, pafcs_ORF_SEND))
+  if (pafcs_is_set_on(pafc, pafcs_ORF_SEND))
     i |= 1 ;
-  if (pafcs_is_set(pafc, pafcs_ORF_RECV))
+  if (pafcs_is_set_on(pafc, pafcs_ORF_RECV))
     i |= 2 ;
 
   if (i != 0)
@@ -283,19 +289,19 @@ bgp_peer_af_config_write (vty vty, bgp_peer peer, qafx_t qafx)
                                                                        what[i]);
     } ;
 
-  if (pafcs_is_set(pafc, pafcs_REFLECTOR_CLIENT))
+  if (pafcs_is_set_on(pafc, pafcs_REFLECTOR_CLIENT))
     vty_out (vty, " neighbor %s route-reflector-client\n", pgn);
 
-  if (pafcs_is_set(pafc, pafcs_NEXTHOP_SELF))
+  if (pafcs_is_set_on(pafc, pafcs_NEXTHOP_SELF))
     vty_out (vty, " neighbor %s next-hop-self\n", pgn);
 
-  if (pafcs_is_set(pafc, pafcs_REMOVE_PRIVATE_AS))
+  if (pafcs_is_set_on(pafc, pafcs_REMOVE_PRIVATE_AS))
     vty_out (vty, " neighbor %s remove-private-AS\n", pgn);
 
   i = 0 ;
-  if (pafcs_is_set(pafc, pafcs_SEND_COMMUNITY))
+  if (pafcs_is_set_on(pafc, pafcs_SEND_COMMUNITY))
     i |= 1 ;
-  if (pafcs_is_set(pafc, pafcs_SEND_EXT_COMMUNITY))
+  if (pafcs_is_set_on(pafc, pafcs_SEND_EXT_COMMUNITY))
     i |= 2 ;
 
   if (bgp_option_check (BGP_OPT_CONFIG_CISCO))
@@ -318,19 +324,19 @@ bgp_peer_af_config_write (vty vty, bgp_peer peer, qafx_t qafx)
       vty_out (vty, " %sneighbor %s send-community%s\n", no, pgn, what[i]);
     } ;
 
-  if (pafcs_is_set(pafc, pafcs_DEFAULT_ORIGINATE))
+  if (pafcs_is_set_on(pafc, pafcs_DEFAULT_ORIGINATE))
     {
-      fn = ni_nref_name(pafc->filter_set[bfs_default_rmap]) ;
+      fn = bgp_nref_name(pafc->filter_set[bfs_default_rmap]) ;
       vty_out (vty, " neighbor %s default-originate", pgn);
-      if (pafcs_is_set(pafc, pafcs_default_rmap))
+      if (pafcs_is_set_on(pafc, pafcs_default_rmap))
         vty_out (vty, " route-map %s", fn);
       vty_out (vty, "\n");
     }
 
-  if (pafcs_is_set(pafc, pafcs_SOFT_RECONFIG))
+  if (pafcs_is_set_on(pafc, pafcs_SOFT_RECONFIG))
     vty_out (vty, " neighbor %s soft-reconfiguration inbound\n", pgn);
 
-  if (pafcs_is_set(pafc, pafcs_max_prefix))
+  if (pafcs_is_set_on(pafc, pafcs_max_prefix))
     {
       vty_out (vty, " neighbor %s maximum-prefix %u", pgn,
                                                            pafc->pmax.limit);
@@ -343,13 +349,13 @@ bgp_peer_af_config_write (vty vty, bgp_peer peer, qafx_t qafx)
       vty_out (vty, "\n");
     }
 
-  if (pafcs_is_set(pafc, pafcs_RSERVER_CLIENT))
+  if (pafcs_is_set_on(pafc, pafcs_RSERVER_CLIENT))
     vty_out (vty, " neighbor %s route-server-client%s", pgn, VTY_NEWLINE);
 
-  if (pafcs_is_set(pafc, pafcs_NEXTHOP_LOCAL_UNCHANGED))
+  if (pafcs_is_set_on(pafc, pafcs_NEXTHOP_LOCAL_UNCHANGED))
     vty_out (vty, " neighbor %s nexthop-local unchanged\n", pgn);
 
-  if (pafcs_is_set(pafc, pafcs_allow_as_in))
+  if (pafcs_is_set_on(pafc, pafcs_allow_as_in))
     {
       if (pafc->allow_as_in == 3)
         vty_out (vty, " neighbor %s allowas-in\n", pgn);
@@ -357,60 +363,60 @@ bgp_peer_af_config_write (vty vty, bgp_peer peer, qafx_t qafx)
         vty_out (vty, " neighbor %s allowas-in %d\n", pgn, pafc->allow_as_in);
     }
 
-  fn = ni_nref_name(pafc->filter_set[bfs_dlist_in]) ;
-  if (pafcs_is_set(pafc, pafcs_dlist_in))
+  fn = bgp_nref_name(pafc->filter_set[bfs_dlist_in]) ;
+  if (pafcs_is_set_on(pafc, pafcs_dlist_in))
     vty_out (vty, " neighbor %s distribute-list %s in\n", pgn, fn) ;
 
-  fn = ni_nref_name(pafc->filter_set[bfs_dlist_out]) ;
-  if (pafcs_is_set(pafc, pafcs_dlist_out))
+  fn = bgp_nref_name(pafc->filter_set[bfs_dlist_out]) ;
+  if (pafcs_is_set_on(pafc, pafcs_dlist_out))
     vty_out (vty, " neighbor %s distribute-list %s out\n", pgn, fn) ;
 
-  fn = ni_nref_name(pafc->filter_set[bfs_plist_in]) ;
-  if (pafcs_is_set(pafc, pafcs_plist_in))
+  fn = bgp_nref_name(pafc->filter_set[bfs_plist_in]) ;
+  if (pafcs_is_set_on(pafc, pafcs_plist_in))
     vty_out (vty, " neighbor %s prefix-list %s in\n", pgn, fn);
 
-  fn = ni_nref_name(pafc->filter_set[bfs_plist_out]) ;
-  if (pafcs_is_set(pafc, pafcs_plist_out))
+  fn = bgp_nref_name(pafc->filter_set[bfs_plist_out]) ;
+  if (pafcs_is_set_on(pafc, pafcs_plist_out))
     vty_out (vty, " neighbor %s prefix-list %s in\n", pgn, fn);
 
-  fn = ni_nref_name(pafc->filter_set[bfs_rmap_in]) ;
-  if (pafcs_is_set(pafc, pafcs_rmap_in))
+  fn = bgp_nref_name(pafc->filter_set[bfs_rmap_in]) ;
+  if (pafcs_is_set_on(pafc, pafcs_rmap_in))
     vty_out (vty, " neighbor %s route-map %s in\n", pgn, fn);
 
-  fn = ni_nref_name(pafc->filter_set[bfs_rmap_out]) ;
-  if (pafcs_is_set(pafc, pafcs_rmap_out))
+  fn = bgp_nref_name(pafc->filter_set[bfs_rmap_out]) ;
+  if (pafcs_is_set_on(pafc, pafcs_rmap_out))
     vty_out (vty, " neighbor %s route-map %s out\n", pgn, fn);
 
-  fn = ni_nref_name(pafc->filter_set[bfs_rmap_inx]) ;
-  if (pafcs_is_set(pafc, pafcs_rmap_inx))
+  fn = bgp_nref_name(pafc->filter_set[bfs_rmap_inx]) ;
+  if (pafcs_is_set_on(pafc, pafcs_rmap_inx))
     vty_out (vty, " neighbor %s route-map %s rs-in\n", pgn, fn);
 
-  fn = ni_nref_name(pafc->filter_set[bfs_rmap_export]) ;
-  if (pafcs_is_set(pafc, pafcs_rmap_export))
+  fn = bgp_nref_name(pafc->filter_set[bfs_rmap_export]) ;
+  if (pafcs_is_set_on(pafc, pafcs_rmap_export))
     vty_out (vty, " neighbor %s route-map %s export\n", pgn, fn);
 
-  fn = ni_nref_name(pafc->filter_set[bfs_rmap_import]) ;
-  if (pafcs_is_set(pafc, pafcs_rmap_import))
+  fn = bgp_nref_name(pafc->filter_set[bfs_rmap_import]) ;
+  if (pafcs_is_set_on(pafc, pafcs_rmap_import))
     vty_out (vty, " neighbor %s route-map %s import\n", pgn, fn);
 
-  fn = ni_nref_name(pafc->filter_set[bfs_us_rmap]) ;
-  if (pafcs_is_set(pafc, pafcs_us_rmap))
+  fn = bgp_nref_name(pafc->filter_set[bfs_us_rmap]) ;
+  if (pafcs_is_set_on(pafc, pafcs_us_rmap))
     vty_out (vty, " neighbor %s unsuppress-map %s import\n", pgn, fn);
 
-  fn = ni_nref_name(pafc->filter_set[bfs_aslist_in]) ;
-  if (pafcs_is_set(pafc, pafcs_aslist_in))
+  fn = bgp_nref_name(pafc->filter_set[bfs_aslist_in]) ;
+  if (pafcs_is_set_on(pafc, pafcs_aslist_in))
     vty_out (vty, " neighbor %s filter-list %s in\n", pgn, fn);
 
-  fn = ni_nref_name(pafc->filter_set[bfs_aslist_out]) ;
-  if (pafcs_is_set(pafc, pafcs_aslist_out))
+  fn = bgp_nref_name(pafc->filter_set[bfs_aslist_out]) ;
+  if (pafcs_is_set_on(pafc, pafcs_aslist_out))
     vty_out (vty, " neighbor %s filter-list %s out\n", pgn, fn);
 
   i = 0 ;
-  if (pafcs_is_set(pafc, pafcs_AS_PATH_UNCHANGED))
+  if (pafcs_is_set_on(pafc, pafcs_AS_PATH_UNCHANGED))
     i |= 1 ;
-  if (pafcs_is_set(pafc, pafcs_NEXTHOP_UNCHANGED))
+  if (pafcs_is_set_on(pafc, pafcs_NEXTHOP_UNCHANGED))
     i |= 2 ;
-  if (pafcs_is_set(pafc, pafcs_MED_UNCHANGED))
+  if (pafcs_is_set_on(pafc, pafcs_MED_UNCHANGED))
     i |= 4 ;
 
   if (i != 0)
@@ -459,9 +465,6 @@ static int bgp_peer_cmp (const cvp* p_p1, const cvp* p_p2) ;
 static int bgp_peer_config_cmp (const cvp* p_pc1, const cvp* p_pc2) ;
 static int bgp_peer_af_config_cmp (const cvp* p_pc1, const cvp* p_pc2) ;
 
-static int bgp_peer_cmp_su(const cvp* p_su, const cvp* p_p) ;
-static int bgp_peer_cmp_name(const cvp* p_n, const cvp* p_p) ;
-
 /*------------------------------------------------------------------------------
  * Create a new peer, with given AS or bound to group and it's AS.
  *
@@ -487,7 +490,7 @@ bgp_peer_create_peer(bgp_inst bgp, sockunion su, as_t as, bgp_peer group)
       /* If group has a remote-as, then peer must follow -- and cannot try to
        * set a different ASN.
        */
-      if (pcs_is_on(group->c, pcs_remote_as))
+      if (pcs_is_set_on(group->c, pcs_remote_as))
         {
           if (as == BGP_ASN_NULL)
             as = group->c->remote_as ;
@@ -506,7 +509,7 @@ bgp_peer_create_peer(bgp_inst bgp, sockunion su, as_t as, bgp_peer group)
         return BGP_ERR_GROUP_NEEDS_REMOTE_AS ;
     } ;
 
-  if (bcs_is_on(bgp->c, bcs_confed_id) && (as == bgp->c->confed_id))
+  if (bcs_is_set_on(bgp->c, bcs_confed_id) && (as == bgp->c->confed_id))
     {
       if (bgp_peer_as_sort(bgp, as) == BGP_PEER_EBGP)
         return BGP_ERR_AS_IS_CONFED_ID ;
@@ -528,7 +531,7 @@ bgp_peer_create_peer(bgp_inst bgp, sockunion su, as_t as, bgp_peer group)
    * Note that the text name is constructed from the su, so is in canonical
    * form.
    */
-  peer = bgp_peer_new(bgp, PEER_TYPE_REAL, sutoa(su).str, su) ;
+  peer = bgp_peer_new(bgp, PEER_TYPE_REAL, NULL, su) ;
   pc   = peer->c ;
 
   /* Bind to the group, if any -- simple, since we have an empty configuration
@@ -540,11 +543,10 @@ bgp_peer_create_peer(bgp_inst bgp, sockunion su, as_t as, bgp_peer group)
 
       gc = group->c ;
 
-      pc->gc      = gc ;
+      pc->group.c      = gc ;
       pc->ctype   = BGP_CFT_MEMBER ;
 
-      qassert(gc->members != NULL) ;
-      vector_binsert(gc->members, bgp_peer_config_cmp, pc) ;
+      vector_binsert(gc->group.members, bgp_peer_config_cmp, pc) ;
     } ;
 
   /* Now set the ASN
@@ -556,8 +558,8 @@ bgp_peer_create_peer(bgp_inst bgp, sockunion su, as_t as, bgp_peer group)
   pc->remote_as = as ;
   if (!group_as)
     {
-      pc->set     |= pcs_bit(pcs_remote_as) ;
-      pc->set_on  |= pcs_bit(pcs_remote_as) ;
+      pc->set |= pcs_bit(pcs_remote_as) ;
+      pc->on  |= pcs_bit(pcs_remote_as) ;
     } ;
 
   /* All set XXX add peer to changed list ???
@@ -645,10 +647,10 @@ bgp_peer_as_set(bgp_peer peer, as_t as, bgp_sc_t bsc)
   switch (pc->ctype)
     {
       case BGP_CFT_MEMBER:
-        if ((bsc == bsc_set_on) && !pcs_is_on(pc, pcs_remote_as))
+        if ((bsc == bsc_set_on) && !pcs_is_set_on(pc, pcs_remote_as))
           {
-            qassert(pc->gc != NULL) ;
-            qassert(pcs_is_on(pc->gc, pcs_remote_as)) ;
+            qassert(pc->group.c != NULL) ;
+            qassert(pcs_is_set_on(pc->group.c, pcs_remote_as)) ;
 
             return BGP_ERR_PEER_CANNOT_SET_AS ;
           } ;
@@ -670,16 +672,18 @@ bgp_peer_as_set(bgp_peer peer, as_t as, bgp_sc_t bsc)
             uint i ;
 
             i = 0 ;
-            while ((mc = vector_get_item(gc->members, i++)) != NULL)
+            while ((mc = vector_get_item(gc->group.members, i++)) != NULL)
               {
-                if (pcs_is_on(mc, pcs_remote_as))
+                qassert((mc->ctype == BGP_CFT_MEMBER) && (mc->group.c == gc)) ;
+
+                if (pcs_is_set_on(mc, pcs_remote_as))
                   {
                     /* Have a member claiming to have a remote-as.
                      *
                      * Must be trying to set an ASN for the group after the
                      * event, which we allow iff they have the given ASN !
                      */
-                    qassert(!pcs_is_on(gc, pcs_remote_as)) ;
+                    qassert(!pcs_is_set_on(gc, pcs_remote_as)) ;
 
                     if (mc->remote_as != as)
                       return BGP_ERR_GROUP_CANNOT_SET_AS ;
@@ -692,7 +696,7 @@ bgp_peer_as_set(bgp_peer peer, as_t as, bgp_sc_t bsc)
                      * member's remote-as value to be set... unlike other
                      * inherited values.)
                      */
-                    qassert(pcs_is_on(gc, pcs_remote_as)) ;
+                    qassert(pcs_is_set_on(gc, pcs_remote_as)) ;
                     qassert(mc->remote_as == gc->remote_as) ;
                   } ;
               } ;
@@ -711,20 +715,22 @@ bgp_peer_as_set(bgp_peer peer, as_t as, bgp_sc_t bsc)
             uint        i ;
             bool        group_as ;
 
-            group_as = pcs_is_on(gc, pcs_remote_as) ;
+            group_as = pcs_is_set_on(gc, pcs_remote_as) ;
             if (group_as)
               bgp_config_pcs_change(gc, pcs_remote_as, bsc_unset) ;
 
             i = 0 ;
-            while ((mc = vector_get_item(gc->members, i++)) != NULL)
+            while ((mc = vector_get_item(gc->group.members, i++)) != NULL)
               {
-                if (pcs_is_on(mc, pcs_remote_as))
+                qassert((mc->ctype == BGP_CFT_MEMBER) && (mc->group.c == gc)) ;
+
+                if (pcs_is_set_on(mc, pcs_remote_as))
                   {
                     /* Have a member claiming to have an ASN.
                      *
                      * So the group must NOT have one !
                      */
-                    qassert(!pcs_is_on(gc, pcs_remote_as)) ;
+                    qassert(!pcs_is_set_on(gc, pcs_remote_as)) ;
                   }
                 else
                   {
@@ -732,11 +738,11 @@ bgp_peer_as_set(bgp_peer peer, as_t as, bgp_sc_t bsc)
                      * following the group, so we can give back mastery over
                      * the remote-as setting.
                      */
-                    qassert(pcs_is_on(gc, pcs_remote_as)) ;
+                    qassert(pcs_is_set_on(gc, pcs_remote_as)) ;
                     qassert(mc->remote_as == gc->remote_as) ;
 
                     mc->set      |= pcs_bit(pcs_remote_as) ;
-                    mc->set_on   |= pcs_bit(pcs_remote_as) ;
+                    mc->on   |= pcs_bit(pcs_remote_as) ;
                     mc->remote_as = gc->remote_as ;     /* make sure    */
                   } ;
               } ;
@@ -834,7 +840,7 @@ bgp_peer_group_set(bgp_peer peer, bgp_peer group, qafx_t qafx, bgp_sc_t bsc)
       switch (pc->ctype)
         {
           case BGP_CFT_PEER:
-            qassert(pc->gc == NULL) ;
+            qassert(pc->group.c == NULL) ;
 
             if (bsc == bsc_set_on)
               return bgp_peer_bind_general(pc, gc) ;
@@ -842,11 +848,11 @@ bgp_peer_group_set(bgp_peer peer, bgp_peer group, qafx_t qafx, bgp_sc_t bsc)
               return BGP_SUCCESS ;
 
           case BGP_CFT_MEMBER:
-            qassert(pc->gc != NULL) ;
+            qassert(pc->group.c != NULL) ;
 
             if (bsc == bsc_set_on)
               {
-                if (pc->gc == gc)
+                if (pc->group.c == gc)
                   return BGP_SUCCESS ;
                 else
                   return BGP_ERR_PEER_GROUP_CANNOT_CHANGE ;
@@ -899,7 +905,7 @@ bgp_peer_group_set(bgp_peer peer, bgp_peer group, qafx_t qafx, bgp_sc_t bsc)
   switch (pafc->ctype)
     {
       case BGP_CFT_PEER:
-        qassert(pafc->gafc == NULL) ;
+        qassert(pafc->group.afc == NULL) ;
 
         if (bsc == bsc_set_on)
           return bgp_peer_bind_af(pafc, gafc) ;
@@ -907,11 +913,11 @@ bgp_peer_group_set(bgp_peer peer, bgp_peer group, qafx_t qafx, bgp_sc_t bsc)
           return BGP_SUCCESS ;
 
       case BGP_CFT_MEMBER:
-        qassert(pafc->gafc != NULL) ;
+        qassert(pafc->group.afc != NULL) ;
 
         if (bsc == bsc_set_on)
           {
-            if (pafc->gafc == gafc)
+            if (pafc->group.afc == gafc)
               return BGP_SUCCESS ;
             else
               return BGP_ERR_PEER_GROUP_CANNOT_CHANGE ;
@@ -943,10 +949,10 @@ bgp_peer_bind_general(bgp_pconfig pc, bgp_pconfig gc)
 {
   bool adopt_remote_as ;
 
-  qassert((pc->ctype == BGP_CFT_PEER) && (pc->gc == NULL)) ;
+  qassert((pc->ctype == BGP_CFT_PEER) && (pc->group.c == NULL)) ;
   qassert((gc->ctype == BGP_CFT_GROUP)) ;
 
-  if (pcs_is_on(gc, pcs_remote_as))
+  if (pcs_is_set_on(gc, pcs_remote_as))
     {
       /* The group is going to set the remote-as... so we need to check
        * that none of the address families of the peer have any implied
@@ -1003,8 +1009,8 @@ bgp_peer_bind_general(bgp_pconfig pc, bgp_pconfig gc)
    *
    * Unset everything except the qafx configured bits.
    */
-  pc->set    &= pcs_qafx_mask ;
-  pc->set_on &= pcs_qafx_mask ;
+  pc->set &= pcs_qafx_mask ;
+  pc->on  &= pcs_qafx_mask ;
 
   if (adopt_remote_as)
     {
@@ -1012,12 +1018,12 @@ bgp_peer_bind_general(bgp_pconfig pc, bgp_pconfig gc)
     }
   else
     {
-      pc->set    |= pcs_remote_as ;
-      pc->set_on |= pcs_remote_as ;
+      pc->set |= pcs_remote_as ;
+      pc->on  |= pcs_remote_as ;
     } ;
 
-  pc->gc = gc ;
-  vector_binsert(gc->members, bgp_peer_config_cmp, pc) ;
+  pc->group.c = gc ;
+  vector_binsert(gc->group.members, bgp_peer_config_cmp, pc) ;
 
   return bgp_config_pcs_change(pc, pcs_group, bsc_set_on) ;
 } ;
@@ -1043,7 +1049,7 @@ bgp_peer_bind_af(bgp_paf_config pafc, bgp_paf_config gafc)
 {
   bgp_peer_sorts_t psset, gsset ;
 
-  qassert((pafc->ctype == BGP_CFT_PEER) && (pafc->gafc == NULL)) ;
+  qassert((pafc->ctype == BGP_CFT_PEER) && (pafc->group.afc == NULL)) ;
   qassert((gafc->ctype == BGP_CFT_GROUP)) ;
 
   /* If the group has an remote-as, then that dictates what may be bound to
@@ -1062,11 +1068,11 @@ bgp_peer_bind_af(bgp_paf_config pafc, bgp_paf_config gafc)
    *
    * Unset everything.
    */
-  pafc->set    = 0 ;
-  pafc->set_on = 0 ;
+  pafc->set = 0 ;
+  pafc->on  = 0 ;
 
-  pafc->gafc   = gafc ;
-  vector_binsert(gafc->members, bgp_peer_af_config_cmp, pafc) ;
+  pafc->group.afc = gafc ;
+  vector_binsert(gafc->group.members, bgp_peer_af_config_cmp, pafc) ;
 
   return bgp_config_pafcs_change(pafc, pafcs_group, bsc_set_on) ;
 } ;
@@ -1079,10 +1085,10 @@ bgp_peer_unbind_general(bgp_pconfig pc)
 {
   bgp_pconfig gc ;
 
-  qassert((pc->ctype == BGP_CFT_MEMBER) && pcs_is_on(pc, pcs_group)) ;
-  qassert(pc->gc != NULL) ;
+  qassert((pc->ctype == BGP_CFT_MEMBER) && pcs_is_set_on(pc, pcs_group)) ;
+  qassert(pc->group.c != NULL) ;
 
-  gc = pc->gc ;
+  gc = pc->group.c ;
   if (gc == NULL)
     return BGP_ERR_BUG ;
 
@@ -1093,18 +1099,18 @@ bgp_peer_unbind_general(bgp_pconfig pc)
    * pc->set_on state -- all set settings are retained, all unset ones will
    * revert to default values.
    */
-  if (pcs_is_on(gc, pcs_remote_as))
+  if (pcs_is_set_on(gc, pcs_remote_as))
     {
       qassert(pc->remote_as == gc->remote_as) ;
-      qassert(pcs_is_off(pc, pcs_remote_as)) ;
+      qassert(pcs_is_set_off(pc, pcs_remote_as)) ;
 
       pc->remote_as = gc->remote_as ;
 
       bgp_config_pcs_change(pc, pcs_remote_as, bsc_set_on) ;
     } ;
 
-  vector_bdelete(gc->members, bgp_peer_config_cmp, pc) ;
-  pc->gc = NULL ;
+  vector_bdelete(gc->group.members, bgp_peer_config_cmp, pc) ;
+  pc->group.c = NULL ;
 
   return bgp_config_pcs_change(pc, pcs_group, bsc_unset) ;
 } ;
@@ -1117,10 +1123,10 @@ bgp_peer_unbind_af(bgp_paf_config pafc)
 {
   bgp_paf_config gafc ;
 
-  qassert(pafc->ctype == BGP_CFT_MEMBER) ;
-  qassert(pafc->gafc  != NULL) ;
+  qassert(pafc->ctype     == BGP_CFT_MEMBER) ;
+  qassert(pafc->group.afc != NULL) ;
 
-  gafc = pafc->gafc ;
+  gafc = pafc->group.afc ;
   if (gafc == NULL)
     return BGP_ERR_BUG ;
 
@@ -1130,8 +1136,8 @@ bgp_peer_unbind_af(bgp_paf_config pafc)
    * state -- all set settings are retained, all unset ones will revert to
    * default values.
    */
-  vector_bdelete(gafc->members, bgp_peer_af_config_cmp, pafc) ;
-  pafc->gafc = NULL ;
+  vector_bdelete(gafc->group.members, bgp_peer_af_config_cmp, pafc) ;
+  pafc->group.afc = NULL ;
 
   return bgp_config_pafcs_change(pafc, pafcs_group, bsc_unset) ;
 } ;
@@ -1176,7 +1182,34 @@ bgp_peer_af_set(bgp_peer peer, qafx_t qafx, bgp_sc_t bsc)
 /*==============================================================================
  * Finding peer objects and state of same
  */
+static int bgp_peer_cmp_cname(const cvp* p_n, const cvp* p_p) ;
 static int bgp_peer_do_cmp (bgp_peer_c p1, bgp_peer_c p2) ;
+
+/*------------------------------------------------------------------------------
+ * Look-up peer by its name in the given bgp instance or all such.
+ *
+ * If the given 'bgp' is NULL, will return peer in any 'view', otherwise
+ * the peer *must* be in the given view.
+ *
+ * Returns:  peer (PEER_TYPE_REAL) if found -- NULL if not found
+ *                                             (or not found in view)
+ */
+extern bgp_peer
+bgp_peer_lookup_name(bgp_inst bgp, chs_c p_name)
+{
+  bgp_peer peer;
+
+  peer = bgp_peer_index_peer_lookup(p_name) ;
+
+  if ((peer != NULL) && (bgp != NULL) && (peer->parent_bgp != bgp))
+    return NULL ;
+
+  qassert(peer->ptype == PEER_TYPE_REAL) ;
+  qassert(peer == vector_bseek(peer->parent_bgp->peers, bgp_peer_cmp_cname,
+                                                                      p_name)) ;
+
+  return peer ;
+} ;
 
 /*------------------------------------------------------------------------------
  * Look-up peer by its address in the given bgp instance or all such.
@@ -1190,17 +1223,7 @@ static int bgp_peer_do_cmp (bgp_peer_c p1, bgp_peer_c p2) ;
 extern bgp_peer
 bgp_peer_lookup_su(bgp_inst bgp, sockunion su)
 {
-  bgp_peer peer;
-
-  peer = bgp_peer_index_peer_lookup(su) ;
-
-  if ((peer != NULL) && (bgp != NULL) && (peer->parent_bgp != bgp))
-    return NULL ;
-
-  qassert(peer->ptype == PEER_TYPE_REAL) ;
-  qassert(peer == vector_bseek(peer->parent_bgp->peers, bgp_peer_cmp_su, su)) ;
-
-  return peer ;
+  return bgp_peer_lookup_name(bgp, bgp_peer_su_cname(su).str) ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -1209,7 +1232,7 @@ bgp_peer_lookup_su(bgp_inst bgp, sockunion su)
  * Returns:  peer (PEER_TYPE_GROUP) if found -- NULL if not found
  */
 extern bgp_peer
-bgp_peer_lookup_group(bgp_inst bgp, chs_c g_str)
+bgp_peer_lookup_group(bgp_inst bgp, chs_c g_name)
 {
   bgp_peer peer;
 
@@ -1219,7 +1242,7 @@ bgp_peer_lookup_group(bgp_inst bgp, chs_c g_str)
       return NULL ;
     }
 
-  peer = vector_bseek(bgp->groups, bgp_peer_cmp_name, g_str) ;
+  peer = vector_bseek(bgp->groups, bgp_peer_cmp_cname, g_name) ;
 
   qassert((peer == NULL) || (peer->ptype == PEER_TYPE_GROUP)) ;
 
@@ -1239,7 +1262,7 @@ extern bool
 bgp_peer_ipv4_default(bgp_peer peer)
 {
   if (bcs_is_set(peer->parent_bgp->c, bcs_DEFAULT_IPV4))
-    return bcs_is_on(peer->parent_bgp->c, bcs_DEFAULT_IPV4) ;
+    return bcs_is_set_on(peer->parent_bgp->c, bcs_DEFAULT_IPV4) ;
 
   return bgp_option_check(BGP_OPT_LEGACY_IPV4_DEFAULT) ;
 } ;
@@ -1263,8 +1286,17 @@ bgp_peer_sex(chs_c p_str, sockunion su, bgp_peer_or_group_t bpog)
     {
       /* We have a peer address -- if we are allowed same, that's fine.
        *
+       * We reject IPv4_Mapped addresses as unnecessary and potentially
+       * confusing -- leading to two names for the same peer, or two names
+       * for two different peers which (sadly) look the same at the IP level.
+       *
        * Otherwise, we have an IP address where we expected a group name !
        */
+#if HAVE_IPV6
+      if (sockunion_is_ipv4_mapped(su))
+        return BGP_ERR_IPV4_MAPPED ;
+#endif
+
       if (bpog & bpog_peer_ip)
         return BGP_OK_PEER_IP ;
       else
@@ -1319,8 +1351,6 @@ bgp_peer_sex(chs_c p_str, sockunion su, bgp_peer_or_group_t bpog)
 
   return BGP_ERR_INVALID_GROUP_NAME ;   /* probably             */
 } ;
-
-
 
 /*------------------------------------------------------------------------------
  * Peer comparison function for sorting.
@@ -1377,10 +1407,8 @@ bgp_peer_do_cmp (bgp_peer_c p1, bgp_peer_c p2)
       return 0 ;
 
     case PEER_TYPE_GROUP:
-      return strcmp(p1->name, p2->name) ;
-
     case PEER_TYPE_REAL:
-      return sockunion_cmp(p1->su_name, p2->su_name) ;
+      return strcmp(bgp_nref_name(p1->cname), bgp_nref_name(p2->cname)) ;
   } ;
 } ;
 
@@ -1388,24 +1416,12 @@ bgp_peer_do_cmp (bgp_peer_c p1, bgp_peer_c p2)
  * Peer comparison function for sorting.
  */
 static int
-bgp_peer_cmp_su(const cvp* p_su, const cvp* p_p)
-{
-  sockunion_c su = *p_su ;
-  bgp_peer_c  p  = *p_p ;
-
-  return sockunion_cmp(su, p->su_name) ;
-} ;
-
-/*------------------------------------------------------------------------------
- * Peer comparison function for sorting.
- */
-static int
-bgp_peer_cmp_name(const cvp* p_n, const cvp* p_p)
+bgp_peer_cmp_cname(const cvp* p_n, const cvp* p_p)
 {
   chs_c      n = *p_n ;
   bgp_peer_c p = *p_p ;
 
-  return strcmp(n, p->name) ;
+  return strcmp(n, bgp_nref_name(p->cname)) ;
 } ;
 
 /*==============================================================================
@@ -1450,8 +1466,8 @@ bgp_peer_new(bgp_inst bgp, bgp_peer_type_t ptype, chs_c name, sockunion su_name)
    *   * peer_id                -- X            -- set by caller
    *   * group_id               -- X            -- set by caller
    *
-   *   * name                   -- X            -- set below
-   *   * cname                  -- NULL         -- none
+   *   * name                   -- NULL         -- set below
+   *   * cname                  -- NULL         -- set below
    *
    *   * su_name                -- AF_UNSPEC    -- set below, if PEER_TYPE_REAL
    *   * prun                   -- NULL         -- none, yet
@@ -1463,7 +1479,10 @@ bgp_peer_new(bgp_inst bgp, bgp_peer_type_t ptype, chs_c name, sockunion su_name)
    */
   confirm(AF_UNSPEC == 0) ;
 
-  peer->name = XSTRDUP(MTYPE_BGP_NAME, name) ;
+  if (su_name == NULL)
+    peer->name = bgp_nref_get(name) ;
+  else
+    peer->name = bgp_nref_get(sutoa(su_name).str) ;
 
   pc = XCALLOC (MTYPE_BGP_PEER_CONFIG, sizeof(bgp_pconfig_t));
   peer->c = pc ;
@@ -1474,8 +1493,8 @@ bgp_peer_new(bgp_inst bgp, bgp_peer_type_t ptype, chs_c name, sockunion su_name)
    *   * desc                   -- NULL         -- none, yet
    *
    *   * ctype                  -- BGP_CFT_NULL -- set below
-   *   * group                  -- NULL         -- none, yet
-   *   * members                -- NULL         -- set below, for group
+   *   * group.c                -- NULL         -- none, yet
+   *   *      .members          -- empty vector -- none, yet
    *
    *   * remote_as              -- BGP_ASN_NULL -- set by caller
    *
@@ -1498,12 +1517,14 @@ bgp_peer_new(bgp_inst bgp, bgp_peer_type_t ptype, chs_c name, sockunion su_name)
    *   * gtsm                   -- false        )
    *   * password               -- NULL         )
    *   * update_source          -- NULL         )
+   *   * update_source_if       -- false        )
    *
    *   * afc                    -- NULLs           -- nothing, yet
    */
   confirm(BGP_CFT_NULL         == 0) ;
   confirm(BGP_ASN_NULL         == 0) ;
   confirm(BGP_PEER_UNSPECIFIED == 0) ;
+  confirm(VECTOR_INIT_ALL_ZEROS) ;
 
   pc->parent_peer = peer ;
 
@@ -1516,7 +1537,7 @@ bgp_peer_new(bgp_inst bgp, bgp_peer_type_t ptype, chs_c name, sockunion su_name)
       case PEER_TYPE_GROUP:
         pc->ctype = BGP_CFT_GROUP ;
 
-        pc->members = vector_new(20) ;
+        peer->cname = bgp_nref_get(name) ;
 
         peer->group_id = vector_binsert(bgp->groups, bgp_peer_cmp, peer) ;
         break ;
@@ -1524,9 +1545,16 @@ bgp_peer_new(bgp_inst bgp, bgp_peer_type_t ptype, chs_c name, sockunion su_name)
       case PEER_TYPE_REAL:
         pc->ctype = BGP_CFT_PEER ;
 
-        sockunion_copy(peer->su_name, su_name) ;
-        peer->peer_id = bgp_peer_index_register(peer) ;
+        if (su_name == NULL)
+          peer->cname = bgp_nref_get(name) ;
+        else
+          {
+            sockunion_copy(peer->su_name, su_name) ;
+            peer->cname = bgp_nref_get(bgp_peer_su_cname(su_name).str) ;
+          } ;
 
+        peer->peer_id = bgp_peer_index_register(peer,
+                                                   bgp_nref_name(peer->cname)) ;
         vector_binsert(bgp->peers, bgp_peer_cmp, peer) ;
         break ;
 
@@ -1599,8 +1627,8 @@ bgp_peer_get_af_config(bgp_peer peer, qafx_t qafx)
    *   * qafx                   -- X            -- set below
    *   * ctype                  -- BGP_CFT_NULL -- set below
    *
-   *   * group                  -- NULL         -- none, yet
-   *   * members                -- NULL         -- set for group, below
+   *   * group.afc              -- NULL         -- none, yet
+   *          .members          -- empty vector -- none, yet
    *
    *   * set                    -- 0            -- nothing set
    *   * set_on                 -- 0            -- absolutely nothing
@@ -1616,6 +1644,8 @@ bgp_peer_get_af_config(bgp_peer peer, qafx_t qafx)
    *         .thresh_pc         -- 0            )
    *         .restart           -- 0            )
    */
+  confirm(VECTOR_INIT_ALL_ZEROS) ;
+
   pafc->parent_pconf = pc ;
   pafc->qafx         = qafx ;
 
@@ -1631,22 +1661,12 @@ bgp_peer_get_af_config(bgp_peer peer, qafx_t qafx)
 
       case BGP_CFT_GROUP:
         pafc->ctype   = BGP_CFT_GROUP ;
-        pafc->members = vector_new(20) ;
         break ;
 
       case BGP_CFT_NULL:
       default:
         qassert(false) ;
         break ;
-    } ;
-
-  /* We default to sending communities
-   */
-  if (! bgp_option_check (BGP_OPT_CONFIG_CISCO))
-    {
-      pafc->set_on |= pafcs_bit(pafcs_SEND_COMMUNITY) |
-                      pafcs_bit(pafcs_SEND_EXT_COMMUNITY) ;
-      pafc->set    |= pafc->set_on ;
     } ;
 
   return pafc ;
@@ -1718,7 +1738,7 @@ bgp_peer_as_sort(bgp_inst bgp, as_t asn)
   if (asn == bgp->c->my_as)
     return BGP_PEER_IBGP ;
 
-  if (bcs_is_on(bgp->c, bcs_confed_id))
+  if (bcs_is_set_on(bgp->c, bcs_confed_id))
     {
       if (asn_set_contains(bgp->c->confed_peers, asn))
         return BGP_PEER_CBGP ;
@@ -1794,14 +1814,13 @@ bgp_peer_sorts_allow(bgp_peer peer, bgp_peer_sorts_t sset_allow)
     return false ;                              /* denied               */
 
   i = 0 ;
-  while ((mc = vector_get_item(gc->members, i++)) != NULL)
+  while ((mc = vector_get_item(gc->group.members, i++)) != NULL)
     {
       /* Collect sort(s) of all general group members -- disallow if we find
        * a peer sort which is incompatible.
        */
-      qassert(mc->ctype == BGP_CFT_MEMBER) ;
-      qassert(mc->gc    == gc) ;
-      qassert(pcs_is_on(mc, pcs_remote_as)) ;
+      qassert((mc->ctype == BGP_CFT_MEMBER) && (mc->group.c == gc)) ;
+      qassert(pcs_is_set_on(mc, pcs_remote_as)) ;
 
       if (!(sset_allow & bgp_peer_explicit_sorts(mc->parent_peer)))
         return false ;          /* denied       */
@@ -1821,15 +1840,15 @@ bgp_peer_sorts_allow(bgp_peer peer, bgp_peer_sorts_t sset_allow)
         continue ;
 
       i = 0 ;
-      while ((mafc = vector_get_item(gafc->members, i++)) != NULL)
+      while ((mafc = vector_get_item(gafc->group.members, i++)) != NULL)
         {
           /* Collect sort(s) of all address family group members
            */
-          qassert(mafc->ctype == BGP_CFT_MEMBER) ;
-          qassert(mafc->gafc  == gafc) ;
+          qassert(mafc->ctype     == BGP_CFT_MEMBER) ;
+          qassert(mafc->group.afc == gafc) ;
 
           mc = mafc->parent_pconf ;
-          qassert(pcs_is_on(mc, pcs_remote_as)) ;
+          qassert(pcs_is_set_on(mc, pcs_remote_as)) ;
 
           if (!(sset_allow & bgp_peer_explicit_sorts(mc->parent_peer)))
             return false ;      /* denied       */
@@ -1870,20 +1889,20 @@ bgp_peer_explicit_sorts(bgp_peer peer)
     {
       case BGP_CFT_PEER:
         qassert(asn != BGP_ASN_NULL) ;
-        qassert(pcs_is_on(pc, pcs_remote_as)) ;
+        qassert(pcs_is_set_on(pc, pcs_remote_as)) ;
         break ;
 
       case BGP_CFT_MEMBER:
         qassert(asn != BGP_ASN_NULL) ;
-        if (!pcs_is_on(pc, pcs_remote_as))
+        if (!pcs_is_set_on(pc, pcs_remote_as))
           {
-            qassert(asn == pc->gc->remote_as) ;
-            qassert(pcs_is_on(pc->gc, pcs_remote_as)) ;
+            qassert(asn == pc->group.c->remote_as) ;
+            qassert(pcs_is_set_on(pc->group.c, pcs_remote_as)) ;
           } ;
         break ;
 
       case BGP_CFT_GROUP:
-        if (pcs_is_on(pc, pcs_remote_as))
+        if (pcs_is_set_on(pc, pcs_remote_as))
           qassert(asn != BGP_ASN_NULL) ;
         else
           asn = BGP_ASN_NULL ;
@@ -1924,7 +1943,7 @@ bgp_peer_implicit_sorts(bgp_peer peer)
 
   sset = bgp_peer_implicit_af_sorts(peer) ;
 
-  if (pcs_is_on(peer->c, pcs_change_local_as))
+  if (pcs_is_set_on(peer->c, pcs_change_local_as))
     sset &= ~BGP_PSORTS_IBGP_BIT ;
 
   return sset ;
@@ -1960,10 +1979,10 @@ bgp_peer_implicit_af_sorts(bgp_peer peer)
       if (pafc == NULL)
         continue ;
 
-      if (pafcs_is_on(pafc, pafcs_REFLECTOR_CLIENT))
+      if (pafcs_is_set_on(pafc, pafcs_REFLECTOR_CLIENT))
         sset &=  BGP_PSORTS_IBGP_BIT ;
 
-      if (pafcs_is_on(pafc, pafcs_REMOVE_PRIVATE_AS))
+      if (pafcs_is_set_on(pafc, pafcs_REMOVE_PRIVATE_AS))
         sset &= ~BGP_PSORTS_IBGP_BIT ;
     } ;
 
@@ -2035,6 +2054,7 @@ bgp_config_pcs_change(bgp_pconfig pc, bgp_pc_setting_t pcs, bgp_sc_t bsc)
   bgp_pc_set_t  mask ;
   bgp_pconfig   mc ;
   uint          i ;
+  bool          dont_propagate ;
 
   set = mask = pcs_bit(pcs) ;
 
@@ -2057,6 +2077,8 @@ bgp_config_pcs_change(bgp_pconfig pc, bgp_pc_setting_t pcs, bgp_sc_t bsc)
    *                             (b) for group members: unset the one setting
    *                                 affected
    */
+  dont_propagate = false ;
+
   switch (pcs)
     {
       case pcs_PASSIVE:
@@ -2120,6 +2142,12 @@ bgp_config_pcs_change(bgp_pconfig pc, bgp_pc_setting_t pcs, bgp_sc_t bsc)
           mask |= pcs_bit(pcs_STRICT_CAP_MATCH) ;
         break ;
 
+      case pcs_description:
+        /* Description of group does not affect description of members !
+         */
+        dont_propagate = true ;
+        break ;
+
       default:
         break ;
     } ;
@@ -2128,9 +2156,9 @@ bgp_config_pcs_change(bgp_pconfig pc, bgp_pc_setting_t pcs, bgp_sc_t bsc)
   if (bsc & bsc_set)
     pc->set    |= set ;                 /* set setting if required      */
 
-  pc->set_on &= pc->set ;               /* unset => off                 */
+  pc->on &= pc->set ;               /* unset => off                 */
   if (bsc == bsc_set_on)
-    pc->set_on |= set ;                 /* set "on" if required         */
+    pc->on |= set ;                 /* set "on" if required         */
 
   switch (pc->ctype)
     {
@@ -2146,12 +2174,16 @@ bgp_config_pcs_change(bgp_pconfig pc, bgp_pc_setting_t pcs, bgp_sc_t bsc)
          * Note that this has no effect on any value(s) -- the peer may have
          * a value for anything, but only the 'set' ones are actually used.
          */
+        if (dont_propagate)
+          break ;
+
         i = 0 ;
-        while ((mc = vector_get_item(pc->members, i++)) != NULL) ;
+        while ((mc = vector_get_item(pc->group.members, i++)) != NULL) ;
           {
-            qassert(mc->ctype == BGP_CFT_MEMBER) ;
-            mc->set    &= ~(set | mask) ;
-            mc->set_on &= mc->set ;
+            qassert((mc->ctype == BGP_CFT_MEMBER) && (mc->group.c == pc)) ;
+
+            mc->set &= ~(set | mask) ;
+            mc->on  &= mc->set ;
             bgp_config_queue(mc->parent_peer) ;
           } ;
 
@@ -2220,9 +2252,9 @@ bgp_config_pafcs_change(bgp_paf_config pafc, bgp_pafc_setting_t pafcs,
   if (bsc & bsc_set)
     pafc->set    |= set ;               /* set setting if required      */
 
-  pafc->set_on &= pafc->set ;           /* unset => off                 */
+  pafc->on &= pafc->set ;           /* unset => off                 */
   if (bsc == bsc_set_on)
-    pafc->set_on |= set ;               /* set "on" if required         */
+    pafc->on |= set ;               /* set "on" if required         */
 
   switch (pafc->ctype)
     {
@@ -2239,11 +2271,12 @@ bgp_config_pafcs_change(bgp_paf_config pafc, bgp_pafc_setting_t pafcs,
          * a value for anything, but only the 'set' ones are actually used.
          */
         i = 0 ;
-        while ((mafc = vector_get_item(pafc->members, i++)) != NULL)
+        while ((mafc = vector_get_item(pafc->group.members, i++)) != NULL)
           {
-            qassert(mafc->ctype == BGP_CFT_MEMBER) ;
-            mafc->set    &= ~(set | mask) ;
-            mafc->set_on &= mafc->set ;
+            qassert((mafc->ctype == BGP_CFT_MEMBER) &&
+                                                    (mafc->group.afc == pafc)) ;
+            mafc->set &= ~(set | mask) ;
+            mafc->on  &= mafc->set ;
             bgp_config_queue(mafc->parent_pconf->parent_peer) ;
           } ;
 
@@ -2304,10 +2337,10 @@ bgp_peer_flag_modify(bgp_peer peer, bgp_pc_setting_t pcs, bgp_sc_t bsc)
       case pcs_STRICT_CAP_MATCH:
         if (bsc == bsc_set_on)
           {
-            if (pcs_is_on(pc, pcs_OVERRIDE_CAPABILITY))
+            if (pcs_is_set_on(pc, pcs_OVERRIDE_CAPABILITY))
               return BGP_ERR_PEER_FLAG_CONFLICT_1 ;
 
-            if (pcs_is_on(pc, pcs_DONT_CAPABILITY))
+            if (pcs_is_set_on(pc, pcs_DONT_CAPABILITY))
               return BGP_ERR_PEER_FLAG_CONFLICT_1 ;
           } ;
         break ;
@@ -2323,7 +2356,7 @@ bgp_peer_flag_modify(bgp_peer peer, bgp_pc_setting_t pcs, bgp_sc_t bsc)
       case pcs_OVERRIDE_CAPABILITY:
         if (bsc == bsc_set_on)
           {
-            if (pcs_is_on(pc, pcs_STRICT_CAP_MATCH))
+            if (pcs_is_set_on(pc, pcs_STRICT_CAP_MATCH))
               return BGP_ERR_PEER_FLAG_CONFLICT_2 ;
           } ;
         break ;
@@ -2339,7 +2372,7 @@ bgp_peer_flag_modify(bgp_peer peer, bgp_pc_setting_t pcs, bgp_sc_t bsc)
       case pcs_DONT_CAPABILITY:
         if (bsc == bsc_set_on)
           {
-            if (pcs_is_on(pc, pcs_STRICT_CAP_MATCH))
+            if (pcs_is_set_on(pc, pcs_STRICT_CAP_MATCH))
               return BGP_ERR_PEER_FLAG_CONFLICT_3 ;
           } ;
         break ;
@@ -2495,7 +2528,7 @@ bgp_peer_multihop_set (bgp_peer peer, ttl_t ttl, bgp_sc_t bsc)
     {
       /* Cannot set pcs_multihop when is already pcs_ttl_security.
        */
-      if (pcs_is_on(pc, pcs_ttl_security))
+      if (pcs_is_set_on(pc, pcs_ttl_security))
         return BGP_ERR_NO_MULTIHOP_WITH_GTSM;
 
       if (pc->ctype == BGP_CFT_GROUP)
@@ -2506,12 +2539,12 @@ bgp_peer_multihop_set (bgp_peer peer, ttl_t ttl, bgp_sc_t bsc)
           bgp_pconfig   mc ;
           uint          i ;
 
-          qassert((pc->gc != NULL) && (pc->gc->members != NULL)) ;
-
           i = 0 ;
-          while ((mc = vector_get_item(pc->gc->members, i++)) != NULL)
+          while ((mc = vector_get_item(pc->group.members, i++)) != NULL)
             {
-              if (pcs_is_on(mc, pcs_ttl_security))
+              qassert((mc->ctype == BGP_CFT_MEMBER) && (mc->group.c == pc)) ;
+
+              if (pcs_is_set_on(mc, pcs_ttl_security))
                 return BGP_ERR_NO_MULTIHOP_WITH_GTSM;
             } ;
         } ;
@@ -2559,7 +2592,7 @@ bgp_peer_ttl_security_hops_set (bgp_peer peer, ttl_t ttl, bgp_sc_t bsc)
    */
   if (bsc == bsc_set_on)
     {
-      if (pcs_is_on(pc, pcs_multihop))
+      if (pcs_is_set_on(pc, pcs_multihop))
         {
           /* Cannot set pcs_ttl_security when is already pcs_multihop
            */
@@ -2574,12 +2607,12 @@ bgp_peer_ttl_security_hops_set (bgp_peer peer, ttl_t ttl, bgp_sc_t bsc)
           uint          i ;
           bgp_pconfig   mc ;
 
-          qassert((pc->gc != NULL) && (pc->gc->members != NULL)) ;
-
           i = 0 ;
-          while ((mc = vector_get_item(pc->gc->members, i++)) != NULL)
+          while ((mc = vector_get_item(pc->group.members, i++)) != NULL)
             {
-              if (pcs_is_on(mc, pcs_multihop))
+              qassert((mc->ctype == BGP_CFT_MEMBER) && (mc->group.c == pc)) ;
+
+              if (pcs_is_set_on(mc, pcs_multihop))
                 return BGP_ERR_NO_MULTIHOP_WITH_GTSM;
             } ;
         } ;
@@ -2614,15 +2647,10 @@ bgp_peer_description_set (bgp_peer peer, chs_c desc)
 
   pc = bgp_config_peer_prepare(peer) ;
 
-  if (pc->desc != NULL)
-    XFREE (MTYPE_PEER_DESC, pc->desc);
+  bgp_nref_set(&peer->c->desc, desc) ;
 
-  if (desc != NULL)
-    pc->desc = XSTRDUP (MTYPE_PEER_DESC, desc);
-  else
-    pc->desc = NULL ;
-
-  return BGP_SUCCESS ;
+  return bgp_config_pcs_change(pc, pcs_description,
+                                      (desc != NULL) ? bsc_set_on : bsc_unset) ;
 }
 
 /*------------------------------------------------------------------------------
@@ -2633,7 +2661,7 @@ bgp_peer_description_set (bgp_peer peer, chs_c desc)
 extern bgp_ret_t
 bgp_peer_update_source_if_set (bgp_peer peer, chs_c ifname)
 {
-  bgp_pconfig pc ;
+  bgp_pconfig   pc ;
 
   pc = bgp_config_peer_prepare(peer) ;
 
@@ -2641,7 +2669,8 @@ bgp_peer_update_source_if_set (bgp_peer peer, chs_c ifname)
                        || (strlen(ifname) >= sizeof(IF_NAMESIZE)))
     return BGP_ERR_INVALID_IF_NAME ;
 
-  ni_nref_set_c(&pc->update_source, bgp_config_name_index, ifname) ;
+  bgp_nref_set(&pc->update_source, ifname) ;
+  pc->update_source_if = true ;
 
   return bgp_config_pcs_change(pc, pcs_update_source, bsc_set_on) ;
 } ;
@@ -2677,7 +2706,8 @@ bgp_peer_update_source_addr_set (bgp_peer peer, chs_c addr, sockunion su)
    */
   ss = sutoa(su) ;
 
-  ni_nref_set_c(&pc->update_source, bgp_config_name_index, ss.str) ;
+  bgp_nref_set(&pc->update_source, ss.str) ;
+  pc->update_source_if = false ;
 
   return bgp_config_pcs_change(pc, pcs_update_source, bsc_set_on) ;
 } ;
@@ -2695,6 +2725,7 @@ bgp_peer_update_source_unset (bgp_peer peer)
   pc = bgp_config_peer_prepare(peer) ;
 
   ni_nref_clear(&pc->update_source) ;
+  pc->update_source_if = false ;
 
   return bgp_config_pcs_change(pc, pcs_update_source, bsc_unset) ;
 } ;
@@ -2743,17 +2774,21 @@ bgp_peer_default_originate_set (bgp_peer peer, qafx_t qafx, chs_c rmap_name,
 
   if (rmap_name != NULL)
     {
-      ni_nref_set_c(&pafc->filter_set[bfs_default_rmap], bgp_config_name_index,
-                                                                   rmap_name) ;
-      bsc = (rmap_name[0] != '\0') ? bsc_set_on : bsc_set_off ;
+      if (rmap_name[0] != '\0')
+        bsc = bsc_set_on ;
+      else
+        {
+          bsc = bsc_set_off ;
+          rmap_name = NULL ;
+        } ;
     }
   else
     {
       if (bsc != bsc_unset)
         return ret1 ;
-
-      ni_nref_clear(&pafc->filter_set[bfs_default_rmap]) ;
     } ;
+
+  bgp_nref_set(&pafc->filter_set[bfs_default_rmap], rmap_name) ;
 
   ret2 = bgp_config_pafcs_change(pafc, pafcs_default_rmap, bsc) ;
 
@@ -2971,7 +3006,7 @@ bgp_peer_local_as_set(bgp_peer peer, as_t local_as, bool no_prepend,
 
       bc = peer->parent_bgp->c ;
 
-      if (bcs_is_on(bc, bcs_confed_id))
+      if (bcs_is_set_on(bc, bcs_confed_id))
         {
           if (local_as == bc->confed_id)
             return BGP_ERR_CANNOT_HAVE_LOCAL_AS_SAME_CONFED_ID ;
@@ -2989,7 +3024,7 @@ bgp_peer_local_as_set(bgp_peer peer, as_t local_as, bool no_prepend,
     }
 
   pc->change_local_as         = local_as ;
-  pc->change_local_as_prepend = !no_prepend ;
+  pc->local_as_prepend = !no_prepend ;
 
   return bgp_config_pcs_change(pc, pcs_change_local_as, bsc) ;
 } ;
@@ -3028,7 +3063,7 @@ bgp_peer_password_set (bgp_peer peer, chs_c password, bgp_sc_t bsc)
         password = NULL ;
     } ;
 
-  ni_nref_set_c(&pc->password, bgp_config_name_index, password) ;
+  bgp_nref_set(&pc->password, password) ;
 
   return bgp_config_pcs_change(pc, pcs_password, bsc) ;
 }
@@ -3097,59 +3132,30 @@ bgp_peer_filter_set(bgp_peer peer, qafx_t qafx, bgp_pafc_setting_t setting,
   switch (setting)
     {
       case pafcs_dlist_in:
-        fs = bfs_dlist_in ;
-        conflict = pafcs_is_on(pafc, pafcs_plist_in) ;
+        conflict = pafcs_is_set_on(pafc, pafcs_plist_in) ;
         break ;
 
       case pafcs_dlist_out:
-        fs = bfs_dlist_out ;
-        conflict = pafcs_is_on(pafc, pafcs_plist_out) ;
+        conflict = pafcs_is_set_on(pafc, pafcs_plist_out) ;
         break ;
 
       case pafcs_plist_in:
-        fs = bfs_plist_in ;
-        conflict = pafcs_is_on(pafc, pafcs_dlist_in) ;
+        conflict = pafcs_is_set_on(pafc, pafcs_dlist_in) ;
         break ;
 
       case pafcs_plist_out:
-        fs = bfs_plist_out ;
-        conflict = pafcs_is_on(pafc, pafcs_dlist_out) ;
+        conflict = pafcs_is_set_on(pafc, pafcs_dlist_out) ;
         break ;
 
       case pafcs_aslist_in:
-        fs = bfs_aslist_in ;
-        break ;
-
       case pafcs_aslist_out:
-        fs = bfs_aslist_out ;
-        break ;
-
       case pafcs_rmap_in:
-        fs = bfs_rmap_in ;
-        break ;
-
       case pafcs_rmap_inx:
-        fs = bfs_rmap_inx ;
-        break ;
-
       case pafcs_rmap_export:
-        fs = bfs_rmap_export ;
-        break ;
-
       case pafcs_rmap_import:
-        fs = bfs_rmap_import ;
-        break ;
-
       case pafcs_rmap_out:
-        fs = bfs_rmap_out ;
-        break ;
-
       case pafcs_us_rmap:
-        fs = bfs_us_rmap ;
-        break ;
-
       case pafcs_default_rmap:
-        fs = bfs_default_rmap ;
         break ;
 
       default:
@@ -3176,7 +3182,23 @@ bgp_peer_filter_set(bgp_peer peer, qafx_t qafx, bgp_pafc_setting_t setting,
         name = NULL ;
     } ;
 
-  ni_nref_set_c(&pafc->filter_set[fs], bgp_config_name_index, name) ;
+  fs = setting - pafcs_filter_first ;
+  CONFIRM(bfs_dlist_in     == (pafcs_dlist_in     - pafcs_filter_first)) ;
+  CONFIRM(bfs_dlist_out    == (pafcs_dlist_out    - pafcs_filter_first)) ;
+  CONFIRM(bfs_plist_in     == (pafcs_plist_in     - pafcs_filter_first)) ;
+  CONFIRM(bfs_plist_out    == (pafcs_plist_out    - pafcs_filter_first)) ;
+  CONFIRM(bfs_aslist_in    == (pafcs_aslist_in    - pafcs_filter_first)) ;
+  CONFIRM(bfs_aslist_out   == (pafcs_aslist_out   - pafcs_filter_first)) ;
+  CONFIRM(bfs_rmap_in      == (pafcs_rmap_in      - pafcs_filter_first)) ;
+  CONFIRM(bfs_rmap_inx     == (pafcs_rmap_inx     - pafcs_filter_first)) ;
+  CONFIRM(bfs_rmap_out     == (pafcs_rmap_out     - pafcs_filter_first)) ;
+  CONFIRM(bfs_rmap_import  == (pafcs_rmap_import  - pafcs_filter_first)) ;
+  CONFIRM(bfs_rmap_export  == (pafcs_rmap_export  - pafcs_filter_first)) ;
+  CONFIRM(bfs_us_rmap      == (pafcs_us_rmap      - pafcs_filter_first)) ;
+  CONFIRM(bfs_default_rmap == (pafcs_default_rmap - pafcs_filter_first)) ;
+  CONFIRM(bfs_orf_plist    == (pafcs_orf_plist    - pafcs_filter_first)) ;
+
+  bgp_nref_set(&pafc->filter_set[fs], name) ;
 
   return bgp_config_pafcs_change(pafc, setting, bsc) ;
 } ;

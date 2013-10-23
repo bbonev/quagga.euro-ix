@@ -477,8 +477,8 @@ bgp_packet_write_attribute(blower br, bgp_prib prib, attr_set attr)
 
   send_as4_path       = false ;
   send_as4_aggregator = false ;
-  as4  = prun->session->args->can_as4 ;
-  sort = prun->sort ;
+  as4  = prun->session->sargs->can_as4 ;
+  sort = prun->rp.sort ;
 
   start = blow_ptr(br) ;
 
@@ -512,27 +512,30 @@ bgp_packet_write_attribute(blower br, bgp_prib prib, attr_set attr)
          *     completely empty
          *
          * If change_local_as is set, then that will be the local_as and we
-         * need to insert the bgp->ebgp_as (ie the true local-as) just after
+         * need to insert the my_as_ebgp (ie the true local-as) just after
          * the (fake) local_as -- except where they are equal.
          */
-        if (prib->route_server_client)
+        if (prib->rp.is_route_server_client)
           break ;
 
-        if (prib->as_path_unchanged && !as_path_is_empty(attr->asp))
+        if (prib->rp.do_as_path_unchanged && !as_path_is_empty(attr->asp))
           break ;
 
-        asp_out->seg = BGP_AS_SEQUENCE ;
+        asp_out->seg            = BGP_AS_SEQUENCE ;
         asp_out->prepend_count  = 1 ;
-        asp_out->prepend_asn[0] = prun->args_r.local_as ;
+        asp_out->prepend_asn[0] = prun->rp.sargs_conf.local_as ;
 
-        if (prun->change_local_as != BGP_ASN_NULL)
+        if (prun->rp.change_local_as != BGP_ASN_NULL)
           {
-            qassert(prun->change_local_as == prun->args_r.local_as) ;
+            as_t  my_as_ebgp ;
 
-            if (prun->ebgp_as_r != prun->args_r.local_as)
+            qassert(prun->rp.change_local_as == prun->rp.sargs_conf.local_as) ;
+
+            my_as_ebgp = prun->brun->rp.my_as_ebgp ;
+            if (my_as_ebgp != prun->rp.sargs_conf.local_as)
               {
                 asp_out->prepend_count  = 2 ;
-                asp_out->prepend_asn[1] = prun->ebgp_as_r ;
+                asp_out->prepend_asn[1] = my_as_ebgp ;
               } ;
           } ;
 
@@ -542,9 +545,9 @@ bgp_packet_write_attribute(blower br, bgp_prib prib, attr_set attr)
         /* A Confed Member in a different Member-AS, so we need to do the
          * AS_CONFED_SEQUENCE thing
          */
-        asp_out->seg    = BGP_AS_CONFED_SEQUENCE ;
+        asp_out->seg            = BGP_AS_CONFED_SEQUENCE ;
         asp_out->prepend_count  = 1 ;
-        asp_out->prepend_asn[0] = prun->args_r.local_as ;
+        asp_out->prepend_asn[0] = prun->rp.sargs_conf.local_as ;
 
         break ;
 
@@ -685,7 +688,7 @@ bgp_packet_write_attribute(blower br, bgp_prib prib, attr_set attr)
 
   /* Community attribute.
    */
-  if ( (attr->community != NULL) && prib->send_community)
+  if ( (attr->community != NULL) && prib->rp.do_send_community)
     {
       p = attr_community_out_prepare(attr->community, &len) ;
       blow_n_check(br, p, len) ;
@@ -715,7 +718,7 @@ bgp_packet_write_attribute(blower br, bgp_prib prib, attr_set attr)
       /* Prepare and put the cluster list, prepending either the (explicit)
        * cluster_id or the (implicit) router_id.
        */
-      clust_out->cluster_id = prun->cluster_id_r ;
+      clust_out->cluster_id = prun->brun->rp.cluster_eid ;
 
       attr_cluster_out_prepare(clust_out, attr->cluster) ;
 
@@ -727,7 +730,7 @@ bgp_packet_write_attribute(blower br, bgp_prib prib, attr_set attr)
    *
    * Send only the transitive community if this is not iBGP and not Confed.
    */
-  if ((attr->ecommunity != NULL) && prib->send_ecommunity)
+  if ((attr->ecommunity != NULL) && prib->rp.do_send_ecommunity)
     {
       bool trans_only ;
 
@@ -2929,13 +2932,13 @@ bgp_attr_as_path_set_if_ok(bgp_attr_parsing restrict prs)
   /* First AS check for EBGP -- NB: have already rejected any confed stuff.
    */
   if ((prs->sort == BGP_PEER_EBGP)
-              && (as_path_first_simple_asn(asp) != prs->prun->args_r.remote_as))
+       && (as_path_first_simple_asn(asp) != prs->prun->rp.sargs_conf.remote_as))
     {
-      if (prs->prun->do_enforce_first_as_r)
+      if (prs->prun->rp.do_enforce_first_as)
         {
           zlog (prs->prun->log, LOG_ERR,
                                   "%s incorrect first AS in path (must be %u)",
-                               prs->prun->name, prs->prun->args_r.remote_as) ;
+                          prs->prun->name, prs->prun->rp.sargs_conf.remote_as) ;
 
           bgp_attr_malformed(prs, BGP_NOMS_U_MAL_AS_PATH, 0) ;
           return ;

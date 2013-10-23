@@ -169,7 +169,7 @@ extern int sockunion_accept (int sock_fd, sockunion su);
 extern int sockunion_stream_socket (sockunion su);
 extern int sockunion_bind (int sock_fd, sockunion su, uint port, bool any) ;
 extern int sockunion_socket (sockunion su, int type, int protocol) ;
-extern int sockunion_connect (int sock_fd, sockunion su_remote,
+extern int sockunion_connect (int sock_fd, sockunion remote_su,
                                                       uint port, uint ifindex) ;
 extern int sockunion_listen(int sock_fd, int backlog) ;
 
@@ -179,6 +179,7 @@ extern int sockunion_is_sock_mapped_ipv4(int sock_fd) ;
 extern bool sockunion_is_mapped_ipv4(sockunion su) ;
 extern int sockunion_getsockname (int sock_fd, sockunion su);
 extern int sockunion_getpeername (int sock_fd, sockunion su);
+extern bool sockunion_is_ipv4_mapped(sockunion_c su) ;
 extern bool sockunion_unmap_ipv4 (sockunion su) ;
 extern void sockunion_map_ipv4 (sockunion su) ;
 

@@ -24,150 +24,11 @@
 
 #include "misc.h"
 
-#include "bgpd/bgp.h"
 #include "bgpd/bgp_common.h"
+#include "bgpd/bgp_run.h"
 
 #include "lib/vector.h"
 #include "lib/ring_buffer.h"
-
-/*==============================================================================
- * The Session Arguments -- used by Session, Connection and Open State
- *
- * These arguments affect how the session runs, from when it is first enabled
- * to when it stops.
- *
- * Some of these affect the capability negotiation and some are subject to
- * that negotiation.
- */
-typedef struct bgp_session_args_gr  bgp_session_args_gr_t ;
-typedef struct bgp_session_args_gr* bgp_session_args_gr ;
-
-struct bgp_session_args_gr
-{
-  bool   can ;
-
-  bool   restarting ;
-  uint   restart_time ;
-
-  qafx_set_t  can_preserve ;
-  qafx_set_t  has_preserved ;
-} ;
-
-enum bgp_orf_cap_bits
-{
-  ORF_SM        = BIT( 0),      /* RFC *type* Send Mode         */
-  ORF_RM        = BIT( 1),      /* RFC *type* Receive Mode      */
-
-  ORF_SM_pre    = BIT( 4),      /* pre-RFC *type* Send Mode     */
-  ORF_RM_pre    = BIT( 5),      /* pre-RFC *type* Receive Mode  */
-} ;
-typedef uint8_t bgp_orf_cap_bits_t ;    /* NB: <= 8 flags       */
-
-//typedef bgp_orf_cap_bits_t  bgp_orf_cap_v[qafx_count] ;
-
-typedef struct bgp_orf_caps  bgp_orf_caps_t ;
-typedef struct bgp_orf_caps* bgp_orf_caps ;
-
-struct bgp_orf_caps
-{
-  bgp_orf_cap_bits_t  af[qafx_count] ;
-} ;
-
-/* Some BGP capabilities and messages have RFC and pre-RFC forms.
- *
- * Sometimes see both, or send RFC and/or pre-RFC forms, or track what form(s)
- * are being used.
- */
-typedef enum bgp_form bgp_form_t ;
-
-enum bgp_form
-{
-  bgp_form_none     = 0,
-  bgp_form_pre      = 1,
-  bgp_form_rfc      = 2,
-  bgp_form_both     = 3     /* _rfc and _pre are bits !     */
-} ;
-
-/*------------------------------------------------------------------------------
- * Session Arguments affect the state of a session from the moment a
- * connection is made.
- *
- * The OPEN message sent is based on the Session Arguments.  The OPEN message
- * received is (largely) parsed into a set of Session Arguments.  When a
- * session becomes established, the resulting Session Arguments are the
- * intersection of what was configured, what was sent (which may be different
- * -- for example when capabilities are suppressed) and what was received.
- */
-typedef struct bgp_session_args bgp_session_args_t ;
-typedef const struct bgp_session_args* bgp_session_args_c ;
-
-struct bgp_session_args
-{
-  as_t          local_as ;      /* ASN here                     */
-  in_addr_t     local_id ;      /* BGP-Id here                  */
-
-  as_t          remote_as ;     /* ASN of the peer              */
-  in_addr_t     remote_id ;     /* BGP-Id of the peer           */
-
-  /* Whether we can send any capabilities at all and whether can do AS4 and/or
-   * MP-Ext.
-   *
-   * These will, usually all be set !
-   */
-  bool       can_capability ;
-  bool       can_mp_ext ;
-
-  bool       can_as4 ;          /* can be turned off                    */
-
-  /* This is set iff the capabilities have been suppressed.
-   *
-   * Is set in open_sent->args if required, and copied from there back to the
-   * session->args when the session becomes established.
-   */
-  bool       cap_suppressed ;
-
-  /* These are configuration properties of the peer which are reflected down
-   * to the connection.
-   *
-   * When a session is established, cap_af_override is set true if the override
-   * is implemented.  The cap_strict is returned as the state at the time the
-   * session was established.
-   */
-  bool       cap_af_override ;  /* assume other end can do all afi/safi
-                                 * this end has active                  */
-  bool       cap_strict ;       /* must have all the capabilites we asked
-                                 * for.                                 */
-
-  /* The can_af is the set of address families we can support -- whether or
-   * not we can advertise those by MP-Ext.
-   *
-   * If !can_mp_ext, then this is limited to (at most) IPv4/Unicast, unless
-   * is cap_af_override.
-   */
-  qafx_set_t can_af ;
-
-  /* Support for Route Refresh and Graceful Restart.
-   */
-  bgp_form_t can_rr ;
-
-  bgp_session_args_gr_t   gr ;
-
-  /* Support for ORF.
-   *
-   * The can_orf says whether one or both of the ORF *capabilities* is
-   * supported -- RFC or pre-RFC forms.
-   *
-   * The can_orf_pfx says what ORF types are supported for each qafx.
-   */
-  bgp_form_t     can_orf ;
-  bgp_orf_caps_t can_orf_pfx ;
-
-  bool       can_dynamic ;
-  bool       can_dynamic_dep ;
-
-  uint       holdtime_secs ;
-  uint       keepalive_secs ;
-} ;
 
 /*==============================================================================
  * BGP Open State.
@@ -251,12 +112,12 @@ typedef const  bgp_open_state_t* bgp_open_state_c ;
 
 struct bgp_open_state
 {
-  bgp_session_args args ;
+  bgp_sargs     sargs ;
 
-  as2_t       my_as2 ;          /* OPEN Message: "My Autonomous System" */
+  as2_t         my_as2 ;        /* OPEN Message: "My Autonomous System" */
 
-  vector_t    afi_safi[1] ;     /* various afi/safi capabilities        */
-  vector_t    unknowns[1] ;     /* list of bgp_cap_unknown              */
+  vector_t      afi_safi[1] ;   /* various afi/safi capabilities        */
+  vector_t      unknowns[1] ;   /* list of bgp_cap_unknown              */
 } ;
 
 /*------------------------------------------------------------------------------
@@ -282,13 +143,12 @@ extern bgp_open_state bgp_open_state_free(bgp_open_state state) ;
 extern bgp_open_state bgp_open_state_set_mov(bgp_open_state dst,
                                                         bgp_open_state* p_src) ;
 
-extern bgp_session_args bgp_session_args_init_new(bgp_session_args args) ;
-extern bgp_session_args bgp_session_args_reset(bgp_session_args args) ;
-extern void bgp_session_args_suppress(bgp_session_args args) ;
-extern bgp_session_args bgp_session_args_copy(bgp_session_args dst,
-                                              bgp_session_args_c src) ;
-extern bgp_session_args bgp_session_args_dup(bgp_session_args_c src) ;
-extern bgp_session_args bgp_session_args_free(bgp_session_args args) ;
+extern bgp_sargs bgp_sargs_init_new(bgp_sargs sargs) ;
+extern bgp_sargs bgp_sargs_reset(bgp_sargs sargs) ;
+extern void bgp_sargs_suppress(bgp_sargs sargs) ;
+extern bgp_sargs bgp_sargs_copy(bgp_sargs dst, bgp_sargs_c src) ;
+extern bgp_sargs bgp_sargs_dup(bgp_sargs_c src) ;
+extern bgp_sargs bgp_sargs_free(bgp_sargs sargs) ;
 
 extern void bgp_open_state_unknown_add(bgp_open_state state, uint8_t code,
                                                void* value, bgp_size_t length) ;
@@ -315,7 +175,7 @@ extern bool bgp_open_prepare_orf_type(bgp_open_orf_type orf_type, uint8_t orft,
                        bgp_orf_caps modes, bgp_form_t form, qafx_set_t can_af) ;
 extern void bgp_open_make_cap_orf(blower br, uint8_t cap_code, uint count,
                     bgp_open_orf_type_t types[], qafx_set_t can_af, bool wrap) ;
-extern void bgp_open_make_cap_gr(blower br, bgp_session_args_gr cap_gr,
+extern void bgp_open_make_cap_gr(blower br, bgp_sargs_gr cap_gr,
                                                  qafx_set_t can_af, bool wrap) ;
 
 #endif /* QUAGGA_BGP_OPEN_STATE_H */

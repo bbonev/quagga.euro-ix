@@ -356,7 +356,7 @@ bgp_fsm_start_session(bgp_session session)
 
   /* Should we go ahead and start one or two connections ?
    */
-  conn_state = session->cops_config->conn_state ;
+  conn_state = session->cops_conf->conn_state ;
 
   if ((conn_state & (bgp_csRun | bgp_csMayConnect | bgp_csMayAccept))
                                                                   <= bgp_csRun)
@@ -1008,7 +1008,7 @@ bgp_fsm_accept_event(bgp_session session, bgp_fsm_event_t fsm_event)
             /* We do not have an accept connection, in sAcquiring state,
              * so... we must not be prepared to accept !
              */
-            qassert(!(session->cops_config->conn_state & bgp_csMayAccept)) ;
+            qassert(!(session->cops_conf->conn_state & bgp_csMayAccept)) ;
             fsm_event = bgp_feNULL ;            /* ignore       */
           }
         else
@@ -3118,8 +3118,8 @@ bgp_fsm_enter_open_confirm(bgp_connection connection)
        * astonishing (but also disturbing) to find that they had different
        * BGP Ids !!!
        */
-      remote_id  = connection->open_recv->args->remote_id ;
-      sibling_id =    sibling->open_recv->args->remote_id ;
+      remote_id  = connection->open_recv->sargs->remote_id ;
+      sibling_id =    sibling->open_recv->sargs->remote_id ;
 
       if (remote_id != sibling_id)
         {
@@ -3137,7 +3137,7 @@ bgp_fsm_enter_open_confirm(bgp_connection connection)
 
       /* NB: bgp_id in open_state is in *network* order
        */
-      local_id = session->open_sent->args->local_id ;
+      local_id = session->open_sent->sargs->local_id ;
       loser = (ntohl(local_id) < ntohl(remote_id)) ? connection
                                                    : sibling ;
       if (BGP_DEBUG(fsm, FSM))
@@ -3455,7 +3455,7 @@ bgp_fsm_hold_timer_set(bgp_connection connection)
 {
   uint holdtime_secs ;
 
-  holdtime_secs  = connection->session->args->holdtime_secs ;
+  holdtime_secs  = connection->session->sargs->holdtime_secs ;
 
   connection->holdtimer_suppressed = (holdtime_secs == 0) ;
 
@@ -3502,7 +3502,7 @@ bgp_fsm_keepalive_timer_set(bgp_connection connection)
   uint holdtime_secs ;
   qtime_t interval ;
 
-  holdtime_secs  = connection->session->args->holdtime_secs ;
+  holdtime_secs  = connection->session->sargs->holdtime_secs ;
 
   connection->holdtimer_suppressed = (holdtime_secs == 0) ;
 
@@ -3512,7 +3512,7 @@ bgp_fsm_keepalive_timer_set(bgp_connection connection)
     {
       uint    keepalive_secs ;
 
-      keepalive_secs = connection->session->args->keepalive_secs ;
+      keepalive_secs = connection->session->sargs->keepalive_secs ;
       if (holdtime_secs < 3)
         holdtime_secs = 3 ;             /* pure paranoia        */
 

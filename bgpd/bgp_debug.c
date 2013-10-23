@@ -171,7 +171,7 @@ bgp_notify_print(bgp_prun prun, bgp_note note)
 
   /* See if we need to do any of this
    */
-  if      (prun->do_log_neighbor_changes_r)
+  if      (prun->rp.do_log_neighbor_changes)
     log_neighbor_changes = true ;
   else if (BGP_DEBUG (normal, NORMAL))
     log_neighbor_changes = false ;

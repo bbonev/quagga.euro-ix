@@ -354,10 +354,14 @@ bgp_peer_and_or_group_lookup_vty(vty vty, chs_c p_str, bgp_peer_or_group_t bpog)
   vty_out (vty, "%% %s '%s' not configured", what, p_str) ;
   if (bm->bgp_count > 1)
     {
-      if ((bgp->name == NULL) || (bgp->name[0] == '\0'))
+      chs_c view_name ;
+
+      view_name = bgp_nref_name(bgp->name) ;
+
+      if ((view_name == NULL) || (view_name[0] == '\0'))
         vty_out(vty, " in the 'unnamed' view") ;
       else
-        vty_out(vty, " in view '%s'", bgp->name) ;
+        vty_out(vty, " in view '%s'", view_name) ;
     } ;
   vty_out(vty, "\n") ;
 
@@ -459,6 +463,8 @@ static const chs_c bgp_vty_return_strings[BGP_RET_COUNT] =
         = "Invalid metric value",
     [BGP_ERR_INVALID_PEER_IP]
         = "Invalid peer IP address",
+    [BGP_ERR_IPV4_MAPPED]
+        = "IPv4-Mapped address is invalid",
     [BGP_ERR_INVALID_GROUP_NAME]
         = "Invalid peer-group name",
     [BGP_ERR_PEER_NOT_GROUP]

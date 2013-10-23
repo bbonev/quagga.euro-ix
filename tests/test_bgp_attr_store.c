@@ -2888,7 +2888,7 @@ test_attr_pair_local_pref(void)
                 break ;
 
               case 1:
-                bgp_attr_pair_clear_local_pref(tap) ;
+                bgp_attr_pair_clear_local_pref(tap, 0) ;
                 break ;
 
               case 2:
@@ -3285,7 +3285,7 @@ test_attr_pair_med(void)
                 break ;
 
               case 1:
-                bgp_attr_pair_clear_med(tap) ;
+                bgp_attr_pair_clear_med(tap, 0) ;
                 break ;
 
               case 2:

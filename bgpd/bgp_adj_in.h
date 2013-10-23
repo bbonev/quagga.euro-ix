@@ -44,9 +44,9 @@ extern route_info bgp_route_info_free(route_info ri, bool remove) ;
 
 
 extern void bgp_adj_in_update_prefix(bgp_prib prib, prefix_id_entry pie,
-                                                          iroute_state parcel) ;
+                                        iroute_state parcel, mpls_tags_t tags) ;
 
-extern route_info bgp_route_select(bgp_rib_node rn, bgp_lc_id_t lc) ;
+extern route_info bgp_route_select_lc(bgp_rib_node rn, bgp_lc_id_t lc) ;
 
 
 extern void bgp_adj_in_discard(bgp_prib prib) ;

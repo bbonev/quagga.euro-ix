@@ -158,7 +158,7 @@ route_match_peer(void* value, prefix_c pfx, route_map_object_t type,
   /* value must be a sockunion -- we look for a match to the given peer.
    */
   su = value ;
-  if (sockunion_same (su, brm->prun->su_name))
+  if (sockunion_same (su, &brm->prun->rp.cops_conf.remote_su))
     return RMAP_MATCH;
 
   return RMAP_NOT_MATCH;
@@ -416,11 +416,12 @@ route_match_ip_route_source (void* value, prefix_c pfx, route_map_object_t type,
 
   brm = object ;
 
-  if ((brm->prun == NULL) || (sockunion_family(brm->prun->su_name) != AF_INET))
+  if ((brm->prun == NULL) ||
+              (sockunion_family(&brm->prun->rp.cops_conf.remote_su) != AF_INET))
     return RMAP_NOT_MATCH;
 
   p.family    = AF_INET;
-  p.prefix    = brm->prun->su_name->sin.sin_addr;
+  p.prefix    = brm->prun->rp.cops_conf.remote_su.sin.sin_addr;
   p.prefixlen = IPV4_MAX_BITLEN;
 
   if (access_list_apply (*(access_list*)value, &p) == FILTER_PERMIT)
@@ -454,11 +455,12 @@ route_match_ip_route_source_prefix_list (void* value, prefix_c pfx,
 
   brm = object ;
 
-  if ((brm->prun == NULL) || (sockunion_family(brm->prun->su_name) != AF_INET))
+  if ((brm->prun == NULL) ||
+              (sockunion_family(&brm->prun->rp.cops_conf.remote_su) != AF_INET))
     return RMAP_NOT_MATCH;
 
   p.family    = AF_INET;
-  p.prefix    = brm->prun->su_name->sin.sin_addr;
+  p.prefix    = brm->prun->rp.cops_conf.remote_su.sin.sin_addr;
   p.prefixlen = IPV4_MAX_BITLEN;
 
   if (prefix_list_apply (*(prefix_list*)value, &p) == PREFIX_PERMIT)
@@ -1144,9 +1146,9 @@ route_set_ip_nexthop (void* value, prefix_c pfx,
 
       if (brm->rmap_type & (BGP_RMAP_TYPE_IN | BGP_RMAP_TYPE_RS_IN
                                              | BGP_RMAP_TYPE_IMPORT) )
-        su = &brm->prun->session->cops->su_remote ;
+        su = &brm->prun->session->cops->remote_su ;
       else if (brm->rmap_type & BGP_RMAP_TYPE_OUT)
-        su = &brm->prun->session->cops->su_local ;
+        su = &brm->prun->session->cops->local_su ;
       else
         return RMAP_OKAY ;
 

@@ -241,6 +241,24 @@ ni_nref_set_b(nref_c* p_ref, name_index ni, ptr_c name, uint name_len)
 } ;
 
 /*------------------------------------------------------------------------------
+ * If the given reference is not NULL, decrement its ref-count and replace it
+ * by the given nref (if any).
+ *
+ * NULL nref clears the given reference.
+ */
+extern void
+ni_nref_set_copy(nref_c* p_ref, nref_c nref)
+{
+  if (*p_ref != NULL)
+    ni_nref_dec(*p_ref) ;
+
+  if (nref != NULL)
+    *p_ref = ni_nref_inc(nref) ;
+  else
+    *p_ref = NULL ;
+} ;
+
+/*------------------------------------------------------------------------------
  * Get niid for the given string -- incrementing its ref-count.
  *
  * If the given reference is not NULL, decrement its ref-count and replace it
@@ -284,6 +302,24 @@ ni_niid_set_b(niid_t* p_id, name_index ni, ptr_c name, uint name_len)
     ni_niid_dec(*p_id, ni) ;
 
   *p_id = got ;
+}
+
+/*------------------------------------------------------------------------------
+ * If the given reference is not NULL, decrement its ref-count and replace it
+ * by the given nref (if any).
+ *
+ * NULL nref clears the given reference.
+ */
+extern void
+ni_niid_set_copy(niid_t* p_id, name_index ni, niid_t niid)
+{
+  if (*p_id != niid_null)
+    ni_niid_dec(*p_id, ni) ;
+
+  if (niid != niid_null)
+    *p_id = ni_niid_inc(niid, ni) ;
+  else
+    *p_id = niid_null ;
 }
 
 /*------------------------------------------------------------------------------

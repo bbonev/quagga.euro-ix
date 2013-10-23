@@ -24,7 +24,10 @@
 #ifndef _QUAGGA_BGP_PRUN_H
 #define _QUAGGA_BGP_PRUN_H
 
+#include "misc.h"
+
 #include "bgpd/bgp_common.h"
+#include "bgpd/bgp_run.h"
 #include "bgpd/bgp_config.h"
 #include "bgpd/bgp_session.h"
 #include "bgpd/bgp_rib.h"
@@ -417,44 +420,25 @@ typedef const bgp_prun_t* bgp_prun_c ;
 
 struct bgp_prun
 {
-  /* The running peer belongs to the parent bgp_peer structure.
-   *
-   * The running code does not care.
-   */
-  bgp_peer      parent_peer ;
-
-  /* Peer information - copies of the bgp_peer values.
-   *
-   * The name and the su_name cannot be changed by a change of configuration.
-   *
-   * The description may be changed by a change of configuration, but since
-   * that has no effect on the running peer, we keep a pointer to the
-   * parent->desc
-   *
-   * NB: the su_name is IPv4 if the original name was IPv4-Mapped !!  TODO !!!
-   */
-  sockunion_c   su_name ;     /* Name of the peer is address of same  */
-  chs_c         name ;          /* Printable address of the peer.       */
-  chs_c const*  p_desc ;
-
-  /* Parent bgp running state
+  /* The running peer belongs to the parent bgp_run structure.
    */
   bgp_run       brun ;
-  struct dl_list_pair(bgp_prun) prun_list ;
 
-  /* Configuration <-> Running State Control.
+  /* For convenience we have a pointer to the printable name of the peer.
+   * The actual name is in a bgp_nref in the running params.
    */
-  struct dl_list_pair(bgp_prun) cup_list ;
+  chs_c         name ;          /* Printable name of the peer.          */
 
+  /* The running parameters and delta
+   */
+  bgp_prun_param_t  rp ;
 
-
+  bgp_run_delta_t   delta ;
 
   /* State of the peer
    */
   bgp_peer_state_t      state ;
   bgp_peer_idle_state_t idle ;
-
-  bgp_conf_change_t     change ;
 
   /* nsf_enabled means....    XXX
    *
@@ -465,43 +449,9 @@ struct bgp_prun
 
   /* The session and state thereof
    */
-  bgp_session           session ;
+  bgp_session   session ;
 
   bgp_peer_session_state_t session_state ;
-
-  /* reference count, primarily to allow bgp_process'ing of route_node's
-   * to be done after a struct peer is deleted.
-   *
-   * named 'lock' for hysterical reasons within Quagga.
-   */
-  uint          lock;
-
-  /* The sort of peer depends on the ASN of the peer, our ASN, CONFED
-   * stuff etc.
-   *
-   *   iBGP: if peer->args.remote_as == bgp->my_as -- whether or not that
-   *         is a confederation member AS.
-   *
-   *   cBGP: if peer->args.remote_as is one of a bgp confederation peer
-   *
-   *   eBGP:   otherwise
-   */
-  bgp_peer_sort_t  sort ;
-
-  bgp_id_t      router_id_r ;
-  as_t          my_as_r ;
-  as_t          ebgp_as_r ;
-  bgp_id_t      cluster_id_r ;
-  as_t          confed_id_r ;
-
-  bool          do_graceful_restart ;
-  bool          do_enforce_first_as_r ;
-  bool          do_log_neighbor_changes_r ;
-  bool          do_check_confed_id_r ;
-  bool          do_check_confed_id_all_r ;
-  bool          no_client_to_client_r ;
-
-  bgp_args_t    bgp_args_r ;
 
   /* Peer information
    */
@@ -550,169 +500,9 @@ struct bgp_prun
   uint          prib_running_count ;
   bgp_prib      prib_running[qafx_count] ;
 
-  /* List of pending Route_Refresh requests.
+  /* List of pending outgoing Route_Refresh requests.
    */
   struct dl_base_pair(bgp_route_refresh) rr_pending ;
-
-  /* The connection options include:
-   *
-   *   * su_remote              -- used by connect() and listen()
-   *
-   *                               copy of su_name (but could be something
-   *                               else, eg a link-local address for the peer !)
-   *
-   *   * su_local               -- "neighbor xx update-source <addr>".
-   *
-   *   * port                   -- for connect() and listen()
-   *
-   *   * conn_state             -- is current configuration and reflects
-   *                               down/reset state....
-   *
-   *       bgp_csMayAccept   ) the actual "passive" etc configuration
-   *       bgp_csMayConnect  )
-   *
-   *       bgp_csRun         ) set when the session is updated.
-   *       bgp_csTrack       )
-   *
-   *   * connect_retry_secs     -- per default, or otherwise
-   *   * accept_retry_secs      -- per default, or otherwise
-   *   * open_hold_secs         -- per default, or otherwise
-   *
-   *   * ttl                    -- "neighbor xx ebgp-multihop" etc.
-   *   * gtsm                   -- "neighbor xx ttl-security hops" etc.
-   *
-   *   * password               -- "neighbor xx password"
-   *
-   *   * ifname                 -- "neighbor xx update-source <name>"
-   */
-  bgp_cops_t    cops_r ;
-
-  /* Peer's configured session arguments
-   *
-   *   * local_as               -- our ASN for this peering -- see below
-   *   * local_id               -- as set by configuration or otherwise
-   *
-   *     The local_as is what we say in any OPEN we send, and for:
-   *
-   *       - iBGP == bgp->my_as
-   *       - cBGP == bgp->my_as
-   *       - eBGP == bgp->ebgp_as -- *except* when is change_local_as
-   *
-   *   * remote_as              -- as set by configuration
-   *   * remote_id              -- as received in most recent session
-   *
-   *     The OPEN received must carry the expected remote_as.
-   *
-   *   * can_capability         -- ! PEER_FLAG_DONT_CAPABILITY
-   *
-   *     Nearly always true !!  Purpose is *deeply* historic... provided to
-   *     cope with pre-RFC2842 peers who crash if given Capability Options !
-   *
-   *     In the absence of cap_af_override this implies that only IPv4 Unicast
-   *     can be used, and all other capabilities are ignored.
-   *
-   *     This is not set if is cap_strict.
-   *
-   *   * can_mp_ext             -- true
-   *
-   *     When a set of session arguments are created, this will be overridden
-   *     by !can_capability.
-   *
-   *     When open_sent arguments are constructed, this may be suppressed by
-   *     cap_suppressed.
-   *
-   *   * can_as4                -- !bm->as2_speaker
-   *
-   *     When a set of session arguments are created, this will be overridden
-   *     by !can_capability.
-   *
-   *     When open_sent arguments are constructed, this may be suppressed by
-   *     cap_suppressed.
-   *
-   *   * cap_suppressed         -- N/A
-   *
-   *   * cap_af_override        -- see PEER_FLAG_OVERRIDE_CAPABILITY
-   *
-   *     If the peer does not send any MP-Ext capabilities, then this causes
-   *     Quagga to assume that the peer supports all the afi/safi that the
-   *     session is enabled for.
-   *
-   *     This is historic, and provided to cope with pre-RFC2858 Multiprotocol
-   *     stuff -- before MP-Ext capabilities existed !
-   *
-   *     This is not set if is cap_strict.
-   *
-   *   * cap_strict             -- PEER_FLAG_STRICT_CAP_MATCH
-   *
-   *     Requires the far end to support all the capabilities this end does.
-   *
-   *     This is not set if is cap_af_override or !can_capability.
-   *
-   *   * can_af                 -- for peer->args: the enabled address families
-   *
-   *     See notes above.
-   *
-   *     When creating a set of session arguments, the can_af will be masked
-   *     down if !can_mp_ext, unless have cap_af_override.
-   *
-   * When creating a set of session arguments, the following will be suppressed
-   * if !can_capability.  And when creating a set of arguments for open_sent,
-   * these will be suppressed if cap_suppressed.
-   *
-   *   * can_rr                 -- bgp_form_both
-   *
-   *     We default to supporting both the RFC and the pre-RFC Route Refresh.
-   *
-   *     Could create an option to turn off one or both.
-   *
-   *   * gr.can                 -- BGP_FLAG_GRACEFUL_RESTART
-   *   * gr.restarting          -- false
-   *   * gr.restart_time        -- 0
-   *   * gr.can_preserve        -- empty
-   *   * gr.has_preserved       -- empty
-   *
-   *     These are set on the fly when a set of session arguments is created.
-   *
-   *   * can_orf                -- bgp_form_both
-   *
-   *     We default to supporting both the RFC and the pre-RFC ORF capability,
-   *     and Prefix ORF types.
-   *
-   *   * can_orf_pfx[]          -- per "neighbor capability orf prefix-list"
-   *
-   *     For the peer->args we register only the RFC types.  As we construct
-   *     arguments for session and for open_sent, will expand this to include
-   *     the pre-RFC types -- where the pre-RFC capability is advertised.
-   *
-   *   * can_dynamic            -- false
-   *   * can_dynamic_dep        -- false
-   *
-   * These are always relevant
-   *
-   *   * holdtime_secs          -- peer->config_holdtime
-   *   * keepalive_secs         -- peer->config_keepalive
-   */
-  bgp_session_args_t  args_r ;            /* NB: embedded         */
-
-  /* change_local_as is set when we are pretending that a previous ASN still
-   * exists.
-   *
-   * For eBGP (not cBGP !) we pretend that the 'change_local_as' AS sits
-   * between us (local_as) and the peer.  This allows the peer to believe that
-   * they are peering with 'change_local_as' (as it was before).
-   *
-   * The args.local_as is set to change_local_as (not bgp->ebgp_as), because
-   * that is the AS used for the session (and in the OPEN sent).
-   */
-  as_t          change_local_as ;
-  bool          change_local_as_prepend ;
-
-  /* Other flags and running configuration
-   */
-  bool          disable_connected_check ;
-
-  uint16_t      weight ;
-  uint          mrai ;
 
   /* Timers.
    *
@@ -735,12 +525,12 @@ struct bgp_prun
 
   /* BGP state count
    */
-  uint32_t established;
-  uint32_t dropped;
+  uint32_t      established;
+  uint32_t      dropped;
 
   /* Peer index, used for dumping TABLE_DUMP_V2 format
    */
-  uint16_t table_dump_index;
+  uint16_t      table_dump_index;
 } ;
 
 #define BGP_TIMER_ON(T,F,V)                     \
@@ -779,6 +569,12 @@ enum adj_in_state
 struct bgp_prib
 {
   bgp_prun      prun ;                  /* parent peer running          */
+
+  /* Running parameters and delta
+   */
+  bgp_prib_param_t  rp ;
+
+  bgp_run_delta_t   delta ;
 
   /* Each peer-rib is associated with the respective bgp-rib -- for the
    * same AFI/SAFI and for that bgp instance.
@@ -839,24 +635,6 @@ struct bgp_prib
 
   bool          real_rib ;      /* With or without zroute       */
   bool          session_up ;
-
-  /* Running c_flags
-   */
-  bool          soft_reconfig ;
-  bool          route_server_client ;
-  bool          route_reflector_client ;
-  bool          send_community ;
-  bool          send_ecommunity ;
-  bool          next_hop_self ;
-  bool          next_hop_unchanged ;
-  bool          next_hop_local_unchanged ;
-
-  bool          as_path_unchanged ;
-  bool          remove_private_as ;
-  bool          med_unchanged ;
-  bool          default_originate ;
-
-  uint8_t       allow_as_in ;
 
   /* Filters and route-maps.
     */
@@ -1016,7 +794,20 @@ enum bgp_clear_type
 /*==============================================================================
  *
  */
-extern bgp_prun bgp_prun_new(void) ;
+extern bgp_prun bgp_prun_new(bgp_run brun, bgp_prun_param prp) ;
+extern bgp_prib bgp_prib_new(bgp_prun prun, qafx_t qafx) ;
+
+extern void bgp_prun_shutdown(bgp_prun prun, peer_down_t why_down) ;
+extern void bgp_prun_execute(bgp_prun prun, peer_down_t why_down) ;
+
+
+
+
+
+
+
+
+
 
 extern bgp_prib bgp_prib_new(bgp_prun prun, qafx_t qafx) ;
 extern bgp_prib bgp_prib_free(bgp_prib prib) ;
@@ -1065,9 +856,11 @@ extern bgp_prun prun_lookup_view_qafx_vty(vty vty, chs_c view_name,
 extern int peer_cmp (bgp_peer p1, bgp_peer p2) ;
 extern qfb_time_t peer_uptime (time_t time);
 
-#if 0
-extern void bgp_withdraw_schedule(bgp_peer peer) ;
-#endif
+/* This is actually defined in bgp_names.c... but if the extern is there, we
+ * have to drag a *huge* amount of stuff into bgp_names.h.
+ */
+extern name_str_t bgp_peer_idle_state_str(bgp_peer_state_t state,
+                                                   bgp_peer_idle_state_t idle) ;
 
 #endif /* _QUAGGA_BGP_PRUN_H */
 

@@ -24,6 +24,7 @@
 
 #include "bgpd/bgp_common.h"
 #include "bgpd/bgpd.h"
+#include "bgpd/bgp_run.h"
 #include "bgpd/bgp_connection.h"
 #include "bgpd/bgp_network.h"
 #include "bgpd/bgp_peer_index.h"
@@ -93,7 +94,7 @@ static char* bgp_connection_host_string(char* host_was, bgp_session session,
 static char* bgp_connection_host_string_free(char* host) ;
 
 static bgp_note bgp_connection_make_args(bgp_connection connection,
-                                                        bgp_session_args args) ;
+                                                              bgp_sargs sargs) ;
 
 /*------------------------------------------------------------------------------
  * Initialise the connection handling.
@@ -297,7 +298,7 @@ bgp_connection_host_string(char* host_was, bgp_session session,
   qfs_printf(qfs, "%s%s", session->lox.name, bgp_connection_tags[ord]) ;
   qfs_term(qfs) ;
 
-  host = XMALLOC(MTYPE_BGP_PEER_HOST, qfs_len(qfs) + 1) ;
+  host = XMALLOC(MTYPE_BGP_NAME, qfs_len(qfs) + 1) ;
   qassert(qfs_len(qfs) == strlen(qfs_string(qfs))) ;
 
   strcpy(host, qfs_string(qfs)) ;
@@ -314,7 +315,7 @@ static char*
 bgp_connection_host_string_free(char* host)
 {
   if (host != NULL)
-    XFREE(MTYPE_BGP_PEER_HOST, host) ;
+    XFREE(MTYPE_BGP_NAME, host) ;
 
   return NULL ;
 } ;
@@ -361,8 +362,8 @@ bgp_connection_establish(bgp_connection connection)
   /* Make sure the session has a nice clean set of result 'args', then make
    * the result arguments.
    */
-  session->args = bgp_session_args_reset(session->args) ;
-  note = bgp_connection_make_args(connection, session->args) ;
+  session->sargs = bgp_sargs_reset(session->sargs) ;
+  note = bgp_connection_make_args(connection, session->sargs) ;
 
   if (note != NULL)
     return note ;
@@ -614,14 +615,14 @@ static void bgp_add_orf_to_notification(bgp_note note,
  *           otherwise -- note for unacceptable session arguments
  */
 static bgp_note
-bgp_connection_make_args(bgp_connection connection, bgp_session_args args)
+bgp_connection_make_args(bgp_connection connection, bgp_sargs sargs)
 {
-  bgp_session_args_c args_config, args_sent, args_recv ;
+  bgp_sargs_c   sargs_conf, sargs_sent, sargs_recv ;
   bgp_session   session ;
   bgp_note      note ;
-  qafx_t     qafx ;
-  qafx_set_t real_af ;
-  uint       holdtime, keepalive ;
+  qafx_t        qafx ;
+  qafx_set_t    real_af ;
+  uint          holdtime, keepalive ;
 
   session = connection->session ;
   note    = NULL ;                      /* so far, so good      */
@@ -635,21 +636,21 @@ bgp_connection_make_args(bgp_connection connection, bgp_session_args args)
    * Note that all these args are embedded structures.  We have a temporary
    * args structure here, which will be copied to the session if all goes well.
    */
-  args_config  = session->args_config ;
-  args_sent    = connection->open_sent->args ;
-  args_recv    = connection->open_recv->args ;
+  sargs_conf  = session->sargs_conf ;
+  sargs_sent  = connection->open_sent->sargs ;
+  sargs_recv  = connection->open_recv->sargs ;
 
   /* Pull in the local_/remote_  _as/_id
    */
-  args->local_as  = args_sent->local_as ;
-  args->local_id  = args_sent->local_id ;
+  sargs->local_as  = sargs_sent->local_as ;
+  sargs->local_id  = sargs_sent->local_id ;
 
-  args->remote_as = args_recv->remote_as ;
-  args->remote_id = args_recv->remote_id ;
+  sargs->remote_as = sargs_recv->remote_as ;
+  sargs->remote_id = sargs_recv->remote_id ;
 
-  qassert(args->local_as  == args_config->local_as) ;
-  qassert(args->local_id  == args_config->local_id) ;
-  qassert(args->remote_as == args_config->remote_as) ;
+  qassert(sargs->local_as  == sargs_conf->local_as) ;
+  qassert(sargs->local_id  == sargs_conf->local_id) ;
+  qassert(sargs->remote_as == sargs_conf->remote_as) ;
 
   /* Decide which afi/safi, if any, this session will carry.
    *
@@ -658,23 +659,23 @@ bgp_connection_make_args(bgp_connection connection, bgp_session_args args)
    *     scope of cap_af_override to the (ancient) case of a peer which does
    *     not really do *any* Capability stuff.
    */
-  args->can_af = real_af = args_recv->can_af & args_sent->can_af ;
+  sargs->can_af = real_af = sargs_recv->can_af & sargs_sent->can_af ;
 
-  if (args_sent->cap_af_override)
+  if (sargs_sent->cap_af_override)
     {
-      if (args_recv->can_mp_ext)
+      if (sargs_recv->can_mp_ext)
         {
           zlog_info ("%s got MP-Ext Capability, so ignoring "
                                   "override-capability", connection->lox.name) ;
         }
-      else if (real_af != args_config->can_af)
+      else if (real_af != sargs_conf->can_af)
         {
-          args->can_af          = args_config->can_af ;
-          args->cap_af_override = true ;
+          sargs->can_af          = sargs_conf->can_af ;
+          sargs->cap_af_override = true ;
         }
     } ;
 
-  if (args->can_af == 0)
+  if (sargs->can_af == 0)
     {
       /* We end up with no afi/safi at all.
        *
@@ -685,7 +686,7 @@ bgp_connection_make_args(bgp_connection connection, bgp_session_args args)
                                                          connection->lox.name) ;
 
       note = bgp_note_new(BGP_NOMC_OPEN, BGP_NOMS_O_CAPABILITY) ;
-      bgp_add_qafx_set_to_notification(note, args_config->can_af) ;
+      bgp_add_qafx_set_to_notification(note, sargs_conf->can_af) ;
 
       return note ;
     } ;
@@ -693,25 +694,25 @@ bgp_connection_make_args(bgp_connection connection, bgp_session_args args)
   /* Now complete the set-up of the args to reflect the negotiated session
    * arguments.
    */
-  args->cap_strict     = args_sent->cap_strict ;
-  args->cap_suppressed = args_sent->cap_suppressed ;
+  sargs->cap_strict     = sargs_sent->cap_strict ;
+  sargs->cap_suppressed = sargs_sent->cap_suppressed ;
 
-  args->can_capability = args_sent->can_capability &&
-                         args_recv->can_capability ;
-  args->can_mp_ext     = args_sent->can_mp_ext &&
-                         args_recv->can_mp_ext ;
-  args->can_as4        = args_recv->can_as4 &&
-                         args_sent->can_as4 ;
+  sargs->can_capability = sargs_sent->can_capability &&
+                          sargs_recv->can_capability ;
+  sargs->can_mp_ext     = sargs_sent->can_mp_ext &&
+                          sargs_recv->can_mp_ext ;
+  sargs->can_as4        = sargs_recv->can_as4 &&
+                          sargs_sent->can_as4 ;
 
-  args->can_rr         = args_recv->can_rr ;
+  sargs->can_rr         = sargs_recv->can_rr ;
 
-  args->gr             = args_recv->gr ;
-  args->gr.can           &= args_sent->gr.can ;
-  args->gr.can_preserve  &= real_af ;
-  args->gr.has_preserved &= real_af ;
+  sargs->gr             = sargs_recv->gr ;
+  sargs->gr.can           &= sargs_sent->gr.can ;
+  sargs->gr.can_preserve  &= real_af ;
+  sargs->gr.has_preserved &= real_af ;
 
-  args->can_orf        = args_recv->can_orf &
-                         args_sent->can_orf ;
+  sargs->can_orf        = sargs_recv->can_orf &
+                          sargs_sent->can_orf ;
 
   for (qafx = qafx_first ; qafx <= qafx_last ; ++qafx)
     {
@@ -723,8 +724,8 @@ bgp_connection_make_args(bgp_connection connection, bgp_session_args args)
       if (!(real_af & qafx_bit(qafx)))
         continue ;
 
-      orf_sent = args_sent->can_orf_pfx.af[qafx] ;
-      orf_recv = args_recv->can_orf_pfx.af[qafx] ;
+      orf_sent = sargs_sent->can_orf_pfx.af[qafx] ;
+      orf_recv = sargs_recv->can_orf_pfx.af[qafx] ;
 
       orf = 0 ;
 
@@ -738,12 +739,12 @@ bgp_connection_make_args(bgp_connection connection, bgp_session_args args)
       if ((orf_sent & ORF_RM_pre) && (orf_recv & ORF_SM_pre))
         orf |= ORF_RM_pre ;
 
-      args->can_orf_pfx.af[qafx] = orf ;
+      sargs->can_orf_pfx.af[qafx] = orf ;
     } ;
 
-  args->can_dynamic     = args_recv->can_dynamic && args_sent->can_dynamic ;
-  args->can_dynamic_dep = !args->can_dynamic && args_recv->can_dynamic_dep
-                                             && args_sent->can_dynamic_dep ;
+  sargs->can_dynamic     = sargs_recv->can_dynamic && sargs_sent->can_dynamic ;
+  sargs->can_dynamic_dep = !sargs->can_dynamic && sargs_recv->can_dynamic_dep
+                                               && sargs_sent->can_dynamic_dep ;
 
   /* Negotiation of HoldTime and setting of KeepaliveTime.
    *
@@ -763,21 +764,21 @@ bgp_connection_make_args(bgp_connection connection, bgp_session_args args)
    *
    *   * the minimum value is the configured value, or 1 if the HoldTime > 0.
    */
-  if (args_recv->holdtime_secs <= args_sent->holdtime_secs)
-    holdtime = args_recv->holdtime_secs ;
+  if (sargs_recv->holdtime_secs <= sargs_sent->holdtime_secs)
+    holdtime = sargs_recv->holdtime_secs ;
   else
-    holdtime = args_sent->holdtime_secs ;
+    holdtime = sargs_sent->holdtime_secs ;
 
   if ((holdtime < 3) && (holdtime != 0))
     holdtime = 3 ;              /* more paranoia        */
 
   keepalive = holdtime / 3 ;
-  if ((keepalive > args_config->keepalive_secs)
-                                           && (args_config->keepalive_secs > 0))
-    keepalive = args_config->keepalive_secs ;
+  if ((keepalive > sargs_conf->keepalive_secs)
+                                           && (sargs_conf->keepalive_secs > 0))
+    keepalive = sargs_conf->keepalive_secs ;
 
-  args->holdtime_secs   = holdtime ;
-  args->keepalive_secs  = keepalive ;
+  sargs->holdtime_secs   = holdtime ;
+  sargs->keepalive_secs  = keepalive ;
 
   /* Do "strict" capability checks:
    *
@@ -836,15 +837,15 @@ bgp_connection_make_args(bgp_connection connection, bgp_session_args args)
    *
    *      We don't support these, in any case.
    */
-  if (args->cap_strict)
+  if (sargs->cap_strict)
     {
       bgp_orf_caps_t orf_pfx_missing ;
       bgp_form_t     orf_cap_missing ;
 
       /* Check that we got AS4 if we wanted it and need it.
        */
-      if (args_config->can_as4 && (args->local_as > BGP_AS2_MAX)
-                               && !args->can_as4)
+      if (sargs_conf->can_as4 && (sargs->local_as > BGP_AS2_MAX)
+                              && !sargs->can_as4)
         {
           /* Note that we complain about the capability we wanted to see !
            */
@@ -858,21 +859,20 @@ bgp_connection_make_args(bgp_connection connection, bgp_session_args args)
 
           store_b( &p[0], BGP_CAN_AS4) ;
           store_b( &p[1], BGP_CAP_AS4_L) ;
-          store_nl(&p[2], args->remote_as) ;
+          store_nl(&p[2], sargs->remote_as) ;
 
           confirm(BGP_CAP_AS4_L == 4) ;
         } ;
 
       /* Check that we got all the families we wanted.
        */
-      if (args_config->can_af != args->can_af)
+      if (sargs_conf->can_af != sargs->can_af)
         {
           if (note == NULL)
-            note = bgp_note_new(BGP_NOMC_OPEN,
-                                          BGP_NOMS_O_CAPABILITY) ;
+            note = bgp_note_new(BGP_NOMC_OPEN, BGP_NOMS_O_CAPABILITY) ;
 
           bgp_add_qafx_set_to_notification(note,
-                                          args_config->can_af & ~args->can_af) ;
+                                          sargs_conf->can_af & ~sargs->can_af) ;
         } ;
 
       /* Check that we got the ability to send Prefix ORF where we wanted
@@ -885,12 +885,12 @@ bgp_connection_make_args(bgp_connection connection, bgp_session_args args)
         {
           bgp_orf_cap_bits_t orf_want ;
 
-          orf_want = args_config->can_orf_pfx.af[qafx] & (ORF_SM | ORF_SM_pre) ;
+          orf_want = sargs_conf->can_orf_pfx.af[qafx] & (ORF_SM | ORF_SM_pre) ;
 
           if (orf_want == 0)
             continue ;
 
-          qassert(args_config->can_af & qafx_bit(qafx)) ;
+          qassert(sargs_conf->can_af & qafx_bit(qafx)) ;
 
           /* For Prefix ORF we have two equivalent Types.  Assuming we wanted
            * one or both: if we did not get at least one of what we wanted,
@@ -902,7 +902,7 @@ bgp_connection_make_args(bgp_connection connection, bgp_session_args args)
            * Note that we complain about ORF_RM to the far end... so, the
            * capability from *their* perspective.
            */
-          if (!(args->can_orf_pfx.af[qafx] & ORF_SM))
+          if (!(sargs->can_orf_pfx.af[qafx] & ORF_SM))
             {
               if (orf_want & ORF_SM)
                 {
@@ -1040,7 +1040,7 @@ bgp_connection_prepare(bgp_connection connection)
   /* Now we want a bang up to date copy of the connection options.
    */
   connection->cops = bgp_cops_copy(connection->cops,
-                                             connection->session->cops_config) ;
+                                             connection->session->cops_conf) ;
 
   return connection->cops ;
 } ;
@@ -1289,8 +1289,8 @@ bgp_cops_reset(bgp_cops cops)
 
   /* Zeroising sets:
    *
-   *   * su_remote              -- AF_UNSPEC
-   *   * su_local               -- AF_UNSPEC
+   *   * remote_su              -- AF_UNSPEC
+   *   * local_su               -- AF_UNSPEC
    *
    *   * port                   -- 0        -- invalid !
    *
@@ -1724,8 +1724,8 @@ bgp_acceptor_reset(bgp_acceptor acceptor, bgp_nom_subcode_t subcode)
  *
  * Clears out the:
  *
- *   su_remote              -- to be filled in by the accept() action
- *   su_local               -- to be filled in by the accept() action
+ *   remote_su              -- to be filled in by the accept() action
+ *   local_su               -- to be filled in by the accept() action
  *
  *   connect_retry_secs     -- N/A
  *
@@ -1740,8 +1740,8 @@ bgp_acceptor_cops_reset(bgp_acceptor acceptor)
 {
   qassert((acceptor->state != bacs_unset) && (acceptor->cops != NULL)) ;
 
-  sockunion_clear(&acceptor->cops->su_remote) ;
-  sockunion_clear(&acceptor->cops->su_local) ;
+  sockunion_clear(&acceptor->cops->remote_su) ;
+  sockunion_clear(&acceptor->cops->local_su) ;
 
   acceptor->cops->connect_retry_secs = 0 ;
   acceptor->cops->ttl_out            = 0 ;
@@ -1791,26 +1791,26 @@ bgp_acceptor_free(bgp_acceptor acceptor)
  * This function is used to initialise or change the accept->cops.  If a change
  * is made which invalidates any current connection, then that is reset.
  *
- * NB: it is not expected that the su_remote in the session->cops_config will
+ * NB: it is not expected that the remote_su in the session->cops_config will
  *     *ever* change.
  *
- *     However, keep a copy of the session->cops_config->su_remote as the
+ *     However, keep a copy of the session->cops_config->remote_su as the
  *     acceptor->su_password.  So that if we set a password, we have a separate
  *     record of what we set the password for.
  *
- *     If arrives here with an su_remote which is not the same as the current
+ *     If arrives here with an remote_su which is not the same as the current
  *     su_password, then will reset the current listening arrangement.
  *
  * Most of the acceptor->cops are unaffected when a new accept connection
  * is made.  All of the settings which could cause a connection to be reset are
- * read-only -- with the exception of the su_remote, as above.  (What this
+ * read-only -- with the exception of the remote_su, as above.  (What this
  * means is we don't need an acceptor->cops_config to run this comparison
  * against -- the acceptor->cops contains both config and current.)
  *
  * The acceptor configuration options are:
  *
- *   su_remote              -- N/A  -- filled in for actual connection
- *   su_local               -- N/A  -- filled in for actual connection
+ *   remote_su              -- N/A  -- filled in for actual connection
+ *   local_su               -- N/A  -- filled in for actual connection
  *
  *   port                   -- if not the same as current, then must unset
  *                             current and start again.
@@ -1866,7 +1866,7 @@ bgp_acceptor_set_cops(bgp_session session, bgp_cops_c new_config)
 
       unset     = !can_track || (cops->port != new_config->port)
                              || !sockunion_same(acceptor->su_password,
-                                                       &new_config->su_remote) ;
+                                                       &new_config->remote_su) ;
 
       new_passw = !strsame(cops->password, new_config->password) ;
 
@@ -1949,7 +1949,7 @@ bgp_acceptor_set_cops(bgp_session session, bgp_cops_c new_config)
     acceptor->su_password = sockunion_free(acceptor->su_password) ;
   else if (set_new)
     acceptor->su_password = sockunion_copy(acceptor->su_password,
-                                                       &new_config->su_remote) ;
+                                                       &new_config->remote_su) ;
 
   /* If we (still) have a running acceptor, update the cops if required.
    */
@@ -2008,24 +2008,24 @@ bgp_acceptor_accept(bgp_acceptor acceptor, int sock_fd, bool ok,
    *
    * This BOUND to be OK... but if not, best not to go any further !
    */
-  cops_config = acceptor->session->cops_config ;
+  cops_config = acceptor->session->cops_conf ;
   cops        = acceptor->cops ;
 
-  if (ok && !sockunion_same(&cops_config->su_remote, sock_su))
+  if (ok && !sockunion_same(&cops_config->remote_su, sock_su))
     {
       plog_err(acceptor->lox.log, "[FSM] BGP accept() for %s"
                                 " -- accept gave address %s ?? (expected %s)",
             acceptor->lox.name, sutoa(sock_su).str,
-                                sutoa(&cops_config->su_remote).str) ;
+                                sutoa(&cops_config->remote_su).str) ;
       ok = false ;
     } ;
 
-  if (ok && !sockunion_same(&cops->su_remote, sock_su))
+  if (ok && !sockunion_same(&cops->remote_su, sock_su))
     {
       plog_err(acceptor->lox.log, "[FSM] BGP accept() for %s"
                        " -- accept gave address %s but getpeername() gave %s",
            acceptor->lox.name, sutoa(sock_su).str,
-                               sutoa(&cops->su_remote).str) ;
+                               sutoa(&cops->remote_su).str) ;
       ok = false ;
     } ;
 

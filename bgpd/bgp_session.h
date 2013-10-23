@@ -185,21 +185,22 @@ struct bgp_session
 
   /* The session arguments configuration.
    *
-   *   * args_sent   -- last set as sent      -- belong to the RE *ALWAYS*.
+   *   * sargs_sent -- last set as sent      -- belong to the RE *ALWAYS*.
    *
    *     This is the reference copy of the last set of session arguments
    *     sent to the BE.
    *
-   *   * args_config -- session configuration -- belong to the BE if pssRunning
+   *   * sargs_conf -- session configuration -- belong to the BE if pssRunning
    *
-   *     The args_config are set from the copy sent when the BE is prodded.
+   *     The sargs_conf are set from the copy sent when the BE is prodded.
    */
-  bgp_session_args      args_sent ;
-  bgp_session_args      args_config ;
+  bgp_sargs     sargs_sent ;
+  bgp_sargs     sargs_conf ;
 
   /* The session arguments for Established Session.
    *
-   *   * args -- actual session state, once established -- transfer BE to RE.
+   *   * sargs     -- actual session state, once established
+   *                                                    -- transfer BE to RE.
    *
    *   * open_sent -- actual OPEN as sent for session, once established
    *                                                    -- transfer BE to RE.
@@ -211,9 +212,9 @@ struct bgp_session
    *
    *     So, while pEstablished, these belong to the peer !
    */
-  bgp_session_args      args ;
-  bgp_open_state        open_sent ;
-  bgp_open_state        open_recv ;
+  bgp_sargs         sargs ;
+  bgp_open_state    open_sent ;
+  bgp_open_state    open_recv ;
 
   /* Session ring-buffers -- created by BE, belong to RE once Established
    *
@@ -224,8 +225,8 @@ struct bgp_session
    * While the session is established, these are shared by the BE and RE.
    * When the session stops, the BE stops using these, and the RE can discard.
    */
-  ring_buffer           read_rb ;
-  ring_buffer           write_rb ;
+  ring_buffer   read_rb ;
+  ring_buffer   write_rb ;
 
   /* Statistics -- embedded structure
    *
@@ -242,7 +243,7 @@ struct bgp_session
    *     This is the reference copy of the last set of connection options
    *     sent to the BE.
    *
-   *   * cops_config -- session configuration -- belong to the BE *ALWAYS*.
+   *   * cops_conf   -- session configuration -- belong to the BE *ALWAYS*.
    *
    *     The cops_config are set from the copy sent when the BE is prodded.
    *
@@ -252,9 +253,9 @@ struct bgp_session
    *     established, and not changed again by the BE.  These are copied to the
    *     peer when the session is established.
    */
-  bgp_cops              cops_sent ;
-  bgp_cops              cops_config ;
-  bgp_cops              cops ;
+  bgp_cops      cops_sent ;
+  bgp_cops      cops_conf ;
+  bgp_cops      cops ;
 
   /* This is for the prodding of the BE.
    *
@@ -335,7 +336,7 @@ struct bgp_session_prod_args            /* to BGP Engine                */
   bgp_note      note ;                  /* NOTIFICATION to send         */
   bool          peer_established ;      /* peer is established          */
 
-  bgp_session_args args ;
+  bgp_sargs args ;
   bgp_cops      cops ;
 } ;
 MQB_ARGS_SIZE_OK(struct bgp_session_prod_args) ;

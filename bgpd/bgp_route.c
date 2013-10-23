@@ -156,19 +156,17 @@ extern attr_set
 bgp_route_in_filter(bgp_prib prib, attr_set attr, prefix_id_entry_c pie)
 {
   bgp_prun    prun ;
+  bgp_run     brun ;
   attr_pair_t pair[1] ;
   as_path     asp ;
   access_list dlist ;
   prefix_list plist ;
   as_list     aslist ;
   route_map   rmap ;
-  const char* reason;
-  bgp_peer_sort_t sort ;
-  qafx_t  qafx ;
+  chs_c       reason;
 
-  qafx = prib->qafx ;
   prun = prib->prun ;
-  sort = prun->sort ;
+  brun = prun->brun ;
 
   /* Load attribute pair in preparation for any changes later on.
    *
@@ -181,11 +179,11 @@ bgp_route_in_filter(bgp_prib prib, attr_set attr, prefix_id_entry_c pie)
    * For eBGP: if directly connected, check that the nexthop is "onlink".
    *
    *           if there is a change_local_as, look for that unless it is the
-   *           same as the ebgp_as.
+   *           same as the my_as_ebgp.
    *
-   *           look for the ebgp_as -- with allow_as_in.
+   *           look for the my_as_ebgp -- with allow_as_in.
    *
-   *           if confed_id is defined, check for bgp->my_as as well.
+   *           if confed_id is defined, check for my_as as well.
    *
    * For other peers:
    *
@@ -197,30 +195,28 @@ bgp_route_in_filter(bgp_prib prib, attr_set attr, prefix_id_entry_c pie)
    */
   asp = pair->working->asp ;
 
-  if (sort == BGP_PEER_EBGP)
+  if (prun->rp.sort == BGP_PEER_EBGP)
     {
       /* If the prun is EBGP and nexthop is not on connected route,
        * discard it.
        *
        * TODO nexthop check for IPv6 ????..............................................
        */
-      if ( (prun->cops_r.ttl == 1)
+      if ( (prun->rp.cops_conf.ttl == 1)
               && ! bgp_nexthop_onlink (qAFI_IPv4, &attr->next_hop)
-              && ! (prun->disable_connected_check) )
+              && ! (prun->rp.do_disable_connected_check) )
         {
           reason = "non-connected next-hop;";
           goto filtered;
         } ;
 
-      /* If we have a change_local_as which is not the same as the as the
-       * bgp->ebgp_as, then need to check for that.
+      /* If we have a change_local_as, check for that.
        *
        * Note that the 'allow_as_in' does not apply to this check.
        */
-      if ( (prun->change_local_as != BGP_ASN_NULL) &&
-           (prun->change_local_as != prun->ebgp_as_r) )
+      if (prun->rp.change_local_as != BGP_ASN_NULL)
         {
-          if (!as_path_loop_check (asp, prun->change_local_as, 0))
+          if (!as_path_loop_check (asp, prun->rp.change_local_as, 0))
             {
               reason = "as-path contains our own (change-local) AS;";
               goto filtered;
@@ -229,9 +225,9 @@ bgp_route_in_filter(bgp_prib prib, attr_set attr, prefix_id_entry_c pie)
 
       /* AS path eBGP loop check -- this is the standard check for loop.
        */
-      if (!as_path_loop_check(asp, prun->ebgp_as_r, prib->allow_as_in))
+      if (!as_path_loop_check(asp, brun->rp.my_as_ebgp, prib->rp.allow_as_in))
         {
-          if (prun->confed_id_r == BGP_ASN_NULL)
+          if (brun->rp.confed_id == BGP_ASN_NULL)
             reason = "as-path contains our own AS;";
           else
             reason = "as-path contains our own (Confed_ID) AS;";
@@ -248,8 +244,8 @@ bgp_route_in_filter(bgp_prib prib, attr_set attr, prefix_id_entry_c pie)
        * The AS-PATH really should not contain any of the Confederation Member
        * ASes (the confed_peers) -- but we do not check for that.
        */
-      if (prun->do_check_confed_id_r &&
-                             !as_path_loop_check(asp, prun->args_r.local_as, 0))
+      if (brun->rp.do_check_confed_id &&
+                                   !as_path_loop_check(asp, brun->rp.my_as, 0))
         {
           reason = "as-path contains our own (Confed Member) AS;";
           goto filtered;
@@ -262,12 +258,12 @@ bgp_route_in_filter(bgp_prib prib, attr_set attr, prefix_id_entry_c pie)
        * For iBGP this will jump on any AS_PATHs which for some unknown reason
        * an internal prun is sending with our AS in it.
        *
-       * For Confed -- that is a prun in the same confederation, but in a
+       * For Confed -- that is a peer in the same confederation, but in a
        * different member AS -- this traps route loops within the confederation.
        * (In this case the bgp->my_as ought to be in Confed segments -- but we
        * don't actually worry about that !)
        */
-      if (!as_path_loop_check(asp, prun->my_as_r, prib->allow_as_in))
+      if (!as_path_loop_check(asp, brun->rp.my_as, prib->rp.allow_as_in))
         {
           reason = "as-path contains our own AS;";
           goto filtered;
@@ -279,22 +275,27 @@ bgp_route_in_filter(bgp_prib prib, attr_set attr, prefix_id_entry_c pie)
        * This is a belt-and-braces thing.  The confed_id should not appear in
        * the AS-PATH, unless it is a Member AS, in which case it should not
        * appear in any not-confederation segment.
+       *
+       * The check-confed-id-all option allows for a confed_id which is not
+       * used by any confederation member -- and so should not appear anywhere
+       * in the path.
        */
-      if (prun->do_check_confed_id_r)
+      if (brun->rp.do_check_confed_id)
         {
-          if (prun->do_check_confed_id_all_r)
+          if (brun->rp.do_check_confed_id_all)
             {
-              if (!as_path_loop_check(asp, prun->confed_id_r, 0))
+              if (!as_path_loop_check(asp, brun->rp.confed_id, 0))
                 {
-                  reason = "as-path contains our own (Confed_ID) AS;";
+                  reason = "as-path contains our Confed_ID AS;";
                   goto filtered ;
                 } ;
             }
           else
             {
-              if (!as_path_loop_check_not_confed(asp, prun->confed_id_r, 0))
+              if (!as_path_loop_check_not_confed(asp, brun->rp.confed_id, 0))
                 {
-                  reason = "as-path contains our own (Confed_ID) AS;";
+                  reason = "as-path contains our Confed_ID AS "
+                                                       "in not-confed segment;";
                   goto filtered;
                 } ;
             } ;
@@ -303,7 +304,7 @@ bgp_route_in_filter(bgp_prib prib, attr_set attr, prefix_id_entry_c pie)
 
   /* Check that we are not the originator of this route
    */
-  if ((prun->router_id_r == pair->working->originator_id)
+  if ((brun->rp.router_id == pair->working->originator_id)
                                    && (pair->working->have & atb_originator_id))
     {
       reason = "originator is us;";
@@ -316,13 +317,13 @@ bgp_route_in_filter(bgp_prib prib, attr_set attr, prefix_id_entry_c pie)
     {
       /* Check that our cluster_id does not appear in the cluster list.
        *
-       * NB: all bgp instances have a default cluster_id, which is the
-       *     instance's router-id.
+       * NB: all bruns have an cluster_eid, which is the configured cluster_id,
+       *     or the instance's router-id.
        *
        * NB: we don't actually know whether we are a Route Reflector or not,
        *     so we here scan the CLUSTER_LIST in any case.
        */
-      if (!attr_cluster_check (pair->working->cluster, prun->cluster_id_r))
+      if (!attr_cluster_check (pair->working->cluster, brun->rp.cluster_eid))
         {
           reason = "reflected from the same cluster;";
           goto  filtered;
@@ -382,8 +383,8 @@ bgp_route_in_filter(bgp_prib prib, attr_set attr, prefix_id_entry_c pie)
    */
   qassert(pair->working->weight == 0) ;
 
-  if (prun->weight != 0)
-    bgp_attr_pair_set_weight(pair, prun->weight) ;
+  if (prun->rp.weight != 0)
+    bgp_attr_pair_set_weight(pair, prun->rp.weight) ;
 
   /* change_local-as prepend
    *
@@ -397,9 +398,10 @@ bgp_route_in_filter(bgp_prib prib, attr_set attr, prefix_id_entry_c pie)
    * Except: if the "phantom" ASN is the same as the current bgp->ebp_as,
    *         then the change_local_as is ignored.
    */
-  if (prun->change_local_as_prepend && (prun->change_local_as != BGP_ASN_NULL))
+  if (prun->rp.do_local_as_prepend &&
+                                    (prun->rp.change_local_as != BGP_ASN_NULL))
     bgp_attr_pair_set_as_path(pair,
-                               as_path_add_seq (asp, prun->change_local_as)) ;
+                              as_path_add_seq (asp, prun->rp.change_local_as)) ;
 
   /* Process prefix and attributes against any 'in' route-map.
    */
@@ -414,7 +416,7 @@ bgp_route_in_filter(bgp_prib prib, attr_set attr, prefix_id_entry_c pie)
 
       brm->prun      = prun ;
       brm->attrs     = pair ;
-      brm->qafx      = qafx ;
+      brm->qafx      = prib->qafx ;
       brm->rmap_type = BGP_RMAP_TYPE_IN ;
 
       if (route_map_apply(rmap, pie->pfx, RMAP_BGP, brm) == RMAP_DENY_MATCH)
@@ -423,6 +425,11 @@ bgp_route_in_filter(bgp_prib prib, attr_set attr, prefix_id_entry_c pie)
           goto  filtered ;
         } ;
     } ;
+
+  /* Finally, set the defaults for local-pref and med.
+   */
+  bgp_attr_pair_default_local_pref(pair, prun->rp.default_local_pref) ;
+  bgp_attr_pair_default_med(pair, prun->rp.default_med) ;
 
   /* Deal with locks and then we are done -- see above.
    */
@@ -463,14 +470,14 @@ bgp_route_in_filter(bgp_prib prib, attr_set attr, prefix_id_entry_c pie)
 extern attr_set
 bgp_route_inx_filter(bgp_prib prib, attr_set attr, prefix_id_entry_c pie)
 {
-  bgp_prun    prun ;
-  attr_pair_t pair[1] ;
-  route_map rmap ;
-  const char *reason;
-  qafx_t  qafx ;
+  bgp_prun      prun ;
+  bgp_run       brun ;
+  attr_pair_t   pair[1] ;
+  route_map     rmap ;
+  chs_c         reason;
 
-  qafx = prib->qafx ;
   prun = prib->prun ;
+  brun = prun->brun ;
 
   /* Load attribute pair in preparation for any changes later on.
    */
@@ -480,7 +487,7 @@ bgp_route_inx_filter(bgp_prib prib, attr_set attr, prefix_id_entry_c pie)
    *
    * This is a duplicate of the Main RIB check -- so no need to log.
    */
-  if (!as_path_loop_check(pair->working->asp, prun->my_as_r, 0))
+  if (!as_path_loop_check(pair->working->asp, brun->rp.my_as, 0))
     {
       reason = NULL ;
       goto filtered ;
@@ -490,7 +497,7 @@ bgp_route_inx_filter(bgp_prib prib, attr_set attr, prefix_id_entry_c pie)
    *
    * This is a duplicate of the Main RIB check -- so no need to log.
    */
-  if ((prun->router_id_r == pair->working->originator_id)
+  if ((brun->rp.router_id == pair->working->originator_id)
                                    && (pair->working->have & atb_originator_id))
     {
       reason = NULL ;
@@ -501,8 +508,8 @@ bgp_route_inx_filter(bgp_prib prib, attr_set attr, prefix_id_entry_c pie)
    */
   qassert(pair->working->weight == 0) ;
 
-  if (prun->weight != 0)
-    bgp_attr_pair_set_weight(pair, prun->weight) ;
+  if (prun->rp.weight != 0)
+    bgp_attr_pair_set_weight(pair, prun->rp.weight) ;
 
   /* Process prefix and attributes against any 'inx' route-map.
    */
@@ -517,7 +524,7 @@ bgp_route_inx_filter(bgp_prib prib, attr_set attr, prefix_id_entry_c pie)
 
       brm->prun      = prun ;
       brm->attrs     = pair ;
-      brm->qafx      = qafx ;
+      brm->qafx      = prib->qafx ;
       brm->rmap_type = BGP_RMAP_TYPE_RS_IN ;
 
       if (route_map_apply(rmap, pie->pfx, RMAP_BGP, brm) == RMAP_DENY_MATCH)
@@ -526,6 +533,11 @@ bgp_route_inx_filter(bgp_prib prib, attr_set attr, prefix_id_entry_c pie)
           goto filtered;
         } ;
     } ;
+
+  /* Finally, set the defaults for local-pref and med.
+   */
+  bgp_attr_pair_default_local_pref(pair, prun->rp.default_local_pref) ;
+  bgp_attr_pair_default_med(pair, prun->rp.default_med) ;
 
   /* Deal with locks and then we are done.
    */
@@ -717,12 +729,12 @@ bgp_rib_process_schedule(bgp_rib_node rn)
 
   rib = rn->it.rib ;
 
-  /* If not already scheduled for processing, reschedule at the end of the
-   * queue.
+  /* If node has been processed it is sitting behind the main rib walker,
+   * so need to move it round to the end of the queue.
    */
-  if (rn->flags & rnf_processed)
+  if (rn->processed)
     {
-      rn->flags ^= rnf_processed ;
+      rn->processed = false ;
 
       ddl_del(rib->queue_base, &rn->it, queue) ;
       ddl_append(rib->queue_base, &rn->it, queue) ;
@@ -838,8 +850,7 @@ bgp_process_walker(void* data, qtime_mono_t yield_time)
       confirm(offsetof(bgp_rib_node_t, it) == 0) ;
 
       bgp_process_node(rn, rw) ;
-
-      rn->flags |= rnf_processed ;
+      rn->processed = true ;
 
       /* If something follows the item we have just processed, then put the
        * walker back on the queue after the item, and return.
@@ -1004,7 +1015,7 @@ bgp_process_update_lc(bgp_rib_node rn, prefix_id_entry pie, bgp_lc_id_t lc)
 
   /* Run the route selection process for this context.
    */
-  ris = bgp_route_select(rn, lc) ;
+  ris = bgp_route_select_lc(rn, lc) ;
 
   /* But if we are not announcing anything, we can stop now !
    */
@@ -1032,7 +1043,7 @@ bgp_process_update_lc(bgp_rib_node rn, prefix_id_entry pie, bgp_lc_id_t lc)
 /*==============================================================================
  * Making and sending new announcements
  */
-static attr_set bgp_route_announce_check(bgp_prib prib, prefix_id_entry pie,
+static attr_set bgp_route_announce_check(bgp_prib to_prib, prefix_id_entry pie,
                                                                route_info ris) ;
 static bool bgp_community_filter_out (bgp_prun prun, attr_set attr) ;
 static bool bgp_output_filter (bgp_prib prib, prefix pfx, attr_set attr) ;
@@ -1090,41 +1101,40 @@ bgp_route_announce(bgp_prib prib, prefix_id_entry pie, route_info ris)
  *           attribute set to be announced -- with one level of lock
  */
 static attr_set
-bgp_route_announce_check(bgp_prib prib, prefix_id_entry pie, route_info ris)
+bgp_route_announce_check(bgp_prib to_prib, prefix_id_entry pie, route_info ris)
 {
-  bgp_prun from_prun, to_prun ;
-  attr_set  attr ;
-  attr_pair_t pair[1] ;
-  route_map rmap ;
-  bool reflecting, set_next_hop ;
-  qafx_t    qafx ;
-  bgp_lc_id_t  lc ;
+  bgp_prun      from_prun, to_prun ;
+  bgp_run       brun ;
+  attr_set      attr ;
+  attr_pair_t   pair[1] ;
+  route_map     rmap ;
+  bool          reflecting, set_next_hop ;
 
-  qassert(!prib->route_server_client) ;
-
-  qafx = prib->qafx ;
-  lc   = prib->lc_id ;
+  qassert(!to_prib->rp.is_route_server_client) ;
 
   from_prun = ris->prib->prun ;
-  to_prun   = prib->prun ;
+  to_prun   = to_prib->prun ;
 
   if (from_prun == to_prun)
     return NULL ;                       /* No return to sender          */
 
-  attr = ris->iroutes[lc].attr ;        /* NB: unchanged until loaded   */
+  brun = to_prun->brun ;
+  qassert(brun == from_prun->brun) ;
+
+  attr = ris->iroutes[to_prib->lc_id].attr ;  /* NB: unchanged until loaded */
 
   /* XXX the checks here do not seem complete.
    *
    * This is copied from the existing code, except that have dropped the
    * invalid IPV6_ADDR_SAME() comparison of two IPv4 addresses !!
    *
-   * Should this be checking the to_peer->su_remote ????
+   * Should this be checking the to_peer->remote_su ????
    */
   switch (pie->pfx->family) /* Do not send routes with nexthop which
                              * is an address of the destination peer    */
     {
       case AF_INET:
-        if (to_prun->args_r.remote_id == attr->next_hop.ip.v4)
+        if (to_prun->rp.sargs_conf.remote_id == attr->next_hop.ip.v4)
           return NULL ;
         break ;
 
@@ -1157,11 +1167,11 @@ bgp_route_announce_check(bgp_prib prib, prefix_id_entry pie, route_info ris)
     }
   else
 #endif
-    rmap = prib->rmap[RMAP_OUT] ;
+    rmap = to_prib->rmap[RMAP_OUT] ;
 
   /* Default route check -- if we have sent a default, do not send another.
    */
-  if (prib->default_sent)
+  if (to_prib->default_sent)
     {
       switch (pie->pfx->family)
         {
@@ -1193,7 +1203,7 @@ bgp_route_announce_check(bgp_prib prib, prefix_id_entry pie, route_info ris)
    * unlikely to be the same as the remote to_peer's id -- but for completeness
    * we check for the existence of an originator-id *after* find equality.
    */
-  if ((to_prun->args_r.remote_id == attr->originator_id) &&
+  if ((to_prun->rp.sargs_conf.remote_id == attr->originator_id) &&
                                             (attr->have & atb_originator_id))
     {
       if (BGP_DEBUG (filter, FILTER))
@@ -1205,9 +1215,9 @@ bgp_route_announce_check(bgp_prib prib, prefix_id_entry pie, route_info ris)
 
   /* ORF prefix-list filter check
    */
-  if (prib->orf_plist != NULL)
+  if (to_prib->orf_plist != NULL)
     {
-      if (prefix_list_apply (prib->orf_plist, pie->pfx) == PREFIX_DENY)
+      if (prefix_list_apply (to_prib->orf_plist, pie->pfx) == PREFIX_DENY)
         {
           if (BGP_DEBUG (filter, FILTER))
            zlog (to_prun->log, LOG_DEBUG,
@@ -1221,7 +1231,7 @@ bgp_route_announce_check(bgp_prib prib, prefix_id_entry pie, route_info ris)
    *
    * NB: does not change the attributes.
    */
-  if (!bgp_output_filter (prib, pie->pfx, attr))
+  if (!bgp_output_filter (to_prib, pie->pfx, attr))
     {
       if (BGP_DEBUG (filter, FILTER))
         zlog (to_prun->log, LOG_DEBUG, "%s [Update:SEND] %s is filtered",
@@ -1235,27 +1245,27 @@ bgp_route_announce_check(bgp_prib prib, prefix_id_entry pie, route_info ris)
     {
       /* AS path loop check.
        */
-      if (as_path_loop_check (attr->asp, to_prun->args_r.remote_as, 0))
+      if (as_path_loop_check (attr->asp, to_prun->rp.sargs_conf.remote_as, 0))
         {
           if (BGP_DEBUG (filter, FILTER))
             zlog (to_prun->log, LOG_DEBUG,
                   "%s [Update:SEND] suppress announcement to to_peer AS %u"
                                                                 " is AS path.",
-                  to_prun->name, to_prun->args_r.remote_as);
+                  to_prun->name, to_prun->rp.sargs_conf.remote_as);
           return NULL ;
         }
 
       /* If we're a CONFED we need to loop check the CONFED ID too
        */
-      if (to_prun->confed_id_r != BGP_ASN_NULL)
+      if (brun->rp.confed_id != BGP_ASN_NULL)
         {
-          if (as_path_loop_check(attr->asp, to_prun->confed_id_r, 0))
+          if (as_path_loop_check(attr->asp, brun->rp.confed_id, 0))
             {
               if (BGP_DEBUG (filter, FILTER))
                 zlog (to_prun->log, LOG_DEBUG,
                       "%s [Update:SEND] suppress announcement to to_peer AS %u"
                                                                 " is AS path.",
-                      to_prun->name, to_prun->confed_id_r);
+                      to_prun->name, brun->rp.confed_id);
               return NULL ;
             }
         }
@@ -1282,19 +1292,19 @@ bgp_route_announce_check(bgp_prib prib, prefix_id_entry pie, route_info ris)
   reflecting   = false ;
   set_next_hop = true ;
 
-  switch (to_prun->sort)
+  switch (to_prun->rp.sort)
     {
       /* For iBGP destination, worry about iBGP source.
        */
       case BGP_PEER_IBGP:
-        if (from_prun->sort == BGP_PEER_IBGP)
+        if (from_prun->rp.sort == BGP_PEER_IBGP)
           {
             /* Both source and destination peers are iBGP.
              *
              * If we are not reflecting between these peers, we do not
              * announce the route.
              */
-            if (from_prun->prib[qafx]->route_reflector_client)
+            if (from_prun->prib[to_prib->qafx]->rp.is_route_reflector_client)
               {
                 /* A route from a Route-Reflector Client.
                  *
@@ -1304,15 +1314,15 @@ bgp_route_announce_check(bgp_prib prib, prefix_id_entry pie, route_info ris)
                  *
                  * ...except for the "no bgp client-to-client" option.
                  */
-                if (to_prun->no_client_to_client_r
-                                                && prib->route_reflector_client)
+                if (brun->rp.no_client_to_client
+                                       && to_prib->rp.is_route_reflector_client)
                   return bgp_attr_pair_unload(pair) ;
               }
             else
               {
                 /* A route from a Non-client.  Reflect only to clients.
                  */
-                if (!prib->route_reflector_client)
+                if (!to_prib->rp.is_route_reflector_client)
                   return bgp_attr_pair_unload(pair) ;
               } ;
 
@@ -1323,16 +1333,14 @@ bgp_route_announce_check(bgp_prib prib, prefix_id_entry pie, route_info ris)
              */
             if (!(attr->have & atb_originator_id))
               attr = bgp_attr_pair_set_originator_id(pair,
-                                                    from_prun->args_r.remote_id) ;
+                                           from_prun->rp.sargs_conf.remote_id) ;
           } ;
 
-        fall_through ;
+        break ;
 
-        /* For iBGP and cBGP destination, worry about local pref
+        /* For cBGP destination, nothing else to worry about.
          */
       case BGP_PEER_CBGP:
-        if (!(attr->have & atb_local_pref))
-          attr = bgp_attr_pair_set_local_pref(pair, brun->args_r.local_pref) ;
         break ;
 
       /* For eBGP destination:
@@ -1363,11 +1371,11 @@ bgp_route_announce_check(bgp_prib prib, prefix_id_entry pie, route_info ris)
       case BGP_PEER_EBGP:
         if (attr->have & atb_med)
           {
-            if ((from_prun != brun->prun_self) && ! prib->med_unchanged)
-              attr = bgp_attr_pair_clear_med(pair) ;
+            if ((from_prun != brun->prun_self) && !to_prib->rp.do_med_unchanged)
+              attr = bgp_attr_pair_clear_med(pair, 0) ;
           } ;
 
-        if (prib->remove_private_as)
+        if (to_prib->rp.do_remove_private_as)
           {
             if (as_path_private_as_check (attr->asp))
               attr = bgp_attr_pair_set_as_path(pair, as_path_empty_asp) ;
@@ -1418,16 +1426,16 @@ bgp_route_announce_check(bgp_prib prib, prefix_id_entry pie, route_info ris)
             break ;
         } ;
 
-      if (prib->next_hop_unchanged)
+      if (to_prib->rp.do_next_hop_unchanged)
         set_next_hop = !have_next_hop ;
-      else if (prib->next_hop_self)
+      else if (to_prib->rp.do_next_hop_self)
         set_next_hop = true ;
       else if (!have_next_hop)
         set_next_hop = true ;
-      else if ((to_prun->sort == BGP_PEER_EBGP)
+      else if ((to_prun->rp.sort == BGP_PEER_EBGP)
                                             && (attr->next_hop.type == nh_ipv4))
         set_next_hop = (bgp_multiaccess_check_v4 (attr->next_hop.ip.v4,
-                                                     to_prun->su_name) == 0) ;
+                                       &to_prun->rp.cops_conf.remote_su) == 0) ;
       else
         set_next_hop = false ;
     } ;
@@ -1492,7 +1500,7 @@ bgp_route_announce_check(bgp_prib prib, prefix_id_entry pie, route_info ris)
           keep_link_local = false ;
         } ;
 
-      if (!prib->next_hop_local_unchanged)
+      if (!to_prib->rp.do_next_hop_local_unchanged)
         {
           /* We are not required to preserve the existing link-local address.
            *
@@ -1530,7 +1538,7 @@ bgp_route_announce_check(bgp_prib prib, prefix_id_entry pie, route_info ris)
 
       brm->prun      = to_prun ;
       brm->attrs     = pair ;
-      brm->qafx      = qafx ;
+      brm->qafx      = to_prib->qafx ;
       brm->rmap_type = BGP_RMAP_TYPE_OUT ;
 
       if (route_map_apply(rmap, pie->pfx,
@@ -1600,7 +1608,7 @@ bgp_community_filter_out (bgp_prun prun, attr_set attr)
        */
       qassert(known & (cms_no_export | cms_local_as)) ;
 
-      switch (prun->sort)
+      switch (prun->rp.sort)
         {
           case BGP_PEER_EBGP:
             return true ;
@@ -1947,7 +1955,7 @@ bgp_default_originate (bgp_prun prun, qafx_t qafx, bool withdraw)
 
       brun = prun->brun;
 
-      bgp_attr_pair_set_local_pref(attrs, brun->args_r.local_pref) ;
+      bgp_attr_pair_default_local_pref(attrs, brun->rp.defs.local_pref) ;
 
 // TODO .......... either set self as next hop at the last moment, or  ...............
 //                 have a common function for doing this ??
@@ -2322,39 +2330,6 @@ bgp_distance_free (struct bgp_distance *bdistance)
 }
 
 
-extern int
-bgp_config_write_distance (vty vty, bgp_inst bgp)
-{
-  struct bgp_node *rn;
-  struct bgp_distance *bdistance;
-  bgp_args args_c ;
-
-  /* Distance configuration.
-   */
-  args_c = &bgp->config->c_args ;
-  if (   (   (args_c->distance_ebgp   != 0)
-          && (args_c->distance_ibgp   != 0)
-          && (args_c->distance_local  != 0) )
-      && (   (args_c->distance_ebgp  != ZEBRA_EBGP_DISTANCE_DEFAULT)
-          || (args_c->distance_ibgp  != ZEBRA_IBGP_DISTANCE_DEFAULT)
-          || (args_c->distance_local != ZEBRA_IBGP_DISTANCE_DEFAULT) ) )
-    vty_out (vty, " distance bgp %d %d %d\n",
-             args_c->distance_ebgp,
-             args_c->distance_ibgp,
-             args_c->distance_local);
-
-  for (rn = bgp_table_top (bgp_distance_table); rn; rn = bgp_route_next (rn))
-    if ((bdistance = rn->info) != NULL)
-      {
-        vty_out (vty, " distance %d %s/%d %s%s", bdistance->distance,
-                 safe_inet_ntoa (rn->p.u.prefix4), rn->p.prefixlen,
-                 bdistance->access_list ? bdistance->access_list : "",
-                 VTY_NEWLINE);
-      }
-
-  return 0;
-}
-
 static int
 bgp_distance_set (struct vty *vty, const char *distance_str,
                   const char *ip_str, const char *access_list_str)
@@ -2453,12 +2428,12 @@ bgp_distance_apply (bgp_prun prun, prefix_c p)
   if (p->family != AF_INET)
     return 0;
 
-  if (prun->su_name->sa.sa_family != AF_INET)
+  if (prun->rp.cops_conf.remote_su.sa.sa_family != AF_INET)
     return 0;
 
   memset (&q, 0, sizeof (struct prefix_ipv4));
   q.family    = AF_INET ;
-  q.prefix    = prun->su_name->sin.sin_addr ;
+  q.prefix    = prun->rp.cops_conf.remote_su.sin.sin_addr ;
   q.prefixlen = IPV4_MAX_BITLEN ;
 
   /* Check source address.
@@ -2489,145 +2464,34 @@ bgp_distance_apply (bgp_prun prun, prefix_c p)
 
       if (bgp_static->backdoor)
         {
-          if (prun->brun->args_r.distance_local)
-            return prun->brun->args_r.distance_local;
+          if (prun->brun->rp.defs.distance_local)
+            return prun->brun->rp.defs.distance_local;
           else
             return ZEBRA_IBGP_DISTANCE_DEFAULT;
         }
     }
 
-  if (prun->sort == BGP_PEER_EBGP)
+  if (prun->rp.sort == BGP_PEER_EBGP)
     {
-      if (prun->brun->args_r.distance_ebgp != 0)
-        return prun->brun->args_r.distance_ebgp ;
+      if (prun->brun->rp.defs.distance_ebgp != 0)
+        return prun->brun->rp.defs.distance_ebgp ;
 
       return ZEBRA_EBGP_DISTANCE_DEFAULT;
     }
   else
     {
-      if (prun->brun->args_r.distance_ibgp != 0)
-        return prun->brun->args_r.distance_ibgp;
+      if (prun->brun->rp.defs.distance_ibgp != 0)
+        return prun->brun->rp.defs.distance_ibgp;
 
       return ZEBRA_IBGP_DISTANCE_DEFAULT;
     }
 }
-
-DEFUN (bgp_distance,
-       bgp_distance_cmd,
-       "distance bgp <1-255> <1-255> <1-255>",
-       "Define an administrative distance\n"
-       "BGP distance\n"
-       "Distance for routes external to the AS\n"
-       "Distance for routes internal to the AS\n"
-       "Distance for local routes\n")
-{
-  bgp_inst bgp;
-
-  bgp = vty->index;
-
-  bgp->config->c_args.distance_ebgp  = atoi (argv[0]);
-  bgp->config->c_args.distance_ibgp  = atoi (argv[1]);
-  bgp->config->c_args.distance_local = atoi (argv[2]);
-  return CMD_SUCCESS;
-}
-
-DEFUN (no_bgp_distance,
-       no_bgp_distance_cmd,
-       "no distance bgp <1-255> <1-255> <1-255>",
-       NO_STR
-       "Define an administrative distance\n"
-       "BGP distance\n"
-       "Distance for routes external to the AS\n"
-       "Distance for routes internal to the AS\n"
-       "Distance for local routes\n")
-{
-  bgp_inst bgp;
-
-  bgp = vty->index;
-
-  bgp->config->c_args.distance_ebgp  = 0;
-  bgp->config->c_args.distance_ibgp  = 0;
-  bgp->config->c_args.distance_local = 0;
-  return CMD_SUCCESS;
-}
-
-ALIAS (no_bgp_distance,
-       no_bgp_distance2_cmd,
-       "no distance bgp",
-       NO_STR
-       "Define an administrative distance\n"
-       "BGP distance\n")
-
-DEFUN (bgp_distance_source,
-       bgp_distance_source_cmd,
-       "distance <1-255> A.B.C.D/M",
-       "Define an administrative distance\n"
-       "Administrative distance\n"
-       "IP source prefix\n")
-{
-  bgp_distance_set (vty, argv[0], argv[1], NULL);
-  return CMD_SUCCESS;
-}
-
-DEFUN (no_bgp_distance_source,
-       no_bgp_distance_source_cmd,
-       "no distance <1-255> A.B.C.D/M",
-       NO_STR
-       "Define an administrative distance\n"
-       "Administrative distance\n"
-       "IP source prefix\n")
-{
-  bgp_distance_unset (vty, argv[0], argv[1], NULL);
-  return CMD_SUCCESS;
-}
-
-DEFUN (bgp_distance_source_access_list,
-       bgp_distance_source_access_list_cmd,
-       "distance <1-255> A.B.C.D/M WORD",
-       "Define an administrative distance\n"
-       "Administrative distance\n"
-       "IP source prefix\n"
-       "Access list name\n")
-{
-  bgp_distance_set (vty, argv[0], argv[1], argv[2]);
-  return CMD_SUCCESS;
-}
-
-DEFUN (no_bgp_distance_source_access_list,
-       no_bgp_distance_source_access_list_cmd,
-       "no distance <1-255> A.B.C.D/M WORD",
-       NO_STR
-       "Define an administrative distance\n"
-       "Administrative distance\n"
-       "IP source prefix\n"
-       "Access list name\n")
-{
-  bgp_distance_unset (vty, argv[0], argv[1], argv[2]);
-  return CMD_SUCCESS;
-}
-
-/*------------------------------------------------------------------------------
- * Table of bgp_route commands
- */
-CMD_INSTALL_TABLE(static, bgp_route_cmd_table, BGPD) =
-{
-  { BGP_NODE,        &bgp_distance_cmd                                  },
-  { BGP_NODE,        &no_bgp_distance_cmd                               },
-  { BGP_NODE,        &no_bgp_distance2_cmd                              },
-  { BGP_NODE,        &bgp_distance_source_cmd                           },
-  { BGP_NODE,        &no_bgp_distance_source_cmd                        },
-  { BGP_NODE,        &bgp_distance_source_access_list_cmd               },
-  { BGP_NODE,        &no_bgp_distance_source_access_list_cmd            },
-
-  CMD_INSTALL_END
-} ;
 
 /*============================================================================*/
 
 extern void
 bgp_route_cmd_init (void)
 {
-  cmd_install_table(bgp_route_cmd_table) ;
 }
 
 /*------------------------------------------------------------------------------

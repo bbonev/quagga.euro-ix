@@ -86,8 +86,6 @@ enum attr_state
   ats_parcel_in  = 2,   /* => incoming "route_parcel"   */
   ats_parcel_out = 3,   /* => outgoing "route_parcel"   */
 
-  ats_route_mpls = 4,   /* => state of mpls adj_out     */
-
   /* It's a byte, guys
    */
   ats_limit,
@@ -113,16 +111,9 @@ CONFIRM(((uint)ats_last <= BYTE_MAX)
  *
  *   1) a stored attribute set.
  *
- *      This is the "steady state" value for not-MPLS SAFI.
+ *      This is the "steady state" value.
  *
- *   2) an MPLS route.
- *
- *      This is the "steady state" value for an MPLS SAFI.
- *
- *      The MPLS stored value comprises a pointer to a stored attribute set,
- *      and the Tag last sent.
- *
- *   3) a route in flux structure.
+ *   2) a route in flux structure.
  *
  *      This is the dynamic state for all SAFI.
  *
@@ -130,9 +121,9 @@ CONFIRM(((uint)ats_last <= BYTE_MAX)
  *      while an update is "cooling off" after being sent, and before any
  *      further update may be sent.
  *
- * To distinguish which of (1), (2) or (3) are the value, we have to do a
- * certain amount of magic with the layout of (2) and (3) -- based on the
- * fact that (1) starts with a vhash_node !  The layout of the vhash node is:
+ * To distinguish which of (1) or (2) are the value, we have to do a certain
+ * amount of magic with the layout of (1) and (2) -- based on the fact that
+ * (1) starts with a vhash_node !  The layout of the vhash node is:
  *
  *   a) void*
  *   b) uint32_t
@@ -142,9 +133,9 @@ CONFIRM(((uint)ats_last <= BYTE_MAX)
  * stored attribute sets, but those will always have a zero reference count,
  * and a zero "set" bit.
  *
- * So: we arrange the 'route_mpls' and the 'route_flux' structures such that
- * the uint32_t (c) has B0=0 but non-zero.  To avoid issues with Endian-ness,
- * The layout of these structures has an explicit uint32_t here.
+ * So: we arrange the 'route_flux' structures such that the uint32_t (c) has
+ * B0=0 but is non-zero.  To avoid issues with Endian-ness, The layout of
+ * these structures has an explicit uint32_t here.
  *
  * We also arrange for the attr_flux to only ever use the "set" bit of the
  * vhash.ref_count -- so that we can use the rest as the schedule-time for the
@@ -156,7 +147,6 @@ union adj_out_ptr
 {
   adj_out     anon ;            /* until know what it is        */
   attr_set    attr ;
-  route_mpls  mpls ;
   route_flux  flux ;
 } ;
 
@@ -301,11 +291,9 @@ typedef enum adj_out_type adj_out_type_t ;
 enum adj_out_type
 {
   aob_attr_set    = BIT(0),
-  aob_attr_flux   = aob_attr_set,
+  aob_attr_flux   = BIT(0),
 
   aob_eor         = 0 * BIT(1),
-
-  aob_mpls        = 0 * BIT(1),
   aob_flux        = 1 * BIT(1),
 
   aob_type_count,
@@ -314,8 +302,8 @@ CONFIRM(aob_attr_set  == (uint)vhash_ref_count_held) ;
 CONFIRM(aob_attr_flux == (uint)vhash_ref_count_held) ;
 CONFIRM(aob_type_mask >= (aob_type_count - 1)) ;
 
-/* A route-flux object in aob_flux state has a route_flux_action, indicating
- * which list it is on, inter alia.
+/* A route-flux object has a route_flux_action, indicating which list it is on,
+ * inter alia.
  */
 typedef enum route_flux_action  route_flux_action_t ;
 enum route_flux_action
@@ -328,33 +316,6 @@ enum route_flux_action
   rf_act_count    = 4,
 };
 CONFIRM(aob_action_mask >= (rf_act_count - 1)) ;
-
-/*------------------------------------------------------------------------------
- * A 'route_mpls' comprises a pointer to either an attribute set, or to an
- * attribute collection, plus an MPLS tag.
- *
- * In "steady state" the adj_out points at the 'route_mpls' (which in turn
- * points at the attribute set -- not NULL).
- *
- * When in flux, the adj_out points to a 'route_flux', which points at the
- * 'route_mpls' (which in turn points at the attribute out marshal).
- */
-typedef struct route_mpls  route_mpls_t ;
-
-struct route_mpls
-{
-  void*         atp ;           /* attr_flux for pending announcement
-                                 * attr_set for announced route         */
-  mpls_tags_t   tag ;
-
-  uint32_t      bits ;          /* the adj_out_bits_t                   */
-} ;
-
-/* An adj_out_ptr may refer to a route_mpls, so it must be capable of being
- * mapped to an adj_out_t.
- */
-CONFIRM(offsetof(route_mpls_t, bits)  == offsetof(adj_out_t, bits)) ;
-CONFIRM(sizeof(((route_mpls)0)->bits) == sizeof(((adj_out)0)->bits)) ;
 
 /*------------------------------------------------------------------------------
  * A 'route_flux' manages a route while a new update is pending, and for a
@@ -377,24 +338,31 @@ typedef struct route_flux  route_flux_t ;
 
 struct route_flux
 {
-  void*         current ;       /* NULL => nothing
-                                 * attr_set for not MPLS
-                                 * route_mpls for MPLS.                 */
+  attr_set      current ;       /* NULL => nothing                      */
   prefix_id_t   pfx_id ;
 
   uint32_t      bits ;          /* the adj_out_bits_t   */
 
-  void*         pending ;       /* if not MPLS:
-                                 *   NULL => withdraw or nothing pending
-                                 *   attr_set  -- unless rf_act_announce
-                                 *   attr_flux -- for rf_act_announce
-                                 * if MPLS -> route_mpls (at all times)
-                                 *   the route_mpls->atp is as above.   */
+  union
+    {
+      adj_out   anon ;            /* until know what it is        */
+      attr_set  attr ;
+      attr_flux flux ;
+    } pending ;                 /* NULL => withdraw or nothing pending
+                                 * attr_set  -- unless rf_act_announce
+                                 * attr_flux -- for rf_act_announce     */
 
+  /* The list is:
+   *
+   *    rf_act_batch    -- prib->fifo_batch      -- pfifo
+   *    rf_act_withdraw -- prib->withdraw_queue  -- simple list
+   *    rf_act_announce -- the attr_flux fifo    -- simple list
+   *    rf_act_mrai     -- prib->fifo_mrai       -- pfifo
+   */
   struct dl_list_pair(route_flux) list ;
 } ;
 
-/* An adj_out_ptr may refer to a route_mpls, so it must be capable of being
+/* An adj_out_ptr may refer to a route_flux, so it must be capable of being
  * mapped to an adj_out_t.
  */
 CONFIRM(offsetof(route_flux_t, bits)  == offsetof(adj_out_t, bits)) ;
@@ -433,7 +401,7 @@ struct attr_flux
    */
   attr_set      attr ;
 
-  /* When the 'fifo' is not empty, this sits on the adj_out
+  /* When the 'fifo' is not empty, this sits on the prib->announce_queue
    */
   struct dl_list_pair(attr_flux) list ;
 
@@ -454,7 +422,6 @@ CONFIRM(sizeof(((adj_out)0)->bits) == sizeof(((attr_flux)0)->vhash.ref_count)) ;
 /*==============================================================================
  *
  */
-
 
 /*------------------------------------------------------------------------------
  * Route Outgoing "Parcel".
@@ -481,7 +448,6 @@ struct route_out_parcel
   attr_set       attr ;
 
   prefix_id_t    pfx_id ;
-  mpls_tags_t    tag ;
 
   byte           qafx ;
   byte           action ;
@@ -495,7 +461,7 @@ extern void bgp_adj_out_discard(bgp_prib prib) ;
 extern void bgp_adj_out_set_stale(bgp_prib prib, uint delay) ;
 
 extern void bgp_adj_out_update(bgp_prib prib, prefix_id_entry pie,
-                                               attr_set attr, mpls_tags_t tag) ;
+                                                                attr_set attr) ;
 extern void bgp_adj_out_eor(bgp_prib prib) ;
 
 extern void bgp_adj_out_start_updates(bgp_prib prib) ;

@@ -164,18 +164,20 @@ bgp_interface_down (int command, struct zclient *zclient, zebra_size_t length)
                                       brun = ddl_next(brun, brun_list))
       {
         bgp_prun  prun ;
+        uint      i ;
 
-        if (brun->no_fast_ext_failover)
+        if (brun->rp.no_fast_ext_failover)
           continue;
 
-        for (prun = ddl_head(brun->pruns) ; prun != NULL
-                                          ; prun = ddl_next(prun, prun_list))
+        i = 0 ;
+        while ((prun = vector_get_item(brun->pruns, i++)) != NULL)
           {
-            if (prun->cops_r.ttl != 1)
+            if (prun->rp.cops_conf.ttl != 1)
               continue;
 
-            if (prun->su_name->sa.sa_family == AF_INET)
-              peer_if = if_lookup_by_ipv4 (&prun->su_name->sin.sin_addr);
+            if (prun->rp.cops_conf.remote_su.sa.sa_family == AF_INET)
+              peer_if =
+                if_lookup_by_ipv4 (&prun->rp.cops_conf.remote_su.sin.sin_addr) ;
             else
               continue;
 
@@ -546,9 +548,9 @@ bgp_nexthop_set (sockunion local, sockunion remote,
     {
       if (IN6_IS_ADDR_LINKLOCAL (&local->sin6.sin6_addr))
         {
-          if (prun->cops_r.ifname[0] != '\0')
+          if (prun->rp.cops_conf.ifname[0] != '\0')
             ifp = if_lookup_by_index (
-                                    if_nametoindex (prun->cops_r.ifname));
+                                    if_nametoindex (prun->rp.cops_conf.ifname));
         }
       else
         ifp = if_lookup_by_ipv6 (&local->sin6.sin6_addr);
@@ -583,8 +585,8 @@ bgp_nexthop_set (sockunion local, sockunion remote,
 
       /* IPv4 nexthop.  I don't care about it.
        */
-      if (prun->args_r.local_id != 0)
-        nexthop->v4.s_addr = prun->args_r.local_id;
+      if (prun->rp.sargs_conf.local_id != 0)
+        nexthop->v4.s_addr = prun->rp.sargs_conf.local_id;
 
       /* Global address*/
       if (! IN6_IS_ADDR_LINKLOCAL (&local->sin6.sin6_addr))
@@ -659,7 +661,7 @@ bgp_zebra_route_set(zroute zr, bgp_prun prun, route_info ri)
 
   zr->i_safi = get_iSAFI(ri->current.qafx) ;
 
-  switch (prun->sort)
+  switch (prun->rp.sort)
     {
       case BGP_PEER_IBGP:
       case BGP_PEER_CBGP:
@@ -667,7 +669,8 @@ bgp_zebra_route_set(zroute zr, bgp_prun prun, route_info ri)
         break ;
 
       case BGP_PEER_EBGP:
-        if ((prun->cops_r.ttl != 1) || (prun->disable_connected_check))
+        if ((prun->rp.cops_conf.ttl != 1)
+                                       || (prun->rp.do_disable_connected_check))
           zr->flags |= ZEBRA_FLAG_INTERNAL ;
         break ;
 
@@ -789,9 +792,9 @@ bgp_zebra_announce (zroute zr, bgp_rib_node rn, prefix_c pfx)
                * Workaround for Cisco's nexthop bug.
                */
               if (IN6_IS_ADDR_UNSPECIFIED(&nh->ip.v6[in6_global])
-                 && (prun->session->cops->su_remote.sa.sa_family == AF_INET6))
+                 && (prun->session->cops->remote_su.sa.sa_family == AF_INET6))
                 zr->next_hop.ipv6.addr =
-                                prun->session->cops->su_remote.sin6.sin6_addr ;
+                                prun->session->cops->remote_su.sin6.sin6_addr ;
               else
                 zr->next_hop.ipv6.addr = nh->ip.v6[in6_link_local].addr ;
 
@@ -801,8 +804,8 @@ bgp_zebra_announce (zroute zr, bgp_rib_node rn, prefix_c pfx)
 
           if ((zr->ifindex != 0) && IN6_IS_ADDR_LINKLOCAL (nexthop[0]))
             {
-              if (prun->cops_r.ifname[0] != '\0')
-                zr->ifindex = if_nametoindex (prun->cops_r.ifname);
+              if (prun->rp.cops_conf.ifname[0] != '\0')
+                zr->ifindex = if_nametoindex (prun->rp.cops_conf.ifname);
               else if (prun->nexthop.ifp)
                 zr->ifindex = prun->nexthop.ifp->ifindex;
             } ;

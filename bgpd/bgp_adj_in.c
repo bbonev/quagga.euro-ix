@@ -20,6 +20,7 @@
  */
 
 #include "bgpd/bgp_common.h"
+#include "bgpd/bgpd.h"
 #include "bgpd/bgp_adj_in.h"
 #include "bgpd/bgp_run.h"
 #include "bgpd/bgp_prun.h"
@@ -285,16 +286,16 @@ bgp_route_info_free(route_info ri, bool remove)
 
   if (rn != NULL)
     {
-      bgp_lc_id_t  lc, changed_head ;
+      bgp_lc_id_t  lc ;
 
-      changed_head = rn->changed->head ;
+      rn->has_changed = false ;
 
       for (lc = lc_view_id ; lc < ri->local_context_count ; ++lc)
         bgp_adj_in_withdraw_lc(rn, ri, lc) ;
 
       svec_del(rn->avail, ri->rindex) ;
 
-      if ((rn->changed->head != lc_end_id) && (changed_head == lc_end_id))
+      if (rn->has_changed)
         bgp_rib_process_schedule(rn) ;
     } ;
 
@@ -335,8 +336,8 @@ bgp_route_info_free(route_info ri, bool remove)
  */
 static void bgp_adj_in_update_lc(bgp_rib_node rn, route_info ri, attr_set attr,
                                               bgp_lc_id_t lc, bool tag_change) ;
-static void bgp_adj_in_changed_lc(bgp_rib_node rn, bool change,
-                                                               bgp_lc_id_t lc) ;
+static void bgp_adj_in_changed_lc(bgp_rib_node rn, bgp_lc_id_t lc,
+                                                                  bool change) ;
 static route_merit_t bgp_route_merit(bgp_rib rib, attr_set attr,
                                                                 byte sub_type) ;
 static void bgp_route_info_process_schedule(route_info ri) ;
@@ -367,11 +368,12 @@ static void bgp_route_info_process_schedule(route_info ri) ;
  */
 extern void
 bgp_adj_in_update_prefix(bgp_prib prib, prefix_id_entry pie,
-                                                            iroute_state parcel)
+                                          iroute_state parcel, mpls_tags_t tags)
 {
   route_info      ri ;
 
   qassert(prib->qafx == parcel->qafx) ;
+
   if (parcel->attr == NULL)
     qassert(parcel->flags == RINFO_WITHDRAWN) ;
   else
@@ -561,13 +563,21 @@ bgp_adj_in_update_prefix(bgp_prib prib, prefix_id_entry pie,
 
   /* Now we set the pending -- taking a lock on the attributes, if any.
    *
+   * At this (final) moment we embed any tags required in the pending.attr,
+   * so that from now on we don't worry about them.
+   *
    * Whatever flags have been passed, make sure we keep only those which are
    * relevant, and set RINFO_PENDING.
    */
   ri->pending = *parcel ;
 
   if (ri->pending.attr != NULL)
-    bgp_attr_lock(ri->pending.attr) ;
+    {
+      if (ri->pending.attr->tags == tags)
+        bgp_attr_lock(ri->pending.attr) ;
+      else
+        ri->pending.attr = bgp_attr_set_tags(ri->pending.attr, tags) ;
+    } ;
 
   ri->pending.flags = (parcel->flags & (RINFO_REFUSED | RINFO_WITHDRAWN))
                                                                | RINFO_PENDING ;
@@ -627,6 +637,10 @@ bgp_route_info_process_schedule(route_info ri)
 /*------------------------------------------------------------------------------
  * Work queue action for prib adj-in -- process route into RIB.
  *
+ * Processes the head of the prib->pending_routes.
+ *
+ * Returns:  true <=> successfully processed one pending route.
+ *           false => no pending routes or waiting for some external event.
  *
  * TODO aggregate stuff
  */
@@ -639,7 +653,6 @@ bgp_adj_in_process(bgp_prib prib)
   bool              withdraw, announce, must_change ;
   bgp_rib_node      rn ;
   bgp_lc_id_t       lcc ;
-  bgp_lc_id_t       changed_head ;
 
   /* Establish where we were.
    */
@@ -781,8 +794,6 @@ bgp_adj_in_process(bgp_prib prib)
        */
       if (withdraw)
         ri->prib->pcount_in -= 1 ;
-      else
-        must_change = prib->is_mpls && (ri->current.tags != ri->pending.tags) ;
     } ;
 
   /* Whatever else happens, now we update the current attributes, and clear
@@ -817,7 +828,7 @@ bgp_adj_in_process(bgp_prib prib)
 
   qassert(announce == (prib->in_attrs != NULL)) ;
 
-  changed_head = rn->changed->head ;
+  rn->has_changed = false ;
   lcc = prib->rib->local_context_count ;
   if      (announce)
     {
@@ -848,9 +859,9 @@ bgp_adj_in_process(bgp_prib prib)
 
       /* Worry about the med_as stuff.
        */
-      if      (prib->rib->do_always_compare_med)
+      if      (prib->rib->rp.do_always_compare_med)
         ri->med_as = BGP_ASN_NULL ;
-      else if (prib->rib->do_confed_compare_med)
+      else if (prib->rib->rp.do_confed_compare_med)
         ri->med_as = as_path_left_most_asn(prib->in_attrs->asp) ;
       else
         ri->med_as = as_path_first_simple_asn(prib->in_attrs->asp) ;
@@ -914,7 +925,7 @@ bgp_adj_in_process(bgp_prib prib)
             {
               attr_set rc_attrs ;
 
-              if (prib->route_server_client && (lc_from->id == lc_to->id))
+              if (prib->rp.is_route_server_client && (lc_from->id == lc_to->id))
                 continue ;
 
               if (rc_in_attrs != NULL)
@@ -951,11 +962,10 @@ bgp_adj_in_process(bgp_prib prib)
         bgp_adj_in_withdraw_lc(rn, ri, lc) ;
     } ;
 
-  if (changed_head != rn->changed->head)
-    {
-      ri->uptime = bgp_clock() ;
-      bgp_rib_process_schedule(rn) ;
-    } ;
+  ri->uptime = bgp_clock() ;
+
+  if (rn->has_changed)
+    bgp_rib_process_schedule(rn) ;
 
   /* Done push state back to ai_next, and forget any in_attrs (to be tidy).
    *
@@ -993,10 +1003,13 @@ bgp_adj_in_process(bgp_prib prib)
  * are out of order.  This is a compromise, to avoid having to chase down
  * the list of routes to find (and clear) the current selection (if it has not
  * been withdrawn).
+ *
+ * If the rib_node candidates have changed such that the rib_node needs to be
+ * processed, the rn->has_changed flag is set.
  */
 static void
-bgp_adj_in_update_lc(bgp_rib_node rn, route_info ri, attr_set attr, bgp_lc_id_t lc,
-                                                               bool must_change)
+bgp_adj_in_update_lc(bgp_rib_node rn, route_info ri, attr_set attr,
+                                               bgp_lc_id_t lc, bool must_change)
 {
   route_merit_t merit, merit_was ;
   svs_base      base ;
@@ -1406,6 +1419,9 @@ bgp_adj_in_update_lc(bgp_rib_node rn, route_info ri, attr_set attr, bgp_lc_id_t 
 
 /*------------------------------------------------------------------------------
  * Withdraw one of the given route-context's available routes, if any.
+ *
+ * If the rib-node changes, such that it should be processed, rn->has_changed
+ * will be set.
  */
 static void
 bgp_adj_in_withdraw_lc(bgp_rib_node rn, route_info ri, bgp_lc_id_t lc)
@@ -1453,7 +1469,7 @@ bgp_adj_in_withdraw_lc(bgp_rib_node rn, route_info ri, bgp_lc_id_t lc)
  * Set the given local-context as changed, if required and not already set.
  */
 static void
-bgp_adj_in_changed_lc(bgp_rib_node rn, bool changed, bgp_lc_id_t lc)
+bgp_adj_in_changed_lc(bgp_rib_node rn, bgp_lc_id_t lc, bool changed)
 {
   if (changed && (rn->aroutes[lc_view_id].next == lc_id_null))
     {
@@ -1473,7 +1489,7 @@ bgp_adj_in_changed_lc(bgp_rib_node rn, bool changed, bgp_lc_id_t lc)
         {
           /* We place the "view" at the head of the list, always.
            */
-          rn->changed->head         = lc_view_id ;
+          rn->changed->head            = lc_view_id ;
           rn->aroutes[lc_view_id].next = lc_head;
         }
       else
@@ -1484,6 +1500,8 @@ bgp_adj_in_changed_lc(bgp_rib_node rn, bool changed, bgp_lc_id_t lc)
           rn->changed->tail                   = lc ;
           rn->aroutes[lc].next = lc_end_id ;
         } ;
+
+      rn->has_changed = true ;
     } ;
 } ;
 
@@ -1494,13 +1512,12 @@ static route_info bgp_route_deterministic_med(bgp_rib_node rn, route_info ris,
                                   bgp_lc_id_t lc, uint count, route_info ris_was) ;
 static route_info bgp_tie_break(bgp_rib_node rn, route_info best,
                              route_info cand, bgp_lc_id_t lc, route_info ris_was) ;
-inline static uint32_t bgp_med_value (attr_set attr, uint32_t default_med) ;
 
 /*------------------------------------------------------------------------------
  * Return selected route for given rib-node in the given context
  */
 extern route_info
-bgp_route_select(bgp_rib_node rn, bgp_lc_id_t lc)
+bgp_route_select_lc(bgp_rib_node rn, bgp_lc_id_t lc)
 {
   route_info    ris, ris_was ;
   iroute        irs ;
@@ -1704,7 +1721,7 @@ bgp_route_select(bgp_rib_node rn, bgp_lc_id_t lc)
    */
   if (count > 1)
     {
-      if (rn->it.rib->do_deterministic_med && (count > 2))
+      if (rn->it.rib->rp.do_deterministic_med && (count > 2))
         {
           /* Do the tie break, with Deterministic-MED.
            */
@@ -1975,16 +1992,10 @@ bgp_route_merit(bgp_rib rib, attr_set attr, byte sub_type)
    *    "preconfigured policy".
    *
    *    By the time we get to here, the Local Pref may have been set by
-   *    Route-Map.
-   *
-   *    TODO... perhaps could set the default in the original attribute set...
-   *                               ... but lots of work if default changes !!??
+   *    Route-Map.  But in any case, a default has been set as part of
+   *    the 'in' filtering.
    */
-  if (attr->have & atb_local_pref)
-    temp = attr->local_pref & ROUTE_MERIT_MASK(route_merit_local_pref_bits) ;
-  else
-    temp = rib->default_local_pref
-                            & ROUTE_MERIT_MASK(route_merit_local_pref_bits) ;
+  temp = attr->local_pref & ROUTE_MERIT_MASK(route_merit_local_pref_bits) ;
 
   merit |= temp << route_merit_local_pref_shift ;
 
@@ -2003,9 +2014,9 @@ bgp_route_merit(bgp_rib rib, attr_set attr, byte sub_type)
    *    If, for some crazy reason, the AS-PATH is beyond what we have bits
    *    for, we leave the field as 0 -- least possible merit.
    */
-  if (!rib->do_aspath_ignore)
+  if (!rib->rp.do_aspath_ignore)
     {
-       if (rib->do_aspath_confed)
+       if (rib->rp.do_aspath_confed)
          temp = as_path_total_path_length (attr->asp);
        else
          temp = as_path_simple_path_length (attr->asp) ;
@@ -2097,11 +2108,10 @@ bgp_tie_break (bgp_rib_node rn, route_info best, route_info cand, bgp_lc_id_t lc
   brun = rn->it.rib->brun ;
   if (best->med_as == cand->med_as)
     {
-      uint32_t best_med, cand_med, default_med ;
+      uint32_t best_med, cand_med ;
 
-      default_med = brun->args_r.med ;
-      best_med    = bgp_med_value (best_attr, default_med);
-      cand_med    = bgp_med_value (cand_attr, default_med);
+      best_med = best_attr->med;
+      cand_med = cand_attr->med;
 
       if (best_med != cand_med)
         return (best_med < cand_med) ? best : cand ;
@@ -2111,8 +2121,8 @@ bgp_tie_break (bgp_rib_node rn, route_info best, route_info cand, bgp_lc_id_t lc
    *
    *    CONFED and iBGP rank equal, "internal" (RFC5065).
    */
-  best_sort = best->prib->prun->sort ;
-  cand_sort = cand->prib->prun->sort ;
+  best_sort = best->prib->prun->rp.sort ;
+  cand_sort = cand->prib->prun->rp.sort ;
 
   if (best_sort != cand_sort)
     {
@@ -2165,12 +2175,12 @@ bgp_tie_break (bgp_rib_node rn, route_info best, route_info cand, bgp_lc_id_t lc
 
       /* 10. for eBGP (and not cBGP) -- BGP Identifier or prefer current
        */
-      best_id = best->prib->prun->args_r.remote_id ;
-      cand_id = cand->prib->prun->args_r.remote_id ;
+      best_id = best->prib->prun->session->sargs->remote_id ;
+      cand_id = cand->prib->prun->session->sargs->remote_id ;
 
       if (best_id != cand_id)
         {
-          if (brun->do_prefer_current_selection)
+          if (rn->it.rib->rp.do_prefer_current)
             {
               if (best == ris_was)
                 return best ;
@@ -2189,12 +2199,12 @@ bgp_tie_break (bgp_rib_node rn, route_info best, route_info cand, bgp_lc_id_t lc
       if (best_attr->have & atb_originator_id)
         best_id = best_attr->originator_id ;
       else
-        best_id = best->prib->prun->args_r.remote_id ;
+        best_id = best->prib->prun->session->sargs->remote_id ;
 
       if (cand_attr->have & atb_originator_id)
         cand_id = cand_attr->originator_id ;
       else
-        cand_id = cand->prib->prun->args_r.remote_id ;
+        cand_id = cand->prib->prun->session->sargs->remote_id ;
 
       if (best_id != cand_id)
         return (ntohl (best_id) < ntohl (cand_id)) ? best : cand ;
@@ -2212,22 +2222,10 @@ bgp_tie_break (bgp_rib_node rn, route_info best, route_info cand, bgp_lc_id_t lc
    *
    *     NB: the addresses cannot be equal !
    */
-  ret = sockunion_cmp (&best->prib->prun->session->cops->su_remote,
-                       &cand->prib->prun->session->cops->su_remote);
+  ret = sockunion_cmp (&best->prib->prun->session->cops->remote_su,
+                       &cand->prib->prun->session->cops->remote_su);
 
   return (ret <= 0) ? best : cand ;
-} ;
-
-/*------------------------------------------------------------------------------
- * Get MED value.  If MED value is missing, use the default.
- */
-inline static uint32_t
-bgp_med_value (attr_set attr, uint32_t default_med)
-{
-  if (attr->have & atb_med)
-    return attr->med;
-  else
-    return default_med ;
 } ;
 
 /*==============================================================================

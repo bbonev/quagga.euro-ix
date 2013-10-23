@@ -56,6 +56,22 @@ enum bgp_peer_id
   bgp_peer_id_max       = UINT_MAX,
 } ;
 
+/*------------------------------------------------------------------------------
+ * Canonical name of peer, derived from sockunion.
+ *
+ * For IPv4: 4xhhhhhhhh         -- ie  32 bits as  8 hex digits, lower-case
+ *     IPv6: 6xhhh....hhh       -- ie 128 bits as 32 hex digits, upper-case
+ *
+ * This is a step towards separating the name of peer from its address, by
+ * converting the address to a string in a canonical form suitable for sorting.
+ */
+typedef struct bgp_peer_su_cname bgp_peer_su_cname_t ;
+
+struct bgp_peer_su_cname
+{
+  char str[40] ;                /* plenty big enough    */
+} ;
+
 /*==============================================================================
  * Functions
  */
@@ -63,12 +79,14 @@ extern void bgp_peer_index_init(void) ;
 extern void bgp_peer_index_init_r(void) ;
 extern void bgp_peer_index_finish(void) ;
 
-extern bgp_peer_id_t bgp_peer_index_register(bgp_peer peer) ;
+extern bgp_peer_su_cname_t bgp_peer_su_cname(sockunion su) ;
+
+extern bgp_peer_id_t bgp_peer_index_register(bgp_peer peer, chs_c cname) ;
 extern void bgp_peer_index_deregister(bgp_peer peer) ;
 
-extern bgp_peer bgp_peer_index_peer_lookup(sockunion su) ;
-extern bgp_prun bgp_peer_index_prun_lookup(sockunion su) ;
-extern bgp_session bgp_peer_index_session_lookup(sockunion su) ;
+extern bgp_peer bgp_peer_index_peer_lookup(chs_c cname) ;
+extern bgp_prun bgp_peer_index_prun_lookup(chs_c cname) ;
+extern bgp_session bgp_peer_index_session_lookup(chs_c cname) ;
 
 #endif /* _QUAGGA_BGP_PEER_INDEX_H */
 

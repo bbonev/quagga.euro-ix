@@ -32,6 +32,8 @@
 #include "workqueue.h"
 #include "privs.h"
 #include "list_util.h"
+#include "vector.h"
+#include "name_index.h"
 
 /*==============================================================================
  * This is the bacic running state for bgp.
@@ -49,6 +51,7 @@ enum bgp_option
   /* Command-line options -- ie not changed by configuration/CLI
    */
   BGP_OPT_NO_FIB                = BIT(0),
+  BGP_OPT_AS2_SPEAKER           = BIT(1),
 
   BGP_OPT_LEGACY_IPV4_DEFAULT   = BIT(1),
   BGP_OPT_LEGACY_GROUPS         = BIT(2),
@@ -81,12 +84,48 @@ struct bgp_env
   bgp_option_t options;         /* Various BGP global configuration.    */
 
   bool  reading_config ;        /* in the process of reading config.    */
-  bool  as2_speaker ;           /* Do not announce AS4                  */
 
   uint  peer_linger_count ;     /* Peers lingering in pDeleting         */
 
   wq_base_t     fg_wq ;
   wq_base_t     bg_wq ;
+};
+
+/*------------------------------------------------------------------------------
+ * BGP instance structure.
+ */
+typedef struct bgp_inst bgp_inst_t ;
+
+struct bgp_inst
+{
+  bgp_env       parent_env ;
+
+  struct dl_list_pair(bgp_inst) bgp_list ;
+
+  /* The the 'view' name is an essential part of the bgp_inst, and *cannot* be
+   * changed once the bgp_inst has been created.
+   */
+  bgp_nref      name;
+
+  /* The run-time state of the instance, and all the running peers.
+   */
+  bgp_run       brun ;
+
+  /* BGP Peers and Groups -- configuration
+   *
+   * All the peers and groups associated with this bgp instance.  The vectors
+   * are held in group-name and peer-ip order:
+   *
+   *   * to find a group within a view, does a vector_bsearch() in this vector.
+   *
+   *   * for output of configuration etc, the output is in order.
+   */
+  vector_t      groups[1] ;     /* bgp_peer -- group    */
+  vector_t      peers[1] ;      /* bgp_peer -- peer     */
+
+  /* The configuration for this bgp_inst.
+   */
+  bgp_bconfig   c ;
 };
 
 /*==============================================================================
@@ -157,7 +196,9 @@ extern qpn_nexus re_nexus;
 
 extern struct zebra_privs_t bgpd_privs ;
 
-/*------------------------------------------------------------------------------
+extern const bgp_defaults_t bgp_default_defaults ;
+
+/*==============================================================================
  * Prototypes.
  */
 extern void bgp_terminate (bool, bool);
@@ -166,18 +207,85 @@ extern void bgp_reset (void);
 extern void bgp_zclient_reset (void);                      /* See bgp_zebra ! */
 
 extern void bgp_master_init (void);
-
 extern void bgp_init (void);
 
 extern bgp_ret_t bgp_option_set (bgp_option_t);
 extern bgp_ret_t bgp_option_unset (bgp_option_t);
+Inline bool bgp_option_check (bgp_option_t flag) ;
 
+Inline time_t bgp_clock(void) ;
+Inline time_t bgp_wall_clock(time_t mono) ;
+
+extern bgp_nref bgp_nref_get(chs_c name) ;
+extern bgp_nref bgp_nref_inc(bgp_nref nref) ;
+extern bgp_nref bgp_nref_dec(bgp_nref nref) ;
+extern void bgp_nref_set(bgp_nref* p_nref, chs_c name) ;
+extern void bgp_nref_copy(bgp_nref* p_nref, bgp_nref nref) ;
+
+Inline chs_c bgp_nref_name(bgp_nref nref) ;
 
 extern bool bgp_name_match(chs_c name1, chs_c name2) ;
 
-Inline bool bgp_option_check (bgp_option_t flag)
+/*==============================================================================
+ * Inlines
+ */
+
+/*------------------------------------------------------------------------------
+ * Is the given option set ?
+ */
+Inline bool
+bgp_option_check (bgp_option_t flag)
 {
   return (bm->options & flag);
-}
+} ;
+
+/*------------------------------------------------------------------------------
+ * Get the name associated with the given nref.
+ *
+ * NB: this assumes that the mutex around the setting of the nref means that
+ *     the nref value is visible to all threads after it is first set.
+ */
+Inline chs_c
+bgp_nref_name(bgp_nref nref)
+{
+  return ni_nref_name(nref) ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * For many purposes BGP requires a CLOCK_MONOTONIC type time, in seconds.
+ */
+Inline time_t
+bgp_clock(void)
+{
+  return qt_get_mono_secs() ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * For some purposes BGP requires a Wall Clock version of a time returned by
+ * bgp_clock() above.
+ *
+ * This is calculated from the current Wall Clock, the current bgp_clock and
+ * the bgp_clock time of some moment in the past.
+ *
+ * The fundamental problem is that the Wall Clock *may* (just may) be altered
+ * by the operator or automatically, if the system clock is wrong.  So there
+ * are, potentially, two versions of a past moment:
+ *
+ *   1) according to the Wall Clock at the time.
+ *
+ *   2) according to the Wall Clock now.
+ *
+ * There doesn't seem to be a good way of selecting between these if they are
+ * different... Here we take (2), which (a) doesn't require us to fetch and
+ * store both bgp_clock() and Wall Clock times every time we record the time
+ * of some event, and (b) assumes that if the Wall Clock has been adjusted,
+ * it was wrong before.  This can still cause confusion, because the Wall
+ * Clock time calculated now may differ from any logged Wall Clock times !!
+ */
+Inline time_t
+bgp_wall_clock(time_t mono)
+{
+  return time(NULL) - (bgp_clock() - mono) ;
+} ;
 
 #endif /* _QUAGGA_BGPD_H */

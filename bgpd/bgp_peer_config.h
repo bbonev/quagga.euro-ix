@@ -90,24 +90,23 @@ struct bgp_peer
   bgp_peer_id_t   peer_id ;
   uint            group_id ;
 
-  /* The name is:
+  /* The name and cname are:
    *
-   *   * PEER_TYPE_REAL         -- "cannonical" form of the neighbor address.
+   *   * PEER_TYPE_REAL    -- name  = the given name of the neighbor.
+   *                          cname = canonical name for sort
    *
-   *   * PEER_TYPE_GROUP   -- the given name of the group
+   *                          For peer the name and cname may or may not be the
+   *                          same -- where the name is the peer's address,
+   *                          they are not the same !
    *
-   *   * PEER_TYPE_SELF         -- NULL
+   *   * PEER_TYPE_GROUP   -- name  = the given name of the group
+   *                          cname = same as the given name
+   *
+   *   * PEER_TYPE_SELF    -- name  = NULL
+   *                          cname = NULL
    */
-  chs_t     name ;              /* name of the peer/group (text)        */
-  chs_t     cname ;
-
-  /* For real peers.... TODO
-   */
-  sockunion_t   su_name[1] ;    /* Name of the peer is address of same  */
-  bgp_prun      prun ;
-
-  bool          changed ;
-  struct dl_list_pair(bgp_peer) pending ;
+  bgp_nref  name ;              /* name of the peer/group (text)        */
+  bgp_nref  cname ;             /* canonical name, for sort             */
 
   /* The configuration for the peer or the peer-group.
    */
@@ -134,9 +133,6 @@ enum bgp_peer_or_group
  * track changes in configuration -- so that when changes are made to the
  * bgp instance or a peer-group, only those changes need to be propagated
  * across all peers.
- *
- *
- *
  */
 
 /* The pcs_xxxx -- names of the configuration items which are general for a
@@ -250,31 +246,7 @@ CONFIRM((pcs_qafx_last + 1) < 64) ;
  *
  * It is explicitly intended that a change in configuration may be detected
  * by comparing two pconf structures
- *
- * Some of the elements of a pconf are "names".  Those are implemented as
- * pointers to a
- *
  */
-#if 0
-/* The peer_flag_t are configuration flags for the entire peer.
- */
-typedef enum bgp_pflag bgp_pflag_t ;
-enum bgp_pflag
-{
-  PEER_FLAG_NOTHING                  = 0,
-
-  PEER_FLAG_SHUTDOWN                 = BIT(pcs_SHUTDOWN),
-  PEER_FLAG_PASSIVE                  = BIT(pcs_PASSIVE),
-  PEER_FLAG_ACTIVE                   = BIT(pcs_ACTIVE),
-  PEER_FLAG_DONT_CAPABILITY          = BIT(pcs_DONT_CAPABILITY),
-  PEER_FLAG_OVERRIDE_CAPABILITY      = BIT(pcs_OVERRIDE_CAPABILITY),
-  PEER_FLAG_STRICT_CAP_MATCH         = BIT(pcs_STRICT_CAP_MATCH),
-  PEER_FLAG_DYNAMIC_CAPABILITY       = BIT(pcs_DYNAMIC_CAPABILITY),
-  PEER_FLAG_DYNAMIC_CAPABILITY_DEP   = BIT(pcs_DYNAMIC_CAPABILITY_DEP),
-  PEER_FLAG_DISABLE_CONNECTED_CHECK  = BIT(pcs_DISABLE_CONNECTED_CHECK),
-} ;
-#endif
-
 
 typedef enum bgp_pconfig_type bgp_pconfig_type_t ;
 enum bgp_pconfig_type
@@ -291,23 +263,23 @@ typedef struct bgp_pconfig const* bgp_pconfig_c ;
 
 struct bgp_pconfig
 {
-  bgp_peer  parent_peer ;       /* parent bgp_peer object       */
+  bgp_peer      parent_peer ;   /* parent bgp_peer object       */
 
-  char*     desc ;
+  bgp_nref      desc ;
 
-  /* BGP_CFT_PEER has:   gc             -- NULL -- no group association
-   *                     members        -- NULL
+  /* BGP_CFT_PEER has:   group.c        -- NULL -- no group association
    *
-   * BGP_CFT_GROUP has:  gc             -- NULL -- no group association !
-   *                     members        -- vector of members -- bgp_paf_config
+   * BGP_CFT_MEMBER has: group.c        -- configuration of group is member of,
    *
-   * BGP_CFT_MEMBER has: gc             -- configuration of group is member of,
-   *                     members        -- NULL
+   * BGP_CFT_GROUP has:  group.members  -- vector of members -- bgp_pconfig
    */
   bgp_pconfig_type_t    ctype ;
 
-  bgp_pconfig   gc ;
-  vector        members ;       /* bgp_pconfig  */
+  union
+    {
+      bgp_pconfig       c ;
+      vector_t          members[1] ;    /* bgp_pconfig  */
+    } group ;
 
   /* All peers have a remote-as, some peer-groups do.
    *
@@ -315,31 +287,36 @@ struct bgp_pconfig
    * a group member may not have its own remote-as.  For the group member, the
    * setting is "off", but the remote-as value is valid (and is a copy of the
    * group's value).
+   *
+   * A peer has a remote_su -- unless some other mechanism is used to map
+   * the peer-name to some address.
    */
   as_t          remote_as ;
 
-  /* The bit-vector of items for which this configuration has a setting, and
-   * a bit-vector of items which are set "on".
+  sockunion_t   remote_su[1] ;
+
+  /* The bit-vector of items for which this configuration has a setting "set",
+   * and a bit-vector of items which are set "on".
    */
   bgp_pc_set_t  set ;
-  bgp_pc_set_t  set_on ;
+  bgp_pc_set_t  on ;
 
   /* Values which are generally inherited from the bgp instance, but which
    * may be set on a per peer/peer-group basis.
    */
-  uint16_t port ;
+  uint16_t  port ;
 
-  uint  local_pref;
-  uint  med ;
-  uint  weight ;
+  uint      local_pref;
+  uint      med ;
+  uint      weight ;
 
-  uint  holdtime_secs ;
-  uint  keepalive_secs ;
-  uint  connect_retry_secs ;
-  uint  accept_retry_secs ;
-  uint  open_hold_secs ;
+  uint      holdtime_secs ;
+  uint      keepalive_secs ;
+  uint      connect_retry_secs ;
+  uint      accept_retry_secs ;
+  uint      open_hold_secs ;
 
-  uint  mrai_secs ;
+  uint      mrai_secs ;
 
   /* Other peer/peer-group level stuff
    *
@@ -348,13 +325,14 @@ struct bgp_pconfig
    * TODO setting for route refresh on a per peer basis ?
    */
   as_t      change_local_as ;
-  bool      change_local_as_prepend ;
+  bool      local_as_prepend ;
 
   ttl_t     ttl ;               /* 1..TTL_MAX                           */
   bool      gtsm ;              /* set GTSM if possible                 */
 
-  nref_c    password ;
-  nref_c    update_source ;
+  bgp_nref  password ;
+  bgp_nref  update_source ;
+  bool      update_source_if ;  /* update_source is an if name          */
 
   /* The afc specific stuff.
   */
@@ -372,25 +350,31 @@ pcs_is_set(bgp_pconfig pc, bgp_pc_setting_t pcs)
 Inline bool
 pcs_is_on(bgp_pconfig pc, bgp_pc_setting_t pcs)
 {
-  return (pc->set & pc->set_on & pcs_bit(pcs)) ;
+  return (pc->on & pcs_bit(pcs)) ;
 } ;
 
 Inline bool
-pcs_is_off(bgp_pconfig pc, bgp_pc_setting_t pcs)
+pcs_is_set_on(bgp_pconfig pc, bgp_pc_setting_t pcs)
 {
-  return (pc->set & ~pc->set_on & pcs_bit(pcs)) ;
+  return (pc->set & pc->on & pcs_bit(pcs)) ;
+} ;
+
+Inline bool
+pcs_is_set_off(bgp_pconfig pc, bgp_pc_setting_t pcs)
+{
+  return (pc->set & ~pc->on & pcs_bit(pcs)) ;
 } ;
 
 Inline bool
 pcs_qafx_config(bgp_pconfig pc, qafx_t qafx)
 {
-  return (pc->set & pc->set_on & pcs_qafx_bit(pcs_qafx_bit(qafx))) ;
+  return (pc->set & pc->on & pcs_qafx_bit(pcs_qafx_bit(qafx))) ;
 } ;
 
 Inline qafx_set_t
 pcs_qafxs(bgp_pconfig pc)
 {
-  return ((pc->set_on & pc->set) >> pcs_qafx_first) & qafx_known_bits ;
+  return ((pc->on & pc->set) >> pcs_qafx_first) & qafx_known_bits ;
 
   confirm((pcs_qafx_bit(qafx_first) >> pcs_qafx_first) == qafx_first_bit) ;
 }
@@ -436,53 +420,52 @@ enum bgp_pafc_setting
    */
   pafcs_max_prefix,
   pafcs_allow_as_in,
-  pafcs_dlist_in,
-  pafcs_plist_in,
-  pafcs_aslist_in,
-  pafcs_rmap_in,
-  pafcs_rmap_inx,
-  pafcs_rmap_export,
 
-  /* "group value" semantics
+  /* Filter settings -- "value" or "group-value" semantics
    */
-  pafcs_default_rmap,
-  pafcs_dlist_out,
-  pafcs_plist_out,
-  pafcs_aslist_out,
-  pafcs_rmap_import,
-  pafcs_rmap_out,
-  pafcs_us_rmap,
+  pafcs_dlist_in,               /* "value" semantics            */
+  pafcs_dlist_out,              /* "group-value" semantics      */
+  pafcs_plist_in,               /* "value" semantics            */
+  pafcs_plist_out,              /* "group-value" semantics      */
+  pafcs_aslist_in,              /* "value" semantics            */
+  pafcs_aslist_out,             /* "group-value" semantics      */
+  pafcs_rmap_in,                /* "value" semantics            */
+  pafcs_rmap_inx,               /* "value" semantics            */
+  pafcs_rmap_out,               /* "group-value" semantics      */
+  pafcs_rmap_import,            /* "group-value" semantics      */
+  pafcs_rmap_export,            /* "value" semantics            */
+  pafcs_us_rmap,                /* "group-value" semantics      */
+  pafcs_default_rmap,           /* "group-value" semantics      */
+  pafcs_orf_plist,
+
+  pafcs_filter_first    = pafcs_dlist_in,
+  pafcs_filter_last     = pafcs_orf_plist,
 
   pafcs_count_of_settings
 };
 
 CONFIRM(pafcs_count_of_settings <= 64) ;
 
+CONFIRM((pafcs_filter_first - pafcs_filter_first) == bfs_first) ;
+CONFIRM((pafcs_filter_last  - pafcs_filter_first) == bfs_last) ;
+
+CONFIRM((pafcs_dlist_in     - pafcs_filter_first) == bfs_dlist_in) ;
+CONFIRM((pafcs_dlist_out    - pafcs_filter_first) == bfs_dlist_out) ;
+CONFIRM((pafcs_plist_in     - pafcs_filter_first) == bfs_plist_in) ;
+CONFIRM((pafcs_plist_out    - pafcs_filter_first) == bfs_plist_out) ;
+CONFIRM((pafcs_aslist_in    - pafcs_filter_first) == bfs_aslist_in) ;
+CONFIRM((pafcs_aslist_out   - pafcs_filter_first) == bfs_aslist_out) ;
+CONFIRM((pafcs_rmap_in      - pafcs_filter_first) == bfs_rmap_in) ;
+CONFIRM((pafcs_rmap_inx     - pafcs_filter_first) == bfs_rmap_inx) ;
+CONFIRM((pafcs_rmap_out     - pafcs_filter_first) == bfs_rmap_out) ;
+CONFIRM((pafcs_rmap_import  - pafcs_filter_first) == bfs_rmap_import) ;
+CONFIRM((pafcs_rmap_export  - pafcs_filter_first) == bfs_rmap_export) ;
+CONFIRM((pafcs_us_rmap      - pafcs_filter_first) == bfs_us_rmap) ;
+CONFIRM((pafcs_default_rmap - pafcs_filter_first) == bfs_default_rmap) ;
+CONFIRM((pafcs_orf_plist    - pafcs_filter_first) == bfs_orf_plist) ;
+
 typedef uint64_t bgp_pafc_set_t ;
 #define pafcs_bit(n) BIT64(n)
-
-#if 0
-typedef enum bgp_paf_flag bgp_paf_flag_t ;
-enum bgp_paf_flag
-{
-  PEER_AFF_NOTHING                 = 0,
-
-  /* These are configuration flags, for per afi/safi configuration stuff.
-   */
-  PEER_AFF_SOFT_RECONFIG            = BIT(pafcs_SOFT_RECONFIG),
-  PEER_AFF_RSERVER_CLIENT           = BIT(pafcs_RSERVER_CLIENT),
-  PEER_AFF_REFLECTOR_CLIENT         = BIT(pafcs_REFLECTOR_CLIENT),
-  PEER_AFF_SEND_COMMUNITY           = BIT(pafcs_SEND_COMMUNITY),
-  PEER_AFF_SEND_EXT_COMMUNITY       = BIT(pafcs_SEND_EXT_COMMUNITY),
-  PEER_AFF_NEXTHOP_SELF             = BIT(pafcs_NEXTHOP_SELF),
-  PEER_AFF_NEXTHOP_UNCHANGED        = BIT(pafcs_NEXTHOP_UNCHANGED),
-  PEER_AFF_NEXTHOP_LOCAL_UNCHANGED  = BIT(pafcs_NEXTHOP_LOCAL_UNCHANGED),
-  PEER_AFF_AS_PATH_UNCHANGED        = BIT(pafcs_AS_PATH_UNCHANGED),
-  PEER_AFF_REMOVE_PRIVATE_AS        = BIT(pafcs_REMOVE_PRIVATE_AS),
-  PEER_AFF_MED_UNCHANGED            = BIT(pafcs_MED_UNCHANGED),
-  PEER_AFF_DEFAULT_ORIGINATE        = BIT(pafcs_DEFAULT_ORIGINATE),
-} ;
-#endif
 
 typedef struct bgp_paf_config  bgp_paf_config_t ;
 typedef struct bgp_paf_config const* bgp_paf_config_c ;
@@ -497,17 +480,20 @@ struct bgp_paf_config
    */
   bgp_pconfig_type_t    ctype ;
 
-  bgp_paf_config gafc ;
-  vector        members ;               /* bgp_paf_config       */
+  union
+    {
+      bgp_paf_config    afc ;
+      vector_t          members[1] ;    /* bgp_paf_config       */
+    } group ;
 
   /* The configuration settings.
    */
   bgp_pafc_set_t    set ;
-  bgp_pafc_set_t    set_on ;
+  bgp_pafc_set_t    on ;
 
   uint          allow_as_in ;
 
-  nref_c        filter_set[bfs_count] ;
+  bgp_nref      filter_set[bfs_count] ;
 
   prefix_max_t  pmax ;
 };
@@ -521,7 +507,13 @@ pafcs_is_set(bgp_paf_config pafc, bgp_pafc_setting_t pafcs)
 Inline bool
 pafcs_is_on(bgp_paf_config pafc, bgp_pafc_setting_t pafcs)
 {
-  return (pafc->set & pafc->set_on & pafcs_bit(pafcs)) ;
+  return (pafc->on & pafcs_bit(pafcs)) ;
+} ;
+
+Inline bool
+pafcs_is_set_on(bgp_paf_config pafc, bgp_pafc_setting_t pafcs)
+{
+  return (pafc->set & pafc->on & pafcs_bit(pafcs)) ;
 } ;
 
 /*==============================================================================
@@ -544,6 +536,7 @@ extern bgp_peer_sort_t bgp_peer_as_sort(bgp_inst bgp, as_t asn) ;
 
 extern bgp_ret_t bgp_peer_sex(chs_c p_str, sockunion su,
                                                       bgp_peer_or_group_t bpg) ;
+extern bgp_peer bgp_peer_lookup_name(bgp_inst bgp, chs_c p_name) ;
 extern bgp_peer bgp_peer_lookup_su(bgp_inst bgp, sockunion su) ;
 extern bgp_peer bgp_peer_lookup_group(bgp_inst bgp, chs_c g_str) ;
 extern bool bgp_peer_ipv4_default(bgp_peer peer) ;

@@ -505,9 +505,8 @@ static bgp_dump
 bgp_dump_routes_index_table(bgp_dump bd, bgp_run brun)
 {
   stream        s ;
-  bgp_prun      prun ;
-  uint          prun_count ;
-  uint16_t peerno, len ;
+  uint          prun_count, peerno ;
+  uint16_t      len ;
 
   if (bd == NULL)
     return NULL ;               /* get out, quick, if no file   */
@@ -516,18 +515,14 @@ bgp_dump_routes_index_table(bgp_dump bd, bgp_run brun)
    */
   s = bgp_dump_header(bd, MRT_MT_TABLE_DUMP_V2, MRT_MST_TDV2_PEER_INDEX_TABLE) ;
 
-  stream_put_ipv4(s, brun->router_id_r) ;       /* Collector BGP ID     */
+  stream_put_ipv4(s, brun->rp.router_id) ;      /* Collector BGP ID     */
 
   len = (brun->view_name != NULL) ? strlen(brun->view_name) : 0 ;
   stream_putw(s, len) ;         /* View name                    */
   if (len != 0)
     stream_put(s, brun->view_name, len) ;
 
-  prun_count = 0 ;
-  for(prun = ddl_head(brun->pruns) ; prun != NULL ;
-                                     prun = ddl_next(prun, prun_list))
-    prun_count += 0 ;
-
+  prun_count = vector_length(brun->pruns) ;
   stream_putw (s, prun_count) ; /* number of peers      */
 
   /* Walk down all peers and construct peer index entries for the known
@@ -538,14 +533,15 @@ bgp_dump_routes_index_table(bgp_dump bd, bgp_run brun)
    * capabilities of the peer; in particular nothing to do with whether the
    * peer is an AS4 speaker.
    */
-  peerno = 0 ;                  /* index for first entry        */
-  for(prun = ddl_head(brun->pruns) ; prun != NULL ;
-                                     prun = ddl_next(prun, prun_list))
+  for (peerno = 0 ; peerno < prun_count ; ++peerno)
     {
+      bgp_prun    prun ;
       sockunion_c su ;
       uint  type ;
 
-      su = prun->su_name ;
+      prun = vector_get_item(brun->pruns, peerno) ;
+
+      su = prun->rp.cops_conf.remote_su ;
 
       type = MRT_TDV2_PEER_INDEX_TABLE_AS4 ;    /* always, for simplicity */
 
@@ -566,9 +562,9 @@ bgp_dump_routes_index_table(bgp_dump bd, bgp_run brun)
         } ;
 
       stream_putc (s, type) ;
-      stream_put_ipv4 (s, prun->args_r.remote_id) ;
+      stream_put_ipv4 (s, prun->session->sargs->remote_id) ;
       stream_put (s, sockunion_get_addr(su), sockunion_get_addr_len(su)) ;
-      stream_putl (s, prun->args_r.remote_as) ;   /* AS4  */
+      stream_putl (s, prun->session->sargs->remote_as) ; /* AS4  */
 
       prun->table_dump_index = peerno ;         /* set peer number      */
 
@@ -1559,9 +1555,9 @@ bgp_dump_packet (bgp_session session, ptr_t msg_body, uint msg_body_length,
    * we construct just the one header.
    */
   s = bgp_dump_common(bd, session,
-                          session->args->can_as4 ? MRT_MST_BGP4MP_MESSAGE_AS4
+                          session->sargs->can_as4 ? MRT_MST_BGP4MP_MESSAGE_AS4
                                                  : MRT_MST_BGP4MP_MESSAGE,
-                                                       session->args->can_as4) ;
+                                                       session->sargs->can_as4) ;
 
   bgp_dump_set_msg_header(s, msg_body_length, msg_bgp_type) ;
   bgp_dump_set_size (s, msg_body_length) ;
@@ -1610,8 +1606,8 @@ bgp_dump_common (bgp_dump bd, bgp_session session, int subtype, bool as4)
    *
    * NB: if there is a change_local_as in force, then local_as is set to that.
    */
-  remote_as = session->args->remote_as ;
-  local_as  = session->args->local_as ;
+  remote_as = session->sargs->remote_as ;
+  local_as  = session->sargs->local_as ;
 
   if (as4)
     {
@@ -1637,8 +1633,8 @@ bgp_dump_common (bgp_dump bd, bgp_session session, int subtype, bool as4)
    * something "impossible" has happened, then the message will still be
    * "syntactically" well formed.
    */
-  su_remote = &session->cops->su_remote ;
-  su_local  = &session->cops->su_local ;
+  su_remote = &session->cops->remote_su ;
+  su_local  = &session->cops->local_su ;
 
   stream_putw (s, sockunion_get_afi(su_remote)) ;
 

@@ -129,7 +129,7 @@ route_vty_short_status_out (vty vty, route_info ri)
 
   /* Internal route.
    */
-  if (ri->prib->prun->sort == BGP_PEER_IBGP)
+  if (ri->prib->prun->rp.sort == BGP_PEER_IBGP)
     vty_out (vty, "i");
   else
     vty_out (vty, " ");
@@ -626,7 +626,7 @@ bgp_show_table (vty vty, bgp_rib rib, bgp_lc_id_t lc, in_addr_t router_id,
                (sht == bgp_show_type_flap_neighbor) ||
                (sht == bgp_show_type_damp_neighbor) )
             {
-              sockunion su = &ri->prib->prun->session->cops->su_remote ;
+              sockunion su = &ri->prib->prun->session->cops->remote_su ;
 
               if ((su == NULL) || ! sockunion_same(su, (sockunion)output_arg))
                 continue;
@@ -770,7 +770,7 @@ bgp_show_brun(vty vty, bgp_run brun, qafx_t qafx, bgp_lc_id_t lc,
       return CMD_WARNING;
     } ;
 
-  return bgp_show_table (vty, rib, lc, brun->router_id_r, sht, output_arg) ;
+  return bgp_show_table (vty, rib, lc, brun->rp.router_id, sht, output_arg) ;
 }
 
 /*------------------------------------------------------------------------------
@@ -956,14 +956,14 @@ DEFUN (show_ip_bgp_view_rsclient,
       return CMD_WARNING;
     }
 
-  if ( !prib->route_server_client)
+  if ( !prib->rp.is_route_server_client)
     {
       vty_out (vty, "%% Neighbor is not a Route-Server client\n");
       return CMD_WARNING;
     }
 
   return bgp_show_table (vty, prib->rib, prib->lc_id,
-                            prun->args_r.remote_id, bgp_show_type_normal, NULL);
+                    prun->rp.sargs_conf.remote_id, bgp_show_type_normal, NULL) ;
 }
 
 ALIAS (show_ip_bgp_view_rsclient,
@@ -1018,14 +1018,14 @@ DEFUN (show_bgp_view_ipv4_safi_rsclient,
       return CMD_WARNING;
     }
 
-  if ( ! prib->route_server_client)
+  if ( ! prib->rp.is_route_server_client)
     {
       vty_out (vty, "%% Neighbor is not a Route-Server client\n") ;
       return CMD_WARNING;
     }
 
   return bgp_show_table (vty, prib->rib, prib->lc_id,
-                              prun->args_r.remote_id, bgp_show_type_normal, NULL);
+                    prun->rp.sargs_conf.remote_id, bgp_show_type_normal, NULL) ;
 }
 
 ALIAS (show_bgp_view_ipv4_safi_rsclient,
@@ -3530,7 +3530,7 @@ bgp_show_route (vty vty, chs_c view_name, chs_c client_name,
       if (client == NULL)
         return CMD_WARNING;
 
-      if (!client->prib[qafx]->route_server_client)
+      if (!client->prib[qafx]->rp.is_route_server_client)
         {
           vty_out (vty, "%% Neighbor is not a Route-Server client\n") ;
           return CMD_WARNING;
@@ -3820,7 +3820,7 @@ bgp_show_route_header (vty vty, bgp_rib rib, bgp_lc_id_t lc, bgp_rib_node rn,
               announced = true ;
             } ;
 
-          vty_out (vty, " %s", sutoa(prib->prun->su_name).str);
+          vty_out (vty, " %s", sutoa(&prib->prun->rp.cops_conf.remote_su).str);
         } ;
     } ;
 
@@ -3860,10 +3860,10 @@ bgp_show_route_detail (vty vty, bgp_rib rib, bgp_lc_id_t lc,
     vty_out (vty, ", (aggregated by %u %s)", attr->aggregator_as,
                                 siptoa(AF_INET, &attr->aggregator_ip).str);
 
-  if (ri->prib->route_reflector_client)
+  if (ri->prib->rp.is_route_reflector_client)
     vty_out (vty, ", (Received from a RR-client)");
 
-  if (ri->prib->route_server_client)
+  if (ri->prib->rp.is_route_server_client)
     vty_out (vty, ", (Received from a RS-client)");
 
   if (ri->current.flags & RINFO_HISTORY)
@@ -3891,7 +3891,7 @@ bgp_show_route_detail (vty vty, bgp_rib rib, bgp_lc_id_t lc,
     {
       vty_out (vty, " from %s (%s)",
                         pie->pfx->family == AF_INET ? "0.0.0.0" : "::",
-                                 siptoa(AF_INET, &rib->brun->router_id_r).str);
+                                 siptoa(AF_INET, &rib->brun->rp.router_id).str);
     }
   else
     {
@@ -3908,7 +3908,7 @@ bgp_show_route_detail (vty vty, bgp_rib rib, bgp_lc_id_t lc,
       if (attr->have & atb_originator_id)
         originator = attr->originator_id ;
       else
-        originator = ri->prib->prun->args_r.remote_id ;
+        originator = ri->prib->prun->rp.sargs_conf.remote_id ;
 
       vty_out (vty, " from %s (%s)", ri->prib->prun->name,
                                         siptoa(AF_INET, &originator).str) ;
@@ -3933,10 +3933,8 @@ bgp_show_route_detail (vty vty, bgp_rib rib, bgp_lc_id_t lc,
   if (attr->have & atb_med)
     vty_out (vty, ", metric %u", attr->med);
 
-  if (attr->have & atb_local_pref)
-    vty_out (vty, ", localpref %u", attr->local_pref);
-  else
-    vty_out (vty, ", localpref %u", rib->brun->args_r.local_pref);
+  vty_out (vty, ", localpref %u%s", attr->local_pref,
+                             (attr->have & atb_local_pref) ? "" : "(default)");
 
   if (attr->weight != 0)
     vty_out (vty, ", weight %u", attr->weight);
@@ -3948,7 +3946,7 @@ bgp_show_route_detail (vty vty, bgp_rib rib, bgp_lc_id_t lc,
     {
       chs_c sort_str ;
 
-      switch (ri->prib->prun->sort)
+      switch (ri->prib->prun->rp.sort)
       {
         case BGP_PEER_IBGP:
           sort_str = "internal" ;
@@ -4882,10 +4880,10 @@ show_adj_route (vty vty, bgp_prun prun, qafx_t qafx, bool in)
   header1 = header2 = true ;
   output_count = 0;
 
-  if (!in && prib->default_originate)
+  if (!in && prib->rp.do_default_originate)
     {
       vty_out (vty, "BGP table version is 0, local router ID is %s\n",
-                                       siptoa(AF_INET, &brun->router_id_r).str);
+                                      siptoa(AF_INET, &brun->rp.router_id).str);
       vty_out (vty, BGP_SHOW_SCODE_HEADER);
       vty_out (vty, BGP_SHOW_OCODE_HEADER "\n");
 
@@ -4909,7 +4907,7 @@ show_adj_route (vty vty, bgp_prun prun, qafx_t qafx, bool in)
           if (header1)
             {
               vty_out (vty, "BGP table version is 0, local router ID is %s\n",
-                                      siptoa(AF_INET, &brun->router_id_r).str) ;
+                                     siptoa(AF_INET, &brun->rp.router_id).str) ;
               vty_out (vty, BGP_SHOW_SCODE_HEADER);
               vty_out (vty, BGP_SHOW_OCODE_HEADER "\n");
               header1 = false;
@@ -4945,7 +4943,7 @@ show_adj_route (vty vty, bgp_prun prun, qafx_t qafx, bool in)
           if (header1)
             {
               vty_out (vty, "BGP table version is 0, local router ID is %s\n",
-                                       siptoa(AF_INET, &brun->router_id_r).str);
+                                      siptoa(AF_INET, &brun->rp.router_id).str);
               vty_out (vty, BGP_SHOW_SCODE_HEADER);
               vty_out (vty, BGP_SHOW_OCODE_HEADER "\n");
               header1 = false;
@@ -4977,7 +4975,7 @@ peer_adj_routes (vty vty, chs_c view_name, chs_c peer_name, qafx_t qafx,
   if (prun == NULL)
     return CMD_WARNING;
 
-  if (in && !prun->prib[qafx]->soft_reconfig)
+  if (in && !prun->prib[qafx]->rp.do_soft_reconfig)
     {
       vty_out (vty, "%% Inbound soft reconfiguration not enabled\n");
       return CMD_WARNING;
@@ -5336,7 +5334,7 @@ DEFUN (show_ip_bgp_neighbor_received_prefix_filter,
   if (prun == NULL)
     return CMD_WARNING;
 
-  prefix_bgp_orf_name_set(name, prun->su_name, qafx_ipv4_unicast) ;
+  prefix_bgp_orf_name_set(name, &prun->rp.cops_conf.remote_su, qafx_ipv4_unicast) ;
 
   count =  prefix_bgp_show_prefix_list (NULL, name);
   if (count != 0)
@@ -5385,7 +5383,7 @@ DEFUN (show_ip_bgp_ipv4_neighbor_received_prefix_filter,
   if (prun == NULL)
     return CMD_WARNING;
 
-  prefix_bgp_orf_name_set(name, prun->su_name, qafx) ;
+  prefix_bgp_orf_name_set(name, &prun->rp.cops_conf.remote_su, qafx) ;
   count =  prefix_bgp_show_prefix_list (NULL, name);
 
   if (count != 0)
@@ -5439,7 +5437,8 @@ DEFUN (show_bgp_neighbor_received_prefix_filter,
   if (prun == NULL)
     return CMD_WARNING;
 
-  prefix_bgp_orf_name_set(name, prun->su_name, qafx_ipv6_unicast) ;
+  prefix_bgp_orf_name_set(name, &prun->rp.cops_conf.remote_su,
+                                                            qafx_ipv6_unicast) ;
 
   count =  prefix_bgp_show_prefix_list (NULL, name);
   if (count)
@@ -5512,7 +5511,8 @@ DEFUN (show_bgp_view_neighbor_received_prefix_filter,
   if (prun == NULL)
     return CMD_WARNING;
 
-  prefix_bgp_orf_name_set(name, prun->su_name, qafx_ipv6_unicast) ;
+  prefix_bgp_orf_name_set(name, &prun->rp.cops_conf.remote_su,
+                                                            qafx_ipv6_unicast) ;
 
   count =  prefix_bgp_show_prefix_list (NULL, name);
   if (count)
@@ -5557,7 +5557,7 @@ bgp_show_neighbor_route (vty vty, chs_c view_name, chs_c peer_name, qafx_t qafx,
 
   /* Need a not-const copy of the su... such is life
    */
-  su = sockunion_copy(&su_s, prun->su_name) ;
+  su = sockunion_copy(&su_s, &prun->rp.cops_conf.remote_su) ;
 
   return bgp_show_brun(vty, prun->brun, qafx, lc_view_id, type, su) ;
 }
@@ -5877,14 +5877,14 @@ DEFUN (show_bgp_view_rsclient,
       return CMD_WARNING;
     }
 
-  if (!prib->route_server_client)
+  if (!prib->rp.is_route_server_client)
     {
       vty_out (vty, "%% Neighbor is not a Route-Server client\n") ;
       return CMD_WARNING;
     }
 
   return bgp_show_table (vty, prib->rib, prib->lc_id,
-                            prun->args_r.remote_id, bgp_show_type_normal, NULL);
+                    prun->rp.sargs_conf.remote_id, bgp_show_type_normal, NULL) ;
 }
 
 ALIAS (show_bgp_view_rsclient,
@@ -5937,14 +5937,14 @@ DEFUN (show_bgp_view_ipv6_safi_rsclient,
       return CMD_WARNING;
     }
 
-  if (!prib->route_server_client)
+  if (!prib->rp.is_route_server_client)
     {
       vty_out (vty, "%% Neighbor is not a Route-Server client\n");
       return CMD_WARNING;
     }
 
   return bgp_show_table (vty, prib->rib, prib->lc_id,
-                            prun->args_r.remote_id, bgp_show_type_normal, NULL);
+                    prun->rp.sargs_conf.remote_id, bgp_show_type_normal, NULL) ;
 }
 
 ALIAS (show_bgp_view_ipv6_safi_rsclient,
@@ -6614,7 +6614,7 @@ show_adj_route_vpn (vty vty, const char* peer_name, const char* rd_str)
       if (!header)
         {
           vty_out (vty, "BGP table version is 0, local router ID is %s\n",
-                                      siptoa(AF_INET, &brun->router_id_r).str);
+                                      siptoa(AF_INET, &brun->rp.router_id).str);
           vty_out (vty, "Status codes: s suppressed, d damped, h history, "
                                             "* valid, > best, i - internal\n");
           vty_out (vty, "Origin codes: i - IGP, e - EGP, "
@@ -6720,7 +6720,7 @@ bgp_show_mpls_vpn (vty vty, const char* rd_str, enum bgp_show_type type,
             {
               sockunion su ;
 
-              su = &ri->prib->prun->session->cops->su_remote ;
+              su = &ri->prib->prun->session->cops->remote_su ;
 
               if (!sockunion_same(su, (sockunion)output_arg))
                 continue;
@@ -6734,7 +6734,7 @@ bgp_show_mpls_vpn (vty vty, const char* rd_str, enum bgp_show_type type,
                 {
                   vty_out (vty, "BGP table version is 0, "
                                                       "local router ID is %s\n",
-                                       siptoa(AF_INET, &brun->router_id_r).str);
+                                      siptoa(AF_INET, &brun->rp.router_id).str);
                   vty_out (vty, "Status codes: s suppressed, d damped, "
                                   "h history, * valid, > best, i - internal\n");
                   vty_out (vty, "Origin codes: i - IGP, e - EGP, "
@@ -6804,7 +6804,7 @@ bgp_show_mpls_vpn_neighbor (vty vty, const char* rd_str,
 
   /* Need a not-const copy of the su... such is life
    */
-  su = sockunion_copy(&su_s, prun->su_name) ;
+  su = sockunion_copy(&su_s, &prun->rp.cops_conf.remote_su) ;
 
   return bgp_show_mpls_vpn (vty, rd_str, bgp_show_type_neighbor, su, tags) ;
 } ;
@@ -6948,7 +6948,7 @@ DEFUN (show_bgp_views,
                                     brun = ddl_next(brun, brun_list))
     vty_out (vty, "\t%s (AS%u)\n",
                ((brun->view_name != NULL) ? brun->view_name : "(null)"),
-                                                                brun->my_as) ;
+                                                               brun->rp.my_as) ;
 
   return CMD_SUCCESS;
 }
@@ -7062,13 +7062,13 @@ DEFUN (show_bgp_memory,
            mtype_memstr (memstrbuf, sizeof (memstrbuf),
                          count * sizeof (bgp_prun_t)),
            VTY_NEWLINE);
-
+#if 0
   if ((count = mem_get_alloc(mst, MTYPE_PEER_GROUP)))
     vty_out (vty, "%ld peer groups, using %s of memory%s", count,
              mtype_memstr (memstrbuf, sizeof (memstrbuf),
                            count * sizeof (bgp_peer_group_t)),
              VTY_NEWLINE);
-
+#endif
   /* Other */
   if ((count = mem_get_alloc(mst, MTYPE_HASH)))
     vty_out (vty, "%ld hash tables, using %s of memory%s", count,
@@ -7126,7 +7126,7 @@ bgp_show_summary (vty vty, bgp_rib rib)
           /* Usage summary and header */
           vty_out (vty,
                    "BGP router identifier %s, local AS number %u\n",
-                siptoa(AF_INET, &brun->router_id_r).str, brun->my_as) ;
+                siptoa(AF_INET, &brun->rp.router_id).str, brun->rp.my_as) ;
 
 #if 0
           ents = bgp_rib_count (brun->rib[qafx]);
@@ -7161,7 +7161,7 @@ bgp_show_summary (vty vty, bgp_rib rib)
                                    ents * sizeof (bgp_peer_group_t)));
 #endif
 
-          if (rib->do_damping)
+          if (rib->rp.do_damping)
             vty_out (vty, "Dampening enabled.\n");
 
           vty_out (vty, "\n"
@@ -7180,7 +7180,7 @@ bgp_show_summary (vty vty, bgp_rib rib)
       vty_out (vty, " 4 ");
 
       vty_out (vty, "%5u %7d %7d %8d %4d %4lu ",
-               prun->args_r.remote_as,
+               prun->rp.sargs_conf.remote_as,
                stats.open_in + stats.update_in + stats.keepalive_in
                + stats.notify_in + stats.refresh_in + stats.dynamic_cap_in,
                stats.open_out + stats.update_out + stats.keepalive_out
@@ -7544,8 +7544,8 @@ bgp_show_prun_afi (vty vty, bgp_prun prun, qafx_t qafx)
     {
       bgp_orf_cap_bits_t orf_pfx_sent, orf_pfx_recv ;
 
-      orf_pfx_sent = prun->session->open_recv->args->can_orf_pfx.af[qafx] ;
-      orf_pfx_recv = prun->session->open_recv->args->can_orf_pfx.af[qafx] ;
+      orf_pfx_sent = prun->session->open_recv->sargs->can_orf_pfx.af[qafx] ;
+      orf_pfx_recv = prun->session->open_recv->sargs->can_orf_pfx.af[qafx] ;
 
       if ((orf_pfx_sent | orf_pfx_recv) != 0)
         vty_out (vty, "  AF-dependant capabilities:\n");
@@ -7569,7 +7569,7 @@ bgp_show_prun_afi (vty vty, bgp_prun prun, qafx_t qafx)
         } ;
     } ;
 
-  prefix_bgp_orf_name_set(orf_pfx_name, prun->su_name, qafx) ;
+  prefix_bgp_orf_name_set(orf_pfx_name, &prun->rp.cops_conf.remote_su, qafx) ;
 
   orf_pfx_count = prefix_bgp_show_prefix_list (NULL, orf_pfx_name);
 
@@ -7587,33 +7587,33 @@ bgp_show_prun_afi (vty vty, bgp_prun prun, qafx_t qafx)
       vty_out (vty, "  First update is deferred until ORF or ROUTE-REFRESH "
                                                   "is received\n");
 
-  if (prib->route_reflector_client)
+  if (prib->rp.is_route_reflector_client)
     vty_out (vty, "  Route-Reflector Client\n");
-  if (prib->route_server_client)
+  if (prib->rp.is_route_server_client)
     vty_out (vty, "  Route-Server Client\n");
-  if (prib->soft_reconfig)
+  if (prib->rp.do_soft_reconfig)
     vty_out (vty, "  Inbound soft reconfiguration allowed\n");
-  if (prib->remove_private_as)
+  if (prib->rp.do_remove_private_as)
     vty_out (vty, "  Private AS number removed from updates to this neighbor\n");
-  if (prib->next_hop_self)
+  if (prib->rp.do_next_hop_self)
     vty_out (vty, "  NEXT_HOP is always this router\n");
-  if (prib->as_path_unchanged)
+  if (prib->rp.do_as_path_unchanged)
     vty_out (vty, "  AS_PATH is propagated unchanged to this neighbor\n");
-  if (prib->next_hop_unchanged)
+  if (prib->rp.do_next_hop_unchanged)
     vty_out (vty, "  NEXT_HOP is propagated unchanged to this neighbor\n");
-  if (prib->med_unchanged)
+  if (prib->rp.do_med_unchanged)
     vty_out (vty, "  MED is propagated unchanged to this neighbor\n");
-  if (prib->send_community || prib->send_ecommunity)
+  if (prib->rp.do_send_community || prib->rp.do_send_ecommunity)
     {
       vty_out (vty, "  Community attribute sent to this neighbor");
-      if (prib->send_community && prib->send_ecommunity)
+      if (prib->rp.do_send_community && prib->rp.do_send_ecommunity)
         vty_out (vty, "(both)\n");
-      else if ( prib->send_ecommunity)
+      else if ( prib->rp.do_send_ecommunity)
         vty_out (vty, "(extended)\n");
       else
         vty_out (vty, "(standard)\n");
     }
-  if (prib->default_originate)
+  if (prib->rp.do_default_originate)
     {
       vty_out (vty, "  Default information originate,");
 
@@ -7756,20 +7756,20 @@ bgp_show_peer (struct vty *vty, bgp_prun prun)
   /* Configured IP address.
    */
   vty_out (vty, "BGP neighbor is %s, ", prun->name);
-  vty_out (vty, "remote AS %u, ", prun->args_r.remote_as);
-  vty_out (vty, "local AS %u", prun->args_r.local_as) ;
-  if ((prun->sort == BGP_PEER_EBGP)
-        && (prun->change_local_as != BGP_ASN_NULL)
-        && (prun->change_local_as != brun->ebgp_as))
-    vty_out (vty, " (changed%s)", (prun->change_local_as_prepend
+  vty_out (vty, "remote AS %u, ", prun->rp.sargs_conf.remote_as);
+  vty_out (vty, "local AS %u", prun->rp.sargs_conf.local_as) ;
+  if ((prun->rp.sort == BGP_PEER_EBGP)
+        && (prun->rp.change_local_as != BGP_ASN_NULL)
+        && (prun->rp.change_local_as != brun->rp.my_as_ebgp))
+    vty_out (vty, " (changed%s)", (prun->rp.do_local_as_prepend
                                                        ? "" : " no-prepend")) ;
   vty_out (vty, ", %s link\n",
-                    (prun->sort == BGP_PEER_IBGP) ? "internal" : "external") ;
+                   (prun->rp.sort == BGP_PEER_IBGP) ? "internal" : "external") ;
 
   /* Description.
    */
-  if (*prun->p_desc != NULL)
-    vty_out (vty, " Description: %s%s", *prun->p_desc, VTY_NEWLINE);
+  if (prun->rp.desc != NULL)
+    vty_out (vty, " Description: %s\n", prun->rp.desc) ;
 
   /* Peer-group
    */
@@ -7786,12 +7786,12 @@ bgp_show_peer (struct vty *vty, bgp_prun prun)
    */
   vty_out (vty, "  BGP version 4");
   vty_out (vty, ", remote router ID %s%s\n",
-                    siptoa(AF_INET, &prun->args_r.remote_id).str,
+                    siptoa(AF_INET, &prun->rp.sargs_conf.remote_id).str,
                      (prun->state == bgp_pEstablished) ? ""
                                                        : " (in last session)") ;
   /* Confederation
    */
-  if (bgp_confederation_peers_check (brun, prun->args_r.remote_as))
+  if (bgp_confederation_peers_check (brun, prun->rp.sargs_conf.remote_as))
     vty_out (vty, "  Neighbor under common administration\n");
 
   /* Status.
@@ -7821,12 +7821,12 @@ bgp_show_peer (struct vty *vty, bgp_prun prun)
   if (prun->state == bgp_pEstablished)
     vty_out (vty, " -- current "
                       "hold time is %u, keepalive interval is %u seconds\n",
-                                          prun->session->args->holdtime_secs,
-                                          prun->session->args->keepalive_secs) ;
+                                          prun->session->sargs->holdtime_secs,
+                                          prun->session->sargs->keepalive_secs) ;
   else
     vty_out (vty, " -- configured "
                       "hold time is %u, keepalive interval is %u seconds\n",
-                      prun->args_r.holdtime_secs, prun->args_r.keepalive_secs) ;
+        prun->rp.sargs_conf.holdtime_secs, prun->rp.sargs_conf.keepalive_secs) ;
 
   /* Capabilities.
    */
@@ -7834,11 +7834,11 @@ bgp_show_peer (struct vty *vty, bgp_prun prun)
 
   if (prun->state == bgp_pEstablished)
     {
-      bgp_session_args args_sent, args_recv, args ;
+      bgp_sargs args_sent, args_recv, args ;
 
-      args_sent = prun->session->open_sent->args ;
-      args_recv = prun->session->open_recv->args ;
-      args      = prun->session->args ;
+      args_sent = prun->session->open_sent->sargs ;
+      args_recv = prun->session->open_recv->sargs ;
+      args      = prun->session->sargs ;
 
       vty_out (vty, "  Neighbor capabilities:\n");
 
@@ -8101,12 +8101,12 @@ bgp_show_peer (struct vty *vty, bgp_prun prun)
   /* advertisement-interval
    */
   vty_out (vty, "  Minimum time between advertisement runs is %d seconds\n",
-                                                                  prun->mrai);
+                                                                 prun->rp.mrai_secs);
 
   /* Update-source.
    */
-  if ((prun->cops_r.ifname[0] != '\0') ||
-      (sockunion_family(&prun->cops_r.su_local) != AF_UNSPEC))
+  if ((prun->rp.cops_conf.ifname[0] != '\0') ||
+      (sockunion_family(&prun->rp.cops_conf.local_su) != AF_UNSPEC))
     {
 #if 0
       if (prun->c->c_set & PEER_CONFIG_INTERFACE)
@@ -8117,10 +8117,10 @@ bgp_show_peer (struct vty *vty, bgp_prun prun)
         {
 #endif
           vty_out (vty, "  Update source is ");
-          if (prun->cops_r.ifname[0] != '\0')
-            vty_out (vty, "%s", prun->cops_r.ifname);
+          if (prun->rp.cops_conf.ifname[0] != '\0')
+            vty_out (vty, "%s", prun->rp.cops_conf.ifname);
           else
-            vty_out (vty, "%s", sutoa(&prun->cops_r.su_local).str);
+            vty_out (vty, "%s", sutoa(&prun->rp.cops_conf.local_su).str);
           vty_out (vty, "\n");
 #if 0
         } ;
@@ -8129,8 +8129,8 @@ bgp_show_peer (struct vty *vty, bgp_prun prun)
 
   /* Default weight
    */
-  if (prun->weight != 0)
-    vty_out (vty, "  Default weight %d\n", prun->weight);
+  if (prun->rp.weight != 0)
+    vty_out (vty, "  Default weight %d\n", prun->rp.weight);
 
   vty_out (vty, "\n");
 
@@ -8165,15 +8165,15 @@ bgp_show_peer (struct vty *vty, bgp_prun prun)
 
   /* EBGP Multihop and GTSM -- for these purposes eBGP includes Confed eBGP.
    */
-  if (prun->sort != BGP_PEER_IBGP)
+  if (prun->rp.sort != BGP_PEER_IBGP)
     {
-      if (prun->cops_r.gtsm)
+      if (prun->rp.cops_conf.gtsm)
         vty_out (vty, "  External BGP neighbor may be up to %d hops away"
                                                             " -- using GTSM.\n",
-                                                             prun->cops_r.ttl) ;
-      else if (prun->cops_r.ttl > 1)
+                                                       prun->rp.cops_conf.ttl) ;
+      else if (prun->rp.cops_conf.ttl > 1)
         vty_out (vty, "  External BGP neighbor may be up to %d hops away.\n",
-                                                             prun->cops_r.ttl) ;
+                                                       prun->rp.cops_conf.ttl) ;
     }
 
   /* Local address and remote address, if established.
@@ -8183,12 +8183,12 @@ bgp_show_peer (struct vty *vty, bgp_prun prun)
   if (prun->state == bgp_pEstablished)
     {
       vty_out (vty, "Local host: %s, Local port: %u\n",
-                         sutoa(&prun->session->cops->su_local).str,
-                          ntohs(prun->session->cops->su_local.sin.sin_port)) ;
+                         sutoa(&prun->session->cops->local_su).str,
+                          ntohs(prun->session->cops->local_su.sin.sin_port)) ;
 
       vty_out (vty, "Foreign host: %s, Foreign port: %u\n",
-                        sutoa(&prun->session->cops->su_remote).str,
-                          ntohs(prun->session->cops->su_remote.sin.sin_port)) ;
+                        sutoa(&prun->session->cops->remote_su).str,
+                          ntohs(prun->session->cops->remote_su.sin.sin_port)) ;
 
       vty_out (vty, "Nexthop: %s\n", siptoa(AF_INET, &prun->nexthop.v4).str) ;
 #ifdef HAVE_IPV6
@@ -8420,10 +8420,12 @@ bgp_show_neighbor (vty vty, bgp_run brun,
                    enum show_type type, union sockunion *su)
 {
   bgp_prun prun;
-  int find = 0;
+  uint     i ;
+  bool     found ;
 
-  for (prun = ddl_head(brun->pruns) ; prun != NULL ;
-                                      prun = ddl_next(prun, prun_list))
+  found = false ;
+  i = 0 ;
+  while ((prun = vector_get_item(brun->pruns, i++)) != NULL)
     {
       switch (type)
         {
@@ -8432,10 +8434,10 @@ bgp_show_neighbor (vty vty, bgp_run brun,
             break;
 
           case show_peer:
-            if (sockunion_same (prun->su_name, su))
+            if (sockunion_same (&prun->rp.cops_conf.remote_su, su))
               {
-                find = 1;
                 bgp_show_peer (vty, prun);
+                found = true ;
               }
             break;
 
@@ -8444,8 +8446,8 @@ bgp_show_neighbor (vty vty, bgp_run brun,
         }
     }
 
-  if (type == show_peer && ! find)
-    vty_out (vty, "%% No such neighbor%s", VTY_NEWLINE);
+  if (type == show_peer && ! found)
+    vty_out (vty, "%% No such neighbor\n");
 
   return CMD_SUCCESS;
 }
@@ -8757,7 +8759,7 @@ bgp_write_rsclient_summary (vty vty, bgp_peer rsclient, qafx_t qafx)
 
   if (rsclient->ptype == PEER_TYPE_GROUP)
     {
-      for (rsclient = ddl_head(rsclient->c->gc->members) ;
+      for (rsclient = ddl_head(rsclient->c->group.members) ;
            rsclient != NULL ;
            rsclient = ddl_next(rsclient->c, member.list))
         {
@@ -8790,7 +8792,7 @@ bgp_write_rsclient_summary (vty vty, bgp_peer rsclient, qafx_t qafx)
 
   vty_out (vty, "4 ");
 
-  vty_out (vty, "%11d ", prun->args_r.remote_as);
+  vty_out (vty, "%11d ", prun->rp.sargs_conf.remote_as);
 
   rmname = route_map_get_name(prib->rmap[RMAP_EXPORT]);
   if ( rmname && strlen (rmname) > 13 )
@@ -8840,7 +8842,7 @@ bgp_show_rsclient_summary (struct vty *vty, bgp_run brun, qafx_t qafx)
     {
       bgp_prun   prun ;
 
-      if (!prib->route_server_client)
+      if (!prib->rp.is_route_server_client)
         continue ;
 
       prun = prib->prun ;
@@ -8848,15 +8850,15 @@ bgp_show_rsclient_summary (struct vty *vty, bgp_run brun, qafx_t qafx)
       if (count == 0)
         {
           vty_out (vty, "Route Server's BGP router identifier %s\n",
-                                siptoa(AF_INET, &prun->brun->router_id_r).str) ;
+                               siptoa(AF_INET, &prun->brun->rp.router_id).str) ;
           vty_out (vty, "Route Server's local AS number %u\n",
-                                                           prun->brun->my_as);
+                                                         prun->brun->rp.my_as);
 
           vty_out (vty, "\n"
                         "%s\n", header) ;
         }
 
-      count += bgp_write_rsclient_summary (vty, peer, qafx);
+      count += bgp_write_rsclient_summary (vty, prun, qafx);
     }
 
   if (count)

@@ -23,6 +23,8 @@
 #include "misc.h"
 
 #include "bgpd/bgp_common.h"
+#include "bgpd/bgp_run.h"
+#include "bgpd/bgp_config.h"
 #include "bgpd/bgp_attr_store.h"
 #include "bgpd/bgp_filter.h"
 #include "bgpd/bgp_rcontext.h"
@@ -134,6 +136,19 @@ CONFIRM(bgp_route_type_null == ((ZEBRA_ROUTE_SYSTEM << BGP_ZEBRA_ROUTE_SHIFT)
 CONFIRM(bgp_route_type_t_max <= 255) ;  /* byte         */
 
 /*==============================================================================
+ *
+ */
+typedef struct bgp_run_redist  bgp_run_redist_t ;
+struct bgp_run_redist
+{
+  bool          set ;
+  bool          metric_set ;
+  uint          metric ;
+
+  route_map     map;
+};
+
+/*==============================================================================
  * The bgp-rib -- RIB.
  *
  * For each address family which has at least one active peer in it, there
@@ -150,17 +165,11 @@ struct bgp_rib
   qafx_t        qafx ;
   bool          real_rib ;
 
-  bool          do_always_compare_med ; /* BGP_FLAG_ALWAYS_COMPARE_MED  */
-  bool          do_deterministic_med ;  /* BGP_FLAG_DETERMINISTIC_MED
-                                           and ! always_compare_med     */
-  bool          do_confed_compare_med ; /* BGP_FLAG_MED_CONFED          */
-  bool          do_aspath_ignore ;      /* BGP_FLAG_ASPATH_IGNORE       */
-  bool          do_aspath_confed ;      /* BGP_FLAG_ASPATH_CONFED       */
+  /* The Run-Time Parameters and compilation stuff.
+   */
+  bgp_rib_param_t  rp ;
 
-  bool          do_damping ;            /* BGP_AFF_DAMPING              */
-
-  uint32_t      default_local_pref ;    /* copy of bgp entry            */
-  uint          lock;
+  bgp_run_delta_t  delta ;
 
   /* Each RIB has a number of local contexts, which are aliases for the sub-set
    * of global route-contexts which the RIB uses.
@@ -226,11 +235,15 @@ struct bgp_rib
 
   /* Static route configuration.
    */
-  bgp_table route ;
+  bgp_table     route ;
 
   /* Aggregate address configuration.
    */
-  bgp_table aggregate ;
+  bgp_table     aggregate ;
+
+  /* Redistribution route-maps -- if any
+   */
+  route_map     redist_rmap[redist_type_count] ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -349,15 +362,6 @@ struct bgp_rib_item
  * The rib-nodes and rib-walkers are both rib-items, and share a common header
  * so that they can both live on the rib's processing list.
  */
-typedef enum bgp_rib_node_flags bgp_rib_node_flags_t ;
-
-enum bgp_rib_node_flags
-{
-  rnf_selected           = BIT(0),      /* something has been selected  */
-  rnf_deterministic_med  = BIT(1),
-
-  rnf_processed          = BIT(7),      /* update process completed     */
-};
 
 /* Each local context known to the rib-node has an 'aroute' entry, where:
  *
@@ -378,7 +382,7 @@ typedef struct aroute  aroute_t ;
 struct aroute
 {
   svs_base_t    base[1] ;
-  bgp_lc_id_t      next ;
+  bgp_lc_id_t   next ;
 } ;
 
 typedef struct bgp_rib_node  bgp_rib_node_t ;
@@ -395,7 +399,8 @@ struct bgp_rib_node
 
   prefix_id_t   pfx_id ;
 
-  bgp_rib_node_flags_t flags ;
+  bool          processed ;
+  bool          has_changed ;
 
   /* Temporarily, during route selection the current selection for the
    * current local_context,
@@ -427,7 +432,7 @@ struct bgp_rib_node
    *     So: NOTHING other than iroute_bases and zroutes can follow
    *         the local_context_count !
    */
-  bgp_lc_id_t      local_context_count ;
+  bgp_lc_id_t   local_context_count ;
   svl_base_t    changed[1] ;
 
   zroute        zroutes ;
@@ -762,7 +767,6 @@ typedef const struct iroute_state* iroute_state_c ;
 struct iroute_state
 {
   attr_set          attr ;
-  mpls_tags_t       tags ;
 
   route_info_flags_t flags : 16 ;
 
@@ -800,7 +804,8 @@ struct route_info
 
   svec_index_t  rindex ;
 
-  /* The prefix_id for this route
+  /* The prefix_id for this route -- once attached to a rib-node, this is
+   * redundant -- but route_info need not always be attached.
    */
   prefix_id_t   pfx_id ;
 

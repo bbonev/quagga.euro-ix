@@ -123,9 +123,12 @@ extern niid_t ni_niid_get_b(name_index ni, ptr_c name, uint name_len) ;
 extern void ni_nref_set_c(nref_c* p_ref, name_index ni, chs_c name) ;
 extern void ni_nref_set_b(nref_c* p_ref, name_index ni, ptr_c name,
                                                                 uint name_len) ;
+extern void ni_nref_set_copy(nref_c* p_ref, nref_c nref) ;
+
 extern void ni_niid_set_c(niid_t* p_id, name_index ni, chs_c name) ;
 extern void ni_niid_set_b(niid_t* p_id, name_index ni, ptr_c name,
                                                                 uint name_len) ;
+extern void ni_niid_set_copy(niid_t* p_id, name_index ni, niid_t niid) ;
 
 extern void ni_nref_clear(nref_c* p_ref) ;
 extern void ni_niid_clear(niid_t* p_id, name_index ni) ;

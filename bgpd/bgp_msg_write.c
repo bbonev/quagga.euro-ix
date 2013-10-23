@@ -294,7 +294,7 @@ bgp_msg_write_get_temp(bgp_msg_writer writer, uint size)
     {
       writer->temp_buff_size = uround_up(size, 512) ;
 
-      writer->temp_buff = XREALLOC(MTYPE_BGP_MSG_BUFF, writer->temp_buff,
+      writer->temp_buff = XREALLOC(MTYPE_BGP_WRITER, writer->temp_buff,
                                                        writer->temp_buff_size) ;
 
       memset(writer->temp_buff, 0, writer->temp_buff_size) ;
@@ -313,7 +313,7 @@ bgp_msg_writer_free(bgp_msg_writer writer)
 {
   if (writer != NULL)
     {
-      XFREE(MTYPE_BGP_MSG_BUFF, writer->temp_buff) ;
+      XFREE(MTYPE_BGP_WRITER, writer->temp_buff) ;
       XFREE(MTYPE_BGP_WRITER, writer->buffer) ;
       XFREE(MTYPE_BGP_WRITER, writer) ;
     } ;
@@ -544,7 +544,7 @@ bgp_msg_write_move_to_temp(bgp_msg_writer writer, uint more_required)
   writer->msg_iv_count = 1 ;
 
   if (old_temp != NULL)
-    XFREE(MTYPE_BGP_MSG_BUFF, old_temp) ;       /* done with it now     */
+    XFREE(MTYPE_BGP_WRITER, old_temp) ;
 
   return fragment_length ;
 } ;
@@ -1410,8 +1410,8 @@ extern void
 bgp_msg_write_open(bgp_connection connection)
 {
   bgp_open_state     open_sent ;
-  bgp_session_args   args_sent ;
-  bgp_session_args_c args_config ;
+  bgp_sargs   args_sent ;
+  bgp_sargs_c args_config ;
   blower_t br[1], sbr[1] ;
   uint   msg_body_length ;
   bool ok ;
@@ -1447,14 +1447,14 @@ bgp_msg_write_open(bgp_connection connection)
    */
   open_sent = connection->open_sent =
                                 bgp_open_state_init_new(connection->open_sent) ;
-  args_sent   = open_sent->args ;
-  args_config = connection->session->args_config  ;
+  args_sent   = open_sent->sargs ;
+  args_config = connection->session->sargs_conf  ;
 
-  bgp_session_args_copy(args_sent, args_config) ;
+  bgp_sargs_copy(args_sent, args_config) ;
   args_sent->cap_suppressed = connection->cap_suppress ;
 
   if (connection->cap_suppress || !args_sent->can_capability)
-    bgp_session_args_suppress(args_sent) ;
+    bgp_sargs_suppress(args_sent) ;
 
   open_sent->my_as2 = (args_sent->local_as <= BGP_AS2_MAX)
                              ? (uint16_t)args_sent->local_as : BGP_ASN_TRANS ;
@@ -1548,12 +1548,12 @@ bgp_msg_write_open(bgp_connection connection)
 static bool
 bgp_open_options(blower br, bgp_open_state open_state)
 {
-  bgp_session_args args ;
+  bgp_sargs args ;
   bool     wrap ;
   bgp_open_orf_type_t orf_type[1] ;
   blower_t sbr[1] ;
 
-  args = open_state->args ;
+  args = open_state->sargs ;
 
   /* If may not send capability, quit now -- zero options.
    */
@@ -1978,7 +1978,7 @@ bgp_msg_write_rr(bgp_msg_writer writer, ptr_t rb_body, uint rb_length,
       return bgp_msg_write_msg_stomp(writer) ;
     } ;
 
-  msg_type = (session->args->can_rr == bgp_form_pre) ? BGP_MT_ROUTE_REFRESH_pre
+  msg_type = (session->sargs->can_rr == bgp_form_pre) ? BGP_MT_ROUTE_REFRESH_pre
                                                      : BGP_MT_ROUTE_REFRESH ;
 
   msg_length = bgp_msg_write_header(writer, rb_length, msg_type) ;

@@ -84,7 +84,12 @@ typedef struct attr_next_hop* attr_next_hop ;
 struct attr_next_hop
 {
   nh_type_t       type ;
-  union ip_union ip;
+  union ip_next_hop
+    {
+      in_addr_t         v4 ;
+      struct in_addr    in_addr ;
+      in6_addr_pair_t   v6 ;
+    } ip ;
 } ;
 
 enum { BGP_ATTR_DEFAULT_WEIGHT = 32768 } ;
@@ -156,7 +161,21 @@ struct attr_set
   as_t            aggregator_as ;       /* BGP_ASN_NULL <=> none             */
   in_addr_t       aggregator_ip ;       /* zero if none                      */
 
+  /* The next-hop and the tags are an integral part of the attributes.
+   *
+   * When an MPLS prefix is advertised, the next-hop identifies the origin PE
+   * router which understands how to deliver packets to that MPLS prefix.  The
+   * tag tells the origin PE router which VPN (or VRF) an incoming packet is
+   * destined for.  So, some distant PE router pushes the tag and forwards the
+   * result towards the origin PE by pushing a further tag to implement the
+   * "tunnel" across the provider's network.
+   *
+   * On an incoming set of attributes the next-hop and the tags are, therefore
+   * closely linked -- even though the tags arrive with the prefix and the
+   * next-hop attribute does not carry a tag.
+   */
   attr_next_hop_t next_hop ;            /* all zero if none set              */
+  mpls_tags_t     tags ;
 
   /* The sub-attributes
    *
@@ -311,10 +330,14 @@ extern attr_set bgp_attr_pair_set_next_hop(attr_pair pair, nh_type_t type,
                                                                const void* ip) ;
 extern attr_set bgp_attr_pair_set_local_pref(attr_pair pair,
                                                           uint32_t local_pref) ;
-extern attr_set bgp_attr_pair_clear_local_pref(attr_pair pair) ;
+extern attr_set bgp_attr_pair_default_local_pref(attr_pair pair,
+                                                          uint32_t local_pref) ;
+extern attr_set bgp_attr_pair_clear_local_pref(attr_pair pair,
+                                                          uint32_t local_pref) ;
 extern attr_set bgp_attr_pair_set_weight(attr_pair pair, uint16_t weight) ;
 extern attr_set bgp_attr_pair_set_med(attr_pair pair, uint32_t med) ;
-extern attr_set bgp_attr_pair_clear_med(attr_pair pair) ;
+extern attr_set bgp_attr_pair_default_med(attr_pair pair, uint32_t med) ;
+extern attr_set bgp_attr_pair_clear_med(attr_pair pair, uint32_t med) ;
 extern attr_set bgp_attr_pair_set_origin(attr_pair pair, uint origin) ;
 extern attr_set bgp_attr_pair_clear_origin(attr_pair pair) ;
 extern attr_set bgp_attr_pair_set_atomic_aggregate(attr_pair pair, bool flag) ;
@@ -323,6 +346,7 @@ extern attr_set bgp_attr_pair_clear_originator_id(attr_pair pair) ;
 extern attr_set bgp_attr_pair_set_reflected(attr_pair pair, bool reflected) ;
 extern attr_set bgp_attr_pair_set_aggregator(attr_pair pair, as_t as,
                                                                  in_addr_t ip) ;
+extern attr_set bgp_attr_set_tags(attr_set attr, mpls_tags_t tags) ;
 
 /* An empty set of attributes, set up in bgp_attr_start() and discarded in
  * bgp_attr_finish().  This set of attributes is never put into the vhash

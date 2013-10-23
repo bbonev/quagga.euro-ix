@@ -38,21 +38,37 @@
  */
 typedef struct bgp_env*         bgp_env ;
 typedef struct bgp_inst*        bgp_inst ;
-typedef struct bgp_run*         bgp_run ;
 typedef struct bgp_bconfig*     bgp_bconfig ;
 typedef struct bgp_baf_config*  bgp_baf_config ;
-typedef struct bgp_args*        bgp_args ;
-typedef struct bgp_rcontext*    bgp_rcontext ;
-typedef struct bgp_rib*         bgp_rib ;
-typedef struct bgp_lcontext*    bgp_lcontext ;
+typedef struct bgp_defaults*    bgp_defaults ;
+
 typedef struct bgp_peer*        bgp_peer ;
+typedef struct bgp_pconfig*     bgp_pconfig ;
+typedef struct bgp_paf_config*  bgp_paf_config ;
+
+typedef struct bgp_assembly*    bgp_assembly ;
+
+typedef struct bgp_run*         bgp_run ;
+typedef struct bgp_rib*         bgp_rib ;
+typedef struct bgp_run_param*   bgp_run_param ;
+typedef struct bgp_rib_param*   bgp_rib_param ;
+typedef struct bgp_redist_param* bgp_redist_param ;
+
+typedef struct bgp_grun*        bgp_grun ;
+
 typedef struct bgp_prun*        bgp_prun ;
 typedef struct bgp_prib*        bgp_prib ;
-typedef struct bgp_session*     bgp_session ;
-typedef struct bgp_connection*  bgp_connection ;
+typedef struct bgp_prun_param*  bgp_prun_param ;
+typedef struct bgp_prib_param*  bgp_prib_param ;
+
+typedef struct bgp_sargs*       bgp_sargs ;
 typedef struct bgp_cops*        bgp_cops ;
 typedef const struct bgp_cops*  bgp_cops_c ;
-typedef struct bgp_session_args* bgp_session_args ;
+
+typedef struct bgp_session*     bgp_session ;
+typedef struct bgp_connection*  bgp_connection ;
+typedef struct bgp_rcontext*    bgp_rcontext ;
+typedef struct bgp_lcontext*    bgp_lcontext ;
 typedef struct bgp_acceptor*    bgp_acceptor ;
 typedef struct bgp_open_state*  bgp_open_state ;
 typedef struct bgp_nexthop*     bgp_nexthop ;
@@ -62,8 +78,6 @@ typedef struct bgp_msg_reader*  bgp_msg_reader ;
 typedef struct bgp_note*        bgp_note ;
 
 typedef struct bgp_peer_group*  bgp_peer_group ;
-typedef struct bgp_pconfig*     bgp_pconfig ;
-typedef struct bgp_paf_config*  bgp_paf_config ;
 
 typedef struct bgp_connection_logging* bgp_connection_logging ;
 
@@ -91,10 +105,16 @@ typedef struct route_mpls*      route_mpls ;
 typedef struct attr_flux*       attr_flux ;
 typedef struct route_flux*      route_flux ;
 
+typedef struct route_map*       route_map ;
+typedef struct prefix_list*     prefix_list ;
+typedef struct as_list*         as_list ;
+typedef struct access_list*     access_list ;
 
 
 typedef struct bgp_table*       bgp_table ;
 typedef struct bgp_node*        bgp_node ;
+
+typedef struct name_index_entry const* bgp_nref ;
 
 /*==============================================================================
  * Miscellaneous common types
@@ -228,6 +248,27 @@ enum bgp_filter_set
   bfs_rmap_export   = bfs_rmap      + RMAP_EXPORT,
 } ;
 
+/* Different types of routes which mat be redistributed for a given qafx.
+ */
+typedef enum bgp_redist_type bgp_redist_type_t ;
+enum bgp_redist_type
+{
+  redist_type_first  = 0,
+  redist_type_last   = (ZEBRA_ROUTE_MAX) - 1,
+
+  redist_type_count  = ZEBRA_ROUTE_MAX
+};
+
+typedef enum bgp_orf_cap_bits bgp_orf_cap_bits_t ;
+enum bgp_orf_cap_bits
+{
+  ORF_SM        = BIT( 0),      /* RFC *type* Send Mode         */
+  ORF_RM        = BIT( 1),      /* RFC *type* Receive Mode      */
+
+  ORF_SM_pre    = BIT( 4),      /* pre-RFC *type* Send Mode     */
+  ORF_RM_pre    = BIT( 5),      /* pre-RFC *type* Receive Mode  */
+} ;
+
 /*==============================================================================
  * The sort of peer is a key property of the peer:
  *
@@ -263,9 +304,9 @@ enum bgp_filter_set
  *
  * When we speak to other routers outside our confederation, that is eBGP, and
  * we strip any confed stuff from the path.  We OPEN connections as AS99 (the
- * bgp->confed_id).  IN bgp->ebgp_as we keep a copy of bgp->my_as or
- * bgp->confed_id, to give the ASN to peer as for eBGP in all cases (unless
- * have change_local_as... which is another story).
+ * bgp->confed_id).  In my_as_ebgp we keep a copy of my_as or the confed_id, to
+ * give the ASN to peer as for eBGP in all cases (unless have
+ * change_local_as... which is another story).
  */
 typedef enum bgp_peer_sort bgp_peer_sort_t ;
 enum bgp_peer_sort
@@ -324,6 +365,7 @@ enum BGP_RET_CODE
   BGP_ERR_INVALID_ROUTE_TYPE,
   BGP_ERR_INVALID_FAMILY,
   BGP_ERR_INVALID_METRIC,
+  BGP_ERR_IPV4_MAPPED,
 
   BGP_ERR_MULTIPLE_INSTANCE_USED,
   BGP_ERR_MULTIPLE_INSTANCE_NOT_SET,
@@ -385,13 +427,19 @@ enum BGP_RET_CODE
 /*==============================================================================
  * BGP Arguments -- appear in configuration and in the running state.
  */
-typedef struct bgp_args  bgp_args_t ;
+typedef struct bgp_defaults  bgp_defaults_t ;
 
-struct bgp_args
+struct bgp_defaults
 {
   /* Default port.
    */
   uint16_t port ;
+
+  /* Default ttls
+   */
+  byte  ibgp_ttl ;
+  byte  cbgp_ttl ;
+  byte  ebgp_ttl ;
 
   /* Default metrics
    */

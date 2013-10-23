@@ -25,6 +25,7 @@ Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
 #include "log.h"
 
 #include "bgpd/bgp_common.h"
+#include "bgpd/bgpd.h"
 #include "bgpd/bgp_config_vty.h"
 #include "bgpd/bgp_config.h"
 #include "bgpd/bgp_inst_config.h"
@@ -1313,6 +1314,118 @@ ALIAS (no_bgp_redistribute_ipv6_rmap_metric,
        "Pointer to route-map entries\n")
 #endif /* HAVE_IPV6 */
 
+DEFUN (bgp_distance,
+       bgp_distance_cmd,
+       "distance bgp <1-255> <1-255> <1-255>",
+       "Define an administrative distance\n"
+       "BGP distance\n"
+       "Distance for routes external to the AS\n"
+       "Distance for routes internal to the AS\n"
+       "Distance for local routes\n")
+{
+  bgp_inst  bgp ;
+
+  bgp = bgp_node_inst(vty) ;
+  if (bgp == NULL)
+    return CMD_WARNING ;
+
+  bgp->c->defs.distance_ebgp  = atoi (argv[0]);
+  bgp->c->defs.distance_ibgp  = atoi (argv[1]);
+  bgp->c->defs.distance_local = atoi (argv[2]);
+
+  return CMD_SUCCESS;
+}
+
+DEFUN (no_bgp_distance,
+       no_bgp_distance_cmd,
+       "no distance bgp <1-255> <1-255> <1-255>",
+       NO_STR
+       "Define an administrative distance\n"
+       "BGP distance\n"
+       "Distance for routes external to the AS\n"
+       "Distance for routes internal to the AS\n"
+       "Distance for local routes\n")
+{
+  bgp_inst  bgp ;
+
+  bgp = bgp_node_inst(vty) ;
+  if (bgp == NULL)
+    return CMD_WARNING ;
+
+  bgp->c->defs.distance_ebgp  = 0;
+  bgp->c->defs.distance_ibgp  = 0;
+  bgp->c->defs.distance_local = 0;
+  return CMD_SUCCESS;
+}
+
+ALIAS (no_bgp_distance,
+       no_bgp_distance2_cmd,
+       "no distance bgp",
+       NO_STR
+       "Define an administrative distance\n"
+       "BGP distance\n")
+
+DEFUN (bgp_distance_source,
+       bgp_distance_source_cmd,
+       "distance <1-255> A.B.C.D/M",
+       "Define an administrative distance\n"
+       "Administrative distance\n"
+       "IP source prefix\n")
+{
+  bgp_inst  bgp ;
+
+  bgp = bgp_node_inst(vty) ;
+  if (bgp == NULL)
+    return CMD_WARNING ;
+#if 0
+  bgp_distance_set (vty, argv[0], argv[1], NULL);
+#endif
+  return CMD_SUCCESS;
+}
+
+DEFUN (no_bgp_distance_source,
+       no_bgp_distance_source_cmd,
+       "no distance <1-255> A.B.C.D/M",
+       NO_STR
+       "Define an administrative distance\n"
+       "Administrative distance\n"
+       "IP source prefix\n")
+{
+#if 0
+  bgp_distance_unset (vty, argv[0], argv[1], NULL);
+#endif
+  return CMD_SUCCESS;
+}
+
+DEFUN (bgp_distance_source_access_list,
+       bgp_distance_source_access_list_cmd,
+       "distance <1-255> A.B.C.D/M WORD",
+       "Define an administrative distance\n"
+       "Administrative distance\n"
+       "IP source prefix\n"
+       "Access list name\n")
+{
+#if 0
+  bgp_distance_set (vty, argv[0], argv[1], argv[2]);
+#endif
+  return CMD_SUCCESS;
+}
+
+DEFUN (no_bgp_distance_source_access_list,
+       no_bgp_distance_source_access_list_cmd,
+       "no distance <1-255> A.B.C.D/M WORD",
+       NO_STR
+       "Define an administrative distance\n"
+       "Administrative distance\n"
+       "IP source prefix\n"
+       "Access list name\n")
+{
+#if 0
+  bgp_distance_unset (vty, argv[0], argv[1], argv[2]);
+#endif
+  return CMD_SUCCESS;
+}
+
 /*==============================================================================
  * Address family selection.
  */
@@ -2035,16 +2148,23 @@ DEFUN (no_neighbor_set_peer_group,
           if (pafc == NULL)
             continue ;
 
-          if (pafc->ctype == BGP_CFT_MEMBER)
+          if (pafc->ctype == BGP_CFT_PEER)
             {
-              qassert(pafc->gafc != NULL) ;
-              used = true ;
-              break ;
+              qassert(pafc->group.afc == NULL) ;
+              continue ;
             } ;
 
-          qassert(pafc->gafc == NULL) ;
+          qassert((pafc->ctype == BGP_CFT_MEMBER) && (pafc->group.afc != NULL));
+
+          /* Found a use of the group in another address family.
+           */
+          used = true ;
+          break ;
         } ;
 
+      /* If the group is no longer used by any address family, unbind the
+       * general configuration.
+       */
       if (!used)
         ret = bgp_peer_group_set(peer, NULL, qafx_none, bsc_unset) ;
     } ;
@@ -4986,6 +5106,14 @@ CMD_INSTALL_TABLE(static, bgp_vty_cmd_table, BGPD) =
   { BGP_VPNV4_NODE,  &neighbor_allow_as_in_cmd                          },
   { BGP_VPNV4_NODE,  &neighbor_allow_as_in_arg_cmd                      },
   { BGP_VPNV4_NODE,  &no_neighbor_allow_as_in_cmd                       },
+
+  { BGP_NODE,        &bgp_distance_cmd                                  },
+  { BGP_NODE,        &no_bgp_distance_cmd                               },
+  { BGP_NODE,        &no_bgp_distance2_cmd                              },
+  { BGP_NODE,        &bgp_distance_source_cmd                           },
+  { BGP_NODE,        &no_bgp_distance_source_cmd                        },
+  { BGP_NODE,        &bgp_distance_source_access_list_cmd               },
+  { BGP_NODE,        &no_bgp_distance_source_access_list_cmd            },
 
   { BGP_NODE,        &address_family_ipv4_cmd                           },
   { BGP_NODE,        &address_family_ipv4_safi_unicast_cmd              },
