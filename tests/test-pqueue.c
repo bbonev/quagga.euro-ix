@@ -48,7 +48,7 @@ in_order(int data_size)
       }
       pqueue_enqueue(&test_data[i], q);
     }
-  
+
   // Remove data from queue and ensure removed in proper order.
   for (i = 0; i < data_size; i++)
     {
@@ -105,9 +105,9 @@ over_dequeue(void)
   q = pqueue_create();
   q->cmp = &cmp;
 
-  int result;
+  void* result;
   result = pqueue_dequeue(q);
-  if (result != -1) {
+  if (result != NULL) {
     fprintf(stderr, "failed\n");
     return;
   }

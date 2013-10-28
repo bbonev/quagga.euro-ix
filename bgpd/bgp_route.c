@@ -869,7 +869,7 @@ bgp_process_walker(void* data, qtime_mono_t yield_time)
           if (ddl_head(rw->refresh_peers) != NULL)
             return wqrc_something | wqrc_rerun ;
           else
-            return wqrc_something | wqrc_rerun_reschedule ;
+            return wqrc_something ;
         } ;
     } ;
 
@@ -1055,28 +1055,13 @@ static void
 bgp_route_announce(bgp_prib prib, prefix_id_entry pie, route_info ris)
 {
   attr_set  attr ;
-  mpls_tags_t tags ;
 
   if (ris == NULL)
-    {
-      /* Withdraw.
-       */
-      attr = NULL ;
-      tags = mpls_tags_null ;
-    }
+    attr = NULL ;               /* withdraw     */
   else
-    {
-      /* Result is an update -- but we have some filtering to do now.
-       */
-      attr = bgp_route_announce_check(prib, pie, ris) ;
+    attr = bgp_route_announce_check(prib, pie, ris) ;
 
-      if (attr != NULL)
-        tags = ris->current.tags ;
-      else
-        tags = mpls_tags_null ;
-    } ;
-
-  bgp_adj_out_update(prib, pie, attr, tags) ;
+  bgp_adj_out_update(prib, pie, attr) ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -1141,7 +1126,7 @@ bgp_route_announce_check(bgp_prib to_prib, prefix_id_entry pie, route_info ris)
 #ifdef HAVE_IPV6
       case AF_INET6:
 #if 0
-        if (to_prun->args.remote_id == attr->next_hop.ip.v4)
+        if (to_prun-rp.sargs_conf.remote_id == attr->next_hop.ip.v4)
           return NULL ;
 #endif
         break ;
@@ -1844,7 +1829,7 @@ bgp_clear_routes(bgp_prun prun, bool nsf)
 {
   uint i ;
 
-  assert((prun->state == bgp_pResetting) || (prun->state == bgp_pDeleting)) ;
+  assert((prun->state == bgp_pIdle) || (prun->state == bgp_pDeleting)) ;
 
   prun->nsf_restarting = false ;
 
@@ -2008,7 +1993,7 @@ bgp_default_originate (bgp_prun prun, qafx_t qafx, bool withdraw)
     {
       if (prib->default_sent)
         {
-          bgp_adj_out_update(prib, pie, NULL, mpls_tags_null) ;
+          bgp_adj_out_update(prib, pie, NULL) ;
           prib->default_sent = false ;
         } ;
     }
@@ -2018,7 +2003,7 @@ bgp_default_originate (bgp_prun prun, qafx_t qafx, bool withdraw)
 
       stored = bgp_attr_pair_store(attrs) ;
 
-      bgp_adj_out_update(prib, pie, stored, mpls_tags_null) ;
+      bgp_adj_out_update(prib, pie, stored) ;
       prib->default_sent = true ;
     } ;
 

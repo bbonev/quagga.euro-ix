@@ -1,4 +1,4 @@
-/* zebra connection and redistribute fucntions.
+/* zebra connection and redistribute functions.
    Copyright (C) 1999 Kunihiro Ishiguro
 
 This file is part of GNU Zebra.
@@ -30,6 +30,9 @@ extern int bgp_config_write_redistribute (struct vty *, bgp_inst , qafx_t,
 extern zroute bgp_zebra_announce(zroute zr, bgp_rib_node rn, prefix_c pfx) ;
 extern zroute bgp_zebra_discard(zroute zr, prefix_c pfx);
 extern void bgp_zebra_withdraw(zroute zr, prefix_c pfx);
+
+extern int bgp_nexthop_set (sockunion local, sockunion remote,
+                                           bgp_nexthop nexthop, bgp_prun prun) ;
 
 extern struct interface *if_lookup_by_ipv4 (const struct in_addr *);
 extern struct interface *if_lookup_by_ipv4_exact (const struct in_addr *);

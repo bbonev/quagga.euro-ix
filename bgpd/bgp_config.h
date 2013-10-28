@@ -49,67 +49,100 @@ enum bgp_setting_change
 typedef enum bgp_run_delta bgp_run_delta_t ;
 enum bgp_run_delta
 {
-  brd_null              = 0,                    /* no delta     */
+  brd_null          = 0,
 
-  /* brd_resume       -- after compilation and application of deltas, the
-   *                     object in question should be resumed.
+  /* brd_continue     -- for prun: not a new prun and not to
    *
-   *                     This is used for RIBs in particular, where they are
-   *                     resumed if there is at least one peer running.
+   *                     for prib:
    */
-  brd_resume        = BIT(0),
+  brd_continue      = BIT(0),
 
-  /* brd_refresh_in   -- the inbound filtering has changed, such that all
-   *                     routes from the neighbor must be refreshed, and
-   *                     any changes propagated.
+  /* brd_refresh_in   -- for prun: N/A, but if a prun param change requires all
+   *                               pribs to brd_refresh_in, that will be
+   *                               inherited from the prun by all pribs.
+   *
+   *                     for prib: the inbound filtering has changed, such that
+   *                               all routes from the neighbor must be
+   *                               refreshed, and any changes propagated.
    */
   brd_refresh_in    = BIT(1),
 
-  /* brd_refresh_out  -- the outbound filtering has changed, such that all
-   *                     routes to the neighbor must be refreshed, and
-   *                     any changes propagated.
+  /* brd_refresh_out  -- for prun: N/A, but if a prun param change requires all
+   *                               pribs to brd_refresh_out, that will be
+   *                               inherited from the prun by all pribs.
+   *
+   *                     for prib: the outbound filtering has changed, such
+   *                               that all routes to the neighbor must be
+   *                               refreshed, and any changes propagated.
    */
   brd_refresh_out   = BIT(2),
 
-  /* brd_reselect     -- selection criteria have changed, such that all routes
-   *                     should be re-selected.
+  /* brd_reselect     -- for prun: selection criteria have changed, such that
+   *                               all routes should be re-selected.
    *
-   *                     This is a RIB level delta, where all the others are
-   *                     peer level ones.
-   *
-   *                     This has no effect on individual peers, except that
-   *                     refresh_out is redundant.
+   *                     for prib: N/A, except that suppresses brd_refresh_out,
+   *                               so is inherited from the prun for that
+   *                               purpose.
    */
   brd_reselect      = BIT(3),
 
-  /* brd_renew        -- the connection options and/or the session arguments
-   *                     have changed, so the BGP Engine should take note.
+  /* brd_renew        -- for prun: the connection options and/or the session
+   *                               arguments have changed, so the BGP Engine
+   *                               should take note.
    *
-   *                     BUT: delta does not justify dropping an established
-   *                          session.
+   *                               NB: the changes do not justify dropping an
+   *                                   established session.
    *
-   *                          delta may/or may not justify dropping a
-   *                          connection which is in the process of trying to
-   *                          establish itself.
+   *                                   the changes may/or may not justify
+   *                                   dropping a connection which is in the
+   *                                   process of trying to establish itself.
+   *
+   *                               This will be ignored if the prun has to be
+   *                               restarted (or shutdown or deleted !)
+   *
+   *                      for prib: N/A.
    */
   brd_renew         = BIT(4),
 
-  /* brd_route_refresh -- need to send a route-refresh request, perhaps to
-   *                      update orf prefix filtering.
+  /* brd_route_refresh -- for prib: need to send a route-refresh request,
+   *                                perhaps to update orf prefix filtering.
+   *
+   *                                This will be ignored if the prun has to be
+   *                                restarted (or shutdown or deleted !)
    */
   brd_route_refresh = BIT(5),
 
-  /* brd_restart      -- drop the existing session (if any) and start a new
-   *                     one.
+  /* brd_restart      -- for prun: stop the existing session (if any) and stop
+   *                               all pribs.
+   *
+   *                               When all is quiet, delete any pribs marked
+   *                               to be deleted.  Start any pribs which are
+   *                               not (then) marked as brd_continue.  Then
+   *                               restart other remaining pribs and set the
+   *                               session going again.
+   *
+   *                     for prib: brd_restart without brd_continue <=> new
+   *                               prib.
    *
    *                     TODO  graceful ????
    */
   brd_restart       = BIT(6),
 
-  /* brd_shutdown     -- drop the existing session (if any) and when all is
-   *                     quiet, delete the running state for the peer.
+  /* brd_shutdown     -- for prun: stop the existing session (if any) and stop
+   *                               all pribs.  When all is quiet leave the
+   *                               prun and all configured pribs, but delete
+   *                               the session (if any).
+   *
+   *                     for prib: drop the adj-in/adj-out, leaving configured
+   *                               but inactive.
    */
   brd_shutdown      = BIT(7),
+
+  /* brd_delete       -- for prun: no longer configured.
+   *
+   *                     for prib: no longer configured.
+   */
+  brd_delete        = BIT(8),
 } ;
 
 /*==============================================================================
@@ -123,6 +156,7 @@ extern bgp_baf_config bgp_config_inst_af_prepare(bgp_inst bgp, qafx_t qafx) ;
 extern bgp_pconfig bgp_config_peer_prepare(bgp_peer peer) ;
 extern bgp_paf_config bgp_config_peer_af_prepare(bgp_peer peer, qafx_t qafx) ;
 
+extern void bgp_config_queue(bgp_peer peer) ;
 
 
 
@@ -135,6 +169,8 @@ extern void bgp_compile(bgp_inst bgp, bgp_assembly assembly) ;
 extern bgp_ret_t bgp_config_inst_changed(void) ;
 
 extern bgp_prun bgp_config_prun(bgp_pconfig pc) ;
+
+
 
 
 #endif /* _QUAGGA_BGP_CONFIG_H */

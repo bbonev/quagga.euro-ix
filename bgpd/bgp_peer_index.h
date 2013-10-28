@@ -82,7 +82,12 @@ extern void bgp_peer_index_finish(void) ;
 extern bgp_peer_su_cname_t bgp_peer_su_cname(sockunion su) ;
 
 extern bgp_peer_id_t bgp_peer_index_register(bgp_peer peer, chs_c cname) ;
+extern bgp_peer_id_t bgp_peer_index_lock_id(bgp_peer_id_t id) ;
+extern bgp_peer_id_t bgp_peer_index_unlock_id(bgp_peer_id_t id) ;
 extern void bgp_peer_index_deregister(bgp_peer peer) ;
+
+extern void bgp_peer_index_set_running(bgp_prun prun, bgp_session session) ;
+extern void bgp_peer_index_stop_running(bgp_prun prun, bgp_session session) ;
 
 extern bgp_peer bgp_peer_index_peer_lookup(chs_c cname) ;
 extern bgp_prun bgp_peer_index_prun_lookup(chs_c cname) ;

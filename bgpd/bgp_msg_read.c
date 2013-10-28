@@ -1695,7 +1695,7 @@ bgp_msg_open_parse(bgp_connection connection, bgp_msg_reader reader)
    * Also:    "The suggested default value for the KeepaliveTime is 1/3 of the
    *           HoldTime."
    *
-   * We set the args_recv->keepalive_secs to the implied default, but we don't
+   * We set the sargs_recv->keepalive_secs to the implied default, but we don't
    * really use this... see below.
    */
   if ((sargs_recv->holdtime_secs < 3) && (sargs_recv->holdtime_secs != 0))
@@ -1854,20 +1854,20 @@ bgp_msg_open_bad_id(bgp_id_t id)
  *
  * Expects connection->open_recv to be in initial state, in particular:
  *
- *   * args->can_capability        -- false
- *   * args->can_mp_ext            -- false
- *   * args->can_as4               -- false
- *   * args->can_af                -- empty
- *   * args->can_rr                -- none
- *   * args->gr.can                -- false
- *   * args->gr.restarting         -- false
- *   * args->gr.restart_time       -- 0
- *   * args->gr.can_preserve       -- empty
- *   * args->gr.has_preserved      -- empty
- *   * args->can_orf               -- empty
- *   * args->can_orf_pfx           -- all 0
- *   * args->can_dynamic           -- false
- *   * args->can_dynamic_dep       -- false
+ *   * sargs->can_capability    -- false
+ *   * sargs->can_mp_ext        -- false
+ *   * sargs->can_as4           -- false
+ *   * sargs->can_af            -- empty
+ *   * sargs->can_rr            -- none
+ *   * sargs->gr.can            -- false
+ *   * sargs->gr.restarting     -- false
+ *   * sargs->gr.restart_time   -- 0
+ *   * sargs->gr.can_preserve   -- empty
+ *   * sargs->gr.has_preserved  -- empty
+ *   * sargs->can_orf           -- empty
+ *   * sargs->can_orf_pfx       -- all 0
+ *   * sargs->can_dynamic       -- false
+ *   * sargs->can_dynamic_dep   -- false
  *
  * and:
  *

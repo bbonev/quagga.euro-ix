@@ -1141,7 +1141,7 @@ bgp_accept_action(qfile qf, void* file_info)
    * Note that the acceptor is set up in the BGP Engine, so once we have a
    * pointer to the session, we can happily look for our acceptor.
    */
-  session  = bgp_peer_index_session_lookup(sock_su) ;
+  session  = bgp_peer_index_session_lookup(bgp_peer_su_cname(sock_su).str) ;
   acceptor = (session != NULL) ? session->acceptor : NULL ;
 
   if ( (acceptor == NULL) || (acceptor->state == bacs_unset) )

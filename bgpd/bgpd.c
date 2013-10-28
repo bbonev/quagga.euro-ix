@@ -43,7 +43,10 @@
 #include "bgpd/bgp_damp.h"
 #include "bgpd/bgp_mplsvpn.h"
 #include "bgpd/bgp_vty.h"
+#include "bgpd/bgp_run_vty.h"
+#include "bgpd/bgp_config_vty.h"
 #include "bgpd/bgp_config.h"
+#include "bgpd/bgp_peer_config.h"
 #include "bgpd/bgp_routemap.h"
 #ifdef HAVE_SNMP
 #include "bgpd/bgp_snmp.h"
@@ -230,8 +233,10 @@ void
 bgp_terminate (bool terminating, bool retain_mode)
 {
   bgp_inst bgp;
+#if 0
   bgp_peer peer;
   struct listnode *node, *nnode;
+#endif
 
   /* If we are retaining, then turn off changes to the FIB.
    */
@@ -247,11 +252,13 @@ bgp_terminate (bool terminating, bool retain_mode)
     {
       /* ...delete or down all peers.
        */
+#if  0 // TODO termination of bgp
       for (ALL_LIST_ELEMENTS (bgp->peer, node, nnode, peer))
         if (terminating)
           bgp_peer_delete(peer) ;
         else
           bgp_peer_down(peer, PEER_DOWN_USER_RESET) ;
+#endif
     } ;
 } ;
 

@@ -140,7 +140,7 @@ struct bgp_connection
    * copied from the acceptor at the same time.
    *
    * So connection only holds the effective cops.  The session holds the
-   * cops_config.
+   * cops_conf.
    */
   qfile             qf ;                /* qpselect file structure      */
   bgp_cops          cops ;              /* connection options in force  */

@@ -56,10 +56,13 @@ bgp_rib_new(bgp_run brun, qafx_t qafx)
 
   /* Zeroizing has set:
    *
-   *   * brun           -- X          -- set below
+   *   * brun           -- X            -- set below
    *
-   *   * qafx           -- X          -- set below
-   *   * real_rib       -- X          -- copied from bgp_instance
+   *   * qafx           -- X            -- set below
+   *   * real_rib       -- X            -- copied from bgp_instance
+   *
+   *   * rp             -- X            -- set below
+   *   * delta          -- brd_null
    *
    *   * peer_count     -- 0          -- none, yet
    *   * local_context_count  -- 0          -- none, yet
@@ -72,9 +75,13 @@ bgp_rib_new(bgp_run brun, qafx_t qafx)
    *   * queue          -- NULLs      -- empty queue, but walker added, below
    *   * walker         -- X          -- set below
    */
+  confirm(brd_null   == 0) ;
+
   rib->brun        = brun ;
   rib->qafx        = qafx ;
   rib->real_rib    = brun->real_rib ;
+
+
 
   rib->nodes_table = ihash_table_init(rib->nodes_table, 0, 60) ;
 
@@ -87,6 +94,42 @@ bgp_rib_new(bgp_run brun, qafx_t qafx)
 } ;
 
 /*------------------------------------------------------------------------------
+ * Initialise new set of bgp_rib_param -- creating of required.
+ *
+ * Returns:  address of the bgp_rib_param.
+ */
+extern bgp_rib_param
+bgp_rib_param_init_new(bgp_rib_param bribp)
+{
+  if (bribp == NULL)
+    bribp = XCALLOC(MTYPE_BGP_ASSEMBLY, sizeof(bgp_rib_param_t)) ;
+  else
+    memset(bribp, 0, sizeof(bgp_rib_param_t)) ;
+
+  /* Zeroizing sets:
+   *
+   *   * real_rib                   -- false    -- TODO
+   *
+   *   * do_always_compare_med      -- false
+   *   * do_deterministic_med       -- false
+   *   * do_confed_compare_med      -- false
+   *   * do_prefer_current          -- X        -- default == true set below
+   *   * do_aspath_ignore           -- false
+   *   * do_aspath_confed           -- false
+   *
+   *   * do_damping                 -- false
+   *
+   *   * redist[] all: .set         -- false
+   *                   .metric_set  -- false
+   *                   .metric      -- 0
+   *                   .rmap_name   -- NULL
+   */
+  bribp->do_prefer_current = true ;
+
+  return bribp ;
+} ;
+
+/*------------------------------------------------------------------------------
  * Empty out and discard the given bgp_rib.
  *
  *
@@ -96,9 +139,9 @@ bgp_rib_destroy(bgp_rib rib)
 {
   if (rib != NULL)
     {
+#if 0
       bgp_rib_node rn ;
 
-#if 0
       while ((rn = ihash_table_ream(rib->nodes_table, keep_it /* embedded */))
                                                                        != NULL)
         pnode_unlock(rn) ;

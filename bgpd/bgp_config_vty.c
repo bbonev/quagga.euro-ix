@@ -534,6 +534,28 @@ ALIAS (no_bgp_timers,
        "Holdtime\n")
 
 /*------------------------------------------------------------------------------
+ * "bgp log-neighbor-changes" configuration.
+ */
+DEFUN (bgp_log_neighbor_changes,
+       bgp_log_neighbor_changes_cmd,
+       "bgp log-neighbor-changes",
+       "BGP specific commands\n"
+       "Log neighbor up/down and reset reason\n")
+{
+  return bgp_flag_modify_vty(vty, bcs_LOG_NEIGHBOR_CHANGES, bsc_set) ;
+}
+
+DEFUN (no_bgp_log_neighbor_changes,
+       no_bgp_log_neighbor_changes_cmd,
+       "no bgp log-neighbor-changes",
+       NO_STR
+       "BGP specific commands\n"
+       "Log neighbor up/down and reset reason\n")
+{
+  return bgp_flag_modify_vty(vty, bcs_LOG_NEIGHBOR_CHANGES, bsc_unset) ;
+}
+
+/*------------------------------------------------------------------------------
  * Route Reflector client-to-client reflection.
  */
 DEFUN (bgp_client_to_client_reflection,
@@ -2255,6 +2277,51 @@ bgp_peer_af_flag_modify_vty(vty vty, chs_c p_str, qafx_t qafx,
 
   return bgp_vty_return (vty, bgp_peer_af_flag_modify(peer, qafx, pafcs, bsc));
 } ;
+
+/*------------------------------------------------------------------------------
+ * Peer/Peer-Group shutdown
+ *
+ * For peer:
+ *
+ *   * can shutdown a peer which is a member of a group, separately from all
+ *     other members of the group.
+ *
+ *   * shutdown will disable any running session, and leave peer disabled.
+ *
+ *   * startup (no shutdown) reverses any shutdown.
+ *
+ *
+ * For group:
+ *
+ */
+/* neighbor shutdown. */
+DEFUN (neighbor_shutdown,
+       neighbor_shutdown_cmd,
+       NEIGHBOR_CMD2 "shutdown",
+       NEIGHBOR_STR
+       NEIGHBOR_ADDR_STR2
+       "Administratively shut down this neighbor\n")
+{
+  return bgp_peer_flag_modify_vty (vty, argv[0], pcs_SHUTDOWN, bsc_set_on);
+}
+
+DEFUN (no_neighbor_shutdown,
+       no_neighbor_shutdown_cmd,
+       NO_NEIGHBOR_CMD2 "shutdown",
+       NO_STR
+       NEIGHBOR_STR
+       NEIGHBOR_ADDR_STR2
+       "Administratively shut down this neighbor\n")
+{
+  return bgp_peer_flag_modify_vty (vty, argv[0], pcs_SHUTDOWN, bsc_unset);
+}
+
+ALIAS (no_neighbor_shutdown,
+       neighbor_startup_cmd,
+       NEIGHBOR_CMD2 "startup",
+       NEIGHBOR_STR
+       NEIGHBOR_ADDR_STR2
+       "Administratively start this neighbor (reverse shut down)\n") ;
 
 /*------------------------------------------------------------------------------
  * neighbor route-server-client
@@ -4579,6 +4646,14 @@ CMD_INSTALL_TABLE(static, bgp_vty_cmd_table, BGPD) =
   { BGP_NODE,        &no_neighbor_peer_group_cmd                        },
   { BGP_NODE,        &no_neighbor_peer_group_remote_as_as_cmd           },
   { BGP_NODE,        &no_neighbor_peer_group_remote_as_cmd              },
+
+  { BGP_NODE,        &bgp_log_neighbor_changes_cmd                      },
+  { BGP_NODE,        &no_bgp_log_neighbor_changes_cmd                   },
+
+  /* "neighbor shutdown" commands. */
+  { BGP_NODE,        &neighbor_shutdown_cmd                             },
+  { BGP_NODE,        &no_neighbor_shutdown_cmd                          },
+  { BGP_NODE,        &neighbor_startup_cmd                              },
 
   { BGP_NODE,        &neighbor_local_as_cmd                             },
   { BGP_NODE,        &neighbor_local_as_no_prepend_cmd                  },

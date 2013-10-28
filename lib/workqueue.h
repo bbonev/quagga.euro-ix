@@ -35,18 +35,15 @@ typedef enum wq_ret_code wq_ret_code_t ;
 
 enum wq_ret_code
 {
-  wqrc_retain           = 0,
-  wqrc_rerun            = 1,
-  wqrc_reschedule       = 2,
-  wqrc_rerun_reschedule = 3,
+  wqrc_retain       = 0,
+  wqrc_rerun        = 1,
+  wqrc_remove       = 2,
+  wqrc_release      = 3,
 
-  wqrc_remove           = 4,
-  wqrc_release          = 5,
+  wqrc_action_mask  = BIT(4) - 1,
 
-  wqrc_action_mask = BIT(4) - 1,
-
-  wqrc_nothing     = 0,
-  wqrc_something   = BIT(4),
+  wqrc_nothing      = 0,
+  wqrc_something    = BIT(4),
 } ;
 
 typedef wq_ret_code_t wq_function(void* data, qtime_mono_t yield_time) ;
@@ -59,7 +56,7 @@ typedef struct wq_item* wq_item ;
 
 struct wq_item
 {
-  struct dl_list_pair(wq_item) queue ;
+  struct dl_list_pair(wq_item) queue ;  /* implements a ring    */
 
   wq_function*  func ;
   void*         data ;
@@ -67,9 +64,26 @@ struct wq_item
 
 /*------------------------------------------------------------------------------
  * Base of a Work Queue
+ *
+ * Since the work queue is a ring, the base is a pointer to the current "head".
  */
-typedef struct dl_base_pair(wq_item) wq_base_t ;
+typedef wq_item    wq_base_t ;
 typedef wq_base_t* wq_base ;
+
+/*------------------------------------------------------------------------------
+ *
+ */
+enum { work_stack_depth  = 4 } ;        /* 3 priorities + idle  */
+
+struct work_stack
+{
+  wq_base_t     queues[work_stack_depth] ;
+
+  byte          counts[work_stack_depth] ;
+
+
+  qtime_t       time_slice ;
+};
 
 /*------------------------------------------------------------------------------
  * Functions

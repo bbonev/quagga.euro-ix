@@ -526,7 +526,7 @@ if_get_ipv6_local (struct interface *ifp, struct in6_addr *addr)
 
 extern int
 bgp_nexthop_set (sockunion local, sockunion remote,
-                 bgp_nexthop nexthop, bgp_prun prun)
+                                             bgp_nexthop nexthop, bgp_prun prun)
 {
   int ret = 0;
   struct interface *ifp = NULL;

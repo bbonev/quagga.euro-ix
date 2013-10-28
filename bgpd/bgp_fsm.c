@@ -330,10 +330,10 @@ static void bgp_fsm_raise_meta_event(bgp_connection connection,
                                                       bgp_fsm_meta_t fsm_meta) ;
 
 /*------------------------------------------------------------------------------
- * Start the given session, if csRun etc -- must be sReset.
+ * Start the given session, if csRun etc -- must be sReady.
  *
  * If !csRun or have neither csMayConnect nor csMayAccept, do nothing (stays
- * sReset).
+ * sReady until some change in the conn_state).
  *
  * Otherwise, this is the first step in the FSM:
  *
@@ -346,7 +346,7 @@ bgp_fsm_start_session(bgp_session session)
 {
   bgp_conn_state_t conn_state ;
 
-  qassert(session->state == bgp_sReset) ;
+  qassert(session->state == bgp_sReady) ;
 
   qassert(session->connections[bc_connect] == NULL) ;
   qassert(session->connections[bc_accept]  == NULL) ;
@@ -3267,7 +3267,7 @@ bgp_fsm_leave_established(bgp_connection connection, bgp_fsm_eqb eqb)
  * The FSM has five timers (though, apart from the KeepaliveTimer, they all
  * use the connection->hold fsm_timer):
  *
- *   * IdleHoldTimer -- uses session->args.holdtime_secs with jitter
+ *   * IdleHoldTimer -- uses session->sargs.holdtime_secs with jitter
  *                   -- uses connection->hold fsm_timer
  *
  *     This runs while in Idle state, and is a period in which no connections
@@ -3278,7 +3278,7 @@ bgp_fsm_leave_established(bgp_connection connection, bgp_fsm_eqb eqb)
  *
  *     This is a one shot timer, which generates a bgp_fsm_eStart event.
  *
- *   * ConnectRetryTimer -- uses session->args.connect_retry_secs with jitter
+ *   * ConnectRetryTimer -- uses session->sargs.connect_retry_secs with jitter
  *                       -- uses connection->hold fsm_timer
  *
  *     This runs while in sConnect or sActive state, and is the period for which
@@ -3309,7 +3309,7 @@ bgp_fsm_leave_established(bgp_connection connection, bgp_fsm_eqb eqb)
  *    This is a one shot timer, which generates a bgp_fsm_eHoldTimer
  *    event.
  *
- *  * HoldTimer  -- uses session->args.holdtime_secs *without* jitter
+ *  * HoldTimer  -- uses session->sargs.holdtime_secs *without* jitter
  *               -- uses connection->hold fsm_timer
  *
  *    This timer is used in sOpenConfirm and sEstablished states only.
@@ -3322,7 +3322,7 @@ bgp_fsm_leave_established(bgp_connection connection, bgp_fsm_eqb eqb)
  *    This timer is recharged every time some input arrives, and generates a
  *    bgp_fsm_eHoldTimer event (and stops) if it ever goes off.
  *
- *  * KeepaliveTimer -- uses session->args.keepalive_secs with jitter.
+ *  * KeepaliveTimer -- uses session->sargs.keepalive_secs with jitter.
  *                   -- uses connection->keepalive fsm_timer
  *
  *    This timer is used in sOpenConfirm and sEstablished states only.

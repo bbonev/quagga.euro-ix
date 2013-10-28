@@ -44,11 +44,11 @@
  *
  * Zeroizing sets:
  *
- *   * args                 -- see bgp_session_args_init_new() below
+ *   * sargs            -- see bgp_session_args_init_new() below
  *
- *   * my_as2               -- BGP_ASN_NULL
- *   * afi_safi             -- empty vector -- embedded
- *   * unknowns             -- empty vector -- embedded
+ *   * my_as2           -- BGP_ASN_NULL
+ *   * afi_safi         -- empty vector -- embedded
+ *   * unknowns         -- empty vector -- embedded
  */
 extern bgp_open_state
 bgp_open_state_init_new(bgp_open_state state)
@@ -77,11 +77,11 @@ bgp_open_state_init_new(bgp_open_state state)
  *
  * Sets:
  *
- *   * args                 -- see bgp_session_args_reset() below
+ *   * sargs            -- see bgp_session_args_reset() below
  *
- *   * my_as2               -- BGP_ASN_NULL
- *   * afi_safi             -- empty vector
- *   * unknowns             -- empty vector
+ *   * my_as2           -- BGP_ASN_NULL
+ *   * afi_safi         -- empty vector
+ *   * unknowns         -- empty vector
  */
 extern bgp_open_state
 bgp_open_state_reset(bgp_open_state state)
@@ -89,9 +89,8 @@ bgp_open_state_reset(bgp_open_state state)
   if (state == NULL)
     return bgp_open_state_init_new(NULL) ;
 
-  state->sargs     = bgp_sargs_reset(state->sargs) ;
-
-  state->my_as2   = BGP_ASN_NULL ;
+  state->sargs  = bgp_sargs_reset(state->sargs) ;
+  state->my_as2 = BGP_ASN_NULL ;
 
   vector_clear(state->afi_safi, 0) ;
   vector_clear(state->unknowns, 0) ;
@@ -149,6 +148,7 @@ bgp_open_state_set_mov(bgp_open_state dst, bgp_open_state* p_src)
 /*==============================================================================
  * Session Arguments stuff
  */
+static bgp_sargs bgp_sargs_setup(bgp_sargs sargs) ;
 
 /*------------------------------------------------------------------------------
  * Initialise new set of session arguments -- allocate if required.
@@ -156,14 +156,14 @@ bgp_open_state_set_mov(bgp_open_state dst, bgp_open_state* p_src)
  * If does not allocate, assumes never been kissed -- see bgp_sargs_reset()
  */
 extern bgp_sargs
-bgp_sargs_init_new(bgp_sargs args)
+bgp_sargs_init_new(bgp_sargs sargs)
 {
-  if (args == NULL)
-    args = XCALLOC(MTYPE_BGP_SESSION_ARGS, sizeof(bgp_sargs_t)) ;
+  if (sargs == NULL)
+    sargs = XCALLOC(MTYPE_BGP_SESSION_ARGS, sizeof(bgp_sargs_t)) ;
   else
-    memset(args, 0, sizeof(bgp_sargs_t)) ;
+    memset(sargs, 0, sizeof(bgp_sargs_t)) ;
 
-  return bgp_sargs_setup(args) ;
+  return bgp_sargs_setup(sargs) ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -173,9 +173,9 @@ bgp_sargs_init_new(bgp_sargs args)
  * things, then this will take care of same.
  */
 static void
-bgp_sargs_unset(bgp_sargs args)
+bgp_sargs_unset(bgp_sargs sargs)
 {
-  memset(args, 0, sizeof(bgp_sargs_t)) ;
+  memset(sargs, 0, sizeof(bgp_sargs_t)) ;
 
   confirm(BGP_ASN_NULL == 0) ;
 } ;
@@ -222,9 +222,9 @@ bgp_sargs_unset(bgp_sargs args)
  * And currently there is nothing else to do.
  */
 static bgp_sargs
-bgp_sargs_setup(bgp_sargs args)
+bgp_sargs_setup(bgp_sargs sargs)
 {
-  return args ;
+  return sargs ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -235,14 +235,14 @@ bgp_sargs_setup(bgp_sargs args)
  *
  */
 extern bgp_sargs
-bgp_sargs_reset(bgp_sargs args)
+bgp_sargs_reset(bgp_sargs sargs)
 {
-  if (args == NULL)
-    return bgp_sargs_init_new(args) ;
+  if (sargs == NULL)
+    return bgp_sargs_init_new(sargs) ;
 
-  bgp_sargs_unset(args) ;
+  bgp_sargs_unset(sargs) ;
 
-  return bgp_sargs_setup(args) ;
+  return bgp_sargs_setup(sargs) ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -284,34 +284,34 @@ bgp_sargs_reset(bgp_sargs args)
  *              cap_strict      -- unless oriinally can_capability.
  */
 extern void
-bgp_sargs_suppress(bgp_sargs args)
+bgp_sargs_suppress(bgp_sargs sargs)
 {
-  if (!args->can_capability)
-    args->cap_strict     = false ;
+  if (!sargs->can_capability)
+    sargs->cap_strict     = false ;
 
-  if (!args->cap_af_override)
-    args->can_af        &= qafx_ipv4_unicast ;
+  if (!sargs->cap_af_override)
+    sargs->can_af        &= qafx_ipv4_unicast ;
 
-  args->can_capability   = false ;
-  args->can_mp_ext       = false ;
-  args->can_as4          = false ;
+  sargs->can_capability   = false ;
+  sargs->can_mp_ext       = false ;
+  sargs->can_as4          = false ;
 
-  args->can_rr           = bgp_form_none ;
+  sargs->can_rr           = bgp_form_none ;
 
-  memset(&args->gr, 0, sizeof(args->gr)) ;
+  memset(&sargs->gr, 0, sizeof(sargs->gr)) ;
 
-  args->can_orf          = bgp_form_none ;
-  memset(&args->can_orf_pfx, 0, sizeof(args->can_orf_pfx)) ;
+  sargs->can_orf          = bgp_form_none ;
+  memset(&sargs->can_orf_pfx, 0, sizeof(sargs->can_orf_pfx)) ;
 
-  args->can_dynamic      = false ;
-  args->can_dynamic_dep  = false ;
+  sargs->can_dynamic      = false ;
+  sargs->can_dynamic_dep  = false ;
 } ;
 
 /*------------------------------------------------------------------------------
- * Copy one set of session args to another.
+ * Copy one set of sargs to another.
  *
- * Currently pretty trivial.  But if session args grows pointers to other
- * structures, then this will take care of things.
+ * Currently pretty trivial.  But if sargs grows pointers to other structures,
+ * then this will take care of things.
  */
 extern bgp_sargs
 bgp_sargs_copy(bgp_sargs dst, bgp_sargs_c src)
@@ -325,10 +325,10 @@ bgp_sargs_copy(bgp_sargs dst, bgp_sargs_c src)
 } ;
 
 /*------------------------------------------------------------------------------
- * Duplicate a set of session args -- creating a new set
+ * Duplicate a set of sargs -- creating a new set
  *
- * Currently pretty trivial.  But if session args grows pointers to other
- * structures, then this will take care of things.
+ * Currently pretty trivial.  But if sargs grows pointers to other structures,
+ * then this will take care of things.
  */
 extern bgp_sargs
 bgp_sargs_dup(bgp_sargs_c src)
@@ -342,12 +342,12 @@ bgp_sargs_dup(bgp_sargs_c src)
  * Returns:  NULL
  */
 extern bgp_sargs
-bgp_sargs_free(bgp_sargs args)
+bgp_sargs_free(bgp_sargs sargs)
 {
-  if (args != NULL)
+  if (sargs != NULL)
     {
-      bgp_sargs_unset(args) ;
-      XFREE(MTYPE_BGP_SESSION_ARGS, args) ;
+      bgp_sargs_unset(sargs) ;
+      XFREE(MTYPE_BGP_SESSION_ARGS, sargs) ;
     } ;
 
   return NULL ;

@@ -80,10 +80,20 @@ struct bgp_session_stats
  * The session->state belongs to the BGP Engine (BE), and is updated as
  * messages are sent to and arrive from the Routeing Engine (RE).
  *
- *   * sReset       -- means that the session has been initialised, ready to
- *                     run.
+ *   * sInitial     -- means that the session has just been created (by the RE)
+ *                     and is initialised.
  *
- *                     The acceptor will be running,
+ *                     The session has yet to be sent to the BE, so nothing is
+ *                     happening, and the session still belongs to the RE.
+ *
+ *   * sReady       -- means that all is ready for a new session to start.
+ *
+ *                     The session is set sReady by the *RE* when it wants a
+ *                     new session to start -- which it can do when the
+ *                     RE knows that the session is sInitial or sStopped.
+ *
+ *                     The acceptor will be running if the conn_state allows
+ *                     (once the session is prodded for the first time).
  *
  *   * sAcquiring   -- means that the session has been started, so the fsm(s)
  *                     are running and trying to acquire and establish a
@@ -98,7 +108,13 @@ struct bgp_session_stats
  *   * sStopped     -- means that the session is stopped, so the fsm(s) are
  *                     not running.
  *
- *                     The acceptor will be running.
+ *                     The acceptor will be running if the conn_state allows.
+ *
+ *                     Apart from the acceptor, nothing in the BE is running.
+ *                     So, once the RE has seen the sStopped state, it may
+ *                     push the state round to sReady again when it wishes.
+ *
+ *                     For the BE, sStopped is a trapping state.
  *
  *   * sDeleting    -- means the session is in the process of being deleted,
  *                     by the BE.
@@ -111,9 +127,11 @@ struct bgp_session_stats
 typedef enum bgp_session_state bgp_session_state_t ;
 enum bgp_session_state
 {
-  bgp_session_state_min     = 0,
+  bgp_session_state_min = 0,
 
-  bgp_sReset        = 0,
+  bgp_sInitial          = 0,
+
+  bgp_sReady,
   bgp_sAcquiring,
   bgp_sEstablished,
   bgp_sStopped,
@@ -121,7 +139,7 @@ enum bgp_session_state
   bgp_sDeleting,
 
   bgp_session_state_count,
-  bgp_session_state_max     = bgp_session_state_count - 1,
+  bgp_session_state_max = bgp_session_state_count - 1,
 } ;
 
 /*------------------------------------------------------------------------------
@@ -141,7 +159,11 @@ enum bgp_session_state
  * when messages are sent, and when they are received.  A (very few) things
  * may change under atomic operation, which may signal things directly.
  *
- * Only the Routing Engine creates sessions.  Only the BGP Engine destroys them.
+ * Only the Routing Engine creates sessions.
+ * Only the BGP Engine destroys them.
+ *
+ *
+ *
  */
 typedef struct bgp_session bgp_session_t ;
 
@@ -150,7 +172,7 @@ struct bgp_session
   /* The session->peer pointer is set when the peer, session and peer index
    * entry are created, and before the session is passed to the BE.
    *
-   * When the peer is deleted (by the RE), the session->peer is set NULL
+   * When the peer is deleted (by the RE), the session->prun is set NULL
    * (atomically) to signal that the session is now moribund -- and the
    * peer cuts its pointers to the session and peer index entry, and the peer
    * index entry is removed from its peer name index.  A message is sent to
@@ -161,6 +183,10 @@ struct bgp_session
 
   /* These are private to the RE, and are set each time a session event message
    * is received from the BE.
+   *
+   * The session->state_seen and the prun->state are closely linked and
+   * changes in one allow/prompt changes in the other.  When the state_seen
+   * is sInitial or sStopped
    *
    * The ordinal returned in the event message identifies which connection
    * the event is for.  In the case of an eEstablished event, the ordinal is
@@ -176,28 +202,31 @@ struct bgp_session
    */
   bgp_conn_ord_t        ord_estd ;
 
-  /* The following are set by the RE before a session is enabled, and not
-   * changed at any other time by either engine.
+  /* The initial idle_hold_time is set from prun->idle_hold_time when the RE
+   * sets the session sReady (so when state_seen is sInitial or sStopped).
+   *
+   * The prun->idle_hold_time grows/shrinks depending on how long the last
+   * established session lasted.  The FSM grows this value if the far end
+   * proves vexatious.
    */
   qtime_t               idle_hold_time ;
 
+  /* The logging is set at sInitial time and not changed thereafter.
+   *
+   * Arguably this should be a cops thing... so that logging can be changed
+   * at any time... but that awaits a general improvement in logging.
+   */
   bgp_connection_logging_t lox ;
 
-  /* The session arguments configuration.
+  /* The session arguments configuration -- belong to the BE, and are set
+   * from sargs sent when the BE is prodded.
    *
-   *   * sargs_sent -- last set as sent      -- belong to the RE *ALWAYS*.
-   *
-   *     This is the reference copy of the last set of session arguments
-   *     sent to the BE.
-   *
-   *   * sargs_conf -- session configuration -- belong to the BE if pssRunning
-   *
-   *     The sargs_conf are set from the copy sent when the BE is prodded.
+   * These are set NULL at sInitial time, and left in the hands of the BE
+   * thereafter.
    */
-  bgp_sargs     sargs_sent ;
   bgp_sargs     sargs_conf ;
 
-  /* The session arguments for Established Session.
+  /* The session arguments for Established Session (state_seen == sEstablished)
    *
    *   * sargs     -- actual session state, once established
    *                                                    -- transfer BE to RE.
@@ -207,10 +236,13 @@ struct bgp_session
    *   * open_recv -- actual OPEN as received for session, once established
    *                                                    -- transfer BE to RE.
    *
-   *     The args, open_sent and open_recv copied from the current connection
-   *     when a session is established, and not changed again by the BE.
+   * The sargs, open_sent and open_recv copied from the current connection
+   * when a session is established, and not changed again by the BE.  (The
+   * BE effectively passes these to the RE along with the message that tells
+   * the RE that the session is sEstablished -- so is "protected" by the
+   * message passing mutex.)
    *
-   *     So, while pEstablished, these belong to the peer !
+   * So, while sEstablished/pEstablished, these belong to the peer !
    */
   bgp_sargs         sargs ;
   bgp_open_state    open_sent ;
@@ -224,6 +256,8 @@ struct bgp_session
    *
    * While the session is established, these are shared by the BE and RE.
    * When the session stops, the BE stops using these, and the RE can discard.
+   *
+   * These too are "protected" by the message passing mutex.
    */
   ring_buffer   read_rb ;
   ring_buffer   write_rb ;
@@ -238,14 +272,9 @@ struct bgp_session
 
   /* Connection options
    *
-   *   * cops_sent   -- last set as sent      -- belong to the RE *ALWAYS*.
-   *
-   *     This is the reference copy of the last set of connection options
-   *     sent to the BE.
-   *
    *   * cops_conf   -- session configuration -- belong to the BE *ALWAYS*.
    *
-   *     The cops_config are set from the copy sent when the BE is prodded.
+   *     The cops_conf are set from the copy sent when the BE is prodded.
    *
    *   * cops -- actual session state, once established -- transfer BE to RE.
    *
@@ -253,28 +282,8 @@ struct bgp_session
    *     established, and not changed again by the BE.  These are copied to the
    *     peer when the session is established.
    */
-  bgp_cops      cops_sent ;
   bgp_cops      cops_conf ;
   bgp_cops      cops ;
-
-  /* This is for the prodding of the BE.
-   *
-   *   * args_tx -- transfer from RE to BE, while pssRunning.
-   *
-   *     The args_tx is set by the RE and cleared by the BE -- using an atomic
-   *     swap.
-   *
-   *   * cops_tx -- transfer from RE to BE.
-   *
-   *     The cops_tx is set by the RE and cleared by the BE -- using an atomic
-   *     swap.
-   *
-   *     When the options change, the RE creates a new set of connection
-   *     options, and sets cops_tx.  If cops_tx existed before, those are now
-   *     redundant.  If no cops_tx existed before, the BE needs to be kicked.
-   *
-   */
-  mqueue_block          mqb_tx ;
 
   /* These values are are private to the BGP Engine.
    *
@@ -333,35 +342,11 @@ enum bgp_rb_msg_out_type
  */
 struct bgp_session_prod_args            /* to BGP Engine                */
 {
-  bgp_note      note ;                  /* NOTIFICATION to send         */
-  bool          peer_established ;      /* peer is established          */
-
-  bgp_sargs args ;
-  bgp_cops      cops ;
+  bgp_note      note ;          /* NOTIFICATION to send, if required    */
+  bgp_sargs     sargs ;         /* new session arguments, if required   */
+  bgp_cops      cops ;          /* new connection options, if required  */
 } ;
 MQB_ARGS_SIZE_OK(struct bgp_session_prod_args) ;
-
-
-struct bgp_session_update_args          /* to and from BGP Engine       */
-{
-  struct stream*  buf ;
-  bgp_size_t size ;
-  int xon_kick;                         /* send XON when processed this */
-
-  bgp_connection  is_pending ;          /* used inside the BGP Engine   */
-                                        /* set NULL on message creation */
-} ;
-MQB_ARGS_SIZE_OK(struct bgp_session_update_args) ;
-
-struct bgp_session_route_refresh_args   /* to and from BGP Engine       */
-{
-  bgp_route_refresh  rr ;
-
-  bgp_connection  is_pending ;          /* used inside the BGP Engine   */
-                                        /* set NULL on message creation */
-} ;
-MQB_ARGS_SIZE_OK(struct bgp_session_route_refresh_args) ;
-
 
 struct bgp_session_event_args           /* to Routeing Engine           */
 {
@@ -371,46 +356,20 @@ struct bgp_session_event_args           /* to Routeing Engine           */
 } ;
 MQB_ARGS_SIZE_OK(struct bgp_session_event_args) ;
 
-#if 0
-struct bgp_session_XON_args             /* to Routeing Engine           */
-{
-                                        /* no further arguments         */
-} ;
-MQB_ARGS_SIZE_OK(struct bgp_session_XON_args) ;
-
-enum { BGP_XON_REFRESH     = 40,
-       BGP_XON_KICK        = 20,
-} ;
-
-struct bgp_session_ttl_args             /* to bgp Engine                */
-{
-  ttl_t ttl ;
-  bool  gtsm ;
-} ;
-MQB_ARGS_SIZE_OK(struct bgp_session_ttl_args) ;
-
-
-/*==============================================================================
- * Session mutex lock/unlock
- */
-
-inline static void BGP_SESSION_LOCK(bgp_session session)
-{
-  qpt_mutex_lock(session->mutex) ;
-} ;
-
-inline static void BGP_SESSION_UNLOCK(bgp_session session)
-{
-  qpt_mutex_unlock(session->mutex) ;
-} ;
-#endif
-
 /*==============================================================================
  * Functions
  */
-extern bgp_session bgp_session_init_new(bgp_prun prun) ;
-extern void bgp_session_start(bgp_session session) ;
-extern bgp_note bgp_session_recharge(bgp_session session, bgp_note note) ;
+extern void bgp_session_execute(bgp_prun prun, bgp_note note) ;
+extern void bgp_session_shutdown(bgp_prun prun, bgp_note note) ;
+
+
+
+
+
+
+
+
+
 
 
 

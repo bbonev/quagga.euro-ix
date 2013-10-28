@@ -644,7 +644,7 @@ bgp_route_info_process_schedule(route_info ri)
  *
  * TODO aggregate stuff
  */
-extern bool
+static bool
 bgp_adj_in_process(bgp_prib prib)
 {
   route_info        ri ;
@@ -2070,7 +2070,6 @@ bgp_tie_break (bgp_rib_node rn, route_info best, route_info cand, bgp_lc_id_t lc
   uint best_cluster, cand_cluster ;
   int ret;
   bgp_peer_sort_t best_sort, cand_sort ;
-  bgp_run brun ;
 
   best_attr = best->iroutes[lc].attr ;
   cand_attr = cand->iroutes[lc].attr ;
@@ -2105,7 +2104,6 @@ bgp_tie_break (bgp_rib_node rn, route_info best, route_info cand, bgp_lc_id_t lc
    *
    *    MED is a weight/cost... so we are looking for the smaller.
    */
-  brun = rn->it.rib->brun ;
   if (best->med_as == cand->med_as)
     {
       uint32_t best_med, cand_med ;

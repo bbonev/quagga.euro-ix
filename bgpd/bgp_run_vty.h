@@ -25,5 +25,7 @@ Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
 
 #include "vty.h"
 
+extern void bgp_vty_run_cmd_init (void) ;
+
 
 #endif /* _QUAGGA_BGP_RUN_VTY_H */

@@ -713,7 +713,7 @@ peer_set_af(bgp_peer peer, qafx_t qafx, bool enable)
           switch (peer->state)
             {
               case bgp_pDown:
-                if (peer->idle == bgp_pisRunnable)
+                if (peer->idle == bgp_pisReady)
                   bgp_peer_start_running(peer) ;
                 break ;
 
@@ -1206,58 +1206,6 @@ peer_remote_as (bgp_inst bgp, sockunion su, as_t* p_as, qafx_t qafx)
 
 #endif
 
-/*==============================================================================
- * For the given interface name, get a suitable address so can bind() before
- * connect() so that we use the required interface.
- *
- * If has a choice, uses address that best matches the peer's address.
- */
-extern sockunion
-bgp_peer_get_ifaddress(bgp_prun peer, const char* ifname, sa_family_t af)
-{
-#if 0
-  struct interface* ifp ;
-  struct connected* connected;
-  struct listnode*  node;
-  prefix   best_prefix ;
-  prefix_t peer_prefix[1] ;
-  int   best, this ;
-
-  if (peer->cops.ifname[0] == '\0')
-    return NULL ;
-
-  ifp = if_lookup_by_name (peer->cops.ifname) ;
-  if (ifp == NULL)
-    {
-      zlog_err("Peer %s interface %s is not known", peer->host, ifname) ;
-      return NULL ;
-    } ;
-
-  prefix_from_sockunion(peer_prefix, peer->su_name) ;
-  best_prefix = NULL ;
-  best = -1 ;
-
-  for (ALL_LIST_ELEMENTS_RO (ifp->connected, node, connected))
-    {
-      if (connected->address->family != af)
-        continue ;
-
-      this = prefix_common_bits (connected->address, peer_prefix) ;
-      if (this > best)
-        {
-          best_prefix = connected->address ;
-          best = this ;
-        } ;
-    } ;
-
-  if (best_prefix != NULL)
-    return sockunion_new_prefix(NULL, best_prefix) ;
-
-  zlog_err("Peer %s interface %s has no suitable address", peer->host, ifname);
-#endif
-
-  return NULL ;
-} ;
 
 #if 0
 

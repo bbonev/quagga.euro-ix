@@ -1301,9 +1301,9 @@ _dsl_push(dl_base_pair_v base, void* item, void** item_p)
  *
  *     Undefined if item is already on any ring (including this one).
  *
- *   rdl_del(base, item, ring)      -- delete from ring
+ *   rdl_del(base, item, ring)      -- delete from ring & get next
  *
- *     Treat as void function.  The item may *not* be NULL.
+ *     Treat as function returning void*.  Returns NULL if the ring now empty.
  *
  *     Undefined if item is not on the ring.
  *
@@ -1487,9 +1487,11 @@ _rdl_prepend(void** base, void* item, dl_list_pair_v item_p)
 /*------------------------------------------------------------------------------
  * Delete given item from rdl.
  *
+ * Returns:  next item in the ring (if any).
+ *
  * NB: item MUST be on the rdl !!
  */
-Inline void
+Inline void*
 _rdl_del(void** base, void* item, dl_list_pair_v item_p)
 {
   void* next ;
@@ -1506,6 +1508,7 @@ _rdl_del(void** base, void* item, dl_list_pair_v item_p)
        */
       qassert((*base == item) && (next == prev)) ;
      *base = NULL ;
+     next = NULL ;
     }
   else
     {
@@ -1526,6 +1529,8 @@ _rdl_del(void** base, void* item, dl_list_pair_v item_p)
     } ;
 
   item_p->next = item_p->prev = NULL ;
+
+  return next ;
 } ;
 
 /*------------------------------------------------------------------------------

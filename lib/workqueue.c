@@ -53,50 +53,32 @@
  *
  *     If time has not run out, the next item (if any) is dispatched.
  *
+ * Running a given work queue will run items on the ring until:
+ *
+ *   * the time-slot has expired when an item returns wqrc_something.
+ *
+ *   * the queue becomes empty.
+ *
+ *   * all items have returned wqrc_nothing.
+ *
+ *     Returning wqrc_nothing with wqrc_retain must be done with a little
+ *     caution.  Generally, when an item runs out of work it should remove
+ *     itself from the queue, to be put back on again when more work rolls up.
+ *     But it is possible to run a work queue where items are "polled" and
+ *     return wqrc_nothing with wqrc_retain if they have nothing to do.  The
+ *     thing to watch out for is that the queue runner will keep going around
+ *     the ring until all items report wqrc_nothing.
+ *
  * What the next item is depends on the "action" which is:
  *
- *   wqrc_retain     -- leave item as is, but step past
+ *   wqrc_retain     -- leave item as is, but step to the next on the ring
  *
- *                      The item will not be dispatched again until the next
- *                      time the work queue is run.
+ *                      The item will be dispatched again when the ring comes
+ *                      round to it again.
  *
- *                      This may be used with wqrc_nothing or wqrc_something
- *                      where items are on the work queue to be "polled".
- *
- *                      The next item is the one which follows the current one.
- *
- *   wqrc_rerun      -- leave item as is, and rerun
- *
- *                      The next item is the current one.
+ *   wqrc_rerun      -- leave item as is, and rerun if time allows
  *
  *                      This is probably not useful for wqrc_nothing.
- *
- *                      For wqrc_something this may be used where the item
- *                      (for example) itself contains a number of things to do,
- *                      and after some amount of work wishes to return to
- *                      check whether time has run out.
- *
- *   wqrc_reschedule -- move item to end of work queue
- *
- *                      The next item is the one which followed the current
- *                      one before it was rescheduled, OR itself (if is at the
- *                      end of the work queue).
- *
- *                      This may be used to achieve a round-robin scheduling
- *                      of work.
- *
- *                      This is probably not useful for wqrc_nothing.
- *
- *   wqrc_rerun_reschedule -- if out of time, reschedule otherwise rerun
- *
- *                      The next item is the current one.
- *
- *                      This is probably not useful for wqrc_nothing, where it
- *                      is the same as rerun !
- *
- *                      For wqrc_something this may be used to keep processing
- *                      while time is available, then round-robin to wait for
- *                      another time-slice.
  *
  *   wqrc_remove     -- remove item from work queue
  *   wqrc_release    -- remove item from work queue and free it
@@ -159,7 +141,7 @@ wq_item_free(wq_item wqi)
 extern wq_item
 wq_item_add(wq_base wq, wq_item wqi)
 {
-  ddl_append(*wq, wqi, queue) ;
+  rdl_append(*wq, wqi, queue) ;
 
   return wqi ;
 } ;
@@ -175,7 +157,7 @@ wq_item_add(wq_base wq, wq_item wqi)
 extern wq_item
 wq_item_del(wq_base wq, wq_item wqi)
 {
-  ddl_del(*wq, wqi, queue) ;
+  rdl_del(*wq, wqi, queue) ;
 
   return wqi ;
 } ;
@@ -192,7 +174,7 @@ extern wq_item
 wq_item_del_free(wq_base wq, wq_item wqi)
 {
   if (wqi != NULL)
-    ddl_del(*wq, wqi, queue) ;
+    rdl_del(*wq, wqi, queue) ;
 
   return wq_item_free(wqi) ;
 } ;
@@ -203,7 +185,7 @@ wq_item_del_free(wq_base wq, wq_item wqi)
 extern void
 wq_init(wq_base wq)
 {
-  ddl_init(*wq) ;
+  rdl_init(*wq) ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -229,13 +211,16 @@ wq_init(wq_base wq)
 extern bool
 wq_run(wq_base wq, qtime_mono_t yield_time, qtime_mono_t* p_now)
 {
-  bool    something ;
-  wq_item wqi ;
+  bool          something ;
+  wq_item       wqi, nothing ;
+  qtime_mono_t  now ;
 
   something = false ;
-  wqi  = ddl_head(*wq) ;
+  now       = 0 ;               /* calm down compiler   */
+  nothing   = NULL ;
 
-  while (wqi != NULL)
+  wqi       = rdl_head(*wq) ;
+  while (wqi != nothing)
     {
       wq_ret_code_t ret ;
       wq_item       next ;
@@ -246,34 +231,20 @@ wq_run(wq_base wq, qtime_mono_t yield_time, qtime_mono_t* p_now)
 
       switch (ret & wqrc_action_mask)
         {
-          /* wqrc_retain: keep the item, but step past it for this run along
-           *              the work queue.
+          /* wqrc_retain: keep the item, and step past it.
            */
           case wqrc_retain:
-            wqi = ddl_next(wqi, queue) ;
+            next = rdl_next(wqi, queue) ;
             break ;
 
-          /* wqrc_rerun:            if time allows, rerun now,
-           *                        otherwise retain.
-           * wqrc_rerun_reschedule: if time allows, rerun now,
-           *                        otherwise reschedule (see below).
+          /* wqrc_rerun:  if time allows, rerun now, otherwise leave as head.
            */
           case wqrc_rerun:
-          case wqrc_rerun_reschedule:
+            next = wqi ;
             break ;
 
-          /* wqrc_reschedule: move item to end of queue
+          /* Treat nonsence response as remove with nothing.
            */
-          case wqrc_reschedule:
-            next = ddl_next(wqi, queue) ;
-            if (next != NULL)
-              {
-                ddl_del(*wq, wqi, queue) ;
-                ddl_append(*wq, wqi, queue) ;
-                wqi = next ;
-              } ;
-            break ;
-
           default:
             qassert(false) ;
             fall_through ;
@@ -281,18 +252,16 @@ wq_run(wq_base wq, qtime_mono_t yield_time, qtime_mono_t* p_now)
           /* wqrc_remove: remove item from queue
            */
           case wqrc_remove:
-            next = ddl_next(wqi, queue) ;
-            ddl_del(*wq, wqi, queue) ;
-            wqi = next ;
+            next = rdl_del(*wq, wqi, queue) ;
+            wqi  = NULL ;
             break ;
 
           /* wqrc_release: remove item from queue and free it
            */
           case wqrc_release:
-            next = ddl_next(wqi, queue) ;
-            ddl_del(*wq, wqi, queue) ;
+            next = rdl_del(*wq, wqi, queue) ;
             wq_item_free(wqi) ;
-            wqi = next ;
+            wqi  = NULL ;
             break ;
         } ;
 
@@ -302,29 +271,32 @@ wq_run(wq_base wq, qtime_mono_t yield_time, qtime_mono_t* p_now)
 
       if (ret & wqrc_something)
         {
-          qtime_mono_t now ;
-
           something = true ;
+
           now = qt_get_monotonic() ;
 
-          if ((wqi == NULL) || (now >= yield_time))
-            {
-              if (ret == (wqrc_something | wqrc_rerun_reschedule))
-                {
-                  qassert(wqi != NULL) ;
+          if (now >= yield_time)
+            break ;
 
-                  if (ddl_next(wqi, queue) != NULL)
-                    {
-                      ddl_del(*wq, wqi, queue) ;
-                      ddl_append(*wq, wqi, queue) ;
-                    } ;
-                } ;
-
-              *p_now = now ;
-              break ;
-            } ;
+          /* We did something for the current item, so clear the nothing
+           * trap.
+           */
+          nothing = NULL ;
+        }
+      else
+        {
+          /* We did nothing for the current item, so if we don't have a
+           * nothing trap set, set it.
+           */
+          if (nothing == NULL)
+            nothing = wqi ;
         } ;
+
+      wqi = next ;
     } ;
+
+  if (something)
+    *p_now = now ;
 
   return something ;
 } ;

@@ -41,46 +41,21 @@
 #include "lib/vhash.h"
 #include "lib/vty.h"
 #include "lib/qfstring.h"
+#include "lib/sockunion.h"
 
 
 /*==============================================================================
- * States of Peer and Session
+ * States of Running Peer and Session
  */
 
 
-/* The state of the peer -- strongly related to the state of the session !
+/* The state of the prun
  *
- *   1. pDown
+ *   1. pIdle  -- for whatever reason, is unable to start a session.
  *
- *      All real peers start in this state.
+ *      The prun_idle_state -- pisXxxx -- is significant.
  *
- *      This is the case while no address families are enabled, eg:
- *
- *        a. when a bgp_peer structure is first created.
- *
- *           Note that PEER_TYPE_GROUP_CONF and PEER_TYPE_SELF are permanently
- *           pDown.
- *
- *        b. not one address family is configured *and* enabled
- *
- *        c. peer is administratively down/disabled/deactivated
- *
- *        d. peer is waiting for route flap or other such timer before
- *           reawakening.
- *
- *      The peer-session states relate to the above as follows:
- *
- *        pssInitial -- case (a)
- *
- *        pssStopped -- all of the above
- *
- *                      NB: in pDown and pssStopped, the acceptor will be
- *                          running if the current cops allow.
- *
- *        all other states are IMPOSSIBLE
- *
- *      When at least one address family is enabled the peer can go pStarted,
- *      and a session will be started.
+ *      When is pIdle & pisReady, it is time to start a session.
  *
  *   2. pStarted
  *
@@ -88,74 +63,13 @@
  *      enable a new session, and is now waiting for the session to be
  *      established.
  *
- *      The session must be sUp.
- *
- *      If the Routeing Engine disables the session -> pLimping and sLimping
- *
- *      The BGP Engine may send event messages, which signal:
- *
- *        * feXxxxx, but not "stopped"    -> remains pStarted
- *
- *          the BGP Engine signals various events which do not stop it from
- *          trying to establish a session, but may be of interest.
- *
- *        * session is (now) sEstablished -> pEstablished
- *
- *        * feXxxxx, and "stopped"        -> pResetting (however briefly)
- *
- *      All other messages are discarded -- there should not be any.
+ *      Must be pisReady.
  *
  *   3. pEstablished
  *
  *      Reaches this state from pStarted when a session becomes established.
  *
- *      The session must be sUp.
  *
- *      If the Routeing Engine disables the session -> pResetting/pssLimping.
- *
- *          The Routeing Engine sets the "down reason" etc. according to why
- *          the session is being disabled.  While pssLimping, this is
- *          provisional.  When a "stopped" event arrives, it may be found that
- *          the session stopped in the BGP Engine before the disable message
- *          arrived, in which case the "down reason" will change to whatever
- *          happened in the BGP Engine.
- *
- *      The BGP Engine may signal:
- *
- *        * feXxxxx, but not "stopped"    -> remains pEstablished
- *
- *          the BGP Engine may signal events which do not stop the established
- *          session, but may be of interest.
- *
- *        * feXxxxx, and "stopped"        -> pResetting (however briefly)
- *                                           and psStopped
- *
- *          The "down reason" is set according to what the BGP Engine reports.
- *
- *      Accepts and sends UPDATE etc messages while is pEstablished.
- *
- *   4. pResetting
- *
- *      Reaches this state from pStarted or pEstablished, as above.
- *
- *      When a disable message is sent to the BGP Engine it is set pssLimping,
- *      and will go pssStopped when is seen to stop.  While is pssLimping, all
- *      messages from the BGP Engine are discarded, until it is seen to stop,
- *      and is set pssStopped.
- *
- *      (When pssStopped is set, will flush all message queues for the session,
- *      since the BGP Engine is now done with it.)
- *
- *      Tidies up the peer, including clearing routes etc.  Once the peer is
- *      completely tidy, and the session is pssStopped:
- *
- *         peer    -> pDown/pssStopped
- *
- *      NB: while pResetting the peer's routes and RIBs may be being processed
- *         (and may or may not be being discarded).
- *
- *          All other parts of the peer may be modified... but mindful of the
- *          "background" tasks which are yet to complete.
  *
  *   5. bgp_pDeleting
  *
@@ -164,129 +78,75 @@
  *
  *      This state may be reached from any of the above.
  *
- *      If there is an active session, it will be sLimping.  When advances to
+ *      If there is an active session, it will be pisLimping.  When advances to
  *      sDown it will be deleted.
  *
  *      The remaining tasks are to clear out routes, dismantle the peer
  *      structure and delete it.  While that is happening, the peer is in this
  *      state.
  */
-typedef enum bgp_peer_states bgp_peer_state_t ;
-enum bgp_peer_states
+typedef enum bgp_prun_states bgp_prun_state_t ;
+enum bgp_prun_states
 {
-  bgp_peer_state_min     = 0,
+  bgp_prun_state_min     = 0,
 
   bgp_pInitial      = 0,        /* in the process of being created      */
 
-  bgp_pDown         = 1,        /* not yet started/restarted            */
+  bgp_pIdle         = 1,        /* see bgp_prun_idle_state              */
   bgp_pStarted      = 2,        /* started, but not yet established     */
   bgp_pEstablished  = 3,        /* session established                  */
 
-  bgp_pResetting    = 4,        /* session stopping/stopped, clearing   */
+//bgp_pResetting    = 4,        /* session stopping/stopped, clearing   */
 
   bgp_pDeleting     = 5,        /* lingers until lock count == 0        */
 
-  bgp_peer_state_max     = 6
-} ;
-
-/* The state of the session, as far as the peer is concerned.
- *
- * The peer->session_state belongs to the Routing Engine (RE), and is updated
- * as messages are sent to and arrive from the BGP Engine (BE).
- *
- *   * pssInitial   -- means that the peer and session are being created (or
- *                     are about to be).
- *
- *   * pssStopped   -- means that the session is not running -- nothing at all
- *                     is happening for the session in the BE, EXCEPT that the
- *                     acceptor may (well) be running.
- *
- *                     NB: while is pssStopped, any changes to the peer->cops
- *                         cause the BE to be prodded if this may affect the
- *                         acceptor, or if becomes pisRunnable.
- *
- *                         The pisReset may hold the session pssStopped until
- *                         the restart timer goes off.
- *
- *                         while is pssStopped, any changes to the peer->args
- *                         do not cause the BE to be prodded.
- *
- *   * pssRunning   -- means that the session is running (something is, as far
- *                     as the RE is concerned, happening for the session in the
- *                     BE).
- *
- *                     NB: changes to peer->cops and/or peer->args will cause
- *                         the BE to be prodded.
- *
- *                         Changing to anything other than pisRunnable will
- *                         send to pssLimping.
- *
- *                         If the session stops spontaneously (from the
- *                         perspective of the RE) then it drops to pssStopped.
- *
- *   * pssLimping   -- means that was pssRunning and the RE is now waiting to
- *                     see a Stopped message from the BE.
- *
- *                     NB: while is pssLimping, changes to peer->cops and
- *                         peer->args are treated in the same way as in
- *                         pssStopped.
- *
- *                         At a minimum will be pisReset.
- *
- *   * pssDeleted   -- means that the peer is being deleted, and session has
- *                     been -- at least, the peer has cut the session away,
- *                     and sent a message to the BE to delete the session..
- */
-typedef enum bgp_peer_session_state bgp_peer_session_state_t ;
-enum bgp_peer_session_state
-{
-  bgp_peer_session_state_min = 0,
-
-  bgp_pssInitial    = 0,        /* in the process of being created      */
-
-  bgp_pssStopped    = 1,
-  bgp_pssRunning    = 2,
-  bgp_pssLimping    = 3,        /* neither up nor down                  */
-
-  bgp_pssDeleted    = 4,        /* gone                                 */
-
-  bgp_peer_session_state_max = 2
+  bgp_prun_state_max     = 6
 } ;
 
 /*------------------------------------------------------------------------------
- * Whether and why the peer is "Idle".
+ * Whether and why the prun is "Idle".
  */
-typedef enum bgp_peer_idle_state bgp_peer_idle_state_t ;
-enum bgp_peer_idle_state
+typedef enum bgp_prun_idle_state bgp_prun_idle_state_t ;
+enum bgp_prun_idle_state
 {
-  bgp_pisRunnable       = 0,
+  bgp_pisIdle           = 0,    /* not ready for some reason    */
 
-  /* This is set while a peer is in the process of being configured.
+  /* Is pisReady iff == bgp_pisReady
    */
-  bgp_pisConfiguring    = BIT(0),
-
-  /* This is the all purpose is reset and pending some sort of restart, flag.
-   *
-   * When the Peering Engine is ready, it will release this and proceed to
-   * restart the session.
-   */
-  bgp_pisReset          = BIT(1),
+  bgp_pisReady          = 1,
 
   /* These are temporary states -- when they are cleared, the connection may
    * well be up again, and that should trigger session state change.
+   *
+   *   * pisLimping         -- the session has been told to stop, but sStopped
+   *                           has not been seen yet.
+   *
+   *   * pisClearing        -- the prun's adj-in, adj-out etc are being cleared,
+   *                           so is not yet ready to restart.
+   *
+   *   * pisMaxPrefixWait   -- the max prefix limit was hit, and we are
+   *                           waiting for its timer to expire.
+   *
+   * May be in any combination of these states.
    */
-  bgp_pisClearing       = BIT(2),   /* clearing from last session drop  */
-  bgp_pisMaxPrefixWait  = BIT(3),   /* waiting for restart timer        */
+  bgp_pisLimping        = BIT( 1),
+  bgp_pisClearing       = BIT( 2),
+  bgp_pisMaxPrefixWait  = BIT( 3),
+
+  bgp_pisUnready        = bgp_pisMaxPrefixWait |
+                          bgp_pisClearing      |
+                          bgp_pisLimping,
 
   /* These are serious, configuration set issues, and will cause the acceptor
    * to reject incoming connections.
    *
    * NB: for status display, the highest numbered bit is used.
    */
-  bgp_pisMaxPrefixStop  = BIT(4),   /* max prefix -- no restart         */
-  bgp_pisNoAF           = BIT(5),   /* no address families are enabled  */
-  bgp_pisShutdown       = BIT(6),   /* "administratively SHUTDOWN"      */
-  bgp_pisDeconfigured   = BIT(7),   /* administratively dead            */
+  bgp_pisMaxPrefixStop  = BIT( 8),      /* max prefix -- no restart         */
+
+  bgp_pisNoAF           = BIT( 9),      /* no address families are enabled  */
+  bgp_pisShutdown       = BIT(10),      /* "administratively SHUTDOWN"      */
+  bgp_pisDeconfigured   = BIT(11),      /* administratively dead            */
 
   bgp_pisDown           = bgp_pisDeconfigured  |
                           bgp_pisShutdown      |
@@ -295,23 +155,11 @@ enum bgp_peer_idle_state
 } ;
 
 /*==============================================================================
- * struct prun and struct peer_rib  -- the BGP neighbor structures.
+ * The reasons for a peer being down or last having been reset.
+ *
+ * The previous code had an elaborate scheme to note individual configuration
+ * changes... this code does not.
  */
-
-
-
-typedef struct bgp_nexthop bgp_nexthop_t ;
-
-struct bgp_nexthop
-{
-  struct interface* ifp;
-  struct in_addr    v4;
-#ifdef HAVE_IPV6
-  struct in6_addr  v6_global;
-  struct in6_addr  v6_local;
-#endif /* HAVE_IPV6 */
-};
-
 typedef enum PEER_DOWN peer_down_t ;
 enum PEER_DOWN
 {
@@ -321,11 +169,14 @@ enum PEER_DOWN
    */
   PEER_DOWN_UNSPECIFIED,
 
-  PEER_DOWN_first       =  1,      /* first not-NULL                       */
+  PEER_DOWN_first       =  PEER_DOWN_UNSPECIFIED,
 
   /* Configuration changes that cause a session to be reset.
    */
   PEER_DOWN_CONFIG_CHANGE,         /* Unspecified config change            */
+
+#if 0
+
 
   PEER_DOWN_RID_CHANGE,            /* 'bgp router-id'                      */
   PEER_DOWN_REMOTE_AS_CHANGE,      /* 'neighbor remote-as'                 */
@@ -349,11 +200,12 @@ enum PEER_DOWN
   PEER_DOWN_AF_DEACTIVATE,         /* 'no neighbor activate'               */
   PEER_DOWN_PASSWORD_CHANGE,       /* 'neighbor password'                  */
   PEER_DOWN_ALLOWAS_IN_CHANGE,     /* 'neighbor allowas-in'                */
+#endif
 
   /* Other actions that cause a session to be reset
    */
-  PEER_DOWN_USER_SHUTDOWN,         /* 'neighbor shutdown'               */
   PEER_DOWN_USER_RESET,            /* 'clear ip bgp'                    */
+  PEER_DOWN_USER_SHUTDOWN,         /* 'neighbor shutdown'               */
   PEER_DOWN_NEIGHBOR_DELETE,       /* neighbor delete                   */
 
   PEER_DOWN_INTERFACE_DOWN,        /* interface reported to be down     */
@@ -381,36 +233,23 @@ enum PEER_DOWN
   PEER_DOWN_last        = PEER_DOWN_count - 1,
 } ;
 
-/*------------------------------------------------------------------------------
- * The restart state for a peer.
- *
- *
- *
+/*==============================================================================
+ * struct prun and struct peer_rib  -- the BGP neighbor structures.
  */
-typedef enum bgp_conf_change  bgp_conf_change_t ;
-enum bgp_conf_change
+
+
+
+typedef struct bgp_nexthop bgp_nexthop_t ;
+
+struct bgp_nexthop
 {
-  bgp_ccNone            = 0,
-
-  bgp_ccRecharge        = BIT(0),
-  bgp_ccSoft_in         = BIT(1),
-  bgp_ccSoft_out        = BIT(2),
-  bgp_ccRestart         = BIT(3),
-  bgp_ccStart           = BIT(4),
-} ;
-
-/*------------------------------------------------------------------------------
- * The running configuration for a peer
- *
- * This encapsulates all the things that are established by configuration, so
- * that a change in configuration can be
- *
- */
-
-
-
-
-
+  struct interface* ifp;
+  struct in_addr    v4;
+#ifdef HAVE_IPV6
+  struct in6_addr  v6_global;
+  struct in6_addr  v6_local;
+#endif /* HAVE_IPV6 */
+};
 
 /*------------------------------------------------------------------------------
  * The structure for each running peer.
@@ -437,8 +276,8 @@ struct bgp_prun
 
   /* State of the peer
    */
-  bgp_peer_state_t      state ;
-  bgp_peer_idle_state_t idle ;
+  bgp_prun_state_t      state ;
+  bgp_prun_idle_state_t idle ;
 
   /* nsf_enabled means....    XXX
    *
@@ -447,11 +286,9 @@ struct bgp_prun
   bool          nsf_enabled ;
   bool          nsf_restarting ;
 
-  /* The session and state thereof
+  /* The session
    */
   bgp_session   session ;
-
-  bgp_peer_session_state_t session_state ;
 
   /* Peer information
    */
@@ -487,7 +324,7 @@ struct bgp_prun
    *     pEstablished.
    *
    *     When a session for an afi/safi is terminated, it is knocked out of the
-   *     af_running.  (Generally this is shortly before goes pDown -- but
+   *     af_running.  (Generally this is shortly before goes pIdle -- but
    *     individual afi/safi may be terminated and the session remain.)
    */
   qafx_set_t    af_set_up ;
@@ -518,10 +355,12 @@ struct bgp_prun
   uint          v_asorig;
   uint          v_gr_restart;
 
+#if 0                           // TODO graceful restart stuff
   /* Threads
    */
   struct thread *t_gr_restart;
   struct thread *t_gr_stale;
+#endif
 
   /* BGP state count
    */
@@ -532,18 +371,6 @@ struct bgp_prun
    */
   uint16_t      table_dump_index;
 } ;
-
-#define BGP_TIMER_ON(T,F,V)                     \
-  do {                                          \
-    if (!(T) && (prun->state != bgp_pDeleting)) \
-      THREAD_TIMER_ON(master,(T),(F),prun,(V)); \
-  } while (0)
-
-#define BGP_TIMER_OFF(T)                        \
-  do {                                          \
-    if (T)                                      \
-      THREAD_TIMER_OFF(T);                      \
-  } while (0)
 
 /*------------------------------------------------------------------------------
  * Each peer has a peer rib for each AFI/SAFI it is configured for.
@@ -798,42 +625,24 @@ extern bgp_prun bgp_prun_new(bgp_run brun, bgp_prun_param prp) ;
 extern bgp_prib bgp_prib_new(bgp_prun prun, qafx_t qafx) ;
 
 extern void bgp_prun_shutdown(bgp_prun prun, peer_down_t why_down) ;
+extern void bgp_prun_delete(bgp_prun prun, peer_down_t why_down) ;
 extern void bgp_prun_execute(bgp_prun prun, peer_down_t why_down) ;
 
+extern bgp_prun bgp_prun_lookup_su(bgp_run brun, sockunion su) ;
+
+extern sockunion bgp_peer_get_ifaddress(bgp_prun prun, const char* ifname,
+                                                               sa_family_t af) ;
 
 
-
-
-
-
-
-
-
-extern bgp_prib bgp_prib_new(bgp_prun prun, qafx_t qafx) ;
 extern bgp_prib bgp_prib_free(bgp_prib prib) ;
 
-extern bgp_prib peer_rib_set_rs(bgp_prun prun, qafx_t qafx) ;
-extern bgp_prib peer_rib_unset_rs(bgp_prun prun, qafx_t qafx) ;
-
-
-
-
-
-extern void bgp_peer_start(bgp_prun prun) ;
-extern void bgp_peer_restart(bgp_prun prun, peer_down_t why_down) ;
-extern void bgp_peer_cops_recharge(bgp_prun prun, peer_down_t why_down) ;
 
 extern void bgp_session_has_established(bgp_session session);
 extern void bgp_session_has_stopped(bgp_session session, bgp_note note) ;
 
-//extern sockunion bgp_peer_get_ifaddress(bgp_prun prun, const char* ifname,
-//                                                              sa_family_t af) ;
-
 extern void peer_clear (bgp_prun prun);
 extern bgp_ret_t peer_clear_soft (bgp_prun prun, qafx_t qafx,
                                                        bgp_clear_type_t stype) ;
-
-extern void bgp_peer_enable(bgp_prun prun);
 
 extern void bgp_peer_down(bgp_prun prun, peer_down_t why_down) ;
 extern void bgp_peer_down_error(bgp_prun prun,
@@ -848,19 +657,15 @@ extern bool bgp_peer_pmax_check(bgp_prib prib) ;
 extern void bgp_peer_pmax_clear(bgp_prib prib) ;
 
 
-extern bgp_prun prun_lookup_view_vty(vty vty, chs_c view_name,
-                                                              chs_c peer_name) ;
-extern bgp_prun prun_lookup_view_qafx_vty(vty vty, chs_c view_name,
-                                                 chs_c peer_name, qafx_t qafx) ;
 
-extern int peer_cmp (bgp_peer p1, bgp_peer p2) ;
 extern qfb_time_t peer_uptime (time_t time);
+
 
 /* This is actually defined in bgp_names.c... but if the extern is there, we
  * have to drag a *huge* amount of stuff into bgp_names.h.
  */
-extern name_str_t bgp_peer_idle_state_str(bgp_peer_state_t state,
-                                                   bgp_peer_idle_state_t idle) ;
+extern name_str_t bgp_peer_idle_state_str(bgp_prun_state_t state,
+                                                   bgp_prun_idle_state_t idle) ;
 
 #endif /* _QUAGGA_BGP_PRUN_H */
 

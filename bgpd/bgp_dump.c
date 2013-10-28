@@ -33,6 +33,8 @@ Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
 #include "bgpd/bgp_connection.h"
 #include "bgpd/bgp_msg_read.h"
 
+#include "bgpd/bgp_inst_config.h"       // TODO
+
 #include "log.h"
 #include "vty.h"
 #include "stream.h"
@@ -463,7 +465,7 @@ bgp_dump_table(bgp_dump_control bdc)
 
   bd = bgp_dump_truncate(bdc->bd) ;     /* could (conceivably) fail     */
 
-  bgp = bgp_inst_default() ;
+  bgp = bgp_inst_default() ;            // TODO !!!
 
   if ((bgp != NULL) && (bd != NULL) && ((brun = bgp->brun) != NULL))
     {
@@ -541,7 +543,7 @@ bgp_dump_routes_index_table(bgp_dump bd, bgp_run brun)
 
       prun = vector_get_item(brun->pruns, peerno) ;
 
-      su = prun->rp.cops_conf.remote_su ;
+      su = &prun->rp.cops_conf.remote_su ;
 
       type = MRT_TDV2_PEER_INDEX_TABLE_AS4 ;    /* always, for simplicity */
 

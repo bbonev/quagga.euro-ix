@@ -248,7 +248,7 @@ bgp_nexthop_onlink (qAFI_t q_afi, attr_next_hop next_hop)
  * Returns:  true <=> is reachable (or no zebra connection)
  */
 static int
-bgp_nexthop_lookup_ipv6 (bgp_peer peer, route_info ri, bool* changed,
+bgp_nexthop_lookup_ipv6 (bgp_prun prun, route_info ri, bool* changed,
                                                            bool* metricchanged)
 {
   struct bgp_node *rn;
@@ -339,7 +339,7 @@ bgp_nexthop_lookup_ipv6 (bgp_peer peer, route_info ri, bool* changed,
  * Returns:  true <=> is reachable (or no zebra connection)
  */
 extern bool
-bgp_nexthop_lookup (qAFI_t q_afi, bgp_peer peer, route_info ri,
+bgp_nexthop_lookup (qAFI_t q_afi, bgp_prun prun, route_info ri,
                                              bool* changed, bool* metricchanged)
 {
   struct bgp_node *rn;
@@ -349,7 +349,7 @@ bgp_nexthop_lookup (qAFI_t q_afi, bgp_peer peer, route_info ri,
 
 #ifdef HAVE_IPV6
   if (q_afi == qAFI_IP6)
-    return bgp_nexthop_lookup_ipv6 (peer, ri, changed, metricchanged);
+    return bgp_nexthop_lookup_ipv6 (prun, ri, changed, metricchanged);
 #endif /* HAVE_IPV6 */
 
   /* If lookup is not enabled, return valid.
@@ -458,7 +458,11 @@ bgp_scan (qAFI_t q_afi)
 
   /* Get default bgp.
    */
+#if 0
   bgp = bgp_inst_default ();
+#else
+  bgp = NULL ;                  // TODO !!!!
+#endif
   if (bgp == NULL)
     return;
 

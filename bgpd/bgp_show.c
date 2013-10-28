@@ -320,7 +320,7 @@ route_vty_out_tag (vty vty, prefix pfx, route_info ri, bool display)
 #endif /* HAVE_IPV6 */
     }
 
-  label = mpls_tags_label(ri->current.tags, 0);
+  label = mpls_tags_label(ri->current.attr->tags, 0);
 
   vty_out (vty, "notag/%d", label);
 
@@ -6971,7 +6971,8 @@ DEFUN (show_bgp_memory,
   vty_out (vty, "%ld RIB nodes, using %s of memory\n", count,
            mtype_memstr (memstrbuf, sizeof (memstrbuf),
                          count * sizeof (struct bgp_node)));
-
+/* TODO some work on the memory reporting !!            */
+#if 0
   count = mem_get_alloc(mst, MTYPE_BGP_ROUTE);
   vty_out (vty, "%ld BGP routes, using %s of memory\n", count,
            mtype_memstr (memstrbuf, sizeof (memstrbuf),
@@ -6980,14 +6981,13 @@ DEFUN (show_bgp_memory,
     vty_out (vty, "%ld BGP route ancillaries, using %s of memory\n", count,
              mtype_memstr (memstrbuf, sizeof (memstrbuf),
                            count * sizeof (struct bgp_info_extra)));
-
+#endif
   if ((count = mem_get_alloc(mst, MTYPE_BGP_STATIC)))
     vty_out (vty, "%ld Static routes, using %s of memory%s", count,
              mtype_memstr (memstrbuf, sizeof (memstrbuf),
                          count * sizeof (struct bgp_static)),
              VTY_NEWLINE);
 
-/* TODO some work on the memory reporting !!            */
 #if 0
   /* Adj-In/Out */
   if ((count = mem_get_alloc(mst, MTYPE_BGP_ADJ_IN)))
@@ -7537,8 +7537,9 @@ bgp_show_prun_afi (vty vty, bgp_prun prun, qafx_t qafx)
 
   vty_out (vty, " For address family: %s\n", qafx_string(qafx));
 
-  if (peer->c->c_af_member != qafx_empty_set)
-    vty_out (vty, "  %s peer-group member\n", peer->c->group->name);
+  if (prib->rp.grun != NULL)
+    vty_out (vty, "  %s peer-group member\n",
+                                            bgp_nref_name(prib->rp.grun->name));
 
   if (prun->state == bgp_pEstablished)
     {
@@ -7769,13 +7770,13 @@ bgp_show_peer (struct vty *vty, bgp_prun prun)
   /* Description.
    */
   if (prun->rp.desc != NULL)
-    vty_out (vty, " Description: %s\n", prun->rp.desc) ;
+    vty_out (vty, " Description: %s\n", bgp_nref_name(prun->rp.desc)) ;
 
   /* Peer-group
    */
-  if (prun->c->group)
+  if (prun->rp.grun != NULL)
     vty_out (vty, " Member of peer-group %s for session parameters\n",
-                                                     peer->c->group->name);
+                                           bgp_nref_name(prun->rp.grun->name)) ;
 
   /* Administrative shutdown.
    */
@@ -7791,7 +7792,7 @@ bgp_show_peer (struct vty *vty, bgp_prun prun)
                                                        : " (in last session)") ;
   /* Confederation
    */
-  if (bgp_confederation_peers_check (brun, prun->rp.sargs_conf.remote_as))
+  if (prun->rp.sort == BGP_PEER_CBGP)
     vty_out (vty, "  Neighbor under common administration\n");
 
   /* Status.
@@ -8024,8 +8025,12 @@ bgp_show_peer (struct vty *vty, bgp_prun prun)
 
   /* graceful restart information
    */
-  if ( established_gr || (prun->t_gr_restart != NULL)
+#if 0           // TODO graceful restart timers
+  if ( established_gr || (prun->session->sargs->gr.restart != NULL)
                       || (prun->t_gr_stale   != NULL) )
+#else
+  if (established_gr)
+#endif
     {
       int eor_send_af_count = 0;
       int eor_receive_af_count = 0;
@@ -8064,7 +8069,7 @@ bgp_show_peer (struct vty *vty, bgp_prun prun)
             } ;
           vty_out (vty, "\n");
         }
-
+#if 0
       if (prun->t_gr_restart)
         vty_out (vty, "    The remaining time of restart timer is %ld\n",
                               thread_timer_remain_second (prun->t_gr_restart)) ;
@@ -8072,6 +8077,7 @@ bgp_show_peer (struct vty *vty, bgp_prun prun)
       if (prun->t_gr_stale)
         vty_out (vty, "    The remaining time of stalepath timer is %ld\n",
                                 thread_timer_remain_second (prun->t_gr_stale)) ;
+#endif
     }
 
   /* Packet counts.
@@ -8746,17 +8752,17 @@ DEFUN (show_ip_bgp_attr_info,
 }
 
 static int
-bgp_write_rsclient_summary (vty vty, bgp_peer rsclient, qafx_t qafx)
+bgp_write_rsclient_summary (vty vty, bgp_prun rsclient, qafx_t qafx)
 {
   char rmbuf[14];
   const char *rmname;
   int len;
-  int count = 0;
+  int count Unused ;
   bgp_prib prib ;
   bgp_prun prun ;
 
   count = 0 ;
-
+#if 0
   if (rsclient->ptype == PEER_TYPE_GROUP)
     {
       for (rsclient = ddl_head(rsclient->c->group.members) ;
@@ -8775,6 +8781,10 @@ bgp_write_rsclient_summary (vty vty, bgp_peer rsclient, qafx_t qafx)
     }
 
   prun = rsclient->prun ;
+#else
+  prun = NULL ;
+#endif
+
   if (prun == NULL)
     return 0 ;
 
@@ -8782,8 +8792,8 @@ bgp_write_rsclient_summary (vty vty, bgp_peer rsclient, qafx_t qafx)
   if (prib == NULL)
     return 0 ;
 
-  vty_out (vty, "%s", rsclient->name);
-  len = 16 - strlen(rsclient->name) ;
+  vty_out (vty, "%s", bgp_nref_name(rsclient->rp.cname));
+  len = 16 - strlen(bgp_nref_name(rsclient->rp.cname)) ;
 
   if (len < 1)
     vty_out (vty, "%s%*s", VTY_NEWLINE, 16, " ");

@@ -184,7 +184,7 @@ bgp_table_free (struct bgp_table *rt)
 
   if (rt->owner)
     {
-      bgp_peer_unlock (rt->owner);
+//    bgp_peer_unlock (rt->owner);
       rt->owner = NULL;
     }
 

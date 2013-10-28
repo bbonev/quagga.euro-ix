@@ -845,6 +845,7 @@ struct route_info
  */
 extern bgp_rib bgp_rib_new(bgp_run brun, qafx_t qafx) ;
 extern bgp_rib bgp_rib_destroy(bgp_rib rib) ;
+extern bgp_rib_param bgp_rib_param_init_new(bgp_rib_param ribp) ;
 
 extern bgp_rib_node bgp_rib_node_get(bgp_rib rib, prefix_id_entry pie) ;
 extern bgp_rib_node bgp_rib_node_extend(bgp_rib_node rn) ;

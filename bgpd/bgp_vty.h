@@ -34,6 +34,8 @@
  */
 #define CMD_AS_RANGE "<1-4294967294>"
 
+extern void bgp_vty_init (void) ;
+
 extern cmd_ret_t bgp_vty_return (vty vty, bgp_ret_t ret) ;
 
 extern qafx_t bgp_node_qafx (vty vty) ;
@@ -48,7 +50,10 @@ extern bgp_peer bgp_peer_or_group_lookup_vty(vty vty, chs_c p_str) ;
 extern bgp_peer bgp_peer_lookup_vty(vty vty, chs_c p_str) ;
 extern bgp_peer bgp_group_lookup_vty(vty vty, chs_c p_str) ;
 
+extern bgp_run bgp_run_lookup_vty(vty vty, chs_c v_str) ;
 
-extern bgp_run bgp_run_lookup_vty(vty vty, chs_c view_name) ;
+extern bgp_prun prun_lookup_view_vty(vty vty, chs_c v_str, chs_c p_str) ;
+extern bgp_prun prun_lookup_view_qafx_vty(vty vty, chs_c v_str, chs_c p_str,
+                                                                  qafx_t qafx) ;
 
 #endif /* _QUAGGA_BGP_VTY_H */

@@ -359,7 +359,7 @@ bgp_connection_establish(bgp_connection connection)
   qassert(session->connections[connection->ord] == connection) ;
   qassert(session->connections[bc_estd]             == NULL) ;
 
-  /* Make sure the session has a nice clean set of result 'args', then make
+  /* Make sure the session has a nice clean set of result 'sargs', then make
    * the result arguments.
    */
   session->sargs = bgp_sargs_reset(session->sargs) ;
@@ -465,11 +465,11 @@ static void bgp_add_orf_to_notification(bgp_note note,
 /*------------------------------------------------------------------------------
  * Make a set of session arguments, taking into account:
  *
- *   * session->args_config
- *   * connection->open_sent    -- args_sent
- *   * connection->open_recv    -- args_recv
+ *   * session configuration    -- the "sargs"
+ *   * connection->open_sent    -- the "sargs_sent"
+ *   * connection->open_recv    -- the "sargs_recv"
  *
- * NB: requires a freshly reset set of args to fill in.
+ * NB: requires a freshly reset set of sargs to fill in.
  *
  * This if for when is about to change from fsOpenConfirm to fsEstablished.
  * That can happen only while sAcquiring, and to only one connection !
@@ -478,25 +478,25 @@ static void bgp_add_orf_to_notification(bgp_note note,
  * OK.  We can fail here if we don't have any afi/safi in common, or the
  * "strict capability" check, if any, fails.
  *
- *   * args->local_as           -- as args_sent
- *     args_sent                -- as args_config
- *     args_recv                -- N/A
+ *   * sargs->local_as          -- as sargs_sent
+ *     sargs_sent               -- as sargs_config
+ *     sargs_recv               -- N/A
  *
- *   * args->local_id           -- as args_sent
- *     args_sent                -- as args_config
- *     args_recv                -- N/A
+ *   * sargs->local_id          -- as sargs_sent
+ *     sargs_sent               -- as sargs_config
+ *     sargs_recv               -- N/A
  *
- *   * args->remote_as          -- as args_recv
- *     args_sent                -- N/A
- *     args_recv                -- as received -- must be as args_config
+ *   * sargs->remote_as         -- as sargs_recv
+ *     sargs_sent               -- N/A
+ *     sargs_recv               -- as received -- must be as sargs_config
  *
- *   * args->local_id           -- as args_recv
- *     args_sent                -- N/A
- *     args_recv                -- as received
+ *   * sargs->local_id          -- as sargs_recv
+ *     sargs_sent               -- N/A
+ *     sargs_recv               -- as received
  *
- *   * args->can_capability     -- args_sent && args_recv
- *     args_sent                -- as args_config, unless cap_suppressed
- *     args_recv                -- as received
+ *   * sargs->can_capability    -- sargs_sent && sargs_recv
+ *     sargs_sent               -- as sargs_config, unless cap_suppressed
+ *     sargs_recv               -- as received
  *
  *     NB: !can_capability => all capabilities are unavailable, except for
  *                            can_af, where the implied IPv4_Unicast is set,
@@ -504,65 +504,65 @@ static void bgp_add_orf_to_notification(bgp_note note,
  *
  *     NB: !can_capability => !can_mp_ext (in particular).
  *
- *   * args->can_mp_ext         -- args_sent && args_recv
- *     args_sent                -- as args_config, unless cap_suppressed
- *     args_recv                -- as received
+ *   * sargs->can_mp_ext        -- sargs_sent && sargs_recv
+ *     sargs_sent               -- as sargs_config, unless cap_suppressed
+ *     sargs_recv               -- as received
  *
- *     NB: if args_recv->can_mp_ext, then args_config->cap_af_override is
+ *     NB: if sargs_recv->can_mp_ext, then sargs_config->cap_af_override is
  *         ignored.
  *
- *   * args->can_as4            -- args_sent && args_recv
- *     args_sent                -- as args_config, unless cap_suppressed
- *     args_recv                -- as received
+ *   * sargs->can_as4           -- sargs_sent && sargs_recv
+ *     sargs_sent               -- as sargs_config, unless cap_suppressed
+ *     sargs_recv               -- as received
  *
- *   * args->cap_suppressed     -- args_sent
- *     args_sent                -- set if that is the case
- *     args_recv                -- not set
+ *   * sargs->cap_suppressed    -- sargs_sent
+ *     sargs_sent               -- set if that is the case
+ *     sargs_recv               -- not set
  *
- *     NB: cap_suppressed => !can_capability and the rest of args_sent will
+ *     NB: cap_suppressed => !can_capability and the rest of sargs_sent will
  *                                                                 reflect that.
  *
- *   * args->cap_af_override    -- set if actually forced something
- *     args_sent                -- copied from args_config
- *     args_recv                -- not set
+ *   * sargs->cap_af_override   -- set if actually forced something
+ *     sargs_sent               -- copied from sargs_config
+ *     sargs_recv               -- not set
  *
- *     NB: args->cap_af_override is true iff:
+ *     NB: sargs->cap_af_override is true iff:
  *
- *         args_sent->caps_af_override == args_config->caps_af_override == true
+ *         sargs_sent->caps_af_override == sargs_config->caps_af_override == true
  *
  *       AND
  *
- *         args_recv->can_mp_ext is false.
+ *         sargs_recv->can_mp_ext is false.
  *
  *         Since cap_af_override is applicable only where the far end does not
  *         do mp_ext !
  *
  *       AND
  *
- *         we here actually turn on some af in args->cap_af which is not set
- *         in both args_sent and args_recv.
+ *         we here actually turn on some af in sargs->cap_af which is not set
+ *         in both sargs_sent and sargs_recv.
  *
- *   * args->cap_strict         -- args_sent
- *     args_sent                -- as args_config
- *     args_recv                -- not set
+ *   * sargs->cap_strict        -- sargs_sent
+ *     sargs_sent               -- as sargs_config
+ *     sargs_recv               -- not set
  *
- *   * args->can_af             -- args_sent && args_recv, but see below
- *     args_sent                -- as sent, if args_recv->can_mp_ext
+ *   * sargs->can_af            -- sargs_sent && sargs_recv, but see below
+ *     sargs_sent               -- as sent, if sargs_recv->can_mp_ext
  *                                          otherwise, the implied IPv4_Unicast
- *     args_recv                -- as received, if args_recv->can_mp_ext
+ *     sargs_recv               -- as received, if sargs_recv->can_mp_ext
  *                                          otherwise, the implied IPv4_Unicast
  *
- *       For args_sent and args_recv, can_af is is what was said by mp_ext or
+ *       For sargs_sent and sargs_recv, can_af is is what was said by mp_ext or
  *       what was implied by an absence of mp_ext.
  *
- *       For args->can_af, if we have args_sent->caps_af_override, AND we do
- *       NOT have args_recv->can_mp_ext, then the result is forced to
- *       args_config->can_af... and args->cap_af_override will be set iff this
+ *       For sargs->can_af, if we have sargs_sent->caps_af_override, AND we do
+ *       NOT have sargs_recv->can_mp_ext, then the result is forced to
+ *       sargs_config->can_af... and sargs->cap_af_override will be set iff this
  *       makes any difference.
  *
- *   * args->can_rr             -- as args_recv (whether and how)
- *     args_sent->can_rr        -- as sent
- *     args_sent->can_rr        -- as received
+ *   * sargs->can_rr            -- as sargs_recv (whether and how)
+ *     sargs_sent->can_rr       -- as sent
+ *     sargs_sent->can_rr       -- as received
  *
  *     NB: even if we are not willing to support Route Refresh requests from
  *         the other end, we may send Route Refresh requests from the other
@@ -571,45 +571,45 @@ static void bgp_add_orf_to_notification(bgp_note note,
  *         If we advertised support for Route Refresh, we must support it even
  *         if the far end is not willing to receive same.
  *
- *   * args->gr                 -- see below
- *     args_sent->gr            -- as sent
- *     args_recv->gr            -- as received
+ *   * sargs->gr                -- see below
+ *     sargs_sent->gr           -- as sent
+ *     sargs_recv->gr           -- as received
  *
- *     For args->gr:
+ *     For sargs->gr:
  *
  *       gr.can             -- set if both ends support (can expect EoR)
  *       gr.restarting      -- set if far end is
  *       gr.restart_time    -- set to what far end said
- *       gr.can_preserve    -- what far end said, masked by args->can_af
- *       gr.has_preserved   -- what far end said, masked by args->can_af
+ *       gr.can_preserve    -- what far end said, masked by sargs->can_af
+ *       gr.has_preserved   -- what far end said, masked by sargs->can_af
  *
  *       TODO should gr.can be split or unilateral ???  Currently always sent !
  *
- *   * args->can_orf            -- whether and how,
- *                                  intersection of args_sent and args_received
- *     args_sent->can_orf       -- as sent
- *     args_recv->can_orf       -- as received
+ *   * sargs->can_orf           -- whether and how,
+ *                                  intersection of sargs_sent and sargs_received
+ *     sargs_sent->can_orf      -- as sent
+ *     sargs_recv->can_orf      -- as received
  *
- *   * args->can_orf_pfx        -- intersection of args_sent and args_received,
- *                                  masked by args->can_af
- *     args_sent->can_orf_pfx   -- as sent
- *     args_recv->can_orf_pfx   -- as received
+ *   * sargs->can_orf_pfx       -- intersection of sargs_sent and sargs_received,
+ *                                  masked by sargs->can_af
+ *     sargs_sent->can_orf_pfx  -- as sent
+ *     sargs_recv->can_orf_pfx  -- as received
  *
- *   * args->can_dynamic        -- currently false
- *     args_sent                -- currently false
- *     args_recv                -- as received
+ *   * sargs->can_dynamic       -- currently false
+ *     sargs_sent               -- currently false
+ *     sargs_recv               -- as received
  *
- *   * args->can_dynamic_dep    -- currently false
- *     args_sent                -- currently false
- *     args_recv                -- as received
+ *   * sargs->can_dynamic_dep   -- currently false
+ *     sargs_sent               -- currently false
+ *     sargs_recv               -- as received
  *
- *   * args->holdtime_secs      -- as negotiated
- *     args_sent                -- as sent
- *     args_recv                -- as received
+ *   * sargs->holdtime_secs     -- as negotiated
+ *     sargs_sent               -- as sent
+ *     sargs_recv               -- as received
  *
- *   * args->keepalive_secs     -- as negotiated
- *     args_sent                -- as sent
- *     args_recv                -- as received
+ *   * sargs->keepalive_secs    -- as negotiated
+ *     sargs_sent               -- as sent
+ *     sargs_recv               -- as received
  *
  * Returns:  NULL <=> OK
  *           otherwise -- note for unacceptable session arguments
@@ -630,11 +630,8 @@ bgp_connection_make_args(bgp_connection connection, bgp_sargs sargs)
   qassert(session->state == bgp_sAcquiring) ;
 
   /* We are going to construct the "negotiated" arguments in the temporary
-   * 'args' -- and in the process we need the (current) args_config, the
-   * args as sent and those as received.
-   *
-   * Note that all these args are embedded structures.  We have a temporary
-   * args structure here, which will be copied to the session if all goes well.
+   * 'sargs' -- and in the process we need the (current) sargs_conf, the
+   * sargs as sent and those as received.
    */
   sargs_conf  = session->sargs_conf ;
   sargs_sent  = connection->open_sent->sargs ;
@@ -691,7 +688,7 @@ bgp_connection_make_args(bgp_connection connection, bgp_sargs sargs)
       return note ;
     } ;
 
-  /* Now complete the set-up of the args to reflect the negotiated session
+  /* Now complete the set-up of the sargs to reflect the negotiated session
    * arguments.
    */
   sargs->cap_strict     = sargs_sent->cap_strict ;
@@ -748,15 +745,15 @@ bgp_connection_make_args(bgp_connection connection, bgp_sargs sargs)
 
   /* Negotiation of HoldTime and setting of KeepaliveTime.
    *
-   *   * holdtime_secs      -- set to min of args_recv and args_sent
+   *   * holdtime_secs      -- set to min of sargs_recv and sargs_sent
    *
-   *                           (The args_sent value is copied from the
-   *                            args_config... but in principle this is a
+   *                           (The sargs_sent value is copied from the
+   *                            sargs_config... but in principle this is a
    *                            negotiation, so we work from what we actually
    *                            sent !)
    *
    *   * keepalive_secs     -- set to min of holdtime_secs / 3 and the
-   *                           keepalive in the args_config.
+   *                           keepalive in the sargs_config.
    *
    * The effect of this on the KeepaliveTime is that:
    *
@@ -787,7 +784,7 @@ bgp_connection_make_args(bgp_connection connection, bgp_sargs sargs)
    * capabilities which the other end may have offered, we simply ignore.
    * This means that for completeness, both ends should configure "strict".
    *
-   * NB: we work from the session->args... so, if the connection has been hit
+   * NB: we work from the session->sargs... so, if the connection has been hit
    *     by cap_suppress, then this checks what was originally asked for.
    *
    *   1) if we support AS4, if our ASN is not represented in AS2, then
@@ -896,7 +893,7 @@ bgp_connection_make_args(bgp_connection connection, bgp_sargs sargs)
            * one or both: if we did not get at least one of what we wanted,
            * then we complain -- and mention all the Types we wanted.
            *
-           * Note that args->can_orf_pfx[] has ORF_SM set iff asked for one
+           * Note that sargs->can_orf_pfx[] has ORF_SM set iff asked for one
            * or both AND received permission of one or both.
            *
            * Note that we complain about ORF_RM to the far end... so, the
@@ -1246,6 +1243,8 @@ bgp_connection_write_action(qfile qf, void* file_info)
 
 /*------------------------------------------------------------------------------
  * Initialise a set of connection options -- allocate if required.
+ *
+ * See bgp_cops_reset() for state of the result.
  */
 extern bgp_cops
 bgp_cops_init_new(bgp_cops cops)
@@ -1791,10 +1790,10 @@ bgp_acceptor_free(bgp_acceptor acceptor)
  * This function is used to initialise or change the accept->cops.  If a change
  * is made which invalidates any current connection, then that is reset.
  *
- * NB: it is not expected that the remote_su in the session->cops_config will
+ * NB: it is not expected that the remote_su in the session->cops_conf will
  *     *ever* change.
  *
- *     However, keep a copy of the session->cops_config->remote_su as the
+ *     However, keep a copy of the session->cops_conf->remote_su as the
  *     acceptor->su_password.  So that if we set a password, we have a separate
  *     record of what we set the password for.
  *
@@ -1804,8 +1803,8 @@ bgp_acceptor_free(bgp_acceptor acceptor)
  * Most of the acceptor->cops are unaffected when a new accept connection
  * is made.  All of the settings which could cause a connection to be reset are
  * read-only -- with the exception of the remote_su, as above.  (What this
- * means is we don't need an acceptor->cops_config to run this comparison
- * against -- the acceptor->cops contains both config and current.)
+ * means is we don't need an acceptor->cops_conf to run this comparison
+ * against -- the acceptor->cops contains both conf and current.)
  *
  * The acceptor configuration options are:
  *
@@ -1836,12 +1835,12 @@ bgp_acceptor_free(bgp_acceptor acceptor)
  *   ifindex                -- N/A
  */
 extern void
-bgp_acceptor_set_cops(bgp_session session, bgp_cops_c new_config)
+bgp_acceptor_set_cops(bgp_session session, bgp_cops_c new_cops)
 {
   bgp_acceptor acceptor ;
   bool can_track, set_new ;
 
-  can_track = (new_config->conn_state & bgp_csCanTrack) == bgp_csCanTrack ;
+  can_track = (new_cops->conn_state & bgp_csCanTrack) == bgp_csCanTrack ;
   acceptor = session->acceptor ;
   if (acceptor == NULL)
     {
@@ -1864,14 +1863,14 @@ bgp_acceptor_set_cops(bgp_session session, bgp_cops_c new_config)
       qassert(cops != NULL) ;
       qassert((cops->conn_state & bgp_csCanTrack) == bgp_csCanTrack) ;
 
-      unset     = !can_track || (cops->port != new_config->port)
+      unset     = !can_track || (cops->port != new_cops->port)
                              || !sockunion_same(acceptor->su_password,
-                                                       &new_config->remote_su) ;
+                                                       &new_cops->remote_su) ;
 
-      new_passw = !strsame(cops->password, new_config->password) ;
+      new_passw = !strsame(cops->password, new_cops->password) ;
 
-      drop      =   (cops->ttl  != new_config->ttl)
-                 || (cops->gtsm != new_config->gtsm) ;
+      drop      =   (cops->ttl  != new_cops->ttl)
+                 || (cops->gtsm != new_cops->gtsm) ;
 
       set_new = (unset || new_passw || drop) ;
 
@@ -1903,7 +1902,7 @@ bgp_acceptor_set_cops(bgp_session session, bgp_cops_c new_config)
                *
                * Updates su_password, below.
                */
-              bgp_listen_set_password(new_config) ;
+              bgp_listen_set_password(new_cops) ;
             } ;
         }
       else
@@ -1923,10 +1922,10 @@ bgp_acceptor_set_cops(bgp_session session, bgp_cops_c new_config)
            *
            * but otherwise do nothing at all.
            */
-          cops->conn_state             = new_config->conn_state ;
-          cops->can_notify_before_open = new_config->can_notify_before_open ;
-          cops->accept_retry_secs      = new_config->accept_retry_secs ;
-          cops->open_hold_secs         = new_config->open_hold_secs ;
+          cops->conn_state             = new_cops->conn_state ;
+          cops->can_notify_before_open = new_cops->can_notify_before_open ;
+          cops->accept_retry_secs      = new_cops->accept_retry_secs ;
+          cops->open_hold_secs         = new_cops->open_hold_secs ;
         } ;
     } ;
 
@@ -1935,7 +1934,7 @@ bgp_acceptor_set_cops(bgp_session session, bgp_cops_c new_config)
    */
   if (can_track && (acceptor->state == bacs_unset))
     {
-      set_new = bgp_listen_set(new_config) ;
+      set_new = bgp_listen_set(new_cops) ;
 
       if (set_new)
         acceptor->state = bacs_listening ;
@@ -1945,11 +1944,11 @@ bgp_acceptor_set_cops(bgp_session session, bgp_cops_c new_config)
 
   /* Keep the su_password up to date.
    */
-  if      ((acceptor->state == bacs_unset) || (new_config->password[0] == '\0'))
+  if      ((acceptor->state == bacs_unset) || (new_cops->password[0] == '\0'))
     acceptor->su_password = sockunion_free(acceptor->su_password) ;
   else if (set_new)
     acceptor->su_password = sockunion_copy(acceptor->su_password,
-                                                       &new_config->remote_su) ;
+                                                       &new_cops->remote_su) ;
 
   /* If we (still) have a running acceptor, update the cops if required.
    */
@@ -1957,7 +1956,7 @@ bgp_acceptor_set_cops(bgp_session session, bgp_cops_c new_config)
     {
       qassert(acceptor->state == bacs_listening) ;
 
-      bgp_cops_copy(acceptor->cops, new_config) ;
+      bgp_cops_copy(acceptor->cops, new_cops) ;
       bgp_acceptor_cops_reset(acceptor) ;
     } ;
 } ;
@@ -1999,7 +1998,7 @@ extern void
 bgp_acceptor_accept(bgp_acceptor acceptor, int sock_fd, bool ok,
                                                             sockunion_c sock_su)
 {
-  bgp_cops cops_config, cops ;
+  bgp_cops cops_conf, cops ;
 
   qassert( (sock_fd >= 0) && (acceptor != NULL)
                           && (acceptor->state != bacs_unset) ) ;
@@ -2008,15 +2007,15 @@ bgp_acceptor_accept(bgp_acceptor acceptor, int sock_fd, bool ok,
    *
    * This BOUND to be OK... but if not, best not to go any further !
    */
-  cops_config = acceptor->session->cops_conf ;
-  cops        = acceptor->cops ;
+  cops_conf = acceptor->session->cops_conf ;
+  cops      = acceptor->cops ;
 
-  if (ok && !sockunion_same(&cops_config->remote_su, sock_su))
+  if (ok && !sockunion_same(&cops_conf->remote_su, sock_su))
     {
       plog_err(acceptor->lox.log, "[FSM] BGP accept() for %s"
                                 " -- accept gave address %s ?? (expected %s)",
             acceptor->lox.name, sutoa(sock_su).str,
-                                sutoa(&cops_config->remote_su).str) ;
+                                sutoa(&cops_conf->remote_su).str) ;
       ok = false ;
     } ;
 

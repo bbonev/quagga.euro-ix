@@ -181,7 +181,18 @@
  *    which will -- for all changed local contexts -- do bgp_route_select_lc()
  *    and then bgp_route_announce() to all peers in the context.
  *
+ *    TODO ... actual scheduling of work and suspension of same.
  *
+ * 5) processing selected routes
+ *
+ *    bgp_route_announce() performs outbound filtering and final construction
+ *    of attributes to be sent into the adj-out.
+ *
+ *    TODO ... actual scheduling
+ *
+ * 6) marshaling of routes
+ *
+ * 7) dispatch of updates.
  *
  *
  * Each rib has a work-queue .... TODO
@@ -242,6 +253,6 @@ bgp_run_get_pribs(bgp_run brun, qafx_t qafx)
   if (rib == NULL)
     return NULL ;
 
-  return ddl_head(rib->pribs) ;
+  return NULL ;                 // TODO ????
 } ;
 

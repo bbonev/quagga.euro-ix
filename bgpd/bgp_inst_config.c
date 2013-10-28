@@ -192,10 +192,14 @@ bgp_config_write (vty vty)
       if (bcs_is_set_on(bc, bcs_IMPORT_CHECK))
         vty_out (vty, " bgp network import-check\n");
 
+#if 0                   // TODO nexthop and scan_time....
       bgp_config_write_scan_time (vty);
+#endif
 
+#if 0                   // TODO route flap damping
       if (bafcs_is_on(bc->afc[qafx_ipv4_unicast], bafcs_DAMPING))
         bgp_config_write_damp (vty);
+#endif
 
       if (bcs_is_set_on(bc, bcs_holdtime_secs) ||
           bcs_is_set_on(bc, bcs_keepalive_secs))
@@ -499,21 +503,21 @@ bgp_config_write_redistribute (vty vty, bgp_inst bgp, qafx_t qafx, bool done_af)
 static int
 bgp_config_write_distance (vty vty, bgp_inst bgp)
 {
-  bgp_defaults args_c ;
+  bgp_defaults defs ;
 
   /* Distance configuration.
    */
-  args_c = &bgp->c->args ;
-  if (   (   (args_c->distance_ebgp   != 0)
-          && (args_c->distance_ibgp   != 0)
-          && (args_c->distance_local  != 0) )
-      && (   (args_c->distance_ebgp  != ZEBRA_EBGP_DISTANCE_DEFAULT)
-          || (args_c->distance_ibgp  != ZEBRA_IBGP_DISTANCE_DEFAULT)
-          || (args_c->distance_local != ZEBRA_IBGP_DISTANCE_DEFAULT) ) )
+  defs = &bgp->c->defs ;
+  if (   (   (defs->distance_ebgp   != 0)
+          && (defs->distance_ibgp   != 0)
+          && (defs->distance_local  != 0) )
+      && (   (defs->distance_ebgp  != ZEBRA_EBGP_DISTANCE_DEFAULT)
+          || (defs->distance_ibgp  != ZEBRA_IBGP_DISTANCE_DEFAULT)
+          || (defs->distance_local != ZEBRA_IBGP_DISTANCE_DEFAULT) ) )
     vty_out (vty, " distance bgp %d %d %d\n",
-             args_c->distance_ebgp,
-             args_c->distance_ibgp,
-             args_c->distance_local);
+             defs->distance_ebgp,
+             defs->distance_ibgp,
+             defs->distance_local);
 #if 0
   struct bgp_node *rn;
   struct bgp_distance *bdistance;
@@ -671,7 +675,7 @@ bgp_inst_create (as_t as, chs_c name)
   bgp_inst      bgp;
   bgp_bconfig   bconf ;
 
-  bgp_config_new_prepare() ;
+//bgp_config_new_prepare() ;
 
   bgp   = XCALLOC (MTYPE_BGP, sizeof(bgp_inst_t)) ;
 
@@ -2339,8 +2343,6 @@ bgp_redistribute_set(bgp_inst bgp, qafx_t qafx, bgp_redist_type_t r_type,
 
       ret = bgp_config_bafcs_change(bafc, bafcs_redist_first + r_type, bsc) ;
     } ;
-
-  bafc->redist_changed = true ;
 
   return ret ;
 } ;

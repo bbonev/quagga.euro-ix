@@ -245,6 +245,7 @@
  * Processing the required configuration into the running configuration.
  */
 
+#if 0
 /*------------------------------------------------------------------------------
  * Signal a change to some part of the configuration.
  */
@@ -256,6 +257,7 @@ bgp_config_part_prepare(bgp_config_pending_part_t type, void* part)
 
 
 } ;
+#endif
 
 /*------------------------------------------------------------------------------
  * Signal a change to the given bgp instance
@@ -299,10 +301,12 @@ bgp_config_peer_prepare(bgp_peer peer)
 
   pc = peer->c ;
 
+#if 0
   if (peer->ptype == PEER_TYPE_GROUP)
     bgp_config_part_prepare(bgp_cpGroup, peer) ;
   else
     bgp_config_part_prepare(bgp_cpPeer, peer) ;
+#endif
 
   qassert(pc->parent_peer == peer) ;
 
@@ -334,61 +338,14 @@ bgp_config_peer_af_prepare(bgp_peer peer, qafx_t qafx)
   return pafc ;
 } ;
 
-
-
-
-
-
-
-
-
-
-
-
-extern uint
-bgp_config_part_changed(bgp_config_pending_part_t type,
-                                          void* part, qafx_t qafx, uint setting)
+/*------------------------------------------------------------------------------
+ * Signal that configuration for peer has changed.
+ */
+extern void
+bgp_config_queue(bgp_peer peer)
 {
-  switch (type)
-    {
-      case bgp_cpInstance:
-        ;
-
-      case bgp_cpPeer:
-        ;
-
-      case bgp_cpGroup:
-        ;
-
-      default:
-        break ;
-    } ;
-
-  return 0 ;
-} ;
-
-#if 0
-extern uint
-bgp_config_peer_changed(bgp_peer peer, qafx_t qafx, uint setting)
-{
-  if (peer->ptype == PEER_TYPE_GROUP)
-    bgp_config_part_changed(bgp_cpGroup, peer->c.group, qafx, setting) ;
-  else
-    bgp_config_part_changed(bgp_cpPeer, peer, qafx, setting) ;
-
-  return 0 ;
-} ;
-#endif
-
-
-
-
-
-
-
-
-
-
+  ;
+}
 
 /*==============================================================================
  * Legacy Option Stuff
@@ -410,6 +367,7 @@ static uint bgp_assemble_default_mrai(bgp_prun_param prp, bgp_run_param brp) ;
 static uint bgp_assemble_default_ttl(bgp_prun_param prp, bgp_run_param brp) ;
 static void bgp_assemble_peer_af_settings(bgp_prib_param pribp,
                    bgp_paf_config pafc, bgp_run_param brp, bgp_prun_param prp) ;
+static int bgp_grun_cmp_name (const cvp* p_name, const cvp* p_grun) ;
 
 /*------------------------------------------------------------------------------
  * Assemble all the configuration for a BGP Instance.
@@ -580,34 +538,15 @@ bgp_assemble(bgp_inst bgp)
       if (bafc == NULL)
         continue ;
 
-      bribp = XCALLOC(MTYPE_BGP_ASSEMBLY, sizeof(bgp_rib_param_t)) ;
+      bribp = bgp_rib_param_init_new(NULL) ;
 
-      /* Zeroizing sets:
-       *
-       *   * real_rib                   -- false        -- TODO
-       *
-       *   * do_always_compare_med      -- bcs_ALWAYS_COMPARE_MED
-       *   * do_deterministic_med       -- bcs_DETERMINISTIC_MED
-       *                                             && ! do_always_compare_med
-       *   * do_confed_compare_med      -- bcs_MED_CONFED
-       *   * do_prefer_current          -- ! bcs_COMPARE_ROUTER_ID
-       *   * do_aspath_ignore           -- bcs_ASPATH_IGNORE
-       *   * do_aspath_confed           -- bcs_ASPATH_CONFED
-       *
-       *   * do_damping                 -- bafcs_DAMPING
-       *
-       *   * redist[] all: .set         -- false
-       *                   .metric_set  -- false
-       *                   .metric      -- 0
-       *                   .rmap_name   -- NULL
-       */
-      bribp->do_always_compare_med  = bcs_is_set_on(bc, bcs_ALWAYS_COMPARE_MED) ;
-      bribp->do_deterministic_med   = bcs_is_set_on(bc, bcs_DETERMINISTIC_MED)
+      bribp->do_always_compare_med = bcs_is_set_on(bc, bcs_ALWAYS_COMPARE_MED) ;
+      bribp->do_deterministic_med  = bcs_is_set_on(bc, bcs_DETERMINISTIC_MED)
                                              && ! bribp->do_always_compare_med ;
-      bribp->do_confed_compare_med  = bcs_is_set_on(bc, bcs_MED_CONFED) ;
-      bribp->do_prefer_current      = bcs_is_set_on(bc, bcs_COMPARE_ROUTER_ID) ;
-      bribp->do_aspath_ignore       = bcs_is_set_on(bc, bcs_ASPATH_IGNORE) ;
-      bribp->do_aspath_confed       = bcs_is_set_on(bc, bcs_ASPATH_CONFED) ;
+      bribp->do_confed_compare_med = bcs_is_set_on(bc, bcs_MED_CONFED) ;
+      bribp->do_prefer_current    = !bcs_is_set_on(bc, bcs_COMPARE_ROUTER_ID) ;
+      bribp->do_aspath_ignore      = bcs_is_set_on(bc, bcs_ASPATH_IGNORE) ;
+      bribp->do_aspath_confed      = bcs_is_set_on(bc, bcs_ASPATH_CONFED) ;
 
       bribp->do_damping  = bafcs_is_on(bafc, bafcs_DAMPING) ;
 
@@ -725,6 +664,7 @@ bgp_assemble_peer(bgp_pconfig pc, bgp_run_param brp)
 
   /* Zeroizing the bgp_prun_param sets:
    *
+   *   * peer_id                        -- X            -- set below
    *   * name                           -- NULL         -- set below
    *   * cname                          -- NULL         -- set below
    *   * desc                           -- NULL         -- set below
@@ -736,8 +676,8 @@ bgp_assemble_peer(bgp_pconfig pc, bgp_run_param brp)
    *   * do_enforce_first_as            -- default set below
    *   * do_log_neighbor_changes        -- default set below
    *
-   *   * cops                           -- see below
-   *   * args                           -- see below
+   *   * cops_conf                      -- see below
+   *   * sargs_conf                     -- see below
    *
    *   * change_local_as                -- default == BGP_ASN_NULL
    *   * do_change_local_as_prepend     -- default == false
@@ -752,6 +692,8 @@ bgp_assemble_peer(bgp_pconfig pc, bgp_run_param brp)
    *
    *   * afp                            -- NULL         -- none, set as required
    */
+  prp->peer_id = bgp_peer_index_lock_id(pc->parent_peer->peer_id) ;
+
   bgp_nref_copy(&prp->name, pc->parent_peer->name) ;
   bgp_nref_copy(&prp->cname, pc->parent_peer->cname) ;
   bgp_nref_copy(&prp->desc, pc->desc) ;
@@ -853,6 +795,7 @@ bgp_assemble_peer(bgp_pconfig pc, bgp_run_param brp)
    *   * can_rr                 -- default == bgp_form_both
    *
    *   * gr.can                 -- copy of do_graceful_restart
+   *       .restart_time        -- default set below, iff gr.can
    *
    *   * can_orf                -- default == bgp_form_both
    *
@@ -873,6 +816,9 @@ bgp_assemble_peer(bgp_pconfig pc, bgp_run_param brp)
 
   prp->sargs_conf.can_rr          = bgp_form_both ;
   prp->sargs_conf.gr.can          = brp->do_graceful_restart ;
+
+  if (brp->do_graceful_restart)
+    prp->sargs_conf.gr.restart_time  = brp->defs.restart_time_secs ;
 
   prp->sargs_conf.can_orf         = bgp_form_both ;
 
@@ -1146,6 +1092,13 @@ bgp_assemble_peer_settings(bgp_prun_param prp, bgp_pconfig pc,
           prp->cops_conf.gtsm  = false ;
         } ;
     } ;
+
+  /* Finally... if capability negotiation is suppressed, then now is a
+   *            good moment to clear everything from the sargs which
+   *            requires negotiation.
+   */
+  if (!prp->sargs_conf.can_capability)
+    bgp_sargs_suppress(&prp->sargs_conf) ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -1367,14 +1320,30 @@ bgp_assemble_grun(nref_c name, bgp_run_param brp)
 {
   bgp_grun grun ;
 
-  grun = vector_bsearch(brp->gruns, x, bgp_nref_name(name)) ;
+  grun = vector_bseek(brp->gruns, bgp_grun_cmp_name, bgp_nref_name(name)) ;
   qassert(grun != NULL) ;
 
   return grun ;
 } ;
 
 /*------------------------------------------------------------------------------
+ * Grun name comparison function for sorting.
+ */
+static int
+bgp_grun_cmp_name (const cvp* p_name, const cvp* p_grun)
+{
+  chs_c      n = *p_name ;
+  bgp_grun_c p = *p_grun ;
+
+  return strcmp(n, bgp_nref_name(p->name)) ;
+} ;
+
+
+/*------------------------------------------------------------------------------
  * Dismantle and discard the given assembly.
+ *
+ * Each set of prun_param holds a lock on the peer-id, which it must now
+ * release.
  *
  * The prun_param will either have been copied into the respective prun, or
  * have been ignored because the prun is being shut-down.  Where the prun
@@ -1392,6 +1361,8 @@ bgp_assembly_free(bgp_assembly assembly)
    */
   while ((prp = vector_ream(assembly->prun_params, keep_it)) != NULL)
     {
+      prp->peer_id = bgp_peer_index_unlock_id(prp->peer_id) ;
+
       prp->name  = bgp_nref_dec(prp->name) ;
       prp->cname = bgp_nref_dec(prp->cname) ;
       prp->desc  = bgp_nref_dec(prp->desc) ;
@@ -1442,6 +1413,7 @@ bgp_assembly_free(bgp_assembly assembly)
  * Compilation phase
  */
 static bgp_run_delta_t bgp_compile_brun_delta(bgp_run brun, bgp_run_param nrp) ;
+static bgp_run_delta_t bgp_compile_rib_delta(bgp_rib rib, bgp_rib_param nribp) ;
 static bgp_run_delta_t bgp_compile_prun_delta(bgp_prun prun,
                                                           bgp_prun_param nprp) ;
 static bgp_run_delta_t bgp_compile_prib_delta(bgp_prib prib,
@@ -1526,9 +1498,27 @@ bgp_compile(bgp_inst bgp, bgp_assembly assembly)
        *
        * Construct the delta for the bgp_run_param.
        */
+      qafx_t          qafx ;
+
       bgp_compile_clear_groups(brun) ;
 
       bdelta = bgp_compile_brun_delta(brun, assembly->brp) ;
+
+      /* Set the delta for all existing ribs.
+       *
+       * New ribs are handled separately.
+       * Ribs which fall by the way-side are also handled separately.
+       */
+      for (qafx = qafx_first ; qafx <= qafx_last ; ++qafx)
+        {
+          bgp_rib rib ;
+
+          rib = brun->rib[qafx] ;
+
+          if (rib != NULL)
+            rib->delta = bdelta |
+                          bgp_compile_rib_delta(rib, assembly->brp->afp[qafx]) ;
+        } ;
     } ;
 
   /* We can now simply copy in the assembled bgp_run_param.
@@ -1554,29 +1544,24 @@ bgp_compile(bgp_inst bgp, bgp_assembly assembly)
   memset(brun->rp.afp, 0, sizeof(brun->rp.afp)) ;
   confirm(sizeof(brun->rp.afp) == (qafx_count * sizeof(void*))) ;
 
-  /* Move the exiting peers to a temporary vector and clear their delta.
-   *
-   * Once a running peer is constructed, the configuration side should not
-   * delete the configuration until the running peer has been deleted, and
-   * the configuration side informed.  However, as a belt-and-braces thing, we
-   * here mark all running peers as brd_null -- and before discarding the
-   * existing vector of running peers, we kill off any which are either
-   * marked brd_shutdown or brd_null.
+  /* Move the exiting peers to a temporary vector and set to be deleted.
    */
   old_pruns = vector_move_here(NULL, brun->pruns) ;
 
   i = 0 ;
   while ((prun = vector_get_item(old_pruns, i++)) != NULL)
-    prun->delta = brd_null ;
+    prun->delta = brd_delete ;
 
   /* Now all the assembled peers.
    *
-   * We re-create the vector of running peers.  The vector in the assembly is
-   * in peer name order, so the new vector will be, too.
+   * We re-create the vector of pruns known to the brun to include only those
+   * for whom we have a configuration -- noting that this includes any which
+   * are shut-down.  The vector in the assembly is in peer name order, so the
+   * new vector will be, too.
    *
    * The old_pruns vector contains a pointer to all existing pruns.  When
    * we have completed this phase, that vector is emptied out and any pruns
-   * which are not being resumed will be deleted.
+   * which are unknown will then be deleted.
    */
   vector_init_new(brun->pruns, vector_length(assembly->prun_params)) ;
 
@@ -1602,31 +1587,34 @@ bgp_compile(bgp_inst bgp, bgp_assembly assembly)
       if (prun == NULL)
         {
           /* This is a new run-time for the peer.
+           *
+           * If the entire brun is being shutdown or the peer is, then set
+           * brd_shutdown, otherwise set brd_restart.
+           *
+           * Note that we do not set brd_continue to signal a new prun.
            */
-          if (nprp->do_shutdown)
-            continue ;                  /* that was easy        */
-
           prun = bgp_prun_new(brun, nprp) ;
 
-          pdelta |= brd_restart ;
+          if ((bdelta & brd_shutdown) || nprp->do_shutdown)
+            pdelta = brd_shutdown ;
+          else
+            pdelta = brd_restart ;
         }
       else
         {
-          /* We have an existing run-time for the peer
+          /* If the entire brun is being shutdown or the peer is, then set
+           * brd_shutdown.
+           *
+           * Otherwise, we inherit any other brun delta.
+           *
+           * In any case, set brd_continue to show existing prun.
            */
-          if (nprp->do_shutdown)
-            {
-              /* Whatever the state of the prun, we now want it to be
-               * shut-down -- so we set the delta, and when the old_pruns
-               * are cleared up, the shutdown will be implemented.
-               */
-              prun->delta |= brd_shutdown ;
-              continue ;
-            } ;
+          if ((bdelta & brd_shutdown) || nprp->do_shutdown)
+            pdelta = brd_shutdown | brd_continue ;
+          else
+            pdelta =       bdelta | brd_continue ;
 
-          pdelta = bdelta ;
-
-          if (!(pdelta & brd_restart))
+          if (!(pdelta & (brd_shutdown | brd_restart)))
             pdelta |= bgp_compile_prun_delta(prun, nprp) ;
 
           /* We are about to replace the name, cname and desc, so we are
@@ -1677,9 +1665,10 @@ bgp_compile(bgp_inst bgp, bgp_assembly assembly)
 
       /* Now worry about address families and pribs.
        *
-       * We collect a new prib_running vector and the
-       * count of same.  Note that we do *not* include any prib which are
-       * now due to be shutdown.
+       * We collect a new prib_running vector and the count of same.
+       *
+       * Note that we do *not* include any prib which are now due to be
+       * deleted.
        */
       prun->prib_running_count = 0 ;    /* reset                */
       for (qafx = qafx_first ; qafx <= qafx_last ; ++qafx)
@@ -1689,53 +1678,47 @@ bgp_compile(bgp_inst bgp, bgp_assembly assembly)
           bgp_run_delta_t pribdelta ;
           bgp_filter_set_t  fs ;
 
-          /* The prib inherits much of the delta for the prun.
-           */
-          pribdelta = pdelta & (brd_refresh_in | brd_refresh_out |
-                                                 brd_reselect    |
-                                                 brd_route_refresh) ;
           npribp = nprp->afp[qafx] ;
           prib   = prun->prib[qafx] ;
 
           if (prib == NULL)
             {
-              /* We don't have a prib for this address family.
+              /* This is a new prib.
+               *
+               * If the prun is being shutdown, then set brd_shutdown,
+               * otherwise set brd_restart.
+               *
+               * Note that we do not set brd_continue to signal a new prib.
                */
-              if (npribp == NULL)
-                continue ;              /* that was easy        */
+              prib = bgp_prib_new(prun, qafx) ;
 
-              prib        = bgp_prib_new(prun, qafx) ;
-              prib->delta = brd_restart ;
+              if (pdelta & brd_shutdown)
+                pribdelta = brd_shutdown ;
+              else
+                pribdelta = brd_restart ;
 
               prun->prib[qafx] = prib ;
             }
           else
             {
-              /* We have an existing prib.
-               */
-              if (npribp == NULL)
-                {
-                  /* We don't have a configuration for this address family,
-                   * so set the prib to be shutdown and the prun to be
-                   * restarted.
-                   */
-                  prib->delta |= brd_shutdown ;
-                  pdelta      |= brd_restart ;
-
-                  continue ;            /* swept up later       */
-                } ;
-
-              if (!(pribdelta & brd_restart))
-                pribdelta |= bgp_compile_prib_delta(prib, npribp) ;
-
-              /* Note that the delta for an existing prib does *not* have
-               * brd_restart set... only new pribs are so marked.
+              /* This is an existing prib.
                *
-               * Make sure that the prib is at least brd_resume.
+               * If the prun is being shutdown, then set brd_shutdown.
+               *
+               * Otherwise inherit most if the prun delta.
+               *
+               * In any case, set brd_continue to show existing prib.
                */
-              prib->delta = (pribdelta & ~brd_restart) ;
-              if (prib->delta == brd_null)
-                prib->delta = brd_resume ;
+              if (pdelta & brd_shutdown)
+                pribdelta = brd_shutdown | brd_continue ;
+              else
+                pribdelta = (pdelta & (brd_refresh_in | brd_refresh_out |
+                                                        brd_reselect    |
+                                                        brd_route_refresh))
+                                         | brd_continue ;
+
+              if (!(pribdelta & (brd_shutdown | brd_restart)))
+                pribdelta |= bgp_compile_prib_delta(prib, npribp) ;
 
               /* We are about to replace the name, cname and desc, so we are
                * done with the current ones.
@@ -1755,8 +1738,14 @@ bgp_compile(bgp_inst bgp, bgp_assembly assembly)
 
           /* If the prib is new or its delta requires a restart, set the
            * prun level to require a restart.
+           *
+           * Note that brd_restart on a prib is ignored... where the prun
+           * itself does not require a restart, a later prib may signal the
+           * need for a restart and that will not be set on an earlier prib
+           * that does not require one.
            */
-          pdelta |= (pribdelta &  brd_restart) ;
+          prib->delta = (pribdelta & ~brd_restart) ;
+          pdelta     |= (pribdelta &  brd_restart) ;
 
           /* Can now copy the prib rp into the prib, which (inter alia)
            * affects:
@@ -1786,39 +1775,34 @@ bgp_compile(bgp_inst bgp, bgp_assembly assembly)
        *
        * If there are no running address families (left) set the prun to
        * be shutdown.
-       *
-       * Otherwise, add prun to the brun's vector of running pruns, and make
-       * sure it is at least brd_resume.
        */
       if (prun->prib_running_count == 0)
         pdelta = brd_shutdown ;
-      else
-        {
-          vector_push_item(brun->pruns, prun) ;
-          if (pdelta == brd_null)
-            pdelta = brd_resume ;
-        } ;
+      else if (pdelta == brd_delete)
+        pdelta = brd_continue ;
+
+      vector_push_item(brun->pruns, prun) ;
 
       prun->delta = pdelta ;
     } ;
 
-  /* We have now compiled all the assembled parameters and updated the
-   * running state.
+  /* Now we ream out the old_pruns, and:
    *
-   * Can now discard the assembled parameters.
-   */
-  bgp_assembly_free(assembly) ;
-
-  /* Now we ream out the old_pruns, and shutdown any that need to be
-   * shutdown.
+   *   * delete any that need to be deleted
    *
-   * All pruns in the old_pruns which are not due to be shutdown are now
+   *   * shutdown any that need to be shutdown
+   *
+   *   * ...
+   *
+   * All pruns in the old_pruns which are not due to be deleted are now
    * sitting in the brun->pruns vector.
    */
   while ((prun = vector_ream(old_pruns, free_it)) != NULL)
     {
-      if ((prun->delta & brd_shutdown) || (prun->delta == brd_null))
-        bgp_prun_shutdown(prun, PEER_DOWN_UNSPECIFIED /* TODO */) ;
+      if      (prun->delta & brd_delete)
+        bgp_prun_delete(prun, PEER_DOWN_NEIGHBOR_DELETE /* TODO */) ;
+      else if (prun->delta & brd_shutdown)
+        bgp_prun_shutdown(prun, PEER_DOWN_USER_SHUTDOWN /* TODO */) ;
     } ;
 
   /* Nearly there... now we execute the pruns which we now have.
@@ -1826,6 +1810,13 @@ bgp_compile(bgp_inst bgp, bgp_assembly assembly)
   i = 0 ;
   while ((prun = vector_get_item(brun->pruns, i++)) != NULL)
     bgp_prun_execute(prun, PEER_DOWN_UNSPECIFIED /* TODO */) ;
+
+  /* Can now discard the assembled parameters.
+   *
+   * NB: for all the prun_params this releases the lock the assembly process
+   *     took on the peer-id.
+   */
+  bgp_assembly_free(assembly) ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -1841,7 +1832,6 @@ bgp_compile_brun_delta(bgp_run brun, bgp_run_param nrp)
 {
   bgp_run_param   rp ;
   bgp_run_delta_t brd ;
-  qafx_t          qafx ;
 
   /* Changes in the bgp_run_param:
    *
@@ -1922,34 +1912,40 @@ bgp_compile_brun_delta(bgp_run brun, bgp_run_param nrp)
   if (nrp->no_client_to_client != rp->no_client_to_client)
     brd |= brd_refresh_out ;
 
-  /* Clear the delta for all current ribs
-   */
-  for (qafx = qafx_first ; qafx <= qafx_last ; ++qafx)
-    {
-      bgp_rib        rib ;
-      bgp_rib_param  nribp, ribp ;
-
-      rib = brun->rib[qafx] ;
-
-      if (rib == NULL)
-        continue ;
-
-      ribp = &rib->rp ;
-
-      nribp = nrp->afp[qafx] ;
-      if ( (nribp == NULL) ||
-           (nribp->do_always_compare_med  != ribp->do_always_compare_med)  ||
-           (nribp->do_deterministic_med   != ribp->do_deterministic_med)   ||
-           (nribp->do_confed_compare_med  != ribp->do_confed_compare_med)  ||
-           (nribp->do_prefer_current      != ribp->do_prefer_current)      ||
-           (nribp->do_aspath_ignore       != ribp->do_aspath_ignore)       ||
-           (nribp->do_aspath_confed       != ribp->do_aspath_confed) )
-        rib->delta = brd_refresh_in ;
-      else
-        rib->delta = brd_null ;
-    } ;
-
   return brd ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Establish the "delta" between the current rib running parameters and the
+ * given ones or the default ones (if none given).
+ *
+ * Note that this does not change the current state.
+ *
+ * Returns:  the "delta"
+ */
+static bgp_run_delta_t
+bgp_compile_rib_delta(bgp_rib rib, bgp_rib_param nribp)
+{
+  bgp_rib_param   ribp ;
+  bgp_rib_param_t nribp_s ;
+  bgp_run_delta_t brd ;
+
+  brd = brd_null ;
+
+  if (nribp == NULL)
+    nribp = bgp_rib_param_init_new(&nribp_s) ;
+
+  ribp = &rib->rp ;
+
+  if ( (nribp->do_always_compare_med  != ribp->do_always_compare_med)  ||
+       (nribp->do_deterministic_med   != ribp->do_deterministic_med)   ||
+       (nribp->do_confed_compare_med  != ribp->do_confed_compare_med)  ||
+       (nribp->do_prefer_current      != ribp->do_prefer_current)      ||
+       (nribp->do_aspath_ignore       != ribp->do_aspath_ignore)       ||
+       (nribp->do_aspath_confed       != ribp->do_aspath_confed) )
+    brd |= brd_reselect ;
+
+ return brd ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -1998,7 +1994,7 @@ bgp_compile_prun_delta(bgp_prun prun, bgp_prun_param nprp)
    *
    *   * afp                          x  dealt with per afi/safi
    */
-  brd = brd_null ;
+  brd = brd_delete ;
 
   prp = &prun->rp ;
 
@@ -2121,6 +2117,13 @@ bgp_compile_prun_delta(bgp_prun prun, bgp_prun_param nprp)
 
   if (nsc->gr.can)
     {
+      /* TODO ... not sure whether a change in the restart time should
+       *          cause a reset -- though perhaps the other end needs to
+       *          know what to expect on a restart ?
+       *
+       *          change in what may be preserved on a restart is probably
+       *          something the other end does need to know ?
+       */
       if ( (nsc->gr.can_preserve != sc->gr.can_preserve) ||
            (nsc->gr.restart_time != sc->gr.restart_time) )
         return brd | brd_restart ;
@@ -2173,7 +2176,7 @@ bgp_compile_prib_delta(bgp_prib prib, bgp_prib_param npribp)
    *
    *   * pmax                        x  affects continuing session
    */
-  brd = brd_null ;
+  brd = brd_delete ;
 
   pribp = &prib->rp ;
 

@@ -1413,7 +1413,7 @@ bgp_peer_do_cmp (bgp_peer_c p1, bgp_peer_c p2)
 } ;
 
 /*------------------------------------------------------------------------------
- * Peer comparison function for sorting.
+ * Peer comparison function for searching/sorting.
  */
 static int
 bgp_peer_cmp_cname(const cvp* p_n, const cvp* p_p)
@@ -1469,7 +1469,6 @@ bgp_peer_new(bgp_inst bgp, bgp_peer_type_t ptype, chs_c name, sockunion su_name)
    *   * name                   -- NULL         -- set below
    *   * cname                  -- NULL         -- set below
    *
-   *   * su_name                -- AF_UNSPEC    -- set below, if PEER_TYPE_REAL
    *   * prun                   -- NULL         -- none, yet
    *
    *   * changed                -- false
@@ -1497,6 +1496,7 @@ bgp_peer_new(bgp_inst bgp, bgp_peer_type_t ptype, chs_c name, sockunion su_name)
    *   *      .members          -- empty vector -- none, yet
    *
    *   * remote_as              -- BGP_ASN_NULL -- set by caller
+   *   * remote_su              -- AF_UNSPEC    -- set below, if PEER_TYPE_REAL
    *
    *   * set                    -- 0            -- nothing set
    *   * set_on                 -- 0            -- nothing at all
@@ -1549,8 +1549,8 @@ bgp_peer_new(bgp_inst bgp, bgp_peer_type_t ptype, chs_c name, sockunion su_name)
           peer->cname = bgp_nref_get(name) ;
         else
           {
-            sockunion_copy(peer->su_name, su_name) ;
             peer->cname = bgp_nref_get(bgp_peer_su_cname(su_name).str) ;
+            sockunion_copy(pc->remote_su, su_name) ;
           } ;
 
         peer->peer_id = bgp_peer_index_register(peer,
@@ -1689,7 +1689,7 @@ bgp_peer_free_af_config(bgp_paf_config pafc)
 /*==============================================================================
  * peer->sort and related values.
  *
- * The peer->sort depends on:
+ * The peer->sort depends on the remote-as of the peer and:
  *
  *   bgp->my_as         -- our ASN -- per router BGP <ASN>
  *
@@ -1712,11 +1712,6 @@ bgp_peer_free_af_config(bgp_paf_config pafc)
  *                         If bgp->confed_id is set, then after any changes to
  *                         the confed_peers set, all the affected peers are
  *                         checked for a change of peer->sort.
- *
- *   peer->args.remote_as -- the peer's ASN -- per neighbor remote-as <ASN>
- *
- * The peer->args.local_as will be bgp->my_as, unless we are in a CONFED and
- * the peer->sort is EBGP, in which case peer->args.local_as is bgp->my_as.
  */
 
 /*------------------------------------------------------------------------------
@@ -2006,9 +2001,12 @@ bgp_peer_implicit_af_sorts(bgp_peer peer)
  *
  * Returns:  true <=> address is of a local interface
  */
+static bool peer_address_self_check (sockunion su)  Unused ; // TODO
+
 static bool
 peer_address_self_check (sockunion su)
 {
+#if 0
   struct interface *ifp = NULL;
 
   if (su->sa.sa_family == AF_INET)
@@ -2019,6 +2017,9 @@ peer_address_self_check (sockunion su)
 #endif /* HAVE IPV6 */
 
   return (ifp != NULL) ;
+#else
+  return true ;
+#endif
 }
 
 

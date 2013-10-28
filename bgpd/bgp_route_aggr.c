@@ -24,6 +24,7 @@
 
 #include "bgpd/bgp_common.h"
 #include "bgpd/bgp_route_aggr.h"
+#include "bgpd/bgp_vty.h"
 
 #include "command.h"
 #include "vty.h"

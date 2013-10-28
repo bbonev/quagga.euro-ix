@@ -82,6 +82,7 @@ enum bgp_rcontext_type
 } ;
 
 typedef struct bgp_rcontext  bgp_rcontext_t ;
+typedef struct bgp_rcontext const* bgp_rcontext_c ;
 
 struct bgp_rcontext
 {
@@ -123,7 +124,7 @@ struct bgp_rcontext
    * For Route-Server Clients that has the form: RS <neighbor name>
    * (so ordinary route-context names may not contain ' ' -- at least.
    */
-  bgp_inst      bgp ;
+  bgp_run       brun ;
 
   bgp_rcontext_type_t type ;
 
@@ -177,11 +178,11 @@ struct bgp_lcontext
  */
 extern void bgp_rcontext_init(void) ;
 extern void bgp_rcontext_finish(void) ;
-extern void bgp_rcontext_discard_name_index(bgp_inst bgp) ;
+extern void bgp_rcontext_discard_name_index(bgp_run brun) ;
 
 extern bgp_lcontext bgp_lcontext_new(bgp_rib rib, bgp_rcontext rc) ;
 
-extern bgp_rcontext bgp_rcontext_lookup(bgp_inst bgp, const char* name,
+extern bgp_rcontext bgp_rcontext_lookup(bgp_run brun, const char* name,
                                         bgp_rcontext_type_t type, bool* added) ;
 
 extern bgp_lcontext bgp_rcontext_attach_prib(bgp_rcontext rc, bgp_prib prib) ;

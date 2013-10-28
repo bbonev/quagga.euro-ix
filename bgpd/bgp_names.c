@@ -107,14 +107,14 @@ const map_direct_t bgp_fsm_event_map =
 /*------------------------------------------------------------------------------
  * Names of Peer status values
  *
- * When is pDown or pResetting, may wish to consult bgp_peer_idle_state_str()
+ * When is pIdle may wish to consult bgp_peer_idle_state_str()
  */
 const char* const bgp_peer_status_map_body[] =
 {
-  [bgp_pDown]         = "Idle (Down)",
+  [bgp_pIdle]         = "Idle (Down)",
   [bgp_pStarted]      = "Idle (Up)",
   [bgp_pEstablished]  = "Established",
-  [bgp_pResetting]    = "Resetting",
+//[bgp_pResetting]    = "Resetting",
   [bgp_pDeleting]     = "Deleting",
 };
 
@@ -122,14 +122,14 @@ const map_direct_t bgp_peer_status_map =
      map_direct_s(bgp_peer_status_map_body, "unknown(%d)") ;
 
 extern name_str_t
-bgp_peer_idle_state_str(bgp_peer_state_t state, bgp_peer_idle_state_t idle)
+bgp_peer_idle_state_str(bgp_prun_state_t state, bgp_prun_idle_state_t idle)
 {
   const char* name ;
 
   switch (state)
     {
-      case bgp_pDown:
-      case bgp_pResetting:
+      case bgp_pIdle:
+//    case bgp_pResetting:
         break ;
 
       default:
@@ -148,12 +148,10 @@ bgp_peer_idle_state_str(bgp_peer_state_t state, bgp_peer_idle_state_t idle)
     name = "Max-Pfx Wait" ;
   else if (idle & bgp_pisClearing)
     name = "Clearing" ;
-  else if (idle & bgp_pisReset)
-    return map_direct(bgp_peer_status_map, bgp_pResetting) ;
-  else if (idle & bgp_pisConfiguring)
-    name = "Configuring" ;
-  else if (idle == bgp_pisRunnable)
-    return map_direct(bgp_peer_status_map, bgp_pDown) ;
+  else if (idle & bgp_pisLimping)
+    name = "Stopping" ;
+  else if (idle == bgp_pisReady)
+    return map_direct(bgp_peer_status_map, bgp_pIdle) ;
   else
     return map_name_str_val("??0x%x??", idle) ;
 
@@ -456,8 +454,9 @@ const char* const bgp_peer_down_map_body[] =
 
   [PEER_DOWN_UNSPECIFIED]          = "Unspecified reason",
 
-  [PEER_DOWN_CONFIG_CHANGE]        = "Unspecified config change",
+  [PEER_DOWN_CONFIG_CHANGE]        = "Configuration change",
 
+#if 0
   [PEER_DOWN_RID_CHANGE]           = "Router ID changed",
   [PEER_DOWN_REMOTE_AS_CHANGE]     = "Remote AS changed",
   [PEER_DOWN_LOCAL_AS_CHANGE]      = "Local AS change",
@@ -480,6 +479,7 @@ const char* const bgp_peer_down_map_body[] =
   [PEER_DOWN_AF_DEACTIVATE]        = "Address family deactivated",
   [PEER_DOWN_PASSWORD_CHANGE]      = "MD5 Password changed",
   [PEER_DOWN_ALLOWAS_IN_CHANGE]    = "Allow AS in changed",
+#endif
 
   [PEER_DOWN_USER_SHUTDOWN]        = "Admin. shutdown",
   [PEER_DOWN_USER_RESET]           = "User reset",

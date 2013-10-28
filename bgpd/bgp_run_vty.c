@@ -47,78 +47,13 @@ Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
  */
 
 /*==============================================================================
+ * Possible immediate effect on the run-time ????  TODO
  */
+#if 0
 
-/*------------------------------------------------------------------------------
- * "bgp log-neighbor-changes" configuration.
- */
-DEFUN (bgp_log_neighbor_changes,
-       bgp_log_neighbor_changes_cmd,
-       "bgp log-neighbor-changes",
-       "BGP specific commands\n"
-       "Log neighbor up/down and reset reason\n")
-{
-  return bgp_config_flag_change(vty, BGP_FLAG_LOG_NEIGHBOR_CHANGES,
-                                                               true /* set */) ;
-}
+// SHUTDOWN and LOG_NEIGHBOR CHANGES ??
 
-DEFUN (no_bgp_log_neighbor_changes,
-       no_bgp_log_neighbor_changes_cmd,
-       "no bgp log-neighbor-changes",
-       NO_STR
-       "BGP specific commands\n"
-       "Log neighbor up/down and reset reason\n")
-{
-  return bgp_config_flag_change(vty, BGP_FLAG_LOG_NEIGHBOR_CHANGES,
-                                                            false /* clear */) ;
-}
-
-
-/*==============================================================================
- * Peer/Peer-Group shutdown
- *
- * For peer:
- *
- *   * can shutdown a peer which is a member of a group, separately from all
- *     other members of the group.
- *
- *   * shutdown will disable any running session, and leave peer disabled.
- *
- *   * startup (no shutdown) reverses any shutdown.
- *
- *
- * For group:
- *
- */
-
-/* neighbor shutdown. */
-DEFUN (neighbor_shutdown,
-       neighbor_shutdown_cmd,
-       NEIGHBOR_CMD2 "shutdown",
-       NEIGHBOR_STR
-       NEIGHBOR_ADDR_STR2
-       "Administratively shut down this neighbor\n")
-{
-  return peer_flag_modify_vty (vty, argv[0], cgs_SHUTDOWN, true /* set */);
-}
-
-DEFUN (no_neighbor_shutdown,
-       no_neighbor_shutdown_cmd,
-       NO_NEIGHBOR_CMD2 "shutdown",
-       NO_STR
-       NEIGHBOR_STR
-       NEIGHBOR_ADDR_STR2
-       "Administratively shut down this neighbor\n")
-{
-  return peer_flag_modify_vty (vty, argv[0], cgs_SHUTDOWN, false /* unset */);
-}
-
-ALIAS (no_neighbor_shutdown,
-       neighbor_startup_cmd,
-       NEIGHBOR_CMD2 "startup",
-       NEIGHBOR_STR
-       NEIGHBOR_ADDR_STR2
-       "Administratively start this neighbor (reverse shut down)\n") ;
+#endif
 
 /*==============================================================================
  *
@@ -215,7 +150,7 @@ bgp_clear (vty vty, bgp_run brun, qafx_t qafx,
             return CMD_WARNING;
           }
 
-        prun = bgp_peer_lookup_su (brun, &su);
+        prun = bgp_prun_lookup_su (brun, &su);
         if (! prun)
           {
             vty_out (vty, "%%BGP: Unknown neighbor - \"%s\"\n", arg);
@@ -234,6 +169,7 @@ bgp_clear (vty vty, bgp_run brun, qafx_t qafx,
         break ;
 
       case clear_group:
+#if 0           // TODO clear_group
         group = peer_group_lookup (brun, arg);
         if (! group)
           {
@@ -262,6 +198,7 @@ bgp_clear (vty vty, bgp_run brun, qafx_t qafx,
                   } ;
               } ;
           } ;
+#endif
         break ;
 
 
@@ -2576,8 +2513,9 @@ ALIAS (clear_ip_bgp_peer_rsclient,
 /*------------------------------------------------------------------------------
  * Table of commands to be installed for bgp_vty
  */
-CMD_INSTALL_TABLE(static, bgp_vty_cmd_table, BGPD) =
+CMD_INSTALL_TABLE(static, bgp_vty_run_cmd_table, BGPD) =
 {
+#if 0
   { BGP_NODE,        &bgp_log_neighbor_changes_cmd                      },
   { BGP_NODE,        &no_bgp_log_neighbor_changes_cmd                   },
 
@@ -2585,6 +2523,7 @@ CMD_INSTALL_TABLE(static, bgp_vty_cmd_table, BGPD) =
   { BGP_NODE,        &neighbor_shutdown_cmd                             },
   { BGP_NODE,        &no_neighbor_shutdown_cmd                          },
   { BGP_NODE,        &neighbor_startup_cmd                              },
+#endif
 
   { ENABLE_NODE,     &clear_ip_bgp_all_cmd                              },
   { ENABLE_NODE,     &clear_ip_bgp_instance_all_cmd                     },
@@ -2780,13 +2719,8 @@ CMD_INSTALL_TABLE(static, bgp_vty_cmd_table, BGPD) =
 } ;
 
 extern void
-bgp_vty_cmd_init (void)
+bgp_vty_run_cmd_init (void)
 {
-  cmd_install_table(bgp_vty_cmd_table) ;
-}
-
-void
-bgp_vty_init (void)
-{
+  cmd_install_table(bgp_vty_run_cmd_table) ;
 }
 

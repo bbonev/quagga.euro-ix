@@ -39,12 +39,13 @@
 #include "bgpd/bgp_route.h"
 #include "bgpd/bgp_names.h"
 
+#include "bgpd/bgp_zebra.h"             // TODO
+
 #include "linklist.h"
 #include "prefix.h"
 #include "vty.h"
 #include "sockunion.h"
 #include "prefix.h"
-#include "thread.h"
 #include "log.h"
 #include "memory.h"
 #include "plist.h"
@@ -86,6 +87,117 @@
  *
  */
 
+
+
+/*==============================================================================
+ * Execute and Shutdown Prun.
+ */
+static void bgp_prib_shutdown(bgp_prib prib) ;
+
+/*------------------------------------------------------------------------------
+ * Execute the given prun.
+ *
+ *   * create sessions or reset as required
+ *
+ *   * link in all required ribs for all qafx -- creates ribs as required.
+ *
+ *   * link in all required filters for qafx
+ *
+ *   * link in all required local contexts.
+ *
+ *   * initialise or reset adj-in
+ *
+ *   * initialise or reset adj-out
+ *
+ */
+extern void
+bgp_prun_execute(bgp_prun prun, peer_down_t why_down)
+{
+  qafx_t qafx ;
+
+  /* First execute your session.
+   *
+   * If this is a brand new prun, this will create a new session and set the
+   * prun/session running in the peer-index.
+   *
+   * If this is an existing prun, will take note of the prun->delta, and
+   * adjust the session as required.  The note which is passed will be sent
+   * to the peer if the session has to be stopped and restarted.
+   */
+  bgp_session_execute(prun, NULL) ;     // TODO map why_down
+
+
+
+
+
+
+
+
+  for (qafx = qafx_first ; qafx <= qafx_last ; ++qafx)
+    {
+      bgp_prib prib ;
+
+      /* NB: we do *not* use the prun->prib_running at this stage, because
+       *     that may have been dismantled (eg if we are shutting down because
+       *     no address families are runnable).
+       */
+
+      prib = prun->prib[qafx] ;
+      if (prib == NULL)
+        continue ;
+
+      bgp_prib_shutdown(prib) ;
+    } ;
+} ;
+
+
+/*------------------------------------------------------------------------------
+ * Shut-down the given prun.
+ *
+ * Bring to a dead stop and dismantle the prun.
+ */
+extern void
+bgp_prun_shutdown(bgp_prun prun, peer_down_t why_down)
+{
+  qafx_t qafx ;
+
+  bgp_session_shutdown(prun, NULL) ;    // TODO map why_down
+
+  for (qafx = qafx_first ; qafx <= qafx_last ; ++qafx)
+    {
+      bgp_prib prib ;
+
+      /* NB: we do *not* use the prun->prib_running at this stage, because
+       *     that may have been dismantled (eg if we are shutting down because
+       *     no address families are runnable).
+       */
+
+      prib = prun->prib[qafx] ;
+      if (prib == NULL)
+        continue ;
+
+      bgp_prib_shutdown(prib) ;
+    } ;
+} ;
+
+/*------------------------------------------------------------------------------
+ *
+ */
+static void
+bgp_prib_shutdown(bgp_prib prib)
+{
+
+} ;
+
+/*------------------------------------------------------------------------------
+ * Delete the given prun
+ */
+extern void
+bgp_prun_delete(bgp_prun prun, peer_down_t why_down)
+{
+
+} ;
+
 /*==============================================================================
  *
  */
@@ -95,10 +207,9 @@
  *
  * Returns with:  running params *unset*, no name, no pribs and no session
  *
- *                delta         = brd_null
+ *                delta         = brd_delete
  *                state         = pInitial
  *                idle          = pisConfiguring
- *                session_state = pssInitial
  *
  * Returns:  new bgp_prun
  */
@@ -118,13 +229,12 @@ bgp_prun_new(bgp_run brun, bgp_prun_param prp)
    *   * delta                  -- brd_null
    *
    *   * state                  -- pInitial
-   *   * idle                   -- X            -- set pisConfiguring below
+   *   * idle                   -- pisIdle      -- not pisReady (!)
    *
    *   * nsf_enabled            -- false
    *   * nsf_restarting         -- false
    *
    *   * session                -- NULL         -- none yet
-   *   * session_state          -- pssInitial
    *
    *   * uptime                 -- 0
    *   * readtime               -- 0
@@ -150,11 +260,11 @@ bgp_prun_new(bgp_run brun, bgp_prun_param prp)
    *
    *   * idle_hold_time         -- 0            -- none
    *
-   *   * v_asorig               -- 0
-   *   * v_gr_restart           -- 0
+   *   * v_asorig               -- 0            -- TODO
+   *   * v_gr_restart           -- 0            -- TODO
    *
-   *   * t_gr_restart           -- NULL         -- none
-   *   * t_gr_stale             -- NULL         -- none
+   *   * t_gr_restart           -- NULL         -- TODO
+   *   * t_gr_stale             -- NULL         -- TODO
    *
    *   * established            -- 0            -- none
    *   * dropped                -- 0            -- none
@@ -163,16 +273,14 @@ bgp_prun_new(bgp_run brun, bgp_prun_param prp)
    */
   confirm(brd_null       == 0) ;
   confirm(bgp_pInitial   == 0) ;
-  confirm(bgp_pssInitial == 0) ;
+  confirm(bgp_pisIdle    == 0) ;
   confirm(PEER_DOWN_NULL == 0) ;
   confirm(qafx_empty_set == 0) ;
 
   prun->brun = brun ;
-  prun->idle = bgp_pisConfiguring ;
 
   return prun ;
 } ;
-
 
 /*------------------------------------------------------------------------------
  * Create new, empty peer_rib structure.
@@ -314,904 +422,308 @@ bgp_prib_new(bgp_prun prun, qafx_t qafx)
 
 
 
- /*------------------------------------------------------------------------------
-  * Discard peer_rib structure.
-  */
- extern bgp_prib
- bgp_prib_free(bgp_prib prib)
- {
-
-
-   XFREE(MTYPE_BGP_PEER_RIB, prib) ;
-   return NULL ;
- } ;
-
-
-
-
-#if 0
-
-
 /*------------------------------------------------------------------------------
- * Allocate new peer object -- for peer or peer-group
- *
- * Attaches to the
- *
- * Adds structure to the
- *
- * Returns:  address of new peer object.
- *
- * NB: the peer object owns a lock on itself.
- *
- *     That lock is cleared by bgp_peer_delete().
+ * Discard peer_rib structure.
  */
-extern bgp_peer
-bgp_peer_new(bgp_inst bgp, bgp_peer_type_t type, chs_c name)
+extern bgp_prib
+bgp_prib_free(bgp_prib prib)
 {
-  bgp_peer peer;
 
-  /* bgp argument is absolutely required
-   */
-  assert (bgp != NULL) ;
 
-  /* Allocate new peer: point it at owning bgp instance and take a lock on that.
-   *
-   * All types of peer have a bgp parent.
-   */
-  peer = XCALLOC (MTYPE_BGP_PEER, sizeof(bgp_peer_t));
-
-  peer->parent_bgp  = bgp_lock (bgp) ;
-  peer->ptype = type ;
-
-  /* Zeroizing has set:
-   *
-   *   * bgp                    -- X            -- set, above
-   *   * type                   -- X            -- set, above
-   *
-   *   * state                  -- bgp_pInitial
-   *   * config                 -- X            -- set, below
-   *
-   *   * peer_ie                -- NULL         -- none, yet
-   *   * session                -- NULL         -- none, yet
-   *
-   *   * session_state          -- bgp_pssInitial
-   *
-   *   * lock                   -- 0
-   *
-   *   * group                  -- NULL         -- none, yet
-   *   * member.list/.base      -- NULLs        -- none, yet
-   *
-   *   * sort                   -- BGP_PEER_UNSPECIFIED
-   *   * down_pending           -- false        -- not at present
-   *
-   *   * su_name                -- NULL         -- none, yet
-   *   * host                   -- NULL         -- none, yet
-   *   * desc                   -- NULL         -- none, yet
-   *
-   *   * uptime;                -- 0
-   *   * readtime;              -- 0
-   *   * resettime;             -- 0
-   *
-   *   * log                    -- NULL         -- none, yet
-   *
-   *   * shared_network         -- false        -- not
-   *   * nexthop                -- 0's          -- none, yet
-   *
-   *   * last_reset             -- PEER_DOWN_NULL
-   *   * note                   -- NULL         -- none, yet
-   *
-   *   * af_configured          -- qafx_empty_set  -- none, yet
-   *   * af_running             -- qafx_empty_set  -- none, yet
-   *
-   *   * prib[]                 -- NULLs        -- none, yet
-   *   * prib_running_count     -- 0            -- none, yet
-   *   * prib_running[]         -- NULLs        -- none, yet
-   *
-   *   * rr_pending             -- NULLs        -- none, yet
-   *
-   *   * args                   -- X            -- initialised below
-   *
-   *   * change_local_as        -- BGP_ASN_NULL -- none, yet
-   *   * change_local_as_prepend  -- false
-   *
-   *   * disable_connected_check  -- false
-   *
-   *   * weight                 -- 0            -- not set
-   *   * config_mrai            -- 0            -- unset
-   *
-   *   * sflags                 -- PEER_STATUS_NONE
-   *   * idle                   -- X            -- set, below
-   *
-   *   * cops                   -- X            -- initialised, below
-   *
-   *   * qt_restart             -- NULL         -- none, yet
-   *
-   *   * idle_hold_time         -- X            -- set, below
-   *
-   *   * v_asorig               -- X            -- set, below
-   *   * v_gr_restart           -- 0
-   *
-   *   * t_gr_restart           -- NULL         -- none, yet
-   *   * t_gr_stale             -- NULL         -- none, yet
-   *
-   *   * established            -- 0
-   *   * dropped                -- 0
-   *
-   *   * table_dump_index       -- 0
-   */
-  confirm(qafx_empty_set       == 0) ;
-  confirm(bgp_pInitial         == 0) ;
-  confirm(bgp_pssInitial       == 0) ;
-  confirm(BGP_PEER_UNSPECIFIED == 0) ;
-  confirm(PEER_DOWN_NULL       == 0) ;
-  confirm(PEER_STATUS_NONE     == 0) ;
-
-  peer->c = bgp_peer_config_new() ;
-
-  bgp_sargs_init_new(&peer->sargs) ;
-
-  peer->idle = bgp_pisDeconfigured ;    /* so far       */
-
-  bgp_cops_init_new(&peer->cops) ;
-
-  /* Set some default values -- common to all types of peer object
-   */
-  peer->idle_hold_time = QTIME(peer->parent_bgp->default_idle_hold_min_secs) ;
-
-  peer->v_asorig  = BGP_DEFAULT_ASORIGINATE;
-
-  return bgp_peer_lock (peer) ;         /* initial, self reference      */
+  XFREE(MTYPE_BGP_PEER_RIB, prib) ;
+  return NULL ;
 } ;
 
-/*------------------------------------------------------------------------------
- * Allocate new peer_config object.
- *
- * Returns:  address of new, empty, peer_config object.
- */
-static bgp_pconfig
-bgp_peer_config_new(void)
-{
-  bgp_pconfig config ;
 
-  config = XCALLOC (MTYPE_BGP_PEER_CONFIG, sizeof(bgp_pconfig_t));
 
-  /* Zeroizing has set:
-   *
-   *   * c_flags        -- PEER_FLAG_NOTHING
-   *   * c_set          -- PEER_CONFIG_NOTHING
-   *   * c_weight       -- none set
-   *   * c_mrai         -- none set
-   *   * c_af[]         -- NULLs
-   */
-  confirm(PEER_FLAG_NOTHING    == 0) ;
-  confirm(PEER_CONFIG_NOTHING  == 0) ;
 
-  return config ;
-} ;
+
+
 
 /*------------------------------------------------------------------------------
- * Discard peer_config object, if any.
+ * Look-up peer by its address in the given bgp instance or all such.
  *
- * Returns:  NULL
+ * If the given 'bgp' is NULL, will return peer in any 'view', otherwise
+ * the peer *must* be in the given view.
+ *
+ * Returns:  peer (PEER_TYPE_REAL) if found -- NULL if not found
+ *                                             (or not found in view)
  */
-static bgp_pconfig
-bgp_peer_config_free(bgp_pconfig config)
+extern bgp_prun
+bgp_prun_lookup_su(bgp_run brun, sockunion su)
 {
-  if (config != NULL)
-    {
-      qafx_t    qafx ;
+  bgp_prun prun ;
 
-      for (qafx = qafx_first ; qafx <= qafx_last ; ++qafx)
-        config->c_af = bgp_peer_af_config_free(config->c_af) ;
+  prun = bgp_peer_index_prun_lookup(bgp_peer_su_cname(su).str) ;
 
-      XFREE (MTYPE_BGP_PEER_CONFIG, config) ;
-    } ;
+  if ((prun != NULL) && ((brun == NULL) || (prun->brun == brun)))
+    return prun ;
 
   return NULL ;
 } ;
 
-/*------------------------------------------------------------------------------
- * Allocate new peer_af_config object
- *
- * Returns:  NULL.
- */
-static bgp_paf_config
-bgp_peer_af_config_new(void)
-{
-  bgp_paf_config af_config ;
-
-  af_config = XCALLOC (MTYPE_BGP_PEER_AF_CONFIG, sizeof(bgp_paf_config)) ;
-
-  /* Zeroizing has set:
-   *
-   *   * c_flags        -- PEER_AFF_NOTHING
-   *
-   *   * c_dlist[]      -- NULLs        -- none, yet
-   *   * c_plist[]      -- NULLs        -- ditto
-   *   * c_flist[]      -- NULLs        -- ditto
-   *   * c_rmap[]       -- NULLs        -- ditto
-   *   * c_us_rmap      -- NULL         -- ditto
-   *   * c_default_rmap -- NULL         -- ditto
-   *
-   *   * c_orf_plist    -- NULL         -- ditto
-   *
-   *   * c_pmax         -- X            -- set, below
-   */
-  confirm(PEER_AFF_NOTHING    == 0) ;
-
-  bgp_prib_pmax_reset(&af_config->c_pmax) ;
-
-  return af_config ;
-} ;
-
-/*------------------------------------------------------------------------------
- * Discard peer_af_config object, if any.
- *
- * Returns:  NULL
- */
-static bgp_paf_config
-bgp_peer_af_config_free(bgp_paf_config af_config)
-{
-  if (af_config != NULL)
-    {
-      /* Clear neighbor filter, route-map and unsuppress map
-       */
-      for (i = FILTER_IN; i < FILTER_MAX; i++)
-        {
-          prib->dlist[i] = access_list_clear_ref(prib->dlist[i]) ;
-          prib->plist[i] = prefix_list_clear_ref(prib->plist[i]) ;
-          prib->flist[i] = as_list_clear_ref(prib->flist[i]) ;
-        } ;
-
-      for (i = RMAP_IN; i < RMAP_COUNT; i++)
-        prib->rmap[i] = route_map_clear_ref(prib->rmap[i]) ;
-
-      prib->us_rmap      = route_map_clear_ref(prib->us_rmap) ;
-      prib->default_rmap = route_map_clear_ref(prib->default_rmap) ;
-
-      XFREE (MTYPE_BGP_PEER_AF_CONFIG, af_config) ;
-    } ;
-
-  return NULL ;
-} ;
-
-/*------------------------------------------------------------------------------
- * Create new BGP peer -- if an AFI/SAFI is given, activate & enable for that.
- *
- * Peer starts in pDown state.
- *
- * This is creating a PEER_TYPE_REAL, which is placed on the bgp->peer list.
- * (This is NOT creating a peer-group config object, or a "self" peer object.)
- *
- * The 'local_as' will be: bgp->my_as     unless...
- *                         bgp->confed_id ...we are a CONFED and the peer is
- *                                           external to the CONFED.
- *
- * Returns:  address of new peer
- *
- * NB: the peer is locked once, by virtue of having been added to the bgp->peer
- *     list.
- *
- * NB: copies the given su -- caller responsible for the original
- */
-extern bgp_peer
-bgp_peer_create(sockunion su, bgp_inst bgp, as_t remote_as, qafx_t qafx)
-{
-  bgp_peer peer ;
-  struct servent *sp;
-
-  /* Creating a new peer sets:
-   *
-   * Since we are creating a real peer, set that and add self to the bgp
-   * instance's list of peer.  Note that this counts as a reference to the
-   * peer.
-   */
-  peer = bgp_peer_new (bgp, PEER_TYPE_REAL);
-  listnode_add_sort (bgp->peer, bgp_peer_lock (peer));
-
-  peer->state     = bgp_pDown;
-
-  /* Set basic properties of peer -- evaluate and set the peer sort.
-   *
-   * After bgp_peer_new we have to consider:
-   *
-   *   * state                  -- bgp_pInitial
-   *
-   *   * peer_ie                -- need to set
-   *   * session                -- need to create
-   *
-   *   * sort                   -- need to set after args
-   *
-   *   * su_name                -- need to set
-   *   * host                   -- need to set
-   *
-   *   * readtime;              -- set to now
-   *   * resettime;             -- set to now
-   *
-   *   * shared_network         -- false        -- not
-   *   * nexthop                -- 0's          -- none, yet
-   *
-   *   * args                   -- set local_as
-   *
-   *   * cops
-   *         .remote_su         -- copy of peer->su_name (by default)
-   *         .port              -- set to default
-   *         .can_notify_before_open   -- set true (by default)
-   *         .idle_hold_max_secs       -- set to default
-   *         .connect_retry_secs       -- ditto
-   *         .accept_retry_secs        -- ditto
-   *         .open_hold_secs           -- ditto
-   *         .ttl                      -- set depending on peer->sort
-   *
-   * Evaluation of the peer sort depends on the peer->args.remote_as, the
-   * peer->bgp->my_as, and the confederation state.
-   *
-   * Setting the sort also sets values which depend on the sort:
-   *
-   *   * peer->args.local_as  -- set to bgp->my_as, except...
-   *                             ...if eBGP and CONFED is enabled, when must be
-   *                                bgp->confed_id
-   *
-   *   * peer->cops.ttl       -- if the sort changes, then we set the default
-   *   * peer->cops.gtsm         values for the new sort.
-   */
-  peer->su_name         = sockunion_dup(su) ;
-  peer->host            = sockunion_su2str (su, MTYPE_BGP_NAME) ;
-  peer->sargs.remote_as  = remote_as;
-  peer->sargs.local_id   = bgp->router_id;
-
-  qassert(peer->sort            == BGP_PEER_UNSPECIFIED) ;
-  qassert(peer->sargs.remote_as  != BGP_ASN_NULL) ;
-  qassert(peer->sargs.local_as   == BGP_ASN_NULL) ;
-  qassert(peer->change_local_as == BGP_ASN_NULL) ;
-
-  sockunion_copy (&peer->cops.remote_su, peer->su_name) ;
-
-  peer_sort_set(peer, peer_sort(peer)) ;
-  peer_global_config_reset (peer) ;
-
-  sp = getservbyname ("bgp", "tcp");
-  peer->cops.port = (sp == NULL) ? BGP_PORT_DEFAULT : ntohs (sp->s_port);
-
-  /* Last read time and reset time set
-   */
-  peer->readtime = peer->resettime = bgp_clock ();
-
-  /* Set up session and register the peer.
-   */
-  bgp_session_init_new(peer);
-
-  /* If required, activate given AFI/SAFI -- eg "default ipv4-unicast"
-   */
-  if (qafx != qafx_undef)
-    peer_set_af(peer, qafx, true /* enable */) ;
-
-  return peer;
-} ;
-
-/*------------------------------------------------------------------------------
- * Delete peer from configuration.
- *
- * To delete a peer we must first shutdown any current session, .... XXX XXX XXX XXX
- *
- *
- *
- * At the end of the process this releases the initial, self-reference counted
- * in bgp_peer_new().  That may free the peer structure (which will remove
- * the peer's reference to the bgp instance, which may in turn free that).
- *
- * However, there may be other locks on the peer structure, in which case the
- * peer has been set to a dead-end "Deleted" neighbour-state, to allow it to
- * "cool off".  When the refcount hits 0, the peer will be freed -- noting that
- * the owning bgp instance remains in existence (at least) until then.
- *
- * TODO ... sort out PEER_TYPE_xxx differences.
- *
- * Returns:  NULL
- */
-extern bgp_peer
-bgp_peer_delete (bgp_peer peer)
-{
-  qafx_t   qafx ;
-  bgp_inst bgp;
-
-  bgp = peer->parent_bgp ;
-
-  /* Once peer is pDeleting it should be impossible to find in order to
-   * bgp_peer_delete() it !
-   */
-  assert (peer->state != bgp_pDeleting);
-
-  if (peer->ptype == PEER_TYPE_REAL)
-    {
-      /* If the peer is active, then need to shut it down now.  If there are
-       * any stale routes, flush them now.
-       *
-       * There may be a session in existence.  If so, it must either be
-       * sLimping or sDisabled.
-       *
-       * Changing to pDeleting state turns off all timers.
-       */
-      bgp_peer_down(peer, PEER_DOWN_NEIGHBOR_DELETE) ;
-      qassert(peer->state == bgp_pDown) ;
-
-      bgp_peer_change_status (peer, bgp_pDeleting);
-
-      /* Increment count of peers lingering in pDeleting
-       *
-       * The count is used while terminating bgpd -- keeps all the nexuses
-       * running until this count drops to zero.
-       *
-       * NB: counts all sorts of peer objects, including peer-group
-       *     configurations.
-       *
-       *     This is counted down again in bgp_peer_free().
-       */
-      ++bm->peer_linger_count ;
-
-      /* If this peer belongs to peer group, clear up the relationship.
-       */
-      if (peer->group != NULL)
-        {
-          ddl_del(peer->group->members, peer->c, member.list) ;
-          peer->group = NULL;
-        } ;
-    } ;
 
 
-  /* Delete from bgp->peer list, if required.
-   */
-  if (peer->ptype == PEER_TYPE_REAL)
-    {
-      struct listnode *pn;
-      pn = listnode_lookup (bgp->peer, peer) ;
-
-      assert(pn != NULL) ;
-
-      bgp_peer_unlock (peer);   /* bgp peer list reference      */
-      list_delete_node (bgp->peer, pn);
-    } ;
-
-  /* Shut down and release all pribs.
-   */
-  for (qafx = qafx_first ; qafx <= qafx_last ; ++qafx)
-    peer_deactivate_family (peer, qafx) ;
-
-  /* Unregister the peer and tear down the session.
-   *
-   * NB: the peer can no longer be looked up by its 'name'.
-   *
-   *     In particular this means that the accept() logic in the BGP Engine
-   *     will conclude that the session should not be accepting connections.
-   *
-   * NB: also (currently) releases the peer_id -- which may not be so clever ?
-   */
-  bgp_session_delete(peer) ;
-
-  /* Finally: count down the initial reference, which will delete the peer
-   * iff everything else has finished with it.
-   */
-  bgp_peer_unlock (peer);       /* initial, self reference      */
-
-  return NULL ;
-} ;
-
-/*------------------------------------------------------------------------------
- * increase reference count on a bgp_peer
- */
-extern bgp_peer
-bgp_peer_lock (bgp_peer peer)
-{
-  ++peer->lock ;
-  return peer;
-}
-
-/*------------------------------------------------------------------------------
- * decrease reference count on a bgp_peer * If is last reference, the structure is freed and NULL returned
- */
-extern bgp_peer
-bgp_peer_unlock (bgp_peer peer)
-{
-  qassert(peer->lock > 0);
-
-  if (peer->lock > 1)
-    {
-      --peer->lock ;
-      return NULL ;
-    } ;
-
-  return bgp_peer_free (peer);
-} ;
-
-/*------------------------------------------------------------------------------
- * Dismantle and free peer data structure.
- *
- * The peer structure has a reference to the owning bgp instance, and the
- * reference has a lock on that.  When the peer structure has been dismantled,
- * the lock is released.
- */
-static bgp_peer
-bgp_peer_free (bgp_peer peer)
-{
-  bgp_inst bgp ;
-
-  assert (peer->state   == bgp_pDeleting);
-  assert (peer->session == NULL) ;      /* session holds a lock on peer */
-
-  if (peer->ptype == PEER_TYPE_REAL)
-    --bm->peer_linger_count ;
-
-  bgp = peer->parent_bgp ;
-
-  if (peer->desc)
-    XFREE (MTYPE_PEER_DESC, peer->desc);
-
-  /* Discard name and text form thereof
-   */
-  peer->su_name = sockunion_free(peer->su_name);
-
-  if (peer->host != NULL)
-    XFREE (MTYPE_BGP_NAME, peer->host) ;   /* sets peer->host NULL */
 
 
-  // TODO full dismantle of bgp_peer structure etc....
 
-  memset (peer, 0, sizeof(bgp_peer_t));
-  peer->lock = -54321 ;
-  XFREE (MTYPE_BGP_PEER, peer);
 
-  bgp_unlock(bgp);
-
-  return NULL ;
-} ;
 
 
 
 /*==============================================================================
- * Address Family activation and deactivation.
+ * Downing a running peer.
  *
-  */
+ * Here we deal with events which cause a running peer and session to be
+ * brought down.  Once the session has cleared, a new one may restart.
+ *
+ * The prun goes from pStarted or pEstablished to pIdle.  In pIdle the pisXxxx
+ * state comes into play.  If or when the psXxxx state allows, the prun may
+ * either be restarted or deleted altogether, or it may remain in a pisDown
+ * state (eg pisShutdown).
+ */
+static void bgp_peer_down_notify(bgp_prun prun, peer_down_t why_down,
+                                                                bgp_note note) ;
+static peer_down_t bgp_peer_map_notification(bgp_note note) ;
+static bgp_note bgp_peer_map_peer_down(peer_down_t why_down) ;
 
 /*------------------------------------------------------------------------------
- * Configure the peer or peer group for specified AFI/SAFI.
+ * Down Peer -- bring down any existing session and restart if possible.
  *
- * If given address family is not configured, configure to default state.
+ * The following "why_down" values are special:
  *
- * Then for real peers:
+ *   - PEER_DOWN_NSF_CLOSE_SESSION
  *
- *   * if 'enable' and the address family is not already enabled:
+ *     causes NSF to be turned on as the peer is stopped and routes are cleared.
  *
- *   XXX XXX XXX
+ *   - PEER_DOWN_USER_SHUTDOWN
  *
- *   * if not 'enable' and the address family is not already disabled:
+ *     causes the peer to be shutdown -- so won't restart.
  *
- *   XXX XXX XXX
+ *   - PEER_DOWN_NEIGHBOR_DELETE
+ *
+ *     causes PEER_DOWN_USER_SHUTDOWN prior to deleting the peer completely.
+ *
+ * If there is an active session, then it must be disabled, sending the given
+ * notification, or one based on the reason for downing the peer.
+ *
+ * If there is no active session, any stale NSF routes will be cleared.
+ *
+ * So any session ends up as:
+ *
+ *
+ *   pisLimping  XXX -- was XXX , we now wait for BGP Engine
+ *                      to complete the disable action and signal when done.
+ *
+ * The result depends on the initial peer state:
+ *
+ *   0. pIdle
+ *
+ *
+ *
+ *   1. pStarted or pEstablished
+ *
+ *      The session will have been disabled -- and will now be sLimping.
+ *
+ *      When the .
+ *
+ *      Noting that PEER_DOWN_USER_SHUTDOWN and PEER_DOWN_NEIGHBOR_DELETE both
+ *      prevent any restart -- by setting PEER_FLAG_SHUTDOWN.
+ *
+ *   2. pEstablished
+ *
+ *      The session will have been disabled -- and will now be sLimping.
+ *
+ *      See bgp_peer_stop() for the state of the peer.
+ *
+ *   3. bgp_peer_pClearing
+ *
+ *      In this state the session can only be:
+ *
+ *        sLimping    -- session disable has been sent to the BGP Engine.
+ *        sDisabled   -- session has been disabled by the BGP Engine
+ *
+ *      because peer must have been pEstablished immediately before.
+ *
+ *      Do nothing -- will proceed to pIdle in due course.
+ *
+ *   4. bgp_peer_pDeleting
+ *
+ *      In this state there may be no session at all, or the session can
+ *      only be:
+ *
+ *        sIdle       -- session never got going
+ *        sLimping    -- session disable has been sent to the BGP Engine.
+ *        sDisabled   -- session has been disabled by the BGP Engine
+ *
+ *      Do nothing -- peer will be deleted in due course.
  */
-extern bgp_ret_t
-peer_set_af(bgp_peer peer, qafx_t qafx, bool enable)
+extern void
+bgp_peer_down(bgp_prun prun, peer_down_t why_down)
 {
-  bgp_prib   prib ;
-  qafx_bit_t qb ;
+  bgp_peer_down_notify(prun, why_down, NULL) ;
+} ;
 
-  qb = qafx_bit(qafx) ;
-
-  prib = peer->prib[qafx] ;
-
-  if (prib == NULL)
-    {
-      /* Create address family configuration.
-       */
-      qassert(!(peer->af_configured & qb)) ;
-
-      prib = bgp_prib_new(peer, qafx) ;
-      peer->af_configured |= qb ;
-    } ;
-
-  if ((qafx != qafx_ipv4_unicast) && !peer->sargs.can_capability
-                                  && !peer->sargs.cap_af_override)
-    enable = false ;
-
-  if (peer->ptype == PEER_TYPE_REAL)
-    {
-      qafx_set_t af_was_enabled ;       /* old value    */
-
-      af_was_enabled = peer->sargs.can_af ;
-
-      if (enable)
-        {
-          prib->af_status &= ~PEER_AFS_DISABLED ;
-          peer->sargs.can_af = af_was_enabled |  qb ;
-        }
-      else
-        {
-          prib->af_status |=  PEER_AFS_DISABLED ;
-          peer->sargs.can_af = af_was_enabled & ~qb ;
-        } ;
-
-      if (peer->sargs.can_af != af_was_enabled)
-        {
-          /* The enabled state of one or more address families has changed.
-           *
-           * Update the peer->idle state.
-           */
-          qassert((af_was_enabled == qafx_empty_set)
-                                                == (peer->idle & bgp_pisNoAF)) ;
-
-          if    (af_was_enabled == qafx_empty_set)
-            {
-              /* We had nothing, and now we have something !
-               */
-              peer->idle &= ~bgp_pisNoAF ;
-            }
-          else if (peer->sargs.can_af == qafx_empty_set)
-            {
-              /* We had something, and now we have nothing.
-               */
-              peer->idle &= ~bgp_pisNoAF ;
-            } ;
-
-          /* For address families which have been disabled, we withdraw all
-           * routes and discard the adj-out.
-           *
-           * For address families which have been enabled:
-           */
-          switch (peer->state)
-            {
-              case bgp_pDown:
-                if (peer->idle == bgp_pisRunnable)
-                  bgp_peer_start_running(peer) ;
-                break ;
-
-              case bgp_pStarted:
-              case bgp_pEstablished:
-                bgp_peer_restart(peer, PEER_DOWN_AF_ACTIVATE) ;
-                break ;
-
-              case bgp_pResetting:
-              case bgp_pDeleting:
-                break ;
-
-              default:
-                qassert(false) ;
-                break ;
-            } ;
-        } ;
-    }
-  return BGP_SUCCESS ;
+/*------------------------------------------------------------------------------
+ * Notify the far end that an error has been detected, and close down the
+ * session.
+ *
+ * The session will have been established, so the IdleHoldTime will be extended.
+ *
+ * Because it knows no better, the session will be restarted.
+ */
+extern void
+bgp_peer_down_error(bgp_prun prun,
+                                bgp_nom_code_t code, bgp_nom_subcode_t subcode)
+{
+  bgp_peer_down_error_with_data (prun, code, subcode, NULL, 0);
 }
 
 /*------------------------------------------------------------------------------
- * Deactivate the peer or peer group for specified AFI and SAFI.
+ * Notify the far end that an error has been detected, and close down the
+ * session.
+ *
+ * Same as above, except that this accepts a data part for the notification
+ * message -- but len may be 0 (and data may be null iff len == 0).
  */
-extern bgp_ret_t
-peer_deactivate (bgp_peer peer, qafx_t qafx)
+extern void
+bgp_peer_down_error_with_data (bgp_prun prun,
+                               bgp_nom_code_t code, bgp_nom_subcode_t subcode,
+                                               const byte* data, size_t datalen)
 {
-  bgp_prib  prib ;
-  qafx_bit_t qb ;
+  bgp_note note ;
+  note = bgp_note_new_with_data(code, subcode, data, datalen);
 
-  qb = qafx_bit(qafx) ;
+  bgp_peer_down_notify(prun, bgp_peer_map_notification(note), note) ;
+} ;
 
-  if (peer->ptype != PEER_TYPE_GROUP)
-    {
-      if (peer->c_af_member & qb)
-        return BGP_ERR_PEER_BELONGS_TO_GROUP;
-    }
+/*------------------------------------------------------------------------------
+ * Down Peer for the given reason, with the given notification, if any.
+ *
+ * See bgp_peer_down() above.
+ *
+ * If the session is active and has not been downed already, then we now down
+ * it and with suitable notification.
+ *
+ * If the notification is NULL and need to send a notification, make one up
+ * from the given reason for downing the peer.
+ *
+ * NB: once the session has been sent one notification, all further
+ *     notifications are ignored (and discarded, here).
+ *
+ *     If the session is not in a state to receive a notification, we ignore
+ *     this one (and discard it, here).
+ *
+ * NB: takes responsibility for the notification.
+ */
+static void
+bgp_peer_down_notify(bgp_prun prun, peer_down_t why_down, bgp_note note)
+{
+  /* Deal with session (if any)
+   */
+  if (note == NULL)
+    note = bgp_peer_map_peer_down(why_down) ;
+
+#if 0
+  if (bgp_session_disable(peer, note))
+    prun->session->note = bgp_note_copy(prun->session->note, note) ;
   else
-    {
-      bgp_peer member ;
+    bgp_note_free(note) ;
 
-      for (member = ddl_head(peer->group->members) ;
-           member != NULL ;
-           member = ddl_next(member->c, member.list))
-        {
-          if (member->c_af_member & qb)
-            return BGP_ERR_PEER_GROUP_MEMBER_EXISTS;
-        } ;
-    } ;
-
-  /* If we arrive here, the peer is either:
+  /* This logging is (more or less) part of commit 1212dc1961...
    *
-   *   - a real peer which is not a group member for this afi/safi
-   *
-   *   - a group which has no members in this afi/safi
-   *
-   * De-activate the address family configuration.
+   * TODO worry how useful this is and whether is not already done elsewhere.
    */
-  peer_deactivate_family (peer, qafx);
 
-  /* Deal with knock on effect on real peer
-   */
-  if (peer->ptype == PEER_TYPE_REAL)
+  /* Log some                                                           */
+  switch (why_down)
     {
-      bool down = true ;
+      case PEER_DOWN_USER_RESET:
+        zlog_info ("Notification sent to neighbor %s: User reset", prun->host);
+        break ;
 
-      if (down)
-        bgp_peer_down(peer, PEER_DOWN_AF_DEACTIVATE) ;
+      case PEER_DOWN_USER_SHUTDOWN:
+        zlog_info ("Notification sent to neighbor %s: shutdown", prun->host);
+        break ;
+
+      case PEER_DOWN_NOTIFY_SEND:
+        zlog_info ("Notification sent to neighbor %s: type %u/%u",
+                   prun->host, code, sub_code);
+        break ;
+
+      default:
+        zlog_info ("Notification sent to neighbor %s: configuration change",
+                prun->host);
+        break ;
     } ;
-
-  return BGP_SUCCESS ;
-} ;
-
-/*------------------------------------------------------------------------------
- * Activate the given address family for the given peer.
- *
- * Dismantles all address-family specific configuration....
- */
-static void
-peer_activate_family (bgp_peer peer, qafx_t qafx)
-{
-  bgp_prib prib ;
-  int i;
-  bgp_orf_name orf_name ;
-
-  prib = peer->prib[qafx] ;
-  if (prib != NULL)
-    return ;
-
-  peer->prib[qafx] = prib = bgp_prib_new(peer, qafx) ;
-
-  /* Set default neighbor send-community.
-   */
-  if (! bgp_option_check (BGP_OPT_CONFIG_CISCO))
-    peer->c->c_af[qafx]->c_flags |= (PEER_AFF_SEND_COMMUNITY |
-                                          PEER_AFF_SEND_EXT_COMMUNITY) ;
-
-  /* Set defaults for neighbor maximum-prefix -- unset
-   */
-  bgp_prib_pmax_reset(prib) ;
-} ;
-
-/*------------------------------------------------------------------------------
- * Deactivate the given address family for the given peer.
- *
- * Dismantles all address-family specific configuration, which means that
- * dismantles the peer_rib for the address family.
- */
-static void
-peer_deactivate_family (bgp_prun prun, qafx_t qafx)
-{
-  bgp_prib prib ;
-  int i;
-
-  prib = prun->prib[qafx] ;
-  if (prib == NULL)
-    return ;
-
-  /* Clear neighbor filter, route-map and unsuppress map
-   */
-  for (i = FILTER_IN; i < FILTER_MAX; i++)
-    {
-      prib->dlist[i] = access_list_clear_ref(prib->dlist[i]) ;
-      prib->plist[i] = prefix_list_clear_ref(prib->plist[i]) ;
-      prib->flist[i] = as_list_clear_ref(prib->flist[i]) ;
-    } ;
-
-  for (i = RMAP_IN; i < RMAP_COUNT; i++)
-    prib->rmap[i] = route_map_clear_ref(prib->rmap[i]) ;
-
-  prib->us_rmap      = route_map_clear_ref(prib->us_rmap) ;
-  prib->default_rmap = route_map_clear_ref(prib->default_rmap) ;
-
-  /* Clear all neighbor's address family c_flags.
-   */
-  prun->c->c_af[qafx]->c_flags = 0 ;
-  prib->af_status               = 0 ;
-
-  /* Clear ORF info
-   */
-  prib->orf_plist = prefix_bgp_orf_delete(prib->orf_plist) ;
-
-  /* Can now free the peer_rib structure.
-   */
-  prun->prib[qafx] = bgp_prib_free(prib) ;
-} ;
-
 #endif
 
+  /* Now worry about the state of the peer
+   */
+  if ((why_down == PEER_DOWN_USER_SHUTDOWN)
+                                     || (why_down == PEER_DOWN_NEIGHBOR_DELETE))
+    bgp_prun_shutdown(prun, why_down) ;
 
+  if (why_down != PEER_DOWN_NULL)
+    prun->last_reset = why_down ;
 #if 0
-/*------------------------------------------------------------------------------
- * If the given peer is not already an RS Client for the AFI/SAFI, set it to be
- *                                                                 an RS Client.
- *
- * Does nothing if is already a rib_rs peer.
- *
- * Creates a completely empty peer_rib, if one does not exist.  Creates as a
- * rib_main peer, associated with the rib_main bgp_rib (creating that, if
- * required).
- *
- * Creates a rib_rs bgp_rib if required.
- *
- * If was a rib_main peer, then discards any walker with which the peer was
- * associated.
- *
- * Returns:  address of the new peer_rib
- */
-extern bgp_prib
-peer_rib_set_rs(bgp_peer peer, qafx_t qafx)
-{
-  bgp_prib prib ;
-  bgp_rib  rib ;
+  switch (prun->state)
+    {
+      case bgp_pIdle:
 
-  prib = peer->prib[qafx] ;
+      case bgp_pStarted:
+        assert(!bgp_session_is_active(prun->session)
+                  || (prun->session->peer_state == bgp_session_psLimping)) ;
 
-  if (prib == NULL)
-    prib = bgp_prib_new(peer, qafx) ;   /* creates rib_main bgp_rib if
-                                         * required                     */
-  else if (prib->rib_type == rib_rs)
-    return prib ;
+        bgp_peer_nsf_stop (prun) ;        /* flush stale routes, if any   */
 
-  /* We (now) have a prib, and it is rib_main.
-   */
-  rib = prib->rib ;                     /* the rib_main bgp_rib         */
+        bgp_peer_enable(prun) ;           /* Restart if possible.         */
 
-  bgp_rib_walker_detach(prib) ;         /* stop if walking rib_main     */
+        break ;
 
-  rib->peer_count -= 1 ;
+      case bgp_pEstablished:
+        assert(prun->session->peer_state == bgp_session_psLimping) ;
 
-  rib = peer->bgp->rib[qafx] ;
-  if (rib == NULL)
-    rib = peer->bgp->rib[qafx] = bgp_rib_new(peer->bgp, qafx) ;
+        bgp_peer_stop(prun, why_down == PEER_DOWN_NSF_CLOSE_SESSION) ;
 
-  prib->rib = rib ;
+        break ;
 
-  rib->peer_count += 1 ;
+      case bgp_pIdle:
+        assert(   (prun->session->peer_state == bgp_session_psLimping)
+               || (prun->session->peer_state == bgp_session_psStopped) ) ;
 
-  return prib ;
-} ;
+        bgp_peer_nsf_stop (prun) ;        /* flush stale routes, if any   */
 
-/*------------------------------------------------------------------------------
- * If the given peer is an RS Client for the AFI/SAFI, unset that.
- *
- * Creates a completely empty peer_rib, if one does not exist.  Creates as a
- * rib_main peer, associated with the rib_main bgp_rib (creating that, if
- * required).
- *
- * Creates a rib_rs bgp_rib if required.
- *
- * Does nothing if is already a rib_rs peer.
- *
- * If was a rib_main peer, then discards any walker with which the peer was
- * associated.
- *
- * Returns:  address of the new peer_rib
- */
-extern bgp_prib
-peer_rib_unset_rs(bgp_peer peer, qafx_t qafx)
-{
-  bgp_prib prib ;
-  bgp_rib  rib ;
+        break ;
 
-  prib = peer->prib[qafx] ;
+      case bgp_pDeleting:
+        assert(   (prun->session == NULL)
+               || (prun->session->peer_state == bgp_session_psStopped)
+               || (prun->session->peer_state == bgp_session_psLimping) ) ;
+        break ;
 
-  if (prib == NULL)
-    prib = bgp_prib_new(peer, qafx) ;   /* creates rib_main bgp_rib if
-                                         * required                     */
-
-  if (prib->rib_type == rib_main)
-    return prib ;
-
-  /* We (now) have a prib, and it is rib_rs.
-   */
-  rib = prib->rib ;                     /* the rib_rs bgp_rib           */
-  qassert(rib->rib_type == rib_rs) ;
-
-  bgp_rib_walker_detach(prib) ;         /* stop if walking rib_rs       */
-
-  rib->peer_count -= 1 ;
-
-  rib = peer->bgp->rib[qafx][rib_main] ;
-  qassert(rib != NULL) ;
-
-  prib->rib_type = rib_main ;
-  prib->rib = rib ;
-
-  rib->peer_count += 1 ;
-
-  return prib ;
-} ;
-
+      default:
+        zabort("unknown prun->state") ;
+        break ;
+    } ;
 #endif
+} ;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -1227,63 +739,97 @@ peer_rib_unset_rs(bgp_peer peer, qafx_t qafx)
 /*==============================================================================
  *
  */
+static void bgp_peer_change_status (bgp_prun prun, bgp_prun_state_t new_state) ;
 
 
-static void bgp_peer_change_status (bgp_prun prun, bgp_peer_state_t new_state) ;
+/*------------------------------------------------------------------------------
+ * Administrative BGP peer stop event -- stop pEstablished peer.
+ *
+ * MUST be pEstablished.
+ *
+ * Sets pIdle and clears down all routes etc, subject to the required NSF.
+ *
+ * NB: Leaves any Max Prefix Timer running.
+ *
+ *     Starts Graceful Restart and Stale Route timers iff NSF and at least one
+ *     afi/safi is enabled for NSF.
+ */
+static void
+bgp_peer_stop (bgp_prun prun, bool nsf)
+{
+  assert( (prun->state == bgp_pStarted) ||
+          (prun->state == bgp_pEstablished) ) ;
+
+  /* bgp log-neighbor-changes of neighbor Down
+   */
+  if (prun->state == bgp_pEstablished)
+    if (prun->rp.do_log_neighbor_changes)
+      zlog_info ("%%ADJCHANGE: neighbor %s Down %s", prun->name,
+                          map_direct(bgp_peer_down_map, prun->last_reset).str) ;
+
+  /* Change state to pIdle -- turns off all timers.
+   */
+  bgp_peer_change_status(prun, bgp_pIdle) ;
+
+  prun->dropped++ ;
+  prun->resettime = bgp_clock () ;
+
+  /* Clear out routes, with NSF if required.
+   *
+   * Sets PEER_STATUS_NSF_WAIT iff NSF and at least one afi/safi is enabled
+   * for NSF.  Clears PEER_STATUS_NSF_WAIT otherwise.
+   */
+  bgp_clear_routes(prun, nsf) ;
+
+  /* graceful restart
+   */
+  if (prun->nsf_restarting)
+    {
+      if (BGP_DEBUG (events, EVENTS))
+        {
+          zlog_debug ("%s graceful restart timer started for %d sec",
+                      prun->name, prun->v_gr_restart);
+          zlog_debug ("%s graceful restart stalepath timer started for %d sec",
+                      prun->name, prun->brun->rp.defs.stalepath_time_secs);
+        } ;
+
+#if 0
+      BGP_TIMER_ON (prun->t_gr_restart, bgp_graceful_restart_timer_expire,
+                    prun->v_gr_restart) ;
+
+      if (nsf)
+        BGP_TIMER_ON (prun->t_gr_stale, bgp_graceful_stale_timer_expire,
+                                      prun->brun->rp.defs.stalepath_time_secs) ;
+#endif
+    } ;
+
+  /* Reset uptime.
+   */
+  prun->uptime = bgp_clock ();
+} ;
+
+
+
+
+
+/*==============================================================================
+ *
+ */
+
+
 static void bgp_peer_restart_timer_cancel (bgp_prun prun) ;
 
 static void bgp_peer_start_running(bgp_prun prun) ;
-static void bgp_peer_set_idle(bgp_prun prun, bgp_peer_idle_state_t new_idle,
+static void bgp_peer_set_idle(bgp_prun prun, bgp_prun_idle_state_t new_idle,
                                           bgp_note note, peer_down_t why_down) ;
-static void bgp_peer_set_down(bgp_prun prun, bgp_peer_idle_state_t new_idle,
+static void bgp_peer_set_down(bgp_prun prun, bgp_prun_idle_state_t new_idle,
                                           bgp_note note, peer_down_t why_down) ;
 static void bgp_peer_stop_running(bgp_prun prun, bgp_note note,
                                                          peer_down_t why_down) ;
 static void bgp_peer_restart_timer_cancel (bgp_prun prun) ;
 static void bgp_graceful_restart_timer_cancel (bgp_prun prun) ;
 static void bgp_graceful_stale_timer_cancel (bgp_prun prun) ;
-static bgp_note bgp_peer_map_peer_down(peer_down_t why_down) ;
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-/*------------------------------------------------------------------------------
- * Something has changed such that the peer may start, if it can.
- *
- * This will do nothing at all if is: (a) not pDown
- *                                    (b) not pisRunnable
- */
-extern void
-bgp_peer_start(bgp_prun prun)
-{
-  if (prun->state != bgp_pDown)
-    return ;
-
-  bgp_peer_start_running(prun) ;
-} ;
 
 /*------------------------------------------------------------------------------
  * Something has changed such that the peer may restart, if it can.
@@ -1291,7 +837,7 @@ bgp_peer_start(bgp_prun prun)
  *
  *
  */
-extern void
+static void
 bgp_peer_restart(bgp_prun prun, peer_down_t why_down)
 {
   switch (prun->state)
@@ -1305,11 +851,11 @@ bgp_peer_restart(bgp_prun prun, peer_down_t why_down)
       case bgp_pInitial:
         break ;
 
-      /* pDown, so must not have been pisRunnable, so if we now are, we can
+      /* pIdle, so must not have been pisReady, so if we now are, we can
        * kick off session.
        */
-      case bgp_pDown:
-        if (prun->idle == bgp_pisRunnable)
+      case bgp_pIdle:
+        if (prun->idle == bgp_pisReady)
           bgp_peer_start_running(prun) ;
         break ;
 
@@ -1321,7 +867,7 @@ bgp_peer_restart(bgp_prun prun, peer_down_t why_down)
        *     or arguments, which may or may not trigger a stop.
        */
       case bgp_pStarted:
-        if (prun->idle != bgp_pisRunnable)
+        if (prun->idle != bgp_pisReady)
           bgp_peer_stop_running(prun, NULL, why_down) ;
         else
           {
@@ -1329,7 +875,7 @@ bgp_peer_restart(bgp_prun prun, peer_down_t why_down)
 
             note = bgp_peer_map_peer_down(why_down) ;
 
-            note = bgp_session_recharge(prun->session, note) ;
+//          note = bgp_session_recharge(prun->session, note) ;  // TODO
             bgp_note_free(note) ;                 // TODO ???
           } ;
         break ;
@@ -1340,17 +886,10 @@ bgp_peer_restart(bgp_prun prun, peer_down_t why_down)
          *
          *   * if are (still) runnable, we need to reset.
          */
-        if (prun->idle != bgp_pisRunnable)
+        if (prun->idle != bgp_pisReady)
           bgp_peer_stop_running(prun, NULL, why_down) ;
         else
-          bgp_peer_set_idle(prun, bgp_pisReset, NULL, why_down) ;
-        break ;
-
-      /* pResetting, so ????....
-       *
-       *
-       */
-      case bgp_pResetting:
+          bgp_peer_set_idle(prun, bgp_pisIdle, NULL, why_down) ;
         break ;
 
       /* pDeleting, so don't expect any change of runability, but it makes
@@ -1361,36 +900,25 @@ bgp_peer_restart(bgp_prun prun, peer_down_t why_down)
     } ;
 } ;
 
-/*------------------------------------------------------------------------------
- * Something has changed in the cops, so (may) need to tell the session and
- *                                         its Acceptor, and may restart things.
- *
- *
- */
-extern void
-bgp_peer_cops_recharge(bgp_prun prun, peer_down_t why_down)
-{
-  ;
-} ;
+
 
 /*------------------------------------------------------------------------------
- * Start the given peer, provided is pisRunnable.
+ * Start the given peer, provided is pisReady.
  *
- * Peer must be pDown or pResetting, and pssStopped.
+ * Peer must be pIdle or pResetting.
  *
- * If is pisRunnable changes up to pStarted, and kicks off a session.  This is
+ * If is pisReady changes up to pStarted, and kicks off a session.  This is
  * the moment to make sure that the pribs for all af_
  */
 static void
 bgp_peer_start_running(bgp_prun prun)
 {
-  qassert((prun->state == bgp_pDown) || (prun->state == bgp_pResetting)) ;
-  qassert(prun->session_state   == bgp_pssStopped) ;
+  qassert(prun->state == bgp_pIdle) ;
 
-  if (prun->idle == bgp_pisRunnable)
+  if (prun->idle == bgp_pisReady)
     {
       bgp_peer_change_status(prun, bgp_pStarted) ;
-      bgp_session_start(prun->session);
+//    bgp_session_start(prun->session) ;        TODO ???
     } ;
 } ;
 
@@ -1413,19 +941,18 @@ bgp_peer_start_running(bgp_prun prun)
  *     pEstablished session to to be stopped.
  *
  *     So, this is for those cases where it is definitely known that anything
- *     pssRunning MUST stop -- eg. pisDown or pisMaxPrefixWait (the second
+ *     running MUST stop -- eg. pisDown or pisMaxPrefixWait (the second
  *     only occurs in pEstablished).
  *
  * NB: takes responsibility for the notification.
  */
 static void
-bgp_peer_set_idle(bgp_prun prun, bgp_peer_idle_state_t new_idle,
+bgp_peer_set_idle(bgp_prun prun, bgp_prun_idle_state_t new_idle,
                                             bgp_note note, peer_down_t why_down)
 {
   qassert((prun->state          == bgp_pStarted) ||
           (prun->state          == bgp_pEstablished) );
-  qassert(prun->session_state   == bgp_pssRunning) ;
-  qassert(prun->idle            == bgp_pisRunnable) ;
+  qassert(prun->idle            == bgp_pisReady) ;
 
   /* Check and set new level of idle-ness
    */
@@ -1433,11 +960,12 @@ bgp_peer_set_idle(bgp_prun prun, bgp_peer_idle_state_t new_idle,
     {
       default:
         qassert(false) ;
-        new_idle = bgp_pisReset ;
+        new_idle = bgp_pisClearing ;
         fall_through ;
 
       case bgp_pisMaxPrefixWait:
-      case bgp_pisReset:
+      case bgp_pisLimping:
+      case bgp_pisClearing:
         break ;
     } ;
 
@@ -1466,10 +994,10 @@ bgp_peer_set_idle(bgp_prun prun, bgp_peer_idle_state_t new_idle,
  * NB: takes responsibility for the notification.
  */
 extern void
-bgp_peer_set_down(bgp_prun prun, bgp_peer_idle_state_t new_idle,
+bgp_peer_set_down(bgp_prun prun, bgp_prun_idle_state_t new_idle,
                                             bgp_note note, peer_down_t why_down)
 {
-  bgp_peer_idle_state_t old_idle ;
+  bgp_prun_idle_state_t old_idle ;
 
   /* Insist on a single pisDown state.
    */
@@ -1509,7 +1037,6 @@ bgp_peer_set_down(bgp_prun prun, bgp_peer_idle_state_t new_idle,
 
       qassert( (prun->state != bgp_pStarted) &&
                (prun->state != bgp_pEstablished) ) ;
-      qassert(prun->session_state != bgp_pssRunning) ;
 
       bgp_note_free(note) ;     /* discard      */
       return ;
@@ -1532,43 +1059,42 @@ bgp_peer_set_down(bgp_prun prun, bgp_peer_idle_state_t new_idle,
   /* At this point: is now pisDown, but was not previously, so this is the
    *                                                      transition to pisDown.
    *
-   * If the session is bgp_pssRunning then we need down the session and
+   * If the prun is pStarted or pEstablished then we need down the session and
    * acceptor.  Otherwise, we need to down just the acceptor.
    */
-  switch (prun->session_state)
+  switch (prun->state)
     {
-      /* Make the transition to pResetting/pssLimping.  If was pEstablished,
+      /* Make the transition to pResetting.  If was pEstablished,
        * then start the clearing process running.
        *
        * When the session responds with a session-has-stopped message, can make
        * the transition out of pResetting, if is ready to do so.
        */
-      case bgp_pssRunning:
-        qassert((prun->state == bgp_pStarted) ||
-                (prun->state == bgp_pEstablished)) ;
+      case bgp_pInitial:
+      default:
+        qassert(false) ;
+        break ;
 
+      /* Bring down the session.
+       */
+      case bgp_pStarted:
+      case bgp_pEstablished:
         bgp_peer_stop_running(prun, note, why_down) ;
         break ;
 
-      /* These states are unchanged by going pisDown.
+      /* There is no session, but the Acceptor needs to be stopped.
        */
-      case bgp_pssInitial:
-      case bgp_pssDeleted:
+      case bgp_pIdle:
+      case bgp_pDeleting:
+//      bgp_session_recharge(prun->session, NULL) ;     TODO ??
         break ;
-
-      /* Going pisDown will affect the acceptor -- recharging the session
-       * clears csTrack, which will stop the Acceptor.
-       */
-      case bgp_pssLimping:
-      case bgp_pssStopped:
-        bgp_session_recharge(prun->session, NULL) ;
     } ;
 
   bgp_note_free(note) ;       /* done with (if any)   */
 } ;
 
 /*------------------------------------------------------------------------------
- * Stop the current pssRunning session session.
+ * Stop the current running session.
  *
  * If is pStarted, will stop the session -- unconditionally.
  *
@@ -1576,7 +1102,7 @@ bgp_peer_set_down(bgp_prun prun, bgp_peer_idle_state_t new_idle,
  *
  * When the dust settles, the session may automatically restart.
  *
- * Expects: prun->idle            to not be pisRunnable, any more.
+ * Expects: prun->idle            to not be pisReady, any more.
  *          prun->cops.conn_state to not be csRun, any more.
  *
  * NB: takes responsibility for the notification
@@ -1584,19 +1110,17 @@ bgp_peer_set_down(bgp_prun prun, bgp_peer_idle_state_t new_idle,
 static void
 bgp_peer_stop_running(bgp_prun prun, bgp_note note, peer_down_t why_down)
 {
-  qassert(prun->session_state   == bgp_pssRunning) ;
   qassert((prun->state          == bgp_pStarted) ||
           (prun->state          == bgp_pEstablished) );
-  qassert(prun->idle            != bgp_pisRunnable) ;
+  qassert(prun->idle            != bgp_pisReady) ;
 
   if (note == NULL)
     note = bgp_peer_map_peer_down(why_down) ;
 
-  note = bgp_session_recharge(prun->session, note) ;
+// note = bgp_session_recharge(prun->session, note) ;   TODO ???
   bgp_note_free(note) ;                 // TODO ???
 
-  prun->session_state = bgp_pssLimping ;
-  bgp_peer_change_status(prun, bgp_pResetting) ;
+  bgp_peer_change_status(prun, bgp_pIdle) ;
 
 #if 0
   if (prun->state == bgp_pEstablished)
@@ -1633,6 +1157,7 @@ bgp_peer_map_peer_down(peer_down_t why_down)
       /* Configuration changes that cause a session to be reset.
        */
       case PEER_DOWN_CONFIG_CHANGE:
+#if 0
       case PEER_DOWN_RID_CHANGE:
       case PEER_DOWN_REMOTE_AS_CHANGE:
       case PEER_DOWN_LOCAL_AS_CHANGE:
@@ -1655,6 +1180,7 @@ bgp_peer_map_peer_down(peer_down_t why_down)
       case PEER_DOWN_AF_DEACTIVATE:
       case PEER_DOWN_PASSWORD_CHANGE:
       case PEER_DOWN_ALLOWAS_IN_CHANGE:
+#endif
         subcode = BGP_NOMS_C_CONFIG ;
         break ;
 
@@ -1809,9 +1335,9 @@ bgp_peer_map_notification(bgp_note note)
  * will restart those timers.
  */
 static void
-bgp_peer_change_status (bgp_prun prun, bgp_peer_state_t new_state)
+bgp_peer_change_status (bgp_prun prun, bgp_prun_state_t new_state)
 {
-  bgp_peer_state_t old_state ;
+  bgp_prun_state_t old_state ;
 
   old_state = prun->state ;
 
@@ -1834,9 +1360,12 @@ bgp_peer_change_status (bgp_prun prun, bgp_peer_state_t new_state)
       case bgp_pInitial:
         break;
 
-      /* On entry to pDown...
+      /* On entry to pIdle...
        */
-      case bgp_pDown:
+      case bgp_pIdle:
+//      BGP_TIMER_OFF (prun->t_gr_restart);             TODO Graceful Restart
+
+        bgp_graceful_stale_timer_cancel(prun) ;
         break;
 
       /* On entry to pStarted...
@@ -1854,15 +1383,7 @@ bgp_peer_change_status (bgp_prun prun, bgp_peer_state_t new_state)
         bgp_graceful_restart_timer_cancel(prun) ;
         break;
 
-      /* On entry to pResetting...
-       */
-      case bgp_pResetting:
-        BGP_TIMER_OFF (prun->t_gr_restart);
-
-        bgp_graceful_stale_timer_cancel(prun) ;
-        break ;
-
-      /* Take a rubust vuew of unknown states...
+      /* Take a robust view of unknown states...
        */
       default:
         qassert(false) ;
@@ -1871,9 +1392,135 @@ bgp_peer_change_status (bgp_prun prun, bgp_peer_state_t new_state)
       /* On entry to pDeleting, turn off all timers.
        */
       case bgp_pDeleting:
-        BGP_TIMER_OFF (prun->t_gr_restart);
-        BGP_TIMER_OFF (prun->t_gr_stale);
+//      BGP_TIMER_OFF (prun->t_gr_restart);             TODO Graceful Restart
+//      BGP_TIMER_OFF (prun->t_gr_stale);
         break;
+    } ;
+} ;
+
+
+
+
+
+
+static void bgp_peer_stop (bgp_prun prun, bool nsf) ;
+static void bgp_peer_reset_enable(bgp_prun prun) ;
+static void bgp_peer_down_notify(bgp_prun prun, peer_down_t why_down,
+                                                                bgp_note note) ;
+static peer_down_t bgp_peer_map_notification(bgp_note noten) ;
+
+
+static int bgp_graceful_restart_timer_expire(void) ; //(struct thread *thread);
+static int bgp_graceful_stale_timer_expire(void) ;   //(struct thread *thread);
+
+
+/*------------------------------------------------------------------------------
+ * Clear out any stale routes, cancel any Graceful Restart timers.
+ *
+ * NB: may still be pResetting from when peer went down leaving these stale
+ *     routes.
+ *
+ * NB: assumes clearing stale routes will complete immediately !
+ */
+static void
+bgp_peer_clear_all_stale_routes (bgp_prun prun)
+{
+  qafx_t qafx ;
+
+  for (qafx = qafx_first ; qafx <= qafx_last ; qafx++)
+    {
+      bgp_prib prib ;
+
+      prib = prun->prib[qafx] ;
+
+      if ((prib != NULL) && prib->nsf_mode)
+        bgp_clear_stale_route (prun, qafx);
+    } ;
+
+  bgp_graceful_restart_timer_cancel(prun) ;
+  bgp_graceful_stale_timer_cancel(prun) ;
+
+  prun->nsf_restarting = false ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * If waiting for NSF peer to come back, stop now.
+ *
+ * When a session stops -- see bgp_peer_stop(), above -- the peer is set
+ * PEER_STATUS_NSF_WAIT iff there are now stale routes in the table, waiting
+ * for peer to come back.
+ *
+ * This function terminates that wait and clears out any stale routes, and
+ * cancels any timers.
+ *
+ * Also clears down all NSF c_flags.
+ *
+ * If is PEER_STATUS_NSF_WAIT, MUST be pIdle or pResetting.
+ *
+ * NB: may still be pResetting from when peer went down leaving these stale
+ *     routes.
+ *
+ * NB: assumes clearing stale routes will complete immediately !
+ */
+static void
+bgp_peer_nsf_stop (bgp_prun prun)
+{
+  qafx_t qafx ;
+
+  if (prun->nsf_restarting)
+    {
+      assert( (prun->state == bgp_pStarted)
+           || (prun->state == bgp_pIdle) ) ;
+
+      bgp_peer_clear_all_stale_routes (prun) ;
+    } ;
+
+  prun->nsf_enabled = false ;
+
+  for (qafx = qafx_first ; qafx <= qafx_last ; qafx++)
+    {
+      bgp_prib prib ;
+
+      prib = prun->prib[qafx] ;
+
+      if (prib != NULL)
+        prib->nsf_mode = false ;
+    } ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Reset peer "active" state -- tidies things up, ready for peer to be enabled.
+ *
+ * NB: can be called any number of times.
+ */
+static void
+bgp_peer_reset_enable(bgp_prun prun)
+{
+  qafx_t qafx ;
+
+  assert(prun->state != bgp_pEstablished) ;
+
+  prun->nsf_enabled = false ;
+
+  for (qafx = qafx_first ; qafx <= qafx_last ; qafx++)
+    {
+      bgp_prib     prib ;
+
+      /* Reset all negotiated variables
+       */
+      /* peer address family c_flags
+       */
+      prib = prun->prib[qafx] ;
+
+      if (prib != NULL)
+        {
+          prib->nsf_mode          = false ;
+//        prib->af_status_r    = 0 ;    XXX ????
+        } ;
+
+      /* Received ORF prefix-filter
+       */
+      prib->orf_plist = prefix_bgp_orf_delete(prib->orf_plist) ;
     } ;
 } ;
 
@@ -1934,7 +1581,7 @@ static void
 bgp_peer_restart_timer_expired(qtimer qtr, void* timer_info, qtime_mono_t when)
 {
   bgp_prun              prun;
-  bgp_peer_idle_state_t idle ;
+  bgp_prun_idle_state_t idle ;
 
   prun = timer_info ;
   qassert(prun->qt_restart == qtr) ;
@@ -1952,30 +1599,28 @@ bgp_peer_restart_timer_expired(qtimer qtr, void* timer_info, qtime_mono_t when)
    *
    *   * if is not bc_is_up...
    *
-   *   * ...or peer is not pDown,
-   *
-   *   * ...or session_state is not pssStopped,
+   *   * ...or peer is not pIdle,
    *
    * ...then we are not yet ready to restart, so make sure is bc_is_reset and
    * exit -- something else must happen to set the restart timer again.
    */
-  idle &= ~(bgp_pisReset | bgp_pisMaxPrefixWait) ;
+  idle &= ~bgp_pisMaxPrefixWait ;
 
-  if ((prun->state != bgp_pDown) || (prun->session_state != bgp_pssStopped))
+  if (prun->state != bgp_pIdle)
     {
-      /* If we are not bgp_pDown, then we are still resetting, so restore
+      /* If we are not bgp_pIdle, then we are still resetting, so restore
        * that state.
        *
        * If the session has not stopped, ditto.
        */
-      idle |= bgp_pisReset ;
+//    idle |= bgp_pisReset ;            XXX ???
     }
 
   /* Update the idles state at set things running if can do so.
    */
   prun->idle = idle ;
 
-  if (idle == bgp_pisRunnable)
+  if (!(idle & (bgp_pisUnready | bgp_pisDown)))
     bgp_peer_start_running(prun);
 } ;
 
@@ -2054,8 +1699,7 @@ bgp_peer_pmax_check(bgp_prib prib)
       store_b (&p[2], get_iSAFI(prib->qafx)) ;
       store_nl(&p[3], prib->pmax.limit) ;
 
-      qassert((prib->prun->state == bgp_pEstablished) &&
-                                (prib->prun->session_state == bgp_pssRunning)) ;
+      qassert(prib->prun->state == bgp_pEstablished) ;
 
       if (prib->pmax.restart == 0)
         {
@@ -2349,676 +1993,12 @@ peer_clear_soft (bgp_prun prun, qafx_t qafx, bgp_clear_type_t stype)
   return BGP_SUCCESS ;
 } ;
 
-#if 0
-/*------------------------------------------------------------------------------
- * If peer is RSERVER_CLIENT in at least one address family and is not member
- * of a peer_group for that family, return true.
- *
- * Used to check whether the peer is included in list bgp->rsclient.
- */
-extern bool
-peer_rsclient_active (bgp_peer peer)
-{
-  qafx_t qafx ;
 
-  for (qafx = qafx_first ; qafx <= qafx_last ; ++qafx)
-    if ((peer->x_af_flags_x[qafx] & PEER_AFF_RSERVER_CLIENT)
-                                                && ! peer->af_group[qafx])
-      return true ;
 
-  return false ;
-}
-#endif
 
-/*==============================================================================
- * Enabling and disabling a peer.
- */
 
-/*------------------------------------------------------------------------------
- * Shut-down the given prun.
- *
- * Bring to a dead stop and dismantle the prun.
- */
-extern void
-bgp_prun_shutdown(bgp_prun prun, peer_down_t why_down)
-{
-  qafx_t qafx ;
 
-  bgp_session_shutdown(prun, why_down) ;
 
-  for (qafx = qafx_first ; qafx <= qafx_last ; ++qafx)
-    {
-      bgp_prib prib ;
-
-      /* NB: we do *not* use the prun->prib_running at this stage, because
-       *     that may have been dismantled (eg if we are shutting down because
-       *     no address families are runnable).
-       */
-
-      prib = prun->prib[qafx] ;
-      if (prib == NULL)
-        continue ;
-
-      bgp_prib_shutdown(prib) ;
-    } ;
-} ;
-
-/*------------------------------------------------------------------------------
- * Execute the given prun.
- *
- *   * link in all required ribs for all qafx
- *
- *   * link in all required filters for qafx
- *
- */
-extern void
-bgp_prun_execute(bgp_prun prun, peer_down_t why_down)
-{
-  qafx_t qafx ;
-
-  bgp_session_shutdown(prun, why_down) ;
-
-  for (qafx = qafx_first ; qafx <= qafx_last ; ++qafx)
-    {
-      bgp_prib prib ;
-
-      /* NB: we do *not* use the prun->prib_running at this stage, because
-       *     that may have been dismantled (eg if we are shutting down because
-       *     no address families are runnable).
-       */
-
-      prib = prun->prib[qafx] ;
-      if (prib == NULL)
-        continue ;
-
-      bgp_prib_shutdown(prib) ;
-    } ;
-} ;
-
-
-/*------------------------------------------------------------------------------
- * Administrative BGP peer stop event -- stop pEstablished peer.
- *
- * MUST be pEstablished.
- *
- * Sets pDown and clears down all routes etc, subject to the required NSF.
- *
- * NB: Leaves any Max Prefix Timer running.
- *
- *     Starts Graceful Restart and Stale Route timers iff NSF and at least one
- *     afi/safi is enabled for NSF.
- */
-static void
-bgp_peer_stop (bgp_prun prun, bool nsf)
-{
-  assert( (prun->state == bgp_pStarted) ||
-          (prun->state == bgp_pEstablished) ) ;
-
-  /* bgp log-neighbor-changes of neighbor Down
-   */
-  if (prun->state == bgp_pEstablished)
-    if (prun->rp.do_log_neighbor_changes)
-      zlog_info ("%%ADJCHANGE: neighbor %s Down %s", prun->name,
-                          map_direct(bgp_peer_down_map, prun->last_reset).str) ;
-
-  /* Change state to pDown -- turns off all timers.
-   */
-  bgp_peer_change_status(prun, bgp_pDown) ;
-
-  prun->dropped++ ;
-  prun->resettime = bgp_clock () ;
-
-  /* Clear out routes, with NSF if required.
-   *
-   * Sets PEER_STATUS_NSF_WAIT iff NSF and at least one afi/safi is enabled
-   * for NSF.  Clears PEER_STATUS_NSF_WAIT otherwise.
-   */
-  bgp_clear_routes(prun, nsf) ;
-
-  /* graceful restart
-   */
-  if (prun->nsf_restarting)
-    {
-      if (BGP_DEBUG (events, EVENTS))
-        {
-          zlog_debug ("%s graceful restart timer started for %d sec",
-                      prun->name, prun->v_gr_restart);
-          zlog_debug ("%s graceful restart stalepath timer started for %d sec",
-                      prun->name, prun->brun->rp.defs.stalepath_time_secs);
-        } ;
-
-      BGP_TIMER_ON (prun->t_gr_restart, bgp_graceful_restart_timer_expire,
-                    prun->v_gr_restart) ;
-
-      if (nsf)
-        BGP_TIMER_ON (prun->t_gr_stale, bgp_graceful_stale_timer_expire,
-                                      prun->brun->rp.defs.stalepath_time_secs) ;
-    } ;
-
-  /* Reset uptime.
-   */
-  prun->uptime = bgp_clock ();
-
-#ifdef HAVE_SNMP
-  bgpTrapBackwardTransition (prun);
-#endif /* HAVE_SNMP */
-} ;
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-static void bgp_peer_stop (bgp_prun prun, bool nsf) ;
-static void bgp_peer_reset_enable(bgp_prun prun) ;
-static void bgp_peer_down_notify(bgp_prun prun, peer_down_t why_down,
-                                                                bgp_note note) ;
-static void bgp_peer_shutdown(bgp_prun prun) ;
-static bgp_note bgp_peer_map_peer_down(peer_down_t why_down) ;
-static peer_down_t bgp_peer_map_notification(bgp_note noten) ;
-
-
-static int bgp_graceful_restart_timer_expire (struct thread *thread);
-static int bgp_graceful_stale_timer_expire (struct thread *thread);
-
-
-/*------------------------------------------------------------------------------
- * Enable Peer
- *
- * This means that something has changed, and session can be started, if no
- * session has already started.
- *
- * So does nothing unless in pIdle, and expects the peer session state to be:
- *
- *   - pssStopped XXX
- *
- *   - pssRunning XXX
- *
- *   - pssLimping XXX -- cannot, yet, start a new session -- that will happen in
- *                      due course.
- *
- * This means that any change which requires the session to be taken down and
- * restarted needs to call bgp_peer_disable().
- *
- * The other peer states:
- *
- *   - pEstablished
- *
- *   - pResetting -- cannot restart the peer yet, that will happen in due course.
- *
- *   - pDeleted   -- Enable peer makes no sense...  asserts invalid.
- *
- * TODO: assert !pEstablished in bgp_peer_enable ?
- */
-extern void
-bgp_peer_enable(bgp_prun prun)
-{
-#if 0
-  switch (prun->state)
-    {
-      case bgp_pDown:
-        if (prun->sargs.can_af == qafx_empty_set)
-          {
-            break ;
-          } ;
-
-        fall_through ;
-
-      case bgp_pDown:
-        /* The peer is disabled when no address family is enabled.
-         *
-         * An address family is enabled when it is (a) activated and (b) it is
-         * not PEER_FLAG_SHUTDOWN or PEER_STATUS_PREFIX_OVERFLOW or
-         * PEER_AFS_DISABLED or otherwise disabled.
-         *
-         * If no address family is enabled, will do nothing and will remain
-         * pDown.
-         */
-        if (prun->sargs.can_af == qafx_empty_set)
-          break ;
-
-        qassert(!peer_is_disabled(prun)) ;
-        qassert(prun->session->peer_state == bgp_pssStopped) ;
-
-        prun->state = bgp_pStarted ;
-        fall_through ;
-
-      case bgp_pStarted:
-        /* The peer is already enabled... so we
-         *
-         *
-         *
-         */
-        if (prun->af_configured == qafx_empty_set)
-          {
-            break ;
-          } ;
-
-        qassert(   !(prun->c_flags  & PEER_FLAG_SHUTDOWN)
-                && !(prun->sflags & PEER_STATUS_PREFIX_OVERFLOW) ) ;
-
-        qassert(prun->session->peer_state == bgp_pssStopped) ;
-
-        bgp_peer_reset_enable(prun) ;   /* tidy up      */
-        bgp_session_config(prun) ;
-        bgp_peer_change_status (prun, bgp_pStarted) ;
-
-        break ;
-
-
-
-
-        if (bgp_session_is_active(prun->session))
-          assert(prun->session_state != bgp_psEstablished) ;
-        else
-          {
-            if ( (prun->af_configured != qafx_empty_set)
-                && !(prun->c_flags  & PEER_FLAG_SHUTDOWN)
-                && !(prun->sflags & PEER_STATUS_PREFIX_OVERFLOW) )
-              {
-                /* enable the session
-                 */
-                bgp_peer_reset_enable(prun) ;   /* tidy up      */
-                bgp_session_config(prun) ;
-                bgp_peer_change_status (prun, bgp_pStarted) ;
-              } ;
-          } ;
-        break ;
-
-      case bgp_pEstablished:
-        break ;
-
-      case bgp_pDeleting:
-        zabort("cannot enable a pDeleting peer") ;
-        break ;
-
-      default:
-        zabort("unknown prun->state") ;
-        break ;
-    } ;
-
-#endif
-} ;
-
-/*------------------------------------------------------------------------------
- * Update "open_state", if possible, for given peer -- in pStarted state.
- *
- * This is used when the peer is pStarted, but an address family has been
- * enabled or disabled, or any of the bgp_open_state has been changed.
- *
- * pStarted means that a session enable message has been sent to the BGP
- * Engine, but the session is not known (to the Peering Engine) to have
- * established, yet.  There are two cases:
- *
- *   1) the OPEN message has not, yet been sent.
- *
- *      in this case, the session->open_send can be updated, so the change in
- *      the enabled address families does not require the session to be
- *      disabled and re-enabled.
- *
- *   2) the OPEN message has been sent.
- *
- *      so there is no alternative, the session must be disabled and later
- *      automatically re-enabled.
- *
- * NB: does nothing for peers which are not pStarted.
- */
-extern void
-bgp_peer_update_open_state(bgp_prun prun, peer_down_t why_down)
-{
-  bgp_open_state open_send_new, open_send_was ;
-
-  if (prun->state != bgp_pStarted)
-    return ;
-
-
-} ;
-
-/*------------------------------------------------------------------------------
- * Down Peer -- bring down any existing session and restart if possible.
- *
- * The following "why_down" values are special:
- *
- *   - PEER_DOWN_NSF_CLOSE_SESSION
- *
- *     causes NSF to be turned on as the peer is stopped and routes are cleared.
- *
- *   - PEER_DOWN_USER_SHUTDOWN
- *
- *     causes the peer to be shutdown -- so won't restart.
- *
- *   - PEER_DOWN_NEIGHBOR_DELETE
- *
- *     causes PEER_DOWN_USER_SHUTDOWN prior to deleting the peer completely.
- *
- * If there is an active session, then it must be disabled, sending the given
- * notification, or one based on the reason for downing the peer.
- *
- * If there is no active session, any stale NSF routes will be cleared.
- *
- * So any session ends up as:
- *
- *   pssStopped  XXX -- wasn't active and still isn't
- *
- *   pssLimping  XXX -- was pssRunning, we now wait for BGP Engine
- *                      to complete the disable action and signal when done.
- *
- * The result depends on the initial peer state:
- *
- *   0. pDown
- *
- *
- *
- *   1. pStarted or pEstablished
- *
- *      The session will have been disabled -- and will now be sLimping.
- *
- *      When the .
- *
- *      Noting that PEER_DOWN_USER_SHUTDOWN and PEER_DOWN_NEIGHBOR_DELETE both
- *      prevent any restart -- by setting PEER_FLAG_SHUTDOWN.
- *
- *   2. pEstablished
- *
- *      The session will have been disabled -- and will now be sLimping.
- *
- *      See bgp_peer_stop() for the state of the peer.
- *
- *   3. bgp_peer_pClearing
- *
- *      In this state the session can only be:
- *
- *        sLimping    -- session disable has been sent to the BGP Engine.
- *        sDisabled   -- session has been disabled by the BGP Engine
- *
- *      because peer must have been pEstablished immediately before.
- *
- *      Do nothing -- will proceed to pIdle in due course.
- *
- *   4. bgp_peer_pDeleting
- *
- *      In this state there may be no session at all, or the session can
- *      only be:
- *
- *        sIdle       -- session never got going
- *        sLimping    -- session disable has been sent to the BGP Engine.
- *        sDisabled   -- session has been disabled by the BGP Engine
- *
- *      Do nothing -- peer will be deleted in due course.
- */
-extern void
-bgp_peer_down(bgp_prun prun, peer_down_t why_down)
-{
-  bgp_peer_down_notify(prun, why_down, NULL) ;
-} ;
-
-/*------------------------------------------------------------------------------
- * Notify the far end that an error has been detected, and close down the
- * session.
- *
- * The session will have been established, so the IdleHoldTime will be extended.
- *
- * Because it knows no better, the session will be restarted.
- */
-extern void
-bgp_peer_down_error(bgp_prun prun,
-                                bgp_nom_code_t code, bgp_nom_subcode_t subcode)
-{
-  bgp_peer_down_error_with_data (prun, code, subcode, NULL, 0);
-}
-
-/*------------------------------------------------------------------------------
- * Notify the far end that an error has been detected, and close down the
- * session.
- *
- * Same as above, except that this accepts a data part for the notification
- * message -- but len may be 0 (and data may be null iff len == 0).
- */
-extern void
-bgp_peer_down_error_with_data (bgp_prun prun,
-                               bgp_nom_code_t code, bgp_nom_subcode_t subcode,
-                                               const byte* data, size_t datalen)
-{
-  bgp_note note ;
-  note = bgp_note_new_with_data(code, subcode, data, datalen);
-
-  bgp_peer_down_notify(prun, bgp_peer_map_notification(note), note) ;
-} ;
-
-/*------------------------------------------------------------------------------
- * Down Peer for the given reason, with the given notification, if any.
- *
- * See bgp_peer_down() above.
- *
- * If the session is active and has not been downed already, then we now down
- * it and with suitable notification.
- *
- * If the notification is NULL and need to send a notification, make one up
- * from the given reason for downing the peer.
- *
- * NB: once the session has been sent one notification, all further
- *     notifications are ignored (and discarded, here).
- *
- *     If the session is not in a state to receive a notification, we ignore
- *     this one (and discard it, here).
- *
- * NB: takes responsibility for the notification.
- */
-static void
-bgp_peer_down_notify(bgp_prun prun, peer_down_t why_down, bgp_note note)
-{
-  /* Deal with session (if any)
-   */
-  if (note == NULL)
-    note = bgp_peer_map_peer_down(why_down) ;
-
-#if 0
-  if (bgp_session_disable(peer, note))
-    prun->session->note = bgp_note_copy(prun->session->note, note) ;
-  else
-    bgp_note_free(note) ;
-
-  /* This logging is (more or less) part of commit 1212dc1961...
-   *
-   * TODO worry how useful this is and whether is not already done elsewhere.
-   */
-
-  /* Log some                                                           */
-  switch (why_down)
-    {
-      case PEER_DOWN_USER_RESET:
-        zlog_info ("Notification sent to neighbor %s: User reset", prun->host);
-        break ;
-
-      case PEER_DOWN_USER_SHUTDOWN:
-        zlog_info ("Notification sent to neighbor %s: shutdown", prun->host);
-        break ;
-
-      case PEER_DOWN_NOTIFY_SEND:
-        zlog_info ("Notification sent to neighbor %s: type %u/%u",
-                   prun->host, code, sub_code);
-        break ;
-
-      default:
-        zlog_info ("Notification sent to neighbor %s: configuration change",
-                prun->host);
-        break ;
-    } ;
-#endif
-
-  /* Now worry about the state of the peer
-   */
-  if ((why_down == PEER_DOWN_USER_SHUTDOWN)
-                                     || (why_down == PEER_DOWN_NEIGHBOR_DELETE))
-    bgp_peer_shutdown(prun) ;
-
-  if (why_down != PEER_DOWN_NULL)
-    prun->last_reset = why_down ;
-#if 0
-  switch (prun->state)
-    {
-      case bgp_pDown:
-
-      case bgp_pStarted:
-        assert(!bgp_session_is_active(prun->session)
-                  || (prun->session->peer_state == bgp_session_psLimping)) ;
-
-        bgp_peer_nsf_stop (prun) ;        /* flush stale routes, if any   */
-
-        bgp_peer_enable(prun) ;           /* Restart if possible.         */
-
-        break ;
-
-      case bgp_pEstablished:
-        assert(prun->session->peer_state == bgp_session_psLimping) ;
-
-        bgp_peer_stop(prun, why_down == PEER_DOWN_NSF_CLOSE_SESSION) ;
-
-        break ;
-
-      case bgp_pDown:
-        assert(   (prun->session->peer_state == bgp_session_psLimping)
-               || (prun->session->peer_state == bgp_session_psStopped) ) ;
-
-        bgp_peer_nsf_stop (prun) ;        /* flush stale routes, if any   */
-
-        break ;
-
-      case bgp_pDeleting:
-        assert(   (prun->session == NULL)
-               || (prun->session->peer_state == bgp_session_psStopped)
-               || (prun->session->peer_state == bgp_session_psLimping) ) ;
-        break ;
-
-      default:
-        zabort("unknown prun->state") ;
-        break ;
-    } ;
-#endif
-} ;
-
-/*------------------------------------------------------------------------------
- * Clear out any stale routes, cancel any Graceful Restart timers.
- *
- * NB: may still be pResetting from when peer went down leaving these stale
- *     routes.
- *
- * NB: assumes clearing stale routes will complete immediately !
- */
-static void
-bgp_peer_clear_all_stale_routes (bgp_prun prun)
-{
-  qafx_t qafx ;
-
-  for (qafx = qafx_first ; qafx <= qafx_last ; qafx++)
-    {
-      bgp_prib prib ;
-
-      prib = prun->prib[qafx] ;
-
-      if ((prib != NULL) && prib->nsf_mode)
-        bgp_clear_stale_route (prun, qafx);
-    } ;
-
-  bgp_graceful_restart_timer_cancel(prun) ;
-  bgp_graceful_stale_timer_cancel(prun) ;
-
-  prun->nsf_restarting = false ;
-} ;
-
-/*------------------------------------------------------------------------------
- * If waiting for NSF peer to come back, stop now.
- *
- * When a session stops -- see bgp_peer_stop(), above -- the peer is set
- * PEER_STATUS_NSF_WAIT iff there are now stale routes in the table, waiting
- * for peer to come back.
- *
- * This function terminates that wait and clears out any stale routes, and
- * cancels any timers.
- *
- * Also clears down all NSF c_flags.
- *
- * If is PEER_STATUS_NSF_WAIT, MUST be pIdle or pResetting.
- *
- * NB: may still be pResetting from when peer went down leaving these stale
- *     routes.
- *
- * NB: assumes clearing stale routes will complete immediately !
- */
-static void
-bgp_peer_nsf_stop (bgp_prun prun)
-{
-  qafx_t qafx ;
-
-  if (prun->nsf_restarting)
-    {
-      assert( (prun->state == bgp_pStarted)
-           || (prun->state == bgp_pDown) ) ;
-
-      bgp_peer_clear_all_stale_routes (prun) ;
-    } ;
-
-  prun->nsf_enabled = false ;
-
-  for (qafx = qafx_first ; qafx <= qafx_last ; qafx++)
-    {
-      bgp_prib prib ;
-
-      prib = prun->prib[qafx] ;
-
-      if (prib != NULL)
-        prib->nsf_mode = false ;
-    } ;
-} ;
-
-/*------------------------------------------------------------------------------
- * Reset peer "active" state -- tidies things up, ready for peer to be enabled.
- *
- * NB: can be called any number of times.
- */
-static void
-bgp_peer_reset_enable(bgp_prun prun)
-{
-  qafx_t qafx ;
-
-  assert(prun->state != bgp_pEstablished) ;
-
-  prun->nsf_enabled = false ;
-
-  for (qafx = qafx_first ; qafx <= qafx_last ; qafx++)
-    {
-      bgp_prib     prib ;
-
-      /* Reset all negotiated variables
-       */
-      /* peer address family c_flags
-       */
-      prib = prun->prib[qafx] ;
-
-      if (prib != NULL)
-        {
-          prib->nsf_mode          = false ;
-          prib->af_status_r    = 0 ;
-        } ;
-
-      /* Received ORF prefix-filter
-       */
-      prib->orf_plist = prefix_bgp_orf_delete(prib->orf_plist) ;
-    } ;
-} ;
 
 
 /*==============================================================================
@@ -3033,10 +2013,10 @@ static void bgp_session_has_disabled(bgp_session session);
 extern void
 bgp_session_has_established(bgp_session session)
 {
-  bgp_prun         prun ;
-  bgp_sargs args ;
-  qafx_t           qafx ;
-  int  nsf_af_count ;
+  bgp_prun  prun ;
+  bgp_sargs sargs ;
+  qafx_t    qafx ;
+  int       nsf_af_count ;
 
   prun = session->prun ;
   assert(prun->session == session) ;            /* Safety first         */
@@ -3047,7 +2027,7 @@ bgp_session_has_established(bgp_session session)
    */
   bgp_peer_change_status (prun, bgp_pEstablished);
 
-  /* The session->args now belong to the peer, as do the open_sent and
+  /* The session->sargs now belong to the peer, as do the open_sent and
    * open_recv.
    *
    * Extract a few things that affect the state of the peer or address
@@ -3057,10 +2037,10 @@ bgp_session_has_established(bgp_session session)
    * spin-lock should now be visible in this pthread.  [This may not be
    * essential, but does not hurt.]
    */
-  args = qa_get_ptr((void**)&session->sargs) ;
+  sargs = qa_get_ptr((void**)&session->sargs) ;
 
   prun->rp.sargs_conf.remote_id = session->open_recv->sargs->remote_id;
-  prun->af_running = args->can_af ;
+  prun->af_running = sargs->can_af ;
 
   /* Clear down the state of all known address families, and set anything
    * we now know.
@@ -3081,12 +2061,12 @@ bgp_session_has_established(bgp_session session)
       if (!(prun->af_running & qb))
         continue ;              /* not running          */
 
-      prib->session_up ;
+//    prib->session_up ;        /* TODO ???             */
 
-      if (args->gr.can_preserve & qb)
+      if (sargs->gr.can_preserve & qb)
         {
           prib->gr_can_preserve  = true ;
-          prib->gr_has_preserved = (args->gr.has_preserved & qb) ;
+          prib->gr_has_preserved = (sargs->gr.has_preserved & qb) ;
         }
       else
         {
@@ -3094,13 +2074,13 @@ bgp_session_has_established(bgp_session session)
           prib->gr_has_preserved = false ;
         }
 
-      prib->orf_pfx_can_send = (args->can_orf_pfx.af[qafx]
+      prib->orf_pfx_can_send = (sargs->can_orf_pfx.af[qafx]
                                                       & (ORF_SM | ORF_SM_pre)) ;
-      prib->orf_pfx_may_recv = (args->can_orf_pfx.af[qafx]
+      prib->orf_pfx_may_recv = (sargs->can_orf_pfx.af[qafx]
                                                       & (ORF_RM | ORF_RM_pre)) ;
     } ;
 
-    prun->v_gr_restart = args->gr.restart_time;
+    prun->v_gr_restart = sargs->gr.restart_time;
 
     /* TODO: should we do anything with this? */
   #if 0
@@ -3412,8 +2392,6 @@ bgp_session_has_stopped(bgp_session session, bgp_note note)
     prun = session->prun ;
     assert(prun->session == session) ;    /* Safety first         */
 
-   prun->session_state = bgp_pssStopped ;
-
     /* Immediately discard any other messages for this session.
      */
     mqueue_revoke(re_nexus->queue, session, 0) ;
@@ -3460,8 +2438,9 @@ bgp_session_has_stopped(bgp_session session, bgp_note note)
  * Clears down PEER_STATUS_NSF_MODE & PEER_STATUS_NSF_WAIT.
  */
 static int
-bgp_graceful_restart_timer_expire (struct thread *thread)
+bgp_graceful_restart_timer_expire (void) //(struct thread *thread)
 {
+#if 0                           // TODO Graceful Restart
   bgp_prun prun;
 
   prun = THREAD_ARG (thread);
@@ -3472,6 +2451,7 @@ bgp_graceful_restart_timer_expire (struct thread *thread)
 
   bgp_peer_nsf_stop (prun) ;
 
+#endif
   return 0;
 }
 
@@ -3483,12 +2463,14 @@ bgp_graceful_restart_timer_expire (struct thread *thread)
 static void
 bgp_graceful_restart_timer_cancel (bgp_prun prun)
 {
+#if 0                           // TODO Graceful Restart
   if (prun->t_gr_restart)
     {
       BGP_TIMER_OFF (prun->t_gr_restart);
       if (BGP_DEBUG (events, EVENTS))
         zlog_debug ("%s graceful restart timer stopped", prun->name);
     }
+#endif
 } ;
 
 /*------------------------------------------------------------------------------
@@ -3505,8 +2487,9 @@ bgp_graceful_restart_timer_cancel (bgp_prun prun)
  * Clears down PEER_STATUS_NSF_MODE & PEER_STATUS_NSF_WAIT.
  */
 static int
-bgp_graceful_stale_timer_expire (struct thread *thread)
+bgp_graceful_stale_timer_expire (void) // (struct thread *thread)
 {
+#if 0                           // TODO Graceful Restart
   bgp_prun prun;
 
   prun = THREAD_ARG (thread);
@@ -3520,6 +2503,7 @@ bgp_graceful_stale_timer_expire (struct thread *thread)
   else
     bgp_peer_nsf_stop(prun) ;
 
+#endif
   return 0;
 }
 
@@ -3531,12 +2515,14 @@ bgp_graceful_stale_timer_expire (struct thread *thread)
 static void
 bgp_graceful_stale_timer_cancel (bgp_prun prun)
 {
+#if 0                           // TODO Graceful Restart
   if (prun->t_gr_stale)
     {
       BGP_TIMER_OFF (prun->t_gr_stale);
       if (BGP_DEBUG (events, EVENTS))
         zlog_debug ("%s graceful restart stalepath timer stopped", prun->name);
     }
+#endif
 } ;
 
 #if 0
@@ -3608,4 +2594,888 @@ bgp_peer_get_ifaddress(bgp_prun prun, const char* ifname, sa_family_t af)
 
   return NULL ;
 } ;
+
+#if 0
+
+
+/*------------------------------------------------------------------------------
+ * Allocate new peer object -- for peer or peer-group
+ *
+ * Attaches to the
+ *
+ * Adds structure to the
+ *
+ * Returns:  address of new peer object.
+ *
+ * NB: the peer object owns a lock on itself.
+ *
+ *     That lock is cleared by bgp_peer_delete().
+ */
+extern bgp_peer
+bgp_peer_new(bgp_inst bgp, bgp_peer_type_t type, chs_c name)
+{
+  bgp_peer peer;
+
+  /* bgp argument is absolutely required
+   */
+  assert (bgp != NULL) ;
+
+  /* Allocate new peer: point it at owning bgp instance and take a lock on that.
+   *
+   * All types of peer have a bgp parent.
+   */
+  peer = XCALLOC (MTYPE_BGP_PEER, sizeof(bgp_peer_t));
+
+  peer->parent_bgp  = bgp_lock (bgp) ;
+  peer->ptype = type ;
+
+  /* Zeroizing has set:
+   *
+   *   * bgp                    -- X            -- set, above
+   *   * type                   -- X            -- set, above
+   *
+   *   * state                  -- bgp_pInitial
+   *   * config                 -- X            -- set, below
+   *
+   *   * peer_ie                -- NULL         -- none, yet
+   *   * session                -- NULL         -- none, yet
+   *
+   *   * session_state          -- bgp_pssInitial
+   *
+   *   * lock                   -- 0
+   *
+   *   * group                  -- NULL         -- none, yet
+   *   * member.list/.base      -- NULLs        -- none, yet
+   *
+   *   * sort                   -- BGP_PEER_UNSPECIFIED
+   *   * down_pending           -- false        -- not at present
+   *
+   *   * su_name                -- NULL         -- none, yet
+   *   * host                   -- NULL         -- none, yet
+   *   * desc                   -- NULL         -- none, yet
+   *
+   *   * uptime;                -- 0
+   *   * readtime;              -- 0
+   *   * resettime;             -- 0
+   *
+   *   * log                    -- NULL         -- none, yet
+   *
+   *   * shared_network         -- false        -- not
+   *   * nexthop                -- 0's          -- none, yet
+   *
+   *   * last_reset             -- PEER_DOWN_NULL
+   *   * note                   -- NULL         -- none, yet
+   *
+   *   * af_configured          -- qafx_empty_set  -- none, yet
+   *   * af_running             -- qafx_empty_set  -- none, yet
+   *
+   *   * prib[]                 -- NULLs        -- none, yet
+   *   * prib_running_count     -- 0            -- none, yet
+   *   * prib_running[]         -- NULLs        -- none, yet
+   *
+   *   * rr_pending             -- NULLs        -- none, yet
+   *
+   *   * args                   -- X            -- initialised below
+   *
+   *   * change_local_as        -- BGP_ASN_NULL -- none, yet
+   *   * change_local_as_prepend  -- false
+   *
+   *   * disable_connected_check  -- false
+   *
+   *   * weight                 -- 0            -- not set
+   *   * config_mrai            -- 0            -- unset
+   *
+   *   * sflags                 -- PEER_STATUS_NONE
+   *   * idle                   -- X            -- set, below
+   *
+   *   * cops                   -- X            -- initialised, below
+   *
+   *   * qt_restart             -- NULL         -- none, yet
+   *
+   *   * idle_hold_time         -- X            -- set, below
+   *
+   *   * v_asorig               -- X            -- set, below
+   *   * v_gr_restart           -- 0
+   *
+   *   * t_gr_restart           -- NULL         -- none, yet
+   *   * t_gr_stale             -- NULL         -- none, yet
+   *
+   *   * established            -- 0
+   *   * dropped                -- 0
+   *
+   *   * table_dump_index       -- 0
+   */
+  confirm(qafx_empty_set       == 0) ;
+  confirm(bgp_pInitial         == 0) ;
+  confirm(bgp_pssInitial       == 0) ;
+  confirm(BGP_PEER_UNSPECIFIED == 0) ;
+  confirm(PEER_DOWN_NULL       == 0) ;
+  confirm(PEER_STATUS_NONE     == 0) ;
+
+  peer->c = bgp_peer_config_new() ;
+
+  bgp_sargs_init_new(&peer->sargs) ;
+
+  peer->idle = bgp_pisDeconfigured ;    /* so far       */
+
+  bgp_cops_init_new(&peer->cops) ;
+
+  /* Set some default values -- common to all types of peer object
+   */
+  peer->idle_hold_time = QTIME(peer->parent_bgp->default_idle_hold_min_secs) ;
+
+  peer->v_asorig  = BGP_DEFAULT_ASORIGINATE;
+
+  return bgp_peer_lock (peer) ;         /* initial, self reference      */
+} ;
+
+/*------------------------------------------------------------------------------
+ * Allocate new peer_config object.
+ *
+ * Returns:  address of new, empty, peer_config object.
+ */
+static bgp_pconfig
+bgp_peer_config_new(void)
+{
+  bgp_pconfig config ;
+
+  config = XCALLOC (MTYPE_BGP_PEER_CONFIG, sizeof(bgp_pconfig_t));
+
+  /* Zeroizing has set:
+   *
+   *   * c_flags        -- PEER_FLAG_NOTHING
+   *   * c_set          -- PEER_CONFIG_NOTHING
+   *   * c_weight       -- none set
+   *   * c_mrai         -- none set
+   *   * c_af[]         -- NULLs
+   */
+  confirm(PEER_FLAG_NOTHING    == 0) ;
+  confirm(PEER_CONFIG_NOTHING  == 0) ;
+
+  return config ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Discard peer_config object, if any.
+ *
+ * Returns:  NULL
+ */
+static bgp_pconfig
+bgp_peer_config_free(bgp_pconfig config)
+{
+  if (config != NULL)
+    {
+      qafx_t    qafx ;
+
+      for (qafx = qafx_first ; qafx <= qafx_last ; ++qafx)
+        config->c_af = bgp_peer_af_config_free(config->c_af) ;
+
+      XFREE (MTYPE_BGP_PEER_CONFIG, config) ;
+    } ;
+
+  return NULL ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Allocate new peer_af_config object
+ *
+ * Returns:  NULL.
+ */
+static bgp_paf_config
+bgp_peer_af_config_new(void)
+{
+  bgp_paf_config af_config ;
+
+  af_config = XCALLOC (MTYPE_BGP_PEER_AF_CONFIG, sizeof(bgp_paf_config)) ;
+
+  /* Zeroizing has set:
+   *
+   *   * c_flags        -- PEER_AFF_NOTHING
+   *
+   *   * c_dlist[]      -- NULLs        -- none, yet
+   *   * c_plist[]      -- NULLs        -- ditto
+   *   * c_flist[]      -- NULLs        -- ditto
+   *   * c_rmap[]       -- NULLs        -- ditto
+   *   * c_us_rmap      -- NULL         -- ditto
+   *   * c_default_rmap -- NULL         -- ditto
+   *
+   *   * c_orf_plist    -- NULL         -- ditto
+   *
+   *   * c_pmax         -- X            -- set, below
+   */
+  confirm(PEER_AFF_NOTHING    == 0) ;
+
+  bgp_prib_pmax_reset(&af_config->c_pmax) ;
+
+  return af_config ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Discard peer_af_config object, if any.
+ *
+ * Returns:  NULL
+ */
+static bgp_paf_config
+bgp_peer_af_config_free(bgp_paf_config af_config)
+{
+  if (af_config != NULL)
+    {
+      /* Clear neighbor filter, route-map and unsuppress map
+       */
+      for (i = FILTER_IN; i < FILTER_MAX; i++)
+        {
+          prib->dlist[i] = access_list_clear_ref(prib->dlist[i]) ;
+          prib->plist[i] = prefix_list_clear_ref(prib->plist[i]) ;
+          prib->flist[i] = as_list_clear_ref(prib->flist[i]) ;
+        } ;
+
+      for (i = RMAP_IN; i < RMAP_COUNT; i++)
+        prib->rmap[i] = route_map_clear_ref(prib->rmap[i]) ;
+
+      prib->us_rmap      = route_map_clear_ref(prib->us_rmap) ;
+      prib->default_rmap = route_map_clear_ref(prib->default_rmap) ;
+
+      XFREE (MTYPE_BGP_PEER_AF_CONFIG, af_config) ;
+    } ;
+
+  return NULL ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Create new BGP peer -- if an AFI/SAFI is given, activate & enable for that.
+ *
+ * Peer starts in pIdle state.
+ *
+ * This is creating a PEER_TYPE_REAL, which is placed on the bgp->peer list.
+ * (This is NOT creating a peer-group config object, or a "self" peer object.)
+ *
+ * The 'local_as' will be: bgp->my_as     unless...
+ *                         bgp->confed_id ...we are a CONFED and the peer is
+ *                                           external to the CONFED.
+ *
+ * Returns:  address of new peer
+ *
+ * NB: the peer is locked once, by virtue of having been added to the bgp->peer
+ *     list.
+ *
+ * NB: copies the given su -- caller responsible for the original
+ */
+extern bgp_peer
+bgp_peer_create(sockunion su, bgp_inst bgp, as_t remote_as, qafx_t qafx)
+{
+  bgp_peer peer ;
+  struct servent *sp;
+
+  /* Creating a new peer sets:
+   *
+   * Since we are creating a real peer, set that and add self to the bgp
+   * instance's list of peer.  Note that this counts as a reference to the
+   * peer.
+   */
+  peer = bgp_peer_new (bgp, PEER_TYPE_REAL);
+  listnode_add_sort (bgp->peer, bgp_peer_lock (peer));
+
+  peer->state     = bgp_pIdle;
+
+  /* Set basic properties of peer -- evaluate and set the peer sort.
+   *
+   * After bgp_peer_new we have to consider:
+   *
+   *   * state                  -- bgp_pInitial
+   *
+   *   * peer_ie                -- need to set
+   *   * session                -- need to create
+   *
+   *   * sort                   -- need to set after args
+   *
+   *   * su_name                -- need to set
+   *   * host                   -- need to set
+   *
+   *   * readtime;              -- set to now
+   *   * resettime;             -- set to now
+   *
+   *   * shared_network         -- false        -- not
+   *   * nexthop                -- 0's          -- none, yet
+   *
+   *   * args                   -- set local_as
+   *
+   *   * cops
+   *         .remote_su         -- copy of peer->su_name (by default)
+   *         .port              -- set to default
+   *         .can_notify_before_open   -- set true (by default)
+   *         .idle_hold_max_secs       -- set to default
+   *         .connect_retry_secs       -- ditto
+   *         .accept_retry_secs        -- ditto
+   *         .open_hold_secs           -- ditto
+   *         .ttl                      -- set depending on peer->sort
+   *
+   * Evaluation of the peer sort depends on the peer->args.remote_as, the
+   * peer->bgp->my_as, and the confederation state.
+   *
+   * Setting the sort also sets values which depend on the sort:
+   *
+   *   * peer->args.local_as  -- set to bgp->my_as, except...
+   *                             ...if eBGP and CONFED is enabled, when must be
+   *                                bgp->confed_id
+   *
+   *   * peer->cops.ttl       -- if the sort changes, then we set the default
+   *   * peer->cops.gtsm         values for the new sort.
+   */
+  peer->su_name         = sockunion_dup(su) ;
+  peer->host            = sockunion_su2str (su, MTYPE_BGP_NAME) ;
+  peer->sargs.remote_as  = remote_as;
+  peer->sargs.local_id   = bgp->router_id;
+
+  qassert(peer->sort            == BGP_PEER_UNSPECIFIED) ;
+  qassert(peer->sargs.remote_as  != BGP_ASN_NULL) ;
+  qassert(peer->sargs.local_as   == BGP_ASN_NULL) ;
+  qassert(peer->change_local_as == BGP_ASN_NULL) ;
+
+  sockunion_copy (&peer->cops.remote_su, peer->su_name) ;
+
+  peer_sort_set(peer, peer_sort(peer)) ;
+  peer_global_config_reset (peer) ;
+
+  sp = getservbyname ("bgp", "tcp");
+  peer->cops.port = (sp == NULL) ? BGP_PORT_DEFAULT : ntohs (sp->s_port);
+
+  /* Last read time and reset time set
+   */
+  peer->readtime = peer->resettime = bgp_clock ();
+
+  /* Set up session and register the peer.
+   */
+  bgp_session_init_new(peer);
+
+  /* If required, activate given AFI/SAFI -- eg "default ipv4-unicast"
+   */
+  if (qafx != qafx_undef)
+    peer_set_af(peer, qafx, true /* enable */) ;
+
+  return peer;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Delete peer from configuration.
+ *
+ * To delete a peer we must first shutdown any current session, .... XXX XXX XXX XXX
+ *
+ *
+ *
+ * At the end of the process this releases the initial, self-reference counted
+ * in bgp_peer_new().  That may free the peer structure (which will remove
+ * the peer's reference to the bgp instance, which may in turn free that).
+ *
+ * However, there may be other locks on the peer structure, in which case the
+ * peer has been set to a dead-end "Deleted" neighbour-state, to allow it to
+ * "cool off".  When the refcount hits 0, the peer will be freed -- noting that
+ * the owning bgp instance remains in existence (at least) until then.
+ *
+ * TODO ... sort out PEER_TYPE_xxx differences.
+ *
+ * Returns:  NULL
+ */
+extern bgp_peer
+bgp_peer_delete (bgp_peer peer)
+{
+  qafx_t   qafx ;
+  bgp_inst bgp;
+
+  bgp = peer->parent_bgp ;
+
+  /* Once peer is pDeleting it should be impossible to find in order to
+   * bgp_peer_delete() it !
+   */
+  assert (peer->state != bgp_pDeleting);
+
+  if (peer->ptype == PEER_TYPE_REAL)
+    {
+      /* If the peer is active, then need to shut it down now.  If there are
+       * any stale routes, flush them now.
+       *
+       * There may be a session in existence.  If so, it must either be
+       * sLimping or sDisabled.
+       *
+       * Changing to pDeleting state turns off all timers.
+       */
+      bgp_peer_down(peer, PEER_DOWN_NEIGHBOR_DELETE) ;
+      qassert(peer->state == bgp_pIdle) ;
+
+      bgp_peer_change_status (peer, bgp_pDeleting);
+
+      /* Increment count of peers lingering in pDeleting
+       *
+       * The count is used while terminating bgpd -- keeps all the nexuses
+       * running until this count drops to zero.
+       *
+       * NB: counts all sorts of peer objects, including peer-group
+       *     configurations.
+       *
+       *     This is counted down again in bgp_peer_free().
+       */
+      ++bm->peer_linger_count ;
+
+      /* If this peer belongs to peer group, clear up the relationship.
+       */
+      if (peer->group != NULL)
+        {
+          ddl_del(peer->group->members, peer->c, member.list) ;
+          peer->group = NULL;
+        } ;
+    } ;
+
+
+  /* Delete from bgp->peer list, if required.
+   */
+  if (peer->ptype == PEER_TYPE_REAL)
+    {
+      struct listnode *pn;
+      pn = listnode_lookup (bgp->peer, peer) ;
+
+      assert(pn != NULL) ;
+
+      bgp_peer_unlock (peer);   /* bgp peer list reference      */
+      list_delete_node (bgp->peer, pn);
+    } ;
+
+  /* Shut down and release all pribs.
+   */
+  for (qafx = qafx_first ; qafx <= qafx_last ; ++qafx)
+    peer_deactivate_family (peer, qafx) ;
+
+  /* Unregister the peer and tear down the session.
+   *
+   * NB: the peer can no longer be looked up by its 'name'.
+   *
+   *     In particular this means that the accept() logic in the BGP Engine
+   *     will conclude that the session should not be accepting connections.
+   *
+   * NB: also (currently) releases the peer_id -- which may not be so clever ?
+   */
+  bgp_session_delete(peer) ;
+
+  /* Finally: count down the initial reference, which will delete the peer
+   * iff everything else has finished with it.
+   */
+  bgp_peer_unlock (peer);       /* initial, self reference      */
+
+  return NULL ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * increase reference count on a bgp_peer
+ */
+extern bgp_peer
+bgp_peer_lock (bgp_peer peer)
+{
+  ++peer->lock ;
+  return peer;
+}
+
+/*------------------------------------------------------------------------------
+ * decrease reference count on a bgp_peer * If is last reference, the structure is freed and NULL returned
+ */
+extern bgp_peer
+bgp_peer_unlock (bgp_peer peer)
+{
+  qassert(peer->lock > 0);
+
+  if (peer->lock > 1)
+    {
+      --peer->lock ;
+      return NULL ;
+    } ;
+
+  return bgp_peer_free (peer);
+} ;
+
+/*------------------------------------------------------------------------------
+ * Dismantle and free peer data structure.
+ *
+ * The peer structure has a reference to the owning bgp instance, and the
+ * reference has a lock on that.  When the peer structure has been dismantled,
+ * the lock is released.
+ */
+static bgp_peer
+bgp_peer_free (bgp_peer peer)
+{
+  bgp_inst bgp ;
+
+  assert (peer->state   == bgp_pDeleting);
+  assert (peer->session == NULL) ;      /* session holds a lock on peer */
+
+  if (peer->ptype == PEER_TYPE_REAL)
+    --bm->peer_linger_count ;
+
+  bgp = peer->parent_bgp ;
+
+  if (peer->desc)
+    XFREE (MTYPE_PEER_DESC, peer->desc);
+
+  /* Discard name and text form thereof
+   */
+  peer->su_name = sockunion_free(peer->su_name);
+
+  if (peer->host != NULL)
+    XFREE (MTYPE_BGP_NAME, peer->host) ;   /* sets peer->host NULL */
+
+
+  // TODO full dismantle of bgp_peer structure etc....
+
+  memset (peer, 0, sizeof(bgp_peer_t));
+  peer->lock = -54321 ;
+  XFREE (MTYPE_BGP_PEER, peer);
+
+  bgp_unlock(bgp);
+
+  return NULL ;
+} ;
+
+
+
+/*==============================================================================
+ * Address Family activation and deactivation.
+ *
+  */
+
+/*------------------------------------------------------------------------------
+ * Configure the peer or peer group for specified AFI/SAFI.
+ *
+ * If given address family is not configured, configure to default state.
+ *
+ * Then for real peers:
+ *
+ *   * if 'enable' and the address family is not already enabled:
+ *
+ *   XXX XXX XXX
+ *
+ *   * if not 'enable' and the address family is not already disabled:
+ *
+ *   XXX XXX XXX
+ */
+extern bgp_ret_t
+peer_set_af(bgp_peer peer, qafx_t qafx, bool enable)
+{
+  bgp_prib   prib ;
+  qafx_bit_t qb ;
+
+  qb = qafx_bit(qafx) ;
+
+  prib = peer->prib[qafx] ;
+
+  if (prib == NULL)
+    {
+      /* Create address family configuration.
+       */
+      qassert(!(peer->af_configured & qb)) ;
+
+      prib = bgp_prib_new(peer, qafx) ;
+      peer->af_configured |= qb ;
+    } ;
+
+  if ((qafx != qafx_ipv4_unicast) && !peer->sargs.can_capability
+                                  && !peer->sargs.cap_af_override)
+    enable = false ;
+
+  if (peer->ptype == PEER_TYPE_REAL)
+    {
+      qafx_set_t af_was_enabled ;       /* old value    */
+
+      af_was_enabled = peer->sargs.can_af ;
+
+      if (enable)
+        {
+          prib->af_status &= ~PEER_AFS_DISABLED ;
+          peer->sargs.can_af = af_was_enabled |  qb ;
+        }
+      else
+        {
+          prib->af_status |=  PEER_AFS_DISABLED ;
+          peer->sargs.can_af = af_was_enabled & ~qb ;
+        } ;
+
+      if (peer->sargs.can_af != af_was_enabled)
+        {
+          /* The enabled state of one or more address families has changed.
+           *
+           * Update the peer->idle state.
+           */
+          qassert((af_was_enabled == qafx_empty_set)
+                                                == (peer->idle & bgp_pisNoAF)) ;
+
+          if    (af_was_enabled == qafx_empty_set)
+            {
+              /* We had nothing, and now we have something !
+               */
+              peer->idle &= ~bgp_pisNoAF ;
+            }
+          else if (peer->sargs.can_af == qafx_empty_set)
+            {
+              /* We had something, and now we have nothing.
+               */
+              peer->idle &= ~bgp_pisNoAF ;
+            } ;
+
+          /* For address families which have been disabled, we withdraw all
+           * routes and discard the adj-out.
+           *
+           * For address families which have been enabled:
+           */
+          switch (peer->state)
+            {
+              case bgp_pIdle:
+                if (peer->idle == bgp_pisReady)
+                  bgp_peer_start_running(peer) ;
+                break ;
+
+              case bgp_pStarted:
+              case bgp_pEstablished:
+                bgp_peer_restart(peer, PEER_DOWN_AF_ACTIVATE) ;
+                break ;
+
+              case bgp_pResetting:
+              case bgp_pDeleting:
+                break ;
+
+              default:
+                qassert(false) ;
+                break ;
+            } ;
+        } ;
+    }
+  return BGP_SUCCESS ;
+}
+
+/*------------------------------------------------------------------------------
+ * Deactivate the peer or peer group for specified AFI and SAFI.
+ */
+extern bgp_ret_t
+peer_deactivate (bgp_peer peer, qafx_t qafx)
+{
+  bgp_prib  prib ;
+  qafx_bit_t qb ;
+
+  qb = qafx_bit(qafx) ;
+
+  if (peer->ptype != PEER_TYPE_GROUP)
+    {
+      if (peer->c_af_member & qb)
+        return BGP_ERR_PEER_BELONGS_TO_GROUP;
+    }
+  else
+    {
+      bgp_peer member ;
+
+      for (member = ddl_head(peer->group->members) ;
+           member != NULL ;
+           member = ddl_next(member->c, member.list))
+        {
+          if (member->c_af_member & qb)
+            return BGP_ERR_PEER_GROUP_MEMBER_EXISTS;
+        } ;
+    } ;
+
+  /* If we arrive here, the peer is either:
+   *
+   *   - a real peer which is not a group member for this afi/safi
+   *
+   *   - a group which has no members in this afi/safi
+   *
+   * De-activate the address family configuration.
+   */
+  peer_deactivate_family (peer, qafx);
+
+  /* Deal with knock on effect on real peer
+   */
+  if (peer->ptype == PEER_TYPE_REAL)
+    {
+      bool down = true ;
+
+      if (down)
+        bgp_peer_down(peer, PEER_DOWN_AF_DEACTIVATE) ;
+    } ;
+
+  return BGP_SUCCESS ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Activate the given address family for the given peer.
+ *
+ * Dismantles all address-family specific configuration....
+ */
+static void
+peer_activate_family (bgp_peer peer, qafx_t qafx)
+{
+  bgp_prib prib ;
+  int i;
+  bgp_orf_name orf_name ;
+
+  prib = peer->prib[qafx] ;
+  if (prib != NULL)
+    return ;
+
+  peer->prib[qafx] = prib = bgp_prib_new(peer, qafx) ;
+
+  /* Set default neighbor send-community.
+   */
+  if (! bgp_option_check (BGP_OPT_CONFIG_CISCO))
+    peer->c->c_af[qafx]->c_flags |= (PEER_AFF_SEND_COMMUNITY |
+                                          PEER_AFF_SEND_EXT_COMMUNITY) ;
+
+  /* Set defaults for neighbor maximum-prefix -- unset
+   */
+  bgp_prib_pmax_reset(prib) ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Deactivate the given address family for the given peer.
+ *
+ * Dismantles all address-family specific configuration, which means that
+ * dismantles the peer_rib for the address family.
+ */
+static void
+peer_deactivate_family (bgp_prun prun, qafx_t qafx)
+{
+  bgp_prib prib ;
+  int i;
+
+  prib = prun->prib[qafx] ;
+  if (prib == NULL)
+    return ;
+
+  /* Clear neighbor filter, route-map and unsuppress map
+   */
+  for (i = FILTER_IN; i < FILTER_MAX; i++)
+    {
+      prib->dlist[i] = access_list_clear_ref(prib->dlist[i]) ;
+      prib->plist[i] = prefix_list_clear_ref(prib->plist[i]) ;
+      prib->flist[i] = as_list_clear_ref(prib->flist[i]) ;
+    } ;
+
+  for (i = RMAP_IN; i < RMAP_COUNT; i++)
+    prib->rmap[i] = route_map_clear_ref(prib->rmap[i]) ;
+
+  prib->us_rmap      = route_map_clear_ref(prib->us_rmap) ;
+  prib->default_rmap = route_map_clear_ref(prib->default_rmap) ;
+
+  /* Clear all neighbor's address family c_flags.
+   */
+  prun->c->c_af[qafx]->c_flags = 0 ;
+  prib->af_status               = 0 ;
+
+  /* Clear ORF info
+   */
+  prib->orf_plist = prefix_bgp_orf_delete(prib->orf_plist) ;
+
+  /* Can now free the peer_rib structure.
+   */
+  prun->prib[qafx] = bgp_prib_free(prib) ;
+} ;
+
+#endif
+
+
+#if 0
+/*------------------------------------------------------------------------------
+ * If the given peer is not already an RS Client for the AFI/SAFI, set it to be
+ *                                                                 an RS Client.
+ *
+ * Does nothing if is already a rib_rs peer.
+ *
+ * Creates a completely empty peer_rib, if one does not exist.  Creates as a
+ * rib_main peer, associated with the rib_main bgp_rib (creating that, if
+ * required).
+ *
+ * Creates a rib_rs bgp_rib if required.
+ *
+ * If was a rib_main peer, then discards any walker with which the peer was
+ * associated.
+ *
+ * Returns:  address of the new peer_rib
+ */
+extern bgp_prib
+peer_rib_set_rs(bgp_peer peer, qafx_t qafx)
+{
+  bgp_prib prib ;
+  bgp_rib  rib ;
+
+  prib = peer->prib[qafx] ;
+
+  if (prib == NULL)
+    prib = bgp_prib_new(peer, qafx) ;   /* creates rib_main bgp_rib if
+                                         * required                     */
+  else if (prib->rib_type == rib_rs)
+    return prib ;
+
+  /* We (now) have a prib, and it is rib_main.
+   */
+  rib = prib->rib ;                     /* the rib_main bgp_rib         */
+
+  bgp_rib_walker_detach(prib) ;         /* stop if walking rib_main     */
+
+  rib->peer_count -= 1 ;
+
+  rib = peer->bgp->rib[qafx] ;
+  if (rib == NULL)
+    rib = peer->bgp->rib[qafx] = bgp_rib_new(peer->bgp, qafx) ;
+
+  prib->rib = rib ;
+
+  rib->peer_count += 1 ;
+
+  return prib ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * If the given peer is an RS Client for the AFI/SAFI, unset that.
+ *
+ * Creates a completely empty peer_rib, if one does not exist.  Creates as a
+ * rib_main peer, associated with the rib_main bgp_rib (creating that, if
+ * required).
+ *
+ * Creates a rib_rs bgp_rib if required.
+ *
+ * Does nothing if is already a rib_rs peer.
+ *
+ * If was a rib_main peer, then discards any walker with which the peer was
+ * associated.
+ *
+ * Returns:  address of the new peer_rib
+ */
+extern bgp_prib
+peer_rib_unset_rs(bgp_peer peer, qafx_t qafx)
+{
+  bgp_prib prib ;
+  bgp_rib  rib ;
+
+  prib = peer->prib[qafx] ;
+
+  if (prib == NULL)
+    prib = bgp_prib_new(peer, qafx) ;   /* creates rib_main bgp_rib if
+                                         * required                     */
+
+  if (prib->rib_type == rib_main)
+    return prib ;
+
+  /* We (now) have a prib, and it is rib_rs.
+   */
+  rib = prib->rib ;                     /* the rib_rs bgp_rib           */
+  qassert(rib->rib_type == rib_rs) ;
+
+  bgp_rib_walker_detach(prib) ;         /* stop if walking rib_rs       */
+
+  rib->peer_count -= 1 ;
+
+  rib = peer->bgp->rib[qafx][rib_main] ;
+  qassert(rib != NULL) ;
+
+  prib->rib_type = rib_main ;
+  prib->rib = rib ;
+
+  rib->peer_count += 1 ;
+
+  return prib ;
+} ;
+
+#endif
 

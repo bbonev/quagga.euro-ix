@@ -33,20 +33,20 @@
  */
 
 extern void
-bgp_static_delete (bgp_inst bgp)
+bgp_static_delete (bgp_run brun)
 {
   // TODO
 } ;
 
 extern void
-bgp_static_update(bgp_inst bgp, prefix pfx, struct bgp_static* sroute,
+bgp_static_update(bgp_run brun, prefix pfx, struct bgp_static* sroute,
                                                                     qafx_t qafx)
 {
   // TODO
 } ;
 
 extern void
-bgp_static_withdraw (bgp_inst bgp, prefix pfx, qafx_t qafx)
+bgp_static_withdraw (bgp_run brun, prefix pfx, qafx_t qafx)
 {
   // TODO
 } ;

@@ -21,9 +21,12 @@
 #include "misc.h"
 
 #include "bgpd/bgp_common.h"
-#include "bgpd/bgpd.h"
 #include "bgpd/bgp_peer_index.h"
 #include "bgpd/bgp_peer_config.h"
+#include "bgpd/bgp_run.h"
+#include "bgpd/bgp_prun.h"
+
+#include "bgpd/bgpd.h"
 
 #include "lib/vhash.h"
 #include "lib/vector.h"
@@ -198,6 +201,10 @@ static void bgp_peer_id_table_free_entry(bgp_peer_index_entry peer_ie,
 Inline bgp_peer_index_entry bgp_peer_cname_index_lookup(chs_c cname,
                                                                 bool* p_added) ;
 
+/*==============================================================================
+ * Start-up and close-down
+ */
+
 /*------------------------------------------------------------------------------
  * Initialise the bgp_peer_su_index.
  *
@@ -268,6 +275,10 @@ bgp_peer_index_finish(void)
   bgp_peer_index_mutex = qpt_mutex_destroy(bgp_peer_index_mutex) ;
 } ;
 
+/*==============================================================================
+ * Peer Index Operations.
+ */
+
 /*------------------------------------------------------------------------------
  * Register a peer in the peer index.
  *
@@ -305,6 +316,145 @@ bgp_peer_index_register(bgp_peer peer, chs_c cname)
   BGP_PEER_INDEX_UNLOCK() ;  /*->->->->->->->->->->->->->->->->->->->->->->-->*/
 
   return id ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Take a lock on the given peer-id
+ */
+extern bgp_peer_id_t
+bgp_peer_index_lock_id(bgp_peer_id_t id)
+{
+  bgp_peer_index_entry peer_ie ;
+
+  BGP_PEER_INDEX_LOCK() ;    /*<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<*/
+
+  peer_ie = vector_get_item(bgp_peer_id_index, id) ;
+
+  qassert(peer_ie != NULL) ;
+  if (peer_ie != NULL)
+    vhash_inc_ref(peer_ie) ;
+
+  BGP_PEER_INDEX_UNLOCK() ;  /*->->->->->->->->->->->->->->->->->->->->->->-->*/
+
+  return id ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Release lock on the given peer-id
+ */
+extern bgp_peer_id_t
+bgp_peer_index_unlock_id(bgp_peer_id_t id)
+{
+  bgp_peer_index_entry peer_ie ;
+
+  BGP_PEER_INDEX_LOCK() ;    /*<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<*/
+
+  peer_ie = vector_get_item(bgp_peer_id_index, id) ;
+
+  qassert(peer_ie != NULL) ;
+  if (peer_ie != NULL)
+    vhash_dec_ref(peer_ie, bgp_peer_cname_index) ;
+
+  BGP_PEER_INDEX_UNLOCK() ;  /*->->->->->->->->->->->->->->->->->->->->->->-->*/
+
+  return bgp_peer_id_null ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Deregister a peer from the peer index -- for use by the Routeing Engine.
+ *
+ * NB: it is a FATAL error to deregister a peer which is not registered.
+ */
+extern void
+bgp_peer_index_deregister(bgp_peer peer)
+{
+  bgp_peer_index_entry peer_ie ;
+
+  BGP_PEER_INDEX_LOCK() ;    /*<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-*/
+
+  peer_ie = vector_get_item(bgp_peer_id_index, peer->peer_id) ;
+  qassert(peer_ie != NULL) ;
+
+  if (peer_ie != NULL)
+    {
+      qassert(peer_ie->peer == peer) ;
+
+      peer_ie->peer = NULL ;
+      peer->peer_id = bgp_peer_id_null ;
+
+      vhash_clear_held(peer_ie) ;
+    } ;
+
+  BGP_PEER_INDEX_UNLOCK() ;  /*->->->->->->->->->->->->->->->->->->->->->->->*/
+} ;
+
+/*------------------------------------------------------------------------------
+ * Add prun and session to the peer-index entry.
+ *
+ * Note that from this moment the BGP Engine Accept() can find the session, so
+ * it needs to be initialised ready for that !
+ *
+ * The Routeing Engine sets these together, and clears them together.  The
+ * Routeing Engine owns a lock on the peer-id while it is running.
+ *
+ * NB: this assumes that the prun/session are brand new.
+ */
+extern void
+bgp_peer_index_set_running(bgp_prun prun, bgp_session session)
+{
+  bgp_peer_index_entry peer_ie ;
+
+  BGP_PEER_INDEX_LOCK() ;    /*<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-*/
+
+  peer_ie = vector_get_item(bgp_peer_id_index, prun->rp.peer_id) ;
+
+  qassert((peer_ie != NULL) && (peer_ie->prun == NULL)
+                            && (peer_ie->session == NULL) ) ;
+
+  if (peer_ie != NULL)
+    {
+      peer_ie->prun    = prun ;
+      peer_ie->session = session ;
+
+      vhash_inc_ref(peer_ie) ;
+    } ;
+
+  BGP_PEER_INDEX_UNLOCK() ;  /*->->->->->->->->->->->->->->->->->->->->->->->*/
+} ;
+
+/*------------------------------------------------------------------------------
+ * Remove prun and session from the peer-index entry.
+ *
+ * Note that from this moment the BGP Engine Accept() cannot find the session,
+ * so all new accept() will be rejected -- even if the session continues
+ * running until it hears from the Routeing Engine.
+ *
+ * The Routeing Engine sets these together, and clears them together.  The
+ * Routeing Engine owns a lock on the peer-id while it is running.
+ *
+ * NB: this assumes that the prun/session are running !
+ */
+extern void
+bgp_peer_index_stop_running(bgp_prun prun, bgp_session session)
+{
+  bgp_peer_index_entry peer_ie ;
+
+  BGP_PEER_INDEX_LOCK() ;    /*<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-*/
+
+  peer_ie = vector_get_item(bgp_peer_id_index, prun->rp.peer_id) ;
+
+  qassert((peer_ie != NULL) && (peer_ie->prun    == prun)
+                            && (peer_ie->session == session)) ;
+
+  if (peer_ie != NULL)
+    {
+      peer_ie->prun    = NULL ;
+      peer_ie->session = NULL ;
+
+      vhash_dec_ref(peer_ie, bgp_peer_cname_index) ;
+    } ;
+
+  BGP_PEER_INDEX_UNLOCK() ;  /*->->->->->->->->->->->->->->->->->->->->->->->*/
 } ;
 
 /*------------------------------------------------------------------------------
@@ -401,32 +551,12 @@ bgp_peer_cname_index_lookup(chs_c cname, bool* p_added)
   return vhash_lookup(bgp_peer_cname_index, cname, p_added) ;
 } ;
 
-/*------------------------------------------------------------------------------
- * Deregister a peer from the peer index -- for use by the Routeing Engine.
- *
- * NB: it is a FATAL error to deregister a peer which is not registered.
+/*==============================================================================
+ * The vhash functions
  */
-extern void
-bgp_peer_index_deregister(bgp_peer peer)
-{
-  bgp_peer_index_entry peer_ie ;
-
-  BGP_PEER_INDEX_LOCK() ;    /*<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-<-*/
-
-  peer_ie = vector_get_item(bgp_peer_id_index, peer->peer_id) ;
-  assert((peer_ie != NULL) && (peer_ie->peer == peer)
-                           && (peer->peer_id == peer_ie->id)) ;
-
-  peer_ie->peer = NULL ;
-  peer->peer_id = bgp_peer_id_null ;
-
-  vhash_clear_held(peer_ie) ;
-
-  BGP_PEER_INDEX_UNLOCK() ;  /*->->->->->->->->->->->->->->->->->->->->->->->*/
-} ;
 
 /*------------------------------------------------------------------------------
- * Create a new entry in the bgp_peer_su_index, for the given sockunion.
+ * Create a new entry in the bgp_peer_su_index, for the given cname.
  *
  * Allocates the next peer_id -- creating more if required.
  *
@@ -513,10 +643,6 @@ bgp_peer_cname_index_equal(vhash_item_c item, vhash_data_c data)
 
   return strcmp(peer_ie->cname, cname) ;
 } ;
-
-/*==============================================================================
- * Extending the bgp_peer_id_table and adding free entries to it.
- */
 
 /*------------------------------------------------------------------------------
  * Free the given peer index entry and release its peer_id.

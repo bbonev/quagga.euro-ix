@@ -86,7 +86,7 @@ struct bgp_nexthop_cache
 extern void bgp_scan_cmd_init (void);
 extern void bgp_scan_init (void);
 extern void bgp_scan_finish (void);
-extern bool bgp_nexthop_lookup (qAFI_t q_afi, bgp_peer peer, route_info ri,
+extern bool bgp_nexthop_lookup (qAFI_t q_afi, bgp_prun prun, route_info ri,
                                                                   bool*, bool*);
 extern void bgp_connected_add (struct connected *c);
 extern void bgp_connected_delete (struct connected *c);

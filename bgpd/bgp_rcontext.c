@@ -25,6 +25,7 @@
 
 #include "bgpd/bgp_rcontext.h"
 #include "bgpd/bgpd.h"
+#include "bgpd/bgp_run.h"
 #include "bgpd/bgp_prun.h"
 
 #include "lib/vhash.h"
@@ -94,9 +95,9 @@ bgp_rcontext_finish(void)
  * Empty out and free the given bgp instance's rcontext name index, if any.
  */
 extern void
-bgp_rcontext_discard_name_index(bgp_inst bgp)
+bgp_rcontext_discard_name_index(bgp_run brun)
 {
-  bgp->rc_name_index = vhash_table_reset(bgp->rc_name_index) ;
+  brun->rc_name_index = vhash_table_reset(brun->rc_name_index) ;
 }
 
 /*------------------------------------------------------------------------------
@@ -113,7 +114,7 @@ bgp_rcontext_discard_name_index(bgp_inst bgp)
  *           NULL <=> not found
  */
 extern bgp_rcontext
-bgp_rcontext_lookup(bgp_inst bgp, const char* name, bgp_rcontext_type_t type,
+bgp_rcontext_lookup(bgp_run brun, const char* name, bgp_rcontext_type_t type,
                                                                     bool* added)
 {
   bgp_rcontext rc ;
@@ -122,13 +123,13 @@ bgp_rcontext_lookup(bgp_inst bgp, const char* name, bgp_rcontext_type_t type,
   /* If we don't have a table and we are required to add, better create a
    * table to add to.
    */
-  if (bgp->rc_name_index == NULL)
+  if (brun->rc_name_index == NULL)
     {
       if (added == NULL)
         return NULL ;
 
-      bgp->rc_name_index = vhash_table_new(
-            bgp,
+      brun->rc_name_index = vhash_table_new(
+            brun,
             50,                 /* start ready for a few contexts       */
             200,                /* allow to be quite dense              */
             &bgp_rcontext_vhash_params) ;
@@ -149,7 +150,7 @@ bgp_rcontext_lookup(bgp_inst bgp, const char* name, bgp_rcontext_type_t type,
       name = rs_name->str ;
     } ;
 
-  rc = vhash_lookup(bgp->rc_name_index, name, added) ;
+  rc = vhash_lookup(brun->rc_name_index, name, added) ;
 
   tstring_free(rs_name) ;
 
@@ -162,7 +163,7 @@ bgp_rcontext_lookup(bgp_inst bgp, const char* name, bgp_rcontext_type_t type,
    */
   if ((added != NULL) && *added)
     {
-      rc->bgp  = bgp ;
+      rc->brun = brun ;
       rc->type = type ;
 
       vhash_set_held(rc) ;
@@ -189,7 +190,7 @@ extern bgp_rcontext
 bgp_rcontext_unlock(bgp_rcontext rc)
 {
   if (rc != NULL)
-    vhash_dec_ref(rc, rc->bgp->rc_name_index) ;
+    vhash_dec_ref(rc, rc->brun->rc_name_index) ;
   return NULL ;
 } ;
 
@@ -291,7 +292,7 @@ bgp_rcontext_attach_prib(bgp_rcontext rc, bgp_prib prib)
    */
   lc = rc->lcontexts[prib->qafx] ;
   if (lc == NULL)
-    lc = bgp_lcontext_new(rc, prib->rib) ;
+    lc = bgp_lcontext_new(prib->rib, rc) ;
 
   /* Attach this prib to the (new) lcontext
    */
@@ -311,6 +312,8 @@ bgp_lcontext_attach_prib(bgp_lcontext lc, bgp_prib prib)
 
   prib->lc_id = lc->id ;
   ddl_append(lc->pribs, prib, lc_list) ;
+
+  return lc ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -371,7 +374,7 @@ bgp_rcontext_new(vhash_table table, vhash_data_c data)
    *
    *   * lcontexts[]    -- all NULL     -- none, yet
    *
-   *   * bgp            -- NULL         -- MUST be set after vhash_lookup()
+   *   * brun           -- NULL         -- MUST be set after vhash_lookup()
    *   * type           -- rc_is_view   -- MUST be set after vhash_lookup()
    *
    *   * name           -- all '\0'     -- set below
@@ -413,8 +416,8 @@ bgp_rcontext_free(vhash_item item, vhash_table table)
 static int
 bgp_rcontext_equal(vhash_item_c item, vhash_data_c data)
 {
-  bgp_rcontext  rc ;
-  const char*   name ;
+  bgp_rcontext_c rc ;
+  chs_c          name ;
 
   rc   = item ;
   name = data ;

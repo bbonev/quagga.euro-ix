@@ -41,6 +41,14 @@
  */
 
 /*------------------------------------------------------------------------------
+ * Initialisation for bgp vty stuff.
+ */
+extern void
+bgp_vty_init (void)
+{
+}
+
+/*------------------------------------------------------------------------------
  * Utility function to get qafx from current node.
  *
  * Returns IPv4/Unicast if not in an explicit address family.
@@ -221,36 +229,21 @@ bgp_inst_lookup_vty(vty vty, chs_c name, as_t as)
  * If the given name is NULL, return "default" bgp instance (if any).  Note
  * that if there is an 'unnamed' view, then it will be the first view.
  *
- * This kludge is to support "
+ * This kludge is to support "show" commands which are not scoped within a
+ * view.
  *
  * Otherwise lookup by name.
  */
-extern bgp_inst
-bgp_brun_lookup_vty(vty vty, chs_c name, as_t as)
+extern bgp_run
+bgp_run_lookup_vty(vty vty, chs_c name)
 {
   bgp_inst bgp ;
 
-  bgp = bgp_inst_default ();
+  bgp = bgp_inst_lookup_vty (vty, name, BGP_ASN_NULL);
   if (bgp == NULL)
-    {
-      vty_out (vty, "No BGP process is configured\n");
-      return NULL ;
-    }
-  else
-    {
-      bgp = bgp_inst_lookup(name, as);
-      if (bgp == NULL)
-        {
-          if ((name == NULL) || (name[0] == '\0'))
-            {
+    return NULL ;
 
-
-            }
-          vty_out (vty, "Can't find BGP view %s\n", name);
-        } ;
-    } ;
-
-  return bgp ;
+  return bgp->brun ;            // TODO lookup brun separately from inst ???
 } ;
 
 /*==============================================================================
@@ -371,40 +364,54 @@ bgp_peer_and_or_group_lookup_vty(vty vty, chs_c p_str, bgp_peer_or_group_t bpog)
 /*==============================================================================
  * Prun Lookups.
  */
+//static int bgp_prun_cmp_cname(const cvp* p_n, const cvp* p_p) ;
 
 /*------------------------------------------------------------------------------
- * Look-up running peer by its address in the given bgp instance or all such.
+ * Look-up running peer by its name in the given bgp view or all such.
  *
- * If the given 'view_name' is NULL, try all bgp instances.
+ * If the given 'view_name' is NULL, try all bgp views.
  *
  * Returns:  the prun for the peer
  *           NULL if not found
  */
 extern bgp_prun
-prun_lookup_view_vty(vty vty, chs_c view_name, chs_c peer_name)
+prun_lookup_view_vty(vty vty, chs_c v_str, chs_c p_str)
 {
-#if 0
   bgp_run    brun ;
   bgp_prun   prun ;
+  sockunion_t su[1] ;
+  bgp_ret_t   ret ;
 
-  if (view_name == NULL)
-    bgp = NULL ;
+  if (v_str == NULL)
+    brun = NULL ;
   else
     {
-      bgp = bgp_lookup_vty(vty, view_name) ;
-      if (bgp == NULL)
+      brun = bgp_run_lookup_vty(vty, v_str) ;
+      if (brun == NULL)
         return NULL ;
     } ;
 
-  peer = prun_lookup_view_vty(vty, bgp, peer_name, true /* real_peer */) ;
+  ret = bgp_peer_sex(p_str, su, bpog_peer_ip) ;
 
-  if (peer == NULL)
-    return NULL ;
+  if (ret != BGP_OK_PEER_IP)
+    {
+      bgp_vty_return(vty, ret) ;
+      return NULL ;
+    } ;
 
-  return peer->prun ;
-#else
-  return NULL ;
-#endif
+  prun = bgp_prun_lookup_su(brun, su) ;
+  if (prun == NULL)
+    {
+      vty_out (vty, "%% neighbor '%s' not configured", p_str) ;
+      if      (v_str != NULL)
+        vty_out(vty, " in view '%s'", v_str) ;
+      else if (bm->bgp_count > 1)
+        vty_out(vty, " in any view") ;
+
+      vty_out(vty, "\n") ;
+    } ;
+
+  return prun ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -433,6 +440,20 @@ prun_lookup_view_qafx_vty(vty vty, chs_c view_name, chs_c peer_name,
 
   return prun ;
 } ;
+
+#if 0
+/*------------------------------------------------------------------------------
+ * Prun comparison function for searching/sorting.
+ */
+static int
+bgp_prun_cmp_cname(const cvp* p_n, const cvp* p_p)
+{
+  chs_c      n = *p_n ;
+  bgp_prun_c p = *p_p ;
+
+  return strcmp(n, bgp_nref_name(p->rp.cname)) ;
+} ;
+#endif
 
 /*==============================================================================
  *
@@ -599,7 +620,7 @@ bgp_vty_return (vty vty, bgp_ret_t ret)
     str = NULL ;
 
   if (str != NULL)
-    vty_out (vty, "%% %s\n", str, VTY_NEWLINE);
+    vty_out (vty, "%% %s\n", str);
   else
     {
       vty_out (vty, "%% unknown bgp_ret_t %d\n", ret);

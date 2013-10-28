@@ -218,7 +218,7 @@ test_pfifo_item_move_bwd(void) {
   pfifo_period_t period;
   period = 10;
 
-  pfifo_index_t loc_a;
+  pfifo_index_t loc_a Unused;
   loc_a = pfifo_item_add(p, &item_a, period);
 
   pfifo_index_t loc_b;
@@ -612,7 +612,7 @@ test_pfifo_first_not_ex_period_nobody(void) {
   pfifo p;
   p = new_pfifo();
 
-  pfifo_period_t ptime;
+  pfifo_period_t ptime Unused;
   ptime = 10;
 
   pfifo_period_t restime;

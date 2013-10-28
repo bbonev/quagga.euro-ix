@@ -26,6 +26,7 @@
 #include "misc.h"
 
 #include "bgpd/bgp_common.h"
+#include "bgpd/bgp_peer_index.h"
 
 #include "qtime.h"
 #include "sockunion.h"
@@ -167,14 +168,14 @@ struct bgp_rib_param
  *
  *                         Ignored if not csMay_Accept !
  *
- *                         This is cleared if the peer is pisDown
+ *                         This is cleared if the prun is pisDown
  *
  *   * csRun            -- run the session or session acquisition.
  *
  *                         Ignored if not csMay_Accept or csMay_Connect,
  *                         unless a session is established already.
  *
- *                         This is cleared if the peer is not pisRunnable
+ *                         This is cleared if the prun is not pisReady
  *
  * Note that may be csRun without either csMayAccept/Connect.  In particular,
  * once a session is Established, changes to csMayAccept/Connect do not affect
@@ -372,8 +373,8 @@ struct bgp_sargs
 
   /* This is set iff the capabilities have been suppressed.
    *
-   * Is set in open_sent->args if required, and copied from there back to the
-   * session->args when the session becomes established.
+   * Is set in open_sent->sargs if required, and copied from there back to the
+   * session->sargs when the session becomes established.
    */
   bool      cap_suppressed ;
 
@@ -431,12 +432,19 @@ typedef struct bgp_prun_param bgp_prun_param_t ;
 
 struct bgp_prun_param
 {
-  /* We have the name of the peer and its description,
+  /* The id, the names of the peer, its description and group membership.
+   *
+   * When the params are assembled, the 'id' is set from the parent peer.
+   * That guarantees that even if the parent peer is discarded before the
+   * current assembly is compiled and executed, the peer-index entry and the
+   * id are preserved.
    *
    * The name and the su_name cannot be changed by a change of configuration.
    * (We have copies here, though, so that the run-time is self contained, and
    * when being assembled, the bgp_prun_param is a complete.)
    */
+  bgp_peer_id_t peer_id ;       /* copied from peer and locked  */
+
   bgp_nref      name ;          /* copied from config           */
   bgp_nref      cname ;         /* copied from config           */
   bgp_nref      desc ;          /* copied from config           */
@@ -446,10 +454,10 @@ struct bgp_prun_param
   /* The sort of peer depends on the ASN of the peer, our ASN, CONFED
    * stuff etc.
    *
-   *   iBGP: if peer->args.remote_as == bgp->my_as -- whether or not that
+   *   iBGP: if peer->sargs.remote_as == bgp->my_as -- whether or not that
    *         is a confederation member AS.
    *
-   *   cBGP: if peer->args.remote_as is one of a bgp confederation peer
+   *   cBGP: if peer->sargs.remote_as is one of a bgp confederation peer
    *
    *   eBGP:   otherwise
    */
@@ -550,7 +558,7 @@ struct bgp_prun_param
    * between us (local_as) and the peer.  This allows the peer to believe that
    * they are peering with 'change_local_as' (as it was before).
    *
-   * The args.local_as is set to change_local_as (my_as_ebgp), because that is
+   * The sargs.local_as is set to change_local_as (my_as_ebgp), because that is
    * the AS used for the session (and in the OPEN sent).
    */
   as_t          change_local_as ;
@@ -653,6 +661,7 @@ struct bgp_run
  * Run-Time Group Membership
  */
 typedef struct bgp_grun  bgp_grun_t ;
+typedef struct bgp_grun const* bgp_grun_c ;
 
 struct bgp_grun
 {
