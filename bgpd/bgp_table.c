@@ -31,6 +31,7 @@ Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
 
 static void bgp_node_delete (struct bgp_node *);
 static void bgp_table_free (struct bgp_table *);
+static void bgp_table_check(const struct bgp_table *table) ;
 
 struct bgp_table *
 bgp_table_init (afi_t afi, safi_t safi)
@@ -442,6 +443,9 @@ bgp_table_top (const struct bgp_table *const table)
   if (table->top == NULL)
     return NULL;
 
+  if (qdebug)
+    bgp_table_check(table->top) ;
+
   /* Lock the top node and return it. */
   bgp_lock_node (table->top);
   return table->top;
@@ -534,3 +538,72 @@ bgp_table_count (const struct bgp_table *table)
 {
   return table->count;
 }
+
+/*==============================================================================
+ * Stuff for debug.
+ */
+static void bgp_table_node_check(const struct bgp_node* rn, uint count) ;
+
+/*------------------------------------------------------------------------------
+ * Walk the given table and check that it is tickety-boo.
+ *
+ * For each node, will check:
+ *
+ *   1) prefix is valid -- all zeros beyond the prefix length.
+ *
+ *   1) child-nodes point back at the parent.
+ *
+ *   2) child node prefix length is greater than parent's
+ *
+ *   3) child node prefix matches parent's to parent's length
+ *
+ *   4) left child has  '0' in prefix at parent's length
+ *      right child has '1' ditto
+ *
+ *   5) count nodes and check that total matches
+ */
+static void
+bgp_table_check(const struct bgp_table *table)
+{
+  struct bgp_node *node ;
+  uint count ;
+
+  node  = table->top ;
+  count = (node != NULL) ? bgp_node_check(node, table->count) : 0 ;
+
+  qassert(count == table->count) ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Check the given node and its children -- node not NULL
+ */
+static void
+bgp_table_node_check(const struct bgp_node* rn, uint count)
+{
+  uint bit ;
+
+  qassert(count != 0) ;
+
+  count -= 1 ;
+
+  qassert(prefix_check(&rn->p)) ;
+
+  for (bit = 0 ; bit <= 1 ; ++bit)
+    {
+      const struct bgp_node* cn ;
+
+      cn = rn->link[bit] ;
+      if (cn != NULL)
+        {
+          qassert(rn == cn->parent) ;
+          qassert(rn->p.prefixlen < cn->p.prefixlen) ;
+          qassert(prefix_match(&rn->p, &cn->p)) ;
+          qassert(bit == prefix_bit(&cn->p, rn->p.prefixlen)) ;
+
+          bgp_table_node_check(cn, count) ;
+        } ;
+    } ;
+} ;
+
+
+

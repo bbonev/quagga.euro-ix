@@ -238,6 +238,7 @@ extern int prefix_cmp (const struct prefix *, const struct prefix *);
 extern int prefix_common_bits (const struct prefix *, const struct prefix *);
 extern void prefix_copy (struct prefix *dest, const struct prefix *src);
 extern void apply_mask (struct prefix *);
+extern bool prefix_check(const struct prefix *p) ;
 
 extern struct prefix *sockunion2prefix (const_sockunion dest,
                                         const_sockunion mask);

@@ -547,11 +547,14 @@ ecommunity_gettoken (const char *str, struct ecommunity_val *eval,
 struct ecommunity *
 ecommunity_str2com (const char *str, int type, int keyword_included)
 {
-  struct ecommunity *ecom = NULL;
+  struct ecommunity *ecom;
   enum ecommunity_token token;
   struct ecommunity_val eval;
-  int keyword = 0;
+  int keyword ;
 
+  keyword = 0;
+  token   = ecommunity_token_unknown;
+  ecom    = NULL ;
   while ((str = ecommunity_gettoken (str, &eval, &token)))
     {
       switch (token)

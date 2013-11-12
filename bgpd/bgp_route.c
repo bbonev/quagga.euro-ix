@@ -968,7 +968,7 @@ bgp_rs_route_init(struct rs_route* rt, afi_t afi, safi_t safi,
   rt->rs_in_deny     = true ;   /* invalid while !rs_in_applied */
   rt->rs_in_attr     = NULL ;   /* nothing yet                  */
 
-  qassert(bgp_sub_attr_are_interned(attr)) ;
+  qassert((attr == NULL) || bgp_sub_attr_are_interned(attr)) ;
 
   rt->orig_attr      = attr ;
 
@@ -3109,7 +3109,8 @@ bgp_update_main (struct peer *peer, struct prefix *p, struct attr *attr,
 
               /* Neither the attributes nor the tag have changed, so we have
                * no use for the carefully constructed attributes, and no
-               * need to process the bgp_node.
+               * need to process the bgp_node -- except as above for route
+               * flap damping and graceful restart.
                */
               bgp_attr_unintern (use_attr);
               bgp_unlock_node (rn);
@@ -3279,6 +3280,10 @@ bgp_update_main (struct peer *peer, struct prefix *p, struct attr *attr,
   return 0;
 
   /* This BGP update is filtered.  Log the reason then update BGP entry.
+   *
+   * Unlike a real withdraw, the route remains in the adj-in, so if filtering
+   * changes it will be reconsidered on a soft reconfig.  Also, the route may
+   * be considered separately for RS Clients
    */
  filtered:
   if (BGP_DEBUG (update, UPDATE_IN))

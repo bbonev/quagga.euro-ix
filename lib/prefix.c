@@ -43,7 +43,7 @@
 /* Maskbit -- mask for last significant byte of a prefix: maskbit[len % 8]
  */
 static const uint8_t maskbit[] = { 0x00, 0x80, 0xc0, 0xe0, 0xf0,
-                                         0xf8, 0xfc, 0xfe, 0xff };
+                                         0xf8, 0xfc, 0xfe, 0xff } ;
 
 /*==============================================================================
  * "Macros" for banging 32 and 64 bits of masks
@@ -53,6 +53,7 @@ static const uint8_t maskbit[] = { 0x00, 0x80, 0xc0, 0xe0, 0xf0,
 #define U64_1s (uint64_t)0xFFFFFFFFFFFFFFFF
 
 inline static uint32_t n32_mask(uint len)              Always_Inline ;
+inline static uint64_t n64_mask(uint len)              Always_Inline ;
 inline static u_char n32_mask_check (uint32_t mask_n)  Always_Inline ;
 inline static u_char n64_mask_check (uint64_t mask_n)  Always_Inline ;
 
@@ -63,13 +64,23 @@ static uint8_t local_clz_u32_long(uint32_t u32) ;
 inline static uint8_t local_clz_n64(uint64_t n64)      Always_Inline ;
 
 /*------------------------------------------------------------------------------
- * Return 32 bit mask
+ * Return 32 bit mask -- Network Order
  */
 inline static uint32_t
 n32_mask(uint len)
 {
   return (len < 32) ? ~htonl((U32_1s >> len))
                     :         U32_1s ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Return 64 bit mask -- Network Order
+ */
+inline static uint64_t
+n64_mask(uint len)
+{
+  return (len < 64) ? ~htonq((U64_1s >> len))
+                    :         U64_1s ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -104,7 +115,7 @@ n32_mask_check (uint32_t mask_n)
 } ;
 
 /*------------------------------------------------------------------------------
- * Check whether given uint32_t is valid as a netmask.
+ * Check whether given uint64_t is valid as a netmask.
  *
  * Netmask is valid if there are no '1' bits after the LS '0' (if any)
  *
@@ -556,6 +567,53 @@ prefix_family_str (const struct prefix *p)
         return "unknown" ;
     } ;
 }
+
+/*------------------------------------------------------------------------------
+ * Check that given prefix has valid length and that is all zero beyond
+ *                                                            the prefix length.
+ *
+ * Returns:  true <=> OK     (or is AF_UNSPEC, which is always OK).
+ *           false => not OK (or unknown address family)
+ */
+extern bool
+prefix_check(const struct prefix *p)
+{
+  uint     plen ;
+
+  plen = p->prefixlen ;
+
+  switch (p->family)
+    {
+      case AF_INET:
+        if (plen > IPV4_MAX_PREFIXLEN)
+          return false ;
+
+        return (p->u.n32[0] & ~n32_mask(plen)) == 0 ;
+
+#ifdef HAVE_IPV6
+      case AF_INET6:
+        if (p->prefixlen > IPV6_MAX_PREFIXLEN)
+          return false ;
+
+        if (p->prefixlen <= 64)
+          {
+            if (p->u.n64[1] != 0)
+              return false ;
+
+            return (p->u.n64[0] & ~n64_mask(plen)) == 0 ;
+          }
+
+        return (p->u.n64[1] & ~n64_mask(plen - 64)) == 0 ;
+
+#endif /* HAVE_IPV6 */
+
+      case AF_UNSPEC:
+        return true ;
+
+      default:
+        return false ;
+    } ;
+} ;
 
 /*==============================================================================
  * IPv4 Stuff
@@ -1085,21 +1143,23 @@ void apply_classful_mask_ipv4 (struct prefix_ipv4 *p)
 
   destination = ntohl (p->prefix.s_addr);
 
-  if (p->prefixlen == IPV4_MAX_PREFIXLEN);
-  /* do nothing for host routes */
+  if (p->prefixlen == IPV4_MAX_PREFIXLEN)
+    {
+      /* do nothing for host routes */
+    }
   else if (IN_CLASSC (destination))
     {
-      p->prefixlen=24;
+      p->prefixlen = 24;
       apply_mask_ipv4(p);
     }
   else if (IN_CLASSB(destination))
     {
-      p->prefixlen=16;
+      p->prefixlen = 16;
       apply_mask_ipv4(p);
     }
   else
     {
-      p->prefixlen=8;
+      p->prefixlen = 8;
       apply_mask_ipv4(p);
     }
 }
