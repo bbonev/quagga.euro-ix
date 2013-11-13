@@ -476,9 +476,14 @@ bgp_med_value (struct attr *attr, struct bgp *bgp)
     }
 }
 
-/* Compare two bgp route entity.  br is preferable then return 1. */
-static int
-bgp_info_cmp (struct bgp *bgp, struct bgp_info *new, struct bgp_info *exist)
+/*------------------------------------------------------------------------------
+ * Compare two bgp route entity.
+ *
+ * Returns:  the preferred route-info
+ */
+static struct bgp_info *
+bgp_info_cmp (struct bgp *bgp, struct bgp_info *new, struct bgp_info *exist,
+                                                     struct bgp_info *select)
 {
   u_int32_t new_pref;
   u_int32_t exist_pref;
@@ -497,10 +502,8 @@ bgp_info_cmp (struct bgp *bgp, struct bgp_info *new, struct bgp_info *exist)
 
   /* 0. Null check.
    */
-  if (new == NULL)
-    return 0;
   if (exist == NULL)
-    return 1;
+    return new ;
 
   /* 1. Weight check.
    */
@@ -509,9 +512,9 @@ bgp_info_cmp (struct bgp *bgp, struct bgp_info *new, struct bgp_info *exist)
   if (exist->attr->extra)
     exist_weight = exist->attr->extra->weight;
   if (new_weight > exist_weight)
-    return 1;
+    return new ;
   if (new_weight < exist_weight)
-    return 0;
+    return exist ;
 
   /* 2. Local preference check.
    */
@@ -526,26 +529,26 @@ bgp_info_cmp (struct bgp *bgp, struct bgp_info *new, struct bgp_info *exist)
     exist_pref = bgp->default_local_pref;
 
   if (new_pref > exist_pref)
-    return 1;
+    return new ;
   if (new_pref < exist_pref)
-    return 0;
+    return exist ;
 
   /* 3. Local route check.
    */
   if (new->sub_type == BGP_ROUTE_STATIC)
-    return 1;
+    return new ;
   if (exist->sub_type == BGP_ROUTE_STATIC)
-    return 0;
+    return exist ;
 
   if (new->sub_type == BGP_ROUTE_REDISTRIBUTE)
-    return 1;
+    return new ;
   if (exist->sub_type == BGP_ROUTE_REDISTRIBUTE)
-    return 0;
+    return exist ;
 
   if (new->sub_type == BGP_ROUTE_AGGREGATE)
-    return 1;
+    return new ;
   if (exist->sub_type == BGP_ROUTE_AGGREGATE)
-    return 0;
+    return exist ;
 
   /* 4. AS path length check.
    */
@@ -562,27 +565,27 @@ bgp_info_cmp (struct bgp *bgp, struct bgp_info *new, struct bgp_info *exist)
           aspath_hops += aspath_count_confeds (new->attr->aspath);
 
           if ( aspath_hops < (exist_hops + exist_confeds))
-            return 1;
+            return new ;
           if ( aspath_hops > (exist_hops + exist_confeds))
-            return 0;
+            return exist ;
         }
       else
         {
           int newhops = aspath_count_hops (new->attr->aspath);
 
           if (newhops < exist_hops)
-            return 1;
+            return new ;
           if (newhops > exist_hops)
-            return 0;
+            return exist ;
         }
     }
 
   /* 5. Origin check.
    */
   if (new->attr->origin < exist->attr->origin)
-    return 1;
+    return new ;
   if (new->attr->origin > exist->attr->origin)
-    return 0;
+    return exist ;
 
   /* 6. MED check.
    */
@@ -603,9 +606,9 @@ bgp_info_cmp (struct bgp *bgp, struct bgp_info *new, struct bgp_info *exist)
       exist_med = bgp_med_value (exist->attr, bgp);
 
       if (new_med < exist_med)
-        return 1;
+        return new ;
       if (new_med > exist_med)
-        return 0;
+        return exist ;
     }
 
   /* 7. Peer type check.  CONFED and iBGP rank equal, "internal" (RFC5065)
@@ -614,13 +617,13 @@ bgp_info_cmp (struct bgp *bgp, struct bgp_info *new, struct bgp_info *exist)
   exist_sort = peer_sort(exist->peer) ;
 
   if ((new_sort == BGP_PEER_EBGP)   && (exist_sort == BGP_PEER_IBGP))
-    return 1;
+    return new ;
   if ((new_sort == BGP_PEER_EBGP)   && (exist_sort == BGP_PEER_CONFED))
-    return 1;
+    return new ;
   if ((new_sort == BGP_PEER_IBGP)   && (exist_sort == BGP_PEER_EBGP))
-    return 0;
+    return exist ;
   if ((new_sort == BGP_PEER_CONFED) && (exist_sort == BGP_PEER_EBGP))
-    return 0;
+    return exist ;
 
   /* 8. IGP metric check.
    */
@@ -630,9 +633,9 @@ bgp_info_cmp (struct bgp *bgp, struct bgp_info *new, struct bgp_info *exist)
       uint32_t existm = (exist->extra ? exist->extra->igpmetric : 0);
 
       if (newm < existm)
-        return 1;
+        return new ;
       if (newm > existm)
-        return 0;
+        return exist ;
     }
 
   /* 9. Maximum path check. */
@@ -646,10 +649,8 @@ bgp_info_cmp (struct bgp *bgp, struct bgp_info *new, struct bgp_info *exist)
       && (new_sort   == BGP_PEER_EBGP)
       && (exist_sort == BGP_PEER_EBGP) )
     {
-      if (new->flags & BGP_INFO_SELECTED)
-        return 1;
-      if (exist->flags & BGP_INFO_SELECTED)
-        return 0;
+      if ((new == select) || (exist == select))
+        return select ;
     }
 
   /* 11. Router-ID comparision.
@@ -664,9 +665,9 @@ bgp_info_cmp (struct bgp *bgp, struct bgp_info *new, struct bgp_info *exist)
     exist_id.s_addr = exist->peer->remote_id.s_addr;
 
   if (ntohl (new_id.s_addr) < ntohl (exist_id.s_addr))
-    return 1;
+    return new ;
   if (ntohl (new_id.s_addr) > ntohl (exist_id.s_addr))
-    return 0;
+    return exist ;
 
   /* 12. Cluster length comparision.
    */
@@ -680,20 +681,18 @@ bgp_info_cmp (struct bgp *bgp, struct bgp_info *new, struct bgp_info *exist)
     exist_cluster = 0;
 
   if (new_cluster < exist_cluster)
-    return 1;
+    return new ;
   if (new_cluster > exist_cluster)
-    return 0;
+    return exist ;
 
   /* 13. Neighbor address comparision.
    */
   ret = sockunion_cmp (new->peer->su_remote, exist->peer->su_remote);
 
-  if (ret == 1)
-    return 0;
-  if (ret == -1)
-    return 1;
+  if (ret >= 0)
+    return exist ;
 
-  return 1;
+  return new ;
 }
 
 static enum filter_type
@@ -1832,91 +1831,202 @@ struct bgp_info_pair
   struct bgp_info *new;
 };
 
-static void
+/*------------------------------------------------------------------------------
+ * Run the selection process across all candidates for the given rib-node.
+ *
+ * Reaps all "BGP_INFO_REMOVED" except for the current selection.
+ *
+ * Returns:  true <=> new != old selection, or new == old selection but
+ *                                                        BGP_INFO_ATTR_CHANGED
+ *           sets: result->old  = old selection
+ *                       ->new  = new selection
+ *
+ * Removes:  BGP_INFO_SELECTED, BGP_INFO_ATTR_CHANGED from all candidates.
+ *
+ * Sets:     BGP_INFO_SELECTED on the new selection (if any).
+ *
+ * Expects:  BGP_INFO_DMED_DONE and BGP_INFO_DMED_SKIP to be cleared on entry,
+ *           and makes sure those are cleared when returns.
+ */
+static bool
 bgp_best_selection (struct bgp *bgp, struct bgp_node *rn,
                                                    struct bgp_info_pair *result)
 {
   struct bgp_info *new_select;
   struct bgp_info *old_select;
-  struct bgp_info *ri;
-  struct bgp_info *ri1;
-  struct bgp_info *ri2;
-  struct bgp_info *nextri = NULL;
+  struct bgp_info *nextri ;
+  bool old_changed ;
+
+  old_select  = NULL;
+  new_select  = NULL;
 
   /* bgp deterministic-med
    */
-  new_select = NULL;
   if (bgp_flag_check (bgp, BGP_FLAG_DETERMINISTIC_MED))
-    for (ri1 = rn->info; ri1; ri1 = ri1->info_next)
-      {
-        if (ri1->flags & BGP_INFO_DMED_CHECK)
-          continue;
-        if (BGP_INFO_HOLDDOWN (ri1))
-          continue;
+    {
+      struct bgp_info *ri;
+      struct bgp_info *ris;
 
-        new_select = ri1;
-        if (ri1->info_next)
-          for (ri2 = ri1->info_next; ri2; ri2 = ri2->info_next)
+      for (ri = rn->info; ri; ri = ri->info_next)
+        {
+          /* Skip stuff we cannot select, knocking down any BGP_INFO_DMED_DONE
+           * that have been set already.
+           */
+          if ( (ri->flags & (BGP_INFO_VALID |
+                             BGP_INFO_DMED_DONE |
+                             BGP_INFO_DMED_SKIP |
+                             BGP_INFO_UNUSEABLE)) != BGP_INFO_VALID)
             {
-              if (ri2->flags & BGP_INFO_DMED_CHECK)
-                continue;
-              if (BGP_INFO_HOLDDOWN (ri2))
-                continue;
+              ri->flags &= ~BGP_INFO_DMED_DONE ;
+              continue ;        /* already processed or no interest     */
+            } ;
 
-              if (aspath_cmp_left (ri1->attr->aspath, ri2->attr->aspath)
-                  || aspath_cmp_left_confed (ri1->attr->aspath,
-                                             ri2->attr->aspath))
+          if (ri->flags & BGP_INFO_SELECTED)
+            old_select = ri ;
+
+          new_select = ri;
+          for (ris = ri->info_next; ris; ris = ris->info_next)
+            {
+              if ( (ris->flags & (BGP_INFO_VALID |
+                                  BGP_INFO_DMED_DONE |
+                                  BGP_INFO_DMED_SKIP |
+                                  BGP_INFO_UNUSEABLE)) != BGP_INFO_VALID)
+                continue ;      /* already processed or no interest     */
+
+              if (aspath_cmp_left (ri->attr->aspath, ris->attr->aspath)
+                    || aspath_cmp_left_confed (ri->attr->aspath,
+                                               ris->attr->aspath))
                 {
-                  if (bgp_info_cmp (bgp, ri2, new_select))
-                    {
-                      bgp_info_unset_flag (rn, new_select, BGP_INFO_DMED_SELECTED);
-                      new_select = ri2;
-                    }
+                  /* Everything we consider but do not select, we mark
+                   * DMED_SKIP, and the selection process below will then
+                   * ignore these.
+                   */
+                  struct bgp_info *was ;
 
-                  bgp_info_set_flag (rn, ri2, BGP_INFO_DMED_CHECK);
-                }
-            }
-        bgp_info_set_flag (rn, new_select, BGP_INFO_DMED_CHECK);
-        bgp_info_set_flag (rn, new_select, BGP_INFO_DMED_SELECTED);
-      }
+                  if (ris->flags & BGP_INFO_SELECTED)
+                    old_select = ris ;
+
+                  was = new_select ;
+                  new_select = bgp_info_cmp (bgp, ris, new_select, old_select) ;
+
+                  if (new_select == ris)
+                    was->flags |= BGP_INFO_DMED_SKIP ;
+                  else
+                    ris->flags |= BGP_INFO_DMED_SKIP ;
+                } ;
+
+              /* If we have selected something ahead of the current ri,
+               * then we mark that DMED_DONE, so that we don't consider it
+               * again as we advance ri.
+               */
+              if (new_select != ri)
+                new_select->flags |= BGP_INFO_DMED_DONE ;
+            } ;
+        } ;
+
+      old_select  = NULL;
+      new_select  = NULL;
+    } ;
 
   /* Check old selected route and new selected route.
    */
-  old_select = NULL;
-  new_select = NULL;
-  for (ri = rn->info; (ri != NULL) && (nextri = ri->info_next, 1); ri = nextri)
+  old_changed = false ;
+  nextri      = rn->info ;
+  while (nextri != NULL)
     {
-      if (ri->flags & BGP_INFO_SELECTED)
-        old_select = ri;
+      struct bgp_info *ri;
 
-      if (BGP_INFO_HOLDDOWN (ri))
+      ri = nextri ;
+      nextri = ri->info_next ;          /* in case is reaped    */
+
+      if (ri->flags & BGP_INFO_SELECTED)
         {
-          /* reap REMOVED routes, if needs be
-           * selected route must stay for a while longer though
+          /* Should never have more than one current selection !
+           */
+          if (old_select != NULL)
+            {
+              /* Log the error and (arbitrarily) discard SELECTED from the
+               * earlier old_select.
+               *
+               * This may be confusing if the route is withdrawn from Zebra,
+               * but this is no worse than the old code, which (also) captured
+               * the last SELECTED.
+               */
+              bool main_rib ;
+
+              main_rib = (rn->table->type == BGP_TABLE_MAIN) ;
+
+              zlog_err("More than one 'SELECTED' route for %s in %s%s",
+                             spfxtoa(&rn->p).str,
+                             (main_rib ? "main RIB" : "RS-Client RIB: "),
+                             (main_rib ? "" : rn->table->owner->host)) ;
+
+              bgp_info_unset_flag (rn, old_select, BGP_INFO_SELECTED) ;
+
+              if (old_select->flags & BGP_INFO_REMOVED)
+                bgp_info_reap (rn, old_select);
+            } ;
+
+          old_select  = ri;
+          old_changed = (ri->flags & BGP_INFO_ATTR_CHANGED) ;
+        } ;
+
+      if ( (ri->flags & (BGP_INFO_VALID |
+                         BGP_INFO_DMED_SKIP |
+                         BGP_INFO_UNUSEABLE))  == BGP_INFO_VALID)
+        {
+          /* Choose between VALID routes
+           */
+          new_select = bgp_info_cmp (bgp, ri, new_select, old_select) ;
+        }
+      else
+        {
+          /* Ignore routes which are !BGP_INFO_VALID
+           *            or which are BGP_INFO_DMED_SKIP
+           *            or which are BGP_INFO_UNUSEABLE
+           *
+           * As we go past, reap REMOVED routes, except that the current
+           * selected route must stay for a while longer.
+           *
+           * If don't reap, clear all the usual flags.
            */
           if ((ri->flags & BGP_INFO_REMOVED) && (ri != old_select))
-            bgp_info_reap (rn, ri);
+            {
+              bgp_info_reap (rn, ri);
+              continue ;
+            } ;
+        } ;
 
-          continue;
-        }
+      ri->flags &= ~(BGP_INFO_SELECTED  | BGP_INFO_ATTR_CHANGED |
+                     BGP_INFO_DMED_DONE | BGP_INFO_DMED_SKIP) ;
+    } ;
 
-      if (bgp_flag_check (bgp, BGP_FLAG_DETERMINISTIC_MED)
-                                      && !(ri->flags & BGP_INFO_DMED_SELECTED))
+  if (new_select != NULL)
+    {
+      if (!BGP_INFO_HOLDDOWN(new_select))
+        new_select->flags |= BGP_INFO_SELECTED ;
+      else
         {
-          bgp_info_unset_flag (rn, ri, BGP_INFO_DMED_CHECK);
-          continue;
-        }
-      bgp_info_unset_flag (rn, ri, BGP_INFO_DMED_CHECK);
-      bgp_info_unset_flag (rn, ri, BGP_INFO_DMED_SELECTED);
+          bool main_rib ;
 
-      if (bgp_info_cmp (bgp, ri, new_select))
-        new_select = ri;
-    }
+          main_rib = (rn->table->type == BGP_TABLE_MAIN) ;
 
-    result->old = old_select;
-    result->new = new_select;
+          zlog_err("'SELECTED' route for %s in %s%s has flags 0x%x",
+                         spfxtoa(&rn->p).str,
+                         (main_rib ? "main RIB" : "RS-Client RIB: "),
+                         (main_rib ? "" : rn->table->owner->host),
+                         new_select->flags) ;
 
-    return;
+          qassert(!BGP_INFO_HOLDDOWN (new_select)) ;
+
+          new_select = NULL ;
+        } ;
+    } ;
+
+  result->old  = old_select;
+  result->new  = new_select;
+
+  return (old_select != new_select) || old_changed ;
 }
 
 /*------------------------------------------------------------------------------
@@ -2001,7 +2111,7 @@ bgp_process_rsclient (struct work_queue *wq, work_queue_item item)
   struct bgp_info_pair old_and_new;
   struct bgp_table *table ;
   struct peer *rsclient ;
-  bool change_select, announce ;
+  bool update ;
 
   assert(wq->spec.data == item) ;
 
@@ -2029,45 +2139,11 @@ bgp_process_rsclient (struct work_queue *wq, work_queue_item item)
 
   /* Best path selection.
    */
-  bgp_best_selection (bgp, rn, &old_and_new);
+  update = bgp_best_selection (bgp, rn, &old_and_new);
   new_select = old_and_new.new;
   old_select = old_and_new.old;
 
-  announce       = true ;
-  change_select = (new_select != NULL) ;
-
-  if (old_select != NULL)
-    {
-      if (new_select == old_select)
-        {
-          /* The selection has not changed.  But the attributes may have.
-           */
-          if (new_select->flags & BGP_INFO_ATTR_CHANGED)
-            bgp_info_unset_flag (rn, new_select, BGP_INFO_ATTR_CHANGED) ;
-          else
-            announce = false ;
-
-          change_select = false ;
-        }
-      else
-        {
-          if (old_select->flags & BGP_INFO_REMOVED)
-            bgp_info_reap (rn, old_select);
-          else
-            {
-              bgp_info_unset_flag (rn, old_select, BGP_INFO_SELECTED) ;
-              bgp_info_unset_flag (rn, old_select, BGP_INFO_ATTR_CHANGED) ;
-            } ;
-        } ;
-    } ;
-
-  if (change_select)
-    {
-      bgp_info_set_flag (rn, new_select, BGP_INFO_SELECTED);
-      bgp_info_unset_flag (rn, new_select, BGP_INFO_ATTR_CHANGED);
-    } ;
-
-  if (announce)
+  if (update)
     {
       if (CHECK_FLAG (rsclient->sflags, PEER_STATUS_GROUP))
         {
@@ -2090,6 +2166,9 @@ bgp_process_rsclient (struct work_queue *wq, work_queue_item item)
       else
         bgp_process_announce_selected (rsclient, new_select, rn, afi, safi) ;
     } ;
+
+  if ((old_select != NULL) && (old_select->flags & BGP_INFO_REMOVED))
+    bgp_info_reap (rn, old_select) ;
 
   bgp_unlock_node (rn);
   bgp_table_unlock (table);     /* NB: *after* node, in case table is deleted */
@@ -2116,6 +2195,7 @@ bgp_process_main (struct work_queue *wq, work_queue_item item)
   struct listnode *node, *nnode;
   struct bgp_table *table ;
   struct peer *peer;
+  bool   update ;
 
   assert(wq->spec.data == item) ;
 
@@ -2143,65 +2223,61 @@ bgp_process_main (struct work_queue *wq, work_queue_item item)
 
   /* Best path selection.
    */
-  bgp_best_selection (bgp, rn, &old_and_new);
+  update = bgp_best_selection (bgp, rn, &old_and_new);
   old_select = old_and_new.old;
   new_select = old_and_new.new;
 
-  /* Nothing to do.
+  /* If required, update each BGP peer, excluding RS-Clients, in this afi/safi.
    */
-  if (old_select && (old_select == new_select))
+  if (update)
     {
-      if (!(old_select->flags & BGP_INFO_ATTR_CHANGED))
+      for (ALL_LIST_ELEMENTS (bgp->peer, node, nnode, peer))
         {
-          if (old_select->flags & BGP_INFO_IGP_CHANGED)
-            bgp_zebra_announce (p, old_select, bgp, safi);
-
-          goto finish ;         /* was return ! */
+          if (!(peer->af_flags[afi][safi] & PEER_FLAG_RSERVER_CLIENT))
+            bgp_process_announce_selected (peer, new_select, rn, afi, safi);
         }
     }
-
-  if (old_select)
-    bgp_info_unset_flag (rn, old_select, BGP_INFO_SELECTED);
-  if (new_select)
+  else if ((old_select != NULL) && (old_select == new_select))
     {
-      bgp_info_set_flag (rn, new_select, BGP_INFO_SELECTED);
-      bgp_info_unset_flag (rn, new_select, BGP_INFO_ATTR_CHANGED);
-    }
-
-  /* Announce to each BGP peer, excluding RS-Clients in this afi/safi.
-   */
-  for (ALL_LIST_ELEMENTS (bgp->peer, node, nnode, peer))
-    {
-      if (!(peer->af_flags[afi][safi] & PEER_FLAG_RSERVER_CLIENT))
-        bgp_process_announce_selected (peer, new_select, rn, afi, safi);
-    }
+      update = (new_select->flags & BGP_INFO_IGP_CHANGED) ;
+    } ;
 
   /* FIB update.
    */
-  if ( ((safi == SAFI_UNICAST) || (safi == SAFI_MULTICAST))
-                  && (bgp->name == NULL) && ! bgp_option_check (BGP_OPT_NO_FIB))
+  if (update && ((safi == SAFI_UNICAST) || (safi == SAFI_MULTICAST))
+               && (bgp->name == NULL) && ! bgp_option_check (BGP_OPT_NO_FIB))
     {
-      if (new_select && (new_select->type     == ZEBRA_ROUTE_BGP)
-                     && (new_select->sub_type == BGP_ROUTE_NORMAL))
-        bgp_zebra_announce (p, new_select, bgp, safi);
+      if (new_select != NULL)
+        {
+          /* We have a route, which is changed in some way.
+           *
+           * Tell Zebra if a suitable kind of route jas been selected.
+           */
+          new_select->flags &= ~BGP_INFO_IGP_CHANGED ;
+
+          if ( (new_select->type     == ZEBRA_ROUTE_BGP) &&
+               (new_select->sub_type == BGP_ROUTE_NORMAL) )
+            bgp_zebra_announce (p, new_select, bgp, safi);
+        }
       else
         {
-          /* Withdraw the route from the kernel.
+          /* We don't have a route any more, and if we had one before, we'd
+           * better withdraw it.
            */
-          if (old_select && (old_select->type     == ZEBRA_ROUTE_BGP)
-                         && (old_select->sub_type == BGP_ROUTE_NORMAL))
+          if ((old_select != NULL)
+                               && (old_select->type     == ZEBRA_ROUTE_BGP)
+                               && (old_select->sub_type == BGP_ROUTE_NORMAL))
             bgp_zebra_withdraw (p, old_select, safi);
-        }
-    }
+        } ;
+    } ;
 
-  /* Reap old select bgp_info, it it has been removed
+  /* Reap old select bgp_info, if it has been removed
    */
-  if (old_select && (old_select->flags & BGP_INFO_REMOVED))
+  if ((old_select != NULL) && (old_select->flags & BGP_INFO_REMOVED))
     bgp_info_reap (rn, old_select);
 
   /* Finish up
    */
-finish:
   bgp_unlock_node (rn) ;
   bgp_table_unlock (table) ;    /* NB: *after* node, in case table is deleted */
   bgp_unlock (bgp) ;
@@ -3568,15 +3644,10 @@ bgp_announce_route_table (struct peer *peer, afi_t afi, safi_t safi,
         {
           struct attr* attr ;
 
-          /* We do not announce to the source peer.
-           */
-          if (ri->peer == peer)
-            continue ;
-
           /* Announce the selected route.
            *
-           * This is slightly less than than satisfactory...  this may announce
-           * routes which are not Valid and/or Stale and/or Removed :-(
+           * This is slightly less than than satisfactory...  the current
+           * selection may be not Valid and/or Stale and/or Removed :-(
            *
            * The problem is that the process logic assumes that if it
            * reselects the selected route, it does not need to announce it.
@@ -3588,16 +3659,41 @@ bgp_announce_route_table (struct peer *peer, afi_t afi, safi_t safi,
            * happen is that the route will be announced, and at some
            * future date (soon, one hopes) withdrawn or replaced !
            *
+           * However, at present, when a route is restored it is marked
+           * BGP_INFO_ATTR_CHANGED -- which forces the route to be reannounced
+           * when the rib-node is processed.  This may create spurious
+           * duplicate updates... but that is probably better than no
+           * update at all !  (And is probably a work around.)
+           *
            * What is needed is a way to force an update for a subset of all
            * peers.
            */
           if (!(ri->flags & BGP_INFO_SELECTED))
             continue ;
 
-          if (!is_rsclient)
-            attr = bgp_announce_check (ri, peer, &rn->p, afi, safi) ;
+          if (BGP_INFO_HOLDDOWN (ri))
+            {
+              /* If the current selection is in "HOLDDOWN" then the rn really
+               * should be queued for processing.
+               *
+               * If it is queued for processing, then the route selection
+               * should sweep up and make a new selection.
+               *
+               * However... as a belt-and-braces thing, if we don't have a
+               * current selection, we here withdraw the prefix, which we
+               * expect to be re-announced RSN.
+               */
+              qassert(rn->on_wq) ;
+
+              attr = NULL ;
+            }
           else
-            attr = bgp_announce_check_rsclient (ri, peer, &rn->p, afi, safi) ;
+            {
+              if (!is_rsclient)
+                attr = bgp_announce_check (ri, peer, &rn->p, afi, safi) ;
+              else
+                attr = bgp_announce_check_rsclient (ri, peer, &rn->p, afi, safi) ;
+            } ;
 
           if (attr != NULL)
             bgp_adj_out_set (rn, peer, &rn->p, attr, afi, safi, ri);

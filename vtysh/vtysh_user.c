@@ -180,7 +180,9 @@ vtysh_auth(void)
 
   user = user_lookup (passwd->pw_name);
   if (user && user->nopassword)
-    /* Pass through */;
+    {
+      /* Pass through */;
+    }
   else
     {
 #ifdef USE_PAM

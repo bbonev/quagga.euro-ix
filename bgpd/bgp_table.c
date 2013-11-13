@@ -444,7 +444,7 @@ bgp_table_top (const struct bgp_table *const table)
     return NULL;
 
   if (qdebug)
-    bgp_table_check(table->top) ;
+    bgp_table_check(table) ;
 
   /* Lock the top node and return it. */
   bgp_lock_node (table->top);
@@ -542,7 +542,7 @@ bgp_table_count (const struct bgp_table *table)
 /*==============================================================================
  * Stuff for debug.
  */
-static void bgp_table_node_check(const struct bgp_node* rn, uint count) ;
+static uint bgp_table_node_check(const struct bgp_node* rn, uint count) ;
 
 /*------------------------------------------------------------------------------
  * Walk the given table and check that it is tickety-boo.
@@ -569,15 +569,17 @@ bgp_table_check(const struct bgp_table *table)
   uint count ;
 
   node  = table->top ;
-  count = (node != NULL) ? bgp_node_check(node, table->count) : 0 ;
+  count = table->count ;
+  if (node != NULL)
+    count = bgp_table_node_check(node, table->count) ;
 
-  qassert(count == table->count) ;
+  qassert(count == 0) ;
 } ;
 
 /*------------------------------------------------------------------------------
  * Check the given node and its children -- node not NULL
  */
-static void
+static uint
 bgp_table_node_check(const struct bgp_node* rn, uint count)
 {
   uint bit ;
@@ -598,11 +600,13 @@ bgp_table_node_check(const struct bgp_node* rn, uint count)
           qassert(rn == cn->parent) ;
           qassert(rn->p.prefixlen < cn->p.prefixlen) ;
           qassert(prefix_match(&rn->p, &cn->p)) ;
-          qassert(bit == prefix_bit(&cn->p, rn->p.prefixlen)) ;
+          qassert(bit == prefix_bit(&rn->p.u.prefix, rn->p.prefixlen)) ;
 
           bgp_table_node_check(cn, count) ;
         } ;
     } ;
+
+  return count ;
 } ;
 
 

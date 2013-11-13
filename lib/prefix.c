@@ -20,7 +20,7 @@
  * 02111-1307, USA.
  */
 
-#include <zebra.h>
+#include <misc.h>
 
 #include "prefix.h"
 #include "vty.h"
@@ -42,8 +42,10 @@
 
 /* Maskbit -- mask for last significant byte of a prefix: maskbit[len % 8]
  */
+#if 0
 static const uint8_t maskbit[] = { 0x00, 0x80, 0xc0, 0xe0, 0xf0,
                                          0xf8, 0xfc, 0xfe, 0xff } ;
+#endif
 
 /*==============================================================================
  * "Macros" for banging 32 and 64 bits of masks
