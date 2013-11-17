@@ -29,59 +29,7 @@
 #include "prefix.h"
 #include "log.h"
 
-/*------------------------------------------------------------------------------
- * Make stream object
- *
- * NB: can make a stream of size == 0.
- *
- *     Will not allocate a body for the stream -- pointer will be NULL,
- *     but since the size is zero, that is OK.
- *
- * NB: the body of the stream is *NOT* zeroised.
- */
-extern struct stream *
-stream_new (size_t size)
-{
-  struct stream *s;
-
-  s = XCALLOC(MTYPE_STREAM, sizeof (struct stream));
-
-  /* Zeroising sets:
-   *
-   *   next       -- NULL   -- not on any list
-   *
-   *   getp       -- 0      -- start at the beginning
-   *   endp       -- 0      -- empty
-   *   size       -- X      -- see below
-   *
-   *   startp     -- 0      -- tidy
-   *
-   *   overrun    -- false  -- OK so far !
-   *   overflow   -- false  -- ditto
-   *
-   *   data       -- NULL   -- set if size != 0
-   */
-
-  if (size != 0)
-    s->data = XMALLOC(MTYPE_STREAM_DATA, size) ;
-
-  s->size = size;
-
-  return s;
-} ;
-
-/*------------------------------------------------------------------------------
- * Free it now.
- */
-extern void
-stream_free (struct stream *s)
-{
-  if (s == NULL)
-    return;
-
-  XFREE (MTYPE_STREAM_DATA, s->data);
-  XFREE (MTYPE_STREAM, s);
-}
+static void* stream_data_realloc(void* old_data, uint old_size, uint new_size) ;
 
 /*------------------------------------------------------------------------------
  * Set overflow and/or overrun (if required)
@@ -164,7 +112,7 @@ stream_dup (struct stream* src)
 extern size_t
 stream_resize (struct stream *s, size_t newsize)
 {
-  s->data = XREALLOC (MTYPE_STREAM_DATA, s->data, newsize) ;
+  s->data = stream_data_realloc(s->data, s->size, newsize) ;
   s->size = newsize;
 
   if ((s->getp > s->endp) || (s->endp > s->size))
@@ -1143,3 +1091,531 @@ stream_fifo_free (struct stream_fifo *fifo)
   stream_fifo_clean (fifo);
   XFREE (MTYPE_STREAM_FIFO, fifo);
 }
+
+/*==============================================================================
+ * Pools for stream stuff
+ *
+ * Note that each pool is zeroized when it is created, so any padding inside
+ * each stream is zeroized.  But when a backet is "malloc'd" it is not
+ * zeroized, but all fields are immediately filled in.
+ */
+
+#include "qpthreads.h"
+
+enum
+{
+  s_obj_pool_size       = 1024,
+
+  s_data_pool_size      = 64 * 1024,
+  s_data_unit           = 256,
+  s_data_size_max       = 4096,
+
+  s_data_unit_count     = s_data_size_max / s_data_unit,
+} ;
+
+CONFIRM(s_data_size_max == (s_data_unit * s_data_unit_count)) ;
+
+struct s_obj_pool
+{
+  struct s_obj_pool* next ;
+
+  struct stream streams[s_obj_pool_size] ;
+};
+
+struct s_data_pool
+{
+  struct s_data_pool*   next ;
+
+  byte* free ;
+  uint  left ;
+
+  byte  data[s_data_pool_size] ;
+} ;
+
+struct s_data_free
+{
+  struct s_data_free*   next ;
+  size_t        size ;
+} ;
+
+static struct s_obj_pool* s_obj_pools       = NULL ;
+static struct stream*     s_obj_free        = NULL ;
+
+static struct s_data_pool* s_data_pools     = NULL ;
+static struct s_data_pool* s_data_new_pools = NULL ;
+
+static struct s_data_free* s_data_units[s_data_unit_count] = { NULL } ;
+
+static qpt_spin_t s_pool_slock = {0} ;
+
+static struct s_data_free* stream_data_malloc(uint unit_size) ;
+
+/*------------------------------------------------------------------------------
+ * Early morning start
+ */
+extern void
+stream_start_up(void)
+{
+  s_obj_pools   = NULL ;
+  s_obj_free    = NULL ;
+
+  s_data_pools     = NULL ;
+  s_data_new_pools = NULL ;
+
+  memset(s_data_units, 0, sizeof(s_data_units)) ;
+  confirm(sizeof(s_data_units) == (sizeof(void*) * s_data_unit_count)) ;
+}
+
+/*------------------------------------------------------------------------------
+ * Change to qpthreads_enabled
+ */
+extern void
+stream_init_r(void)
+{
+  qpt_spin_init(s_pool_slock) ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Final close
+ */
+extern void
+stream_finish(void)
+{
+  struct s_obj_pool*  o_pool ;
+  struct s_data_pool* d_pool ;
+
+  qpt_spin_destroy(s_pool_slock) ;
+
+  s_obj_free = NULL ;
+
+  while ((o_pool = s_obj_pools) != NULL)
+    {
+      s_obj_pools = o_pool->next ;
+      XFREE(MTYPE_STREAM, o_pool) ;
+    } ;
+
+  memset(s_data_units, 0, sizeof(s_data_units)) ;
+
+  while (1)
+    {
+      if      ((d_pool = s_data_new_pools) != NULL)
+        s_data_new_pools = d_pool->next ;
+      else if ((d_pool = s_data_pools) != NULL)
+        s_data_pools = d_pool->next ;
+      else
+        break ;
+
+      XFREE(MTYPE_STREAM_DATA, d_pool) ;
+    }
+} ;
+
+/*------------------------------------------------------------------------------
+ * Make stream object
+ *
+ * NB: can make a stream of size == 0.
+ *
+ *     Will not allocate a body for the stream -- pointer will be NULL,
+ *     but since the size is zero, that is OK.
+ *
+ * NB: the body of the stream is *NOT* zeroised.
+ */
+extern struct stream *
+stream_new (size_t size)
+{
+  struct stream* s ;
+  byte*  data ;
+
+  qpt_spin_lock(s_pool_slock) ;
+
+  /* Step (1) first catch your stream object.
+   */
+  s = s_obj_free ;
+
+  if (s == NULL)
+    {
+      struct s_obj_pool* pool ;
+      uint i ;
+
+      /* Don't like to hold spin-lock across an XCALLOC, so drop before and
+       * get back afterwards -- this is probably not an issue, but it just
+       * does not feel right !
+       *
+       * If (by some sad coincidence) two pthreads come through here, will
+       * get two pools, not one... tant pis.
+       */
+      qpt_spin_unlock(s_pool_slock) ;
+
+      pool = XCALLOC(MTYPE_STREAM, sizeof(struct s_obj_pool)) ;
+
+      for (i = 0 ; i < s_obj_pool_size ; ++i)
+        {
+          struct stream* sp ;
+
+          sp       = s ;
+          s        = &pool->streams[i] ;
+          s->next  = sp ;
+        } ;
+
+      qpt_spin_lock(s_pool_slock) ;
+
+      pool->next  = s_obj_pools ;
+      s_obj_pools = pool ;
+
+      /* This deals with the (slim) possibility that two pools are created
+       * at the same time.
+       */
+      pool->streams[0].next = s_obj_free ;
+    } ;
+
+  s_obj_free = s->next ;
+
+  /* Step (2) next catch your data object.
+   */
+  /* Deal with the cases we don't use the pool for.
+   */
+  if      (size > s_data_size_max)
+    {
+      qpt_spin_unlock(s_pool_slock) ;
+
+      data = XMALLOC(MTYPE_STREAM_DATA, size) ;
+    }
+  else if (size == 0)
+    {
+      qpt_spin_unlock(s_pool_slock) ;
+
+      data = NULL ;
+    }
+  else
+    {
+      /* Prepare to allocate from the pool.
+       */
+      uint   unit_index ;
+      uint   unit_size ;
+      struct s_data_free* unit ;
+
+      unit_index = (size       - 1) / s_data_unit ;
+      unit_size  = (unit_index + 1) * s_data_unit ;
+
+      /* Try for a previously owned data buffer of the required size
+       */
+      unit = s_data_units[unit_index] ;
+
+      if (unit == NULL)
+        unit = stream_data_malloc(unit_size) ;
+      else
+        {
+          assert(unit->size == unit_size) ;
+          s_data_units[unit_index] = unit->next ;
+        } ;
+
+      qpt_spin_unlock(s_pool_slock) ;
+
+      data = (void*) unit ;
+    } ;
+
+  /* Zeroising sets:
+   *
+   *   next       -- NULL   -- not on any list
+   *
+   *   getp       -- 0      -- start at the beginning
+   *   endp       -- 0      -- empty
+   *   size       -- X      -- see below
+   *
+   *   startp     -- 0      -- tidy
+   *
+   *   overrun    -- false  -- OK so far !
+   *   overflow   -- false  -- ditto
+   *
+   *   data       -- NULL   -- set if size != 0
+   */
+  memset(s, 0, sizeof(struct stream)) ;
+
+  s->data = data ;
+  s->size = size ;
+
+  return s ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Free it now.
+ */
+extern void
+stream_free (struct stream *s)
+{
+  void*  data ;
+  size_t size ;
+
+  if (s == NULL)
+    return;
+
+  data = s->data ;
+  size = s->size ;
+
+  qpt_spin_lock(s_pool_slock) ;
+
+  /* Put stream object straight onto the free list.
+   */
+  s->next    = s_obj_free ;
+  s_obj_free = s ;
+
+  /* Free the data (if any)
+   */
+  /* Deal with the cases we don't use the pool for.
+   */
+  if (size > s_data_size_max)
+    {
+      qpt_spin_unlock(s_pool_slock) ;
+
+      XFREE(MTYPE_STREAM_DATA, data) ;
+    }
+  else if (size == 0)
+    {
+      qpt_spin_unlock(s_pool_slock) ;
+
+      qassert(data == NULL) ;
+    }
+  else
+    {
+      /* Free back to the pool.
+       */
+      uint  unit_size ;
+      uint  unit_index ;
+      struct s_data_free* unit ;
+
+      unit_index = (size       - 1) / s_data_unit ;
+      unit_size  = (unit_index + 1) * s_data_unit ;
+
+      unit = data ;
+
+      unit->next = s_data_units[unit_index] ;
+      unit->size = unit_size ;
+
+      s_data_units[unit_index] = unit ;
+
+      qpt_spin_unlock(s_pool_slock) ;
+    } ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Stream Data malloc -- when there is no free existing unit.
+ *
+ * NB: holds spin-lock !!
+ */
+static struct s_data_free*
+stream_data_malloc(uint unit_size)
+{
+  while (1)
+    {
+      struct s_data_pool* pool ;
+
+      pool = s_data_new_pools ;
+
+      /* Hopefully we can fit the required unit in the current data pool.
+       */
+      if (pool != NULL)
+        {
+          byte* data ;
+          uint left ;
+
+          data = pool->free ;
+          left = pool->left ;
+
+          if (left >= unit_size)
+            {
+              /* Hurrah... can fit the required unit in the current data pool
+               */
+              pool->free  = data + unit_size ;
+              pool->left  = left - unit_size ;
+
+              return (void*)data ;
+            } ;
+
+          /* Cannot use the last of the current pool, arbitrarily we break this
+           * up into 1K/512/256 blocks and place same on the respective free
+           * lists and take the free pool and put it on the pools list.
+           */
+          while (left > 0)
+            {
+              struct s_data_free* unit ;
+              uint index ;
+              uint size ;
+
+              if      (left >= (4 * s_data_unit))
+                {
+                  size  = 4 * s_data_unit ;
+                  index = 4 - 1 ;
+                }
+              else if (left >= (2 * s_data_unit))
+                {
+                  size  = 2 * s_data_unit ;
+                  index = 2 - 1 ;
+                }
+              else
+                {
+                  assert(left == s_data_unit) ;
+
+                  size  = 1 * s_data_unit ;
+                  index = 1 - 1 ;
+                } ;
+
+              unit = (void*)data ;
+
+              unit->next = s_data_units[index] ;
+              unit->size = size ;
+
+              s_data_units[index] = unit ;
+
+              data += size ;
+              left -= size ;
+            } ;
+
+          /* Take the new pool off the front of the new pools list.
+           *
+           * Most of the time that list will be a list of one... but we allow
+           * for it to be otherwise.
+           */
+          s_data_new_pools = pool->next ;
+
+          /* Nothing free as far as the pool is concerned, so can now be put
+           * onto the general list of pools for disposal at shut-down.
+           */
+          pool->free = NULL ;
+          pool->left = 0 ;
+
+          pool->next = s_data_pools ;
+          s_data_pools = pool ;
+        }
+      else
+        {
+          /* We need a brand new new_pool.
+           *
+           * Don't like to hold spin-lock across an XCALLOC, so drop before and
+           * get back afterwards -- this is probably not an issue, but it just
+           * does not feel right !
+           *
+           * If (by some sad coincidence) two pthreads come through here, will
+           * get two pools, not one... tant pis.
+           */
+          qpt_spin_unlock(s_pool_slock) ;
+
+          pool = XCALLOC(MTYPE_STREAM_DATA, sizeof(struct s_data_pool)) ;
+
+          pool->free  = &pool->data[0] ;
+          pool->left  = s_data_pool_size ;
+
+          qpt_spin_lock(s_pool_slock) ;
+
+          if (s_data_new_pools == NULL)
+            s_data_new_pools = pool ;
+          else
+            {
+              /* We have managed to allocate two pools at exactly the same
+               * time.  We arrange to fill the first on the new pools list
+               * first, which seems tidy.
+               */
+              pool->next = s_data_new_pools->next ;
+              s_data_new_pools->next = pool ;
+            } ;
+        } ;
+    } ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Stream Data realloc
+ */
+static void*
+stream_data_realloc(void* old_data, uint old_size, uint new_size)
+{
+  void* new_data ;
+
+  /* We have a number of cases:
+   *
+   *   new_size <= old_size -- do nothing !
+   *
+   *   new_size > s_data_size_max
+   *
+   *     if old_size > s_data_size_max -- ro realloc()
+   *
+   *     otherwise do malloc, copy the old data and free old unit (if any)
+   *
+   *   new_size and old_size are the same number of units -> do nothing !
+   *
+   *   otherwise get a new_size unit from the pool, copy to it and free the
+   *   old_size unit (if any).
+   */
+  if (new_size <= old_size)
+    return old_data ;
+
+  if (new_size > s_data_size_max)
+    {
+      if (old_size > s_data_size_max)
+        return XREALLOC (MTYPE_STREAM_DATA, old_data, new_size) ;
+
+      new_data = XMALLOC(MTYPE_STREAM_DATA, new_size) ;
+    }
+  else
+    {
+      uint  new_index, unit_size ;
+      struct s_data_free* unit ;
+
+      new_index = (new_size - 1) / s_data_unit ;
+
+      if (old_size != 0)
+        {
+          /* Special case where extending, but within the current unit size !
+           */
+          if (new_index == ((old_size - 1) / s_data_unit))
+            return old_data ;
+        } ;
+
+      /* Need a new unit of index new_index.
+       */
+      unit_size  = new_index * s_data_unit ;
+
+      /* Try for a previously owned data buffer of the required size
+       */
+      qpt_spin_lock(s_pool_slock) ;
+
+      unit = s_data_units[new_index] ;
+
+      if (unit == NULL)
+        unit = stream_data_malloc(unit_size) ;
+      else
+        {
+          qassert(unit->size == unit_size) ;
+          s_data_units[new_index] = unit->next ;
+        } ;
+
+      qpt_spin_unlock(s_pool_slock) ;
+
+      new_data = (void*)unit ;
+    } ;
+
+  /* We have the new data -- copy the old data to it, and then free the old
+   * data.
+   *
+   * NB: at this point we KNOW that old_size <= s_data_size_max
+   */
+  if (old_size != 0)
+    {
+      uint  old_index, unit_size ;
+      struct s_data_free* unit ;
+
+      old_index = (old_size  - 1) / s_data_unit ;
+      unit_size = (old_index + 1) * s_data_unit ;
+
+      unit = (void*)old_data ;
+
+      qpt_spin_lock(s_pool_slock) ;
+
+      unit->next = s_data_units[old_index] ;
+      unit->size = unit_size ;
+
+      s_data_units[old_index] = unit ;
+
+      qpt_spin_unlock(s_pool_slock) ;
+    } ;
+
+  return new_data ;
+} ;
+

@@ -70,179 +70,103 @@ Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
  *
  *     So, there can be no dangling references.
  */
+static struct bgp_adj_out* adj_out_calloc (void) ;
+static void adj_out_free (struct bgp_adj_out *adj_out) ;
+static struct bgp_advertise* adv_malloc(void) ;
+static void adv_free (struct bgp_advertise *adv) ;
+static struct bgp_advertise_attr* baa_calloc(void) ;
+static void baa_free (struct bgp_advertise_attr *baa) ;
 
-static struct bgp_advertise_attr *
-baa_new (void)
-{
-  return (struct bgp_advertise_attr *)
-    XCALLOC (MTYPE_BGP_ADVERTISE_ATTR, sizeof (struct bgp_advertise_attr));
-}
-
-static void
-baa_free (struct bgp_advertise_attr *baa)
-{
-  XFREE (MTYPE_BGP_ADVERTISE_ATTR, baa);
-}
-
+/*------------------------------------------------------------------------------
+ * Allocate a new bgp_advertise_attr object, and copy in the given attr.
+ *
+ * For the bgp_advertise_attr hash, the data is the address of the attr
+ * object referred to by the bgp_advertise_attr.
+ */
 static void *
-baa_hash_alloc (void *p)
+baa_hash_alloc (const void *data)
 {
-  struct bgp_advertise_attr * ref = (struct bgp_advertise_attr *) p;
   struct bgp_advertise_attr *baa;
 
-  baa = baa_new ();
-  baa->attr = ref->attr;
+  baa = baa_calloc ();          /* creates a zeroized bgp_advertise_attr  */
+
+  baa->attr = miyagi(data) ;
   return baa;
 }
 
+/*------------------------------------------------------------------------------
+ * Construct "key" for bgp_advertise_attr object's "data"
+ *
+ * For the bgp_advertise_attr hash, the data is the address of the attr
+ * object referred to by the bgp_advertise_attr.
+ */
 static unsigned int
-baa_hash_key (void *p)
+baa_hash_key (const void *data)
 {
-  struct bgp_advertise_attr * baa = (struct bgp_advertise_attr *) p;
-
-  return attrhash_key_make (baa->attr);
+  return ((uintptr_t)data) % UINT_MAX ;
 }
 
-static int
-baa_hash_cmp (const void *p1, const void *p2)
+/*------------------------------------------------------------------------------
+ * Compare value of given bgp_advertise_attr object with the given "data"
+ *
+ * For the bgp_advertise_attr hash, the data is the address of the attr
+ * object referred to by the bgp_advertise_attr.
+ */
+static bool
+baa_hash_equal (const void *obj, const void *data)
 {
-  const struct bgp_advertise_attr * baa1 = p1;
-  const struct bgp_advertise_attr * baa2 = p2;
+  const struct bgp_advertise_attr * baa  = obj ;
+  const struct attr *               attr = data;
 
-  return attrhash_cmp (baa1->attr, baa2->attr);
+  return (baa->attr == attr) ;
 }
 
 /*------------------------------------------------------------------------------
  * Set adv structure (creating if required).
  *
- * If given an existing adv structure, that MUST be attached to the adj,
- * already.
- *
  * Takes a lock on the bgp_node and any bgp_info.
+ *
+ * Places on the given fifo.
  *
  * Returns:  given or new bgp_advertise structure.
  *
- * NB: adv->baa == NULL.
+ * NB: is on the given fifo, is attached to the adj, points at the rn and
+ *     binfo (if any) complete with locks on same...
+ *
+ *     BUT: adv->baa   == NULL ) so looks like withdraw
+ *     AND: adv->binfo == NULL )
+ *
+ *          it is the CALLERs responsibility to add the required baa and binfo
+ *          if this has just been added to the update fifo !!
  */
 static struct bgp_advertise *
 bgp_advertise_set (struct bgp_advertise * adv, struct bgp_node* rn,
-                                   struct bgp_adj_out* adj, struct bgp_info* ri)
+                  struct bgp_adj_out* adj, struct bgp_advertise_fifo_base* base)
 {
-  if (adv != NULL)
-    {
-      assert((adv->adj == adj) && (adj->adv == adv)) ;
-      memset(adv, 0, sizeof(struct bgp_advertise)) ;
-    }
-  else
-    {
-      adv = XCALLOC (MTYPE_BGP_ADVERTISE, sizeof (struct bgp_advertise)) ;
-    } ;
+  if (adv == NULL)
+    adv = adv_malloc() ;        /* not zeroized         */
+
+  memset(adv, 0, sizeof(struct bgp_advertise)) ;
+
+  /* Zeroising has set:
+   *
+   *   * fifo                   -- X            -- set below
+   *   * baa_list               -- NULLs
+   *
+   *   * rn                     -- X            -- set below
+   *   * adj                    -- X            -- set below
+   *
+   *   * baa                    -- NULL         <=> withdraw !
+   *   * binfo                  -- NULL         <=> withdraw !
+   */
+  adv->rn  = bgp_lock_node(rn) ;
 
   adv->adj = adj ;
   adj->adv = adv ;
 
-  adv->rn = bgp_lock_node(rn) ;
-
-  if (ri != NULL)
-    adv->binfo = bgp_info_lock (ri) ;
+  ddl_append(*base, adv, fifo) ;
 
   return adv ;
-} ;
-
-static void
-bgp_advertise_add (struct bgp_advertise_attr *baa,
-                   bgp_advertise adv)
-{
-  bgp_advertise last ;
-
-  if (baa->base.head == NULL)
-    {
-      last = NULL ;
-      baa->base.head = adv ;
-    }
-  else
-    {
-      last = baa->base.tail ;
-      last->adv_next = adv ;
-    } ;
-
-  adv->adv_next  = NULL ;
-  adv->adv_prev  = last ;
-
-  baa->base.tail = adv ;
-}
-
-static void
-bgp_advertise_delete (struct bgp_advertise_attr *baa,
-                      struct bgp_advertise *adv)
-{
-  if (adv->adv_next != NULL)
-    adv->adv_next->adv_prev = adv->adv_prev;
-  else
-    baa->base.tail = adv->adv_prev ;
-
-  if (adv->adv_prev != NULL)
-    adv->adv_prev->adv_next = adv->adv_next;
-  else
-    baa->base.head = adv->adv_next;
-}
-
-/*------------------------------------------------------------------------------
- * Find or create a bgp_advertise_attr entry for the given attributes.
- *
- * NB: attributes must be interned already, and does NOT take another
- *     ref-count -- so the baa->attr inherits the ref-count.
- */
-static struct bgp_advertise_attr *
-bgp_advertise_intern (struct hash *hash, struct attr *attr)
-{
-  struct bgp_advertise_attr ref;
-  struct bgp_advertise_attr *baa;
-
-  qassert(bgp_attr_is_interned(attr)) ;
-
-  ref.attr = attr ;
-  baa = (struct bgp_advertise_attr *) hash_get (hash, &ref, baa_hash_alloc);
-  baa->refcnt++;
-
-  return baa;
-}
-
-/*------------------------------------------------------------------------------
- * Reduce references to the given baa.
- *
- * Releases the ref-count on the baa->attr which is owned by the reference to
- * the baa.
- */
-static void
-bgp_advertise_unintern (struct hash *hash, struct bgp_advertise_attr *baa)
-{
-  struct attr* attr ;
-
-  attr = baa->attr ;
-
-  if (baa->refcnt > 1)
-    baa->refcnt -= 1 ;
-  else
-    {
-      if (attr != NULL)
-        {
-          struct bgp_advertise_attr *ret;
-
-          ret = hash_release (hash, baa);
-          if (ret != baa)
-            {
-              zlog_err("BUG: failed to find interned adv-attr -- found %s",
-                                 (ret == NULL) ? "nothing" : "something else") ;
-              return ;  /* leaky but safer      */
-            } ;
-        } ;
-
-      baa_free (baa);
-    } ;
-
-  if (attr != NULL)
-    bgp_attr_unintern(attr) ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -254,54 +178,117 @@ bgp_advertise_unintern (struct hash *hash, struct bgp_advertise_attr *baa)
  *
  *   - clear bgp_advertise_attr, if any
  *
+ * NB: if an adv exists, it MUST be on the peer's withdraw or update fifo.
+ *
  * The result is, effectively, an adv that can be scheduled as a withdraw.
  *
  * Still has:
  *
  *   * adv->rn and lock on same
  *
- *   * adv>adj and adj->adv still in place.
+ *   * adv->adj and adj->adv still in place.
+ *
+ * BUT: is not on any fifo -- CALLER is responsible for either unsetting
+ *      the adv->rn and adv->adj, or reusing the adv as a withdraw.
  *
  * Returns:  the (new) current head of the baa list of adv which share the
  *           same attr.  NULL if none (or no baa !).
  */
 static struct bgp_advertise *
-bgp_advertise_annul(struct bgp_advertise* adv, struct peer *peer, afi_t afi,
-                                                                   safi_t safi)
+bgp_advertise_annul(struct bgp_advertise* adv, struct bgp_synchronize *sync)
 {
   struct bgp_advertise_attr *baa;
-  struct bgp_advertise *next;
+  struct bgp_advertise *next ;
+  struct attr *attr;
 
-  /* Unlink myself from advertisement FIFO.
+  qassert(adv->adj != NULL) ;
+  qassert(adv      == adv->adj->adv) ;
+  qassert(adv->rn  == adv->adj->rn) ;
+
+  /* Unlink from withdraw or update FIFO.
    */
-  bgp_advertise_fifo_del(adv);
+  baa = adv->baa ;
 
+  if (baa == NULL)
+    {
+      /* This is a withdraw advertisement -- binfo must also be NULL but
+       * we clear it in any case.
+       *
+       * Remove from the withdraw fifo, and we are done.
+       */
+      qassert(adv->binfo == NULL) ;
+
+      if (adv->binfo != NULL)
+        {
+          bgp_info_unlock(adv->binfo) ;
+          adv->binfo = NULL ;
+        } ;
+
+      qassert((ddl_prev(adv, fifo) != NULL) ||
+                                            (ddl_head(sync->withdraw) == adv)) ;
+      ddl_del(sync->withdraw, adv, fifo) ;
+
+      return NULL ;
+    } ;
+
+  /* This is an update advertisement, so remove from the update fifo
+   */
+  qassert((ddl_prev(adv, fifo) != NULL) || (ddl_head(sync->update) == adv)) ;
+  ddl_del(sync->update, adv, fifo) ;
+
+  /* Forget the baa and remove from its list.
+   */
+  adv->baa = NULL ;
+  ddl_del(baa->base, adv, baa_list) ;
+
+  /* If we have a binfo, forget it and undo our lock on it.
+   *
+   * An update MUST have a binfo -- but we do the simple and safe thing here.
+   */
+  qassert(adv->binfo != NULL) ;
   if (adv->binfo != NULL)
     {
       bgp_info_unlock(adv->binfo) ;
       adv->binfo = NULL ;
     } ;
 
-  if ((baa = adv->baa) == NULL)
-    next = NULL;
-  else
+  /* Pick up the next adv which shares the attributes (and hence the baa),
+   * and pick up the attr in question.
+   *
+   * If the baa has no other adv, then it must now be discarded.
+   */
+  qassert(baa->attr != NULL) ;
+
+  next = ddl_head(baa->base) ;
+  attr = baa->attr ;
+
+  if (next == NULL)
     {
-      /* Unlink myself from advertise attribute FIFO.
-       */
-      bgp_advertise_delete (baa, adv) ;
-      adv->baa = NULL ;
+      struct bgp_advertise_attr *ret;
 
-      /* Fetch next advertise candidate.
-       */
-      next = baa->base.head ;
-
-      /* Unintern BGP advertise attribute.
-       */
-      bgp_advertise_unintern (peer->hash[afi][safi], baa) ;
+      ret = hash_release (sync->hash, attr);
+      if (ret == baa)
+        baa_free (baa);
+      else
+        {
+          zlog_err("BUG: failed to find interned adv-attr -- found %s",
+                         (ret == NULL) ? "nothing" : "something else") ;
+        } ;
     } ;
 
+  /* Drop our lock on the attr.
+   *
+   * Note that we do this after releasing and freeing the baa.  It doesn't
+   * really make any difference -- but it avoids having a dangling reference
+   * to the attr in the baa (for however brief a moment).
+   */
+  bgp_attr_unintern(attr) ;
+
+  /* Done... if there are other adv with the same attributes, we here return
+   *         the next one to consider.
+   */
   return next ;
-}
+} ;
 
 /*------------------------------------------------------------------------------
  * Discard the bgp_advertise (adv) object currently associated with
@@ -318,8 +305,8 @@ bgp_advertise_annul(struct bgp_advertise* adv, struct peer *peer, afi_t afi,
  *
  * Release lock on the bgp_node, and clear pointer to it.
  *
- * If required, free the adv object, and set adj->adv NULL.  Otherwise, leave
- * the adv->adj and the adj->adv pointing at each other.
+ * If required, free the adv object, and set adj->adv NULL.  Otherwise, keep
+ * the adv object, but unhook from the adj.
  *
  * Note: removes the adv from the fifo it is attached to.  So, if is about to
  *       advertise in a new way, that's a new advertisement, scheduled anew.
@@ -330,27 +317,32 @@ bgp_advertise_annul(struct bgp_advertise* adv, struct peer *peer, afi_t afi,
  *           same attr.  NULL if none (or no baa !).
  */
 extern struct bgp_advertise *
-bgp_advertise_unset(struct bgp_advertise * adv, struct peer *peer,
-                                          afi_t afi, safi_t safi, bool free_adv)
+bgp_advertise_unset(struct bgp_advertise * adv, struct bgp_synchronize* sync,
+                                                                 bool free_adv)
 {
-  struct bgp_adj_out *adj;
   struct bgp_advertise *next;
+  struct bgp_adj_out *adj;
 
-  adj = adv->adj ;
-  assert(adj->adv == adv) ;
+  next = bgp_advertise_annul(adv, sync) ;
+  adj  = adv->adj ;
 
-  next = bgp_advertise_annul(adv, peer, afi, safi) ;
+  qassert(adv == adj->adv) ;
 
   if (adv->rn != NULL)          /* should be there, but cope    */
-    bgp_unlock_node(adv->rn) ;
-
-  /* Free memory if required.
-   */
-  if (free_adv)
     {
-      XFREE (MTYPE_BGP_ADVERTISE, adv);
-      adj->adv = NULL ;
+      qassert(adv->rn == adj->rn) ;
+
+      bgp_unlock_node(adv->rn) ;
+      adv->rn = NULL ;
     } ;
+
+  /* Unhook from the adj, and free the adv if required.
+   */
+  adv->adj = NULL ;
+  adj->adv = NULL ;
+
+  if (free_adv)
+    adv_free(adv);
 
   return next;
 } ;
@@ -365,20 +357,31 @@ bgp_advertise_unset(struct bgp_advertise * adv, struct peer *peer,
  *           same attr.  NULL if none (or no baa !).
  */
 extern struct bgp_advertise*
-bgp_advertise_redux(struct bgp_advertise * adv,
-                                      struct peer *peer, afi_t afi, safi_t safi)
+bgp_advertise_redux(struct bgp_advertise * adv, struct bgp_synchronize* sync)
 {
   struct bgp_advertise *next;
 
-  qassert(adv->adj->adv == adv) ;
+  qassert(adv->adj   != NULL) ;
   qassert(adv->rn    != NULL) ;
   qassert(adv->baa   != NULL) ;
   qassert(adv->binfo != NULL) ;
 
-  next = bgp_advertise_annul(adv, peer, afi, safi) ;
+  /* Annul the update advertisement.
+   *
+   * The adv is left ready to be rescheduled as a withdraw.
+   */
+  next = bgp_advertise_annul(adv, sync) ;
 
-  bgp_advertise_fifo_add(&peer->sync[afi][safi]->withdraw, adv) ;
+  qassert(adv->adj   != NULL) ;
+  qassert(adv->rn    != NULL) ;
+  qassert(adv->baa   == NULL) ;
+  qassert(adv->binfo == NULL) ;
 
+  ddl_append(sync->withdraw, adv, fifo) ;
+
+  /* The next returned by bgp_advertise_annul() is the next adv with the
+   * same attributes (if any) as the adv we rode in on.
+   */
   return next ;
 } ;
 
@@ -386,7 +389,7 @@ bgp_advertise_redux(struct bgp_advertise * adv,
  * Adj-Out Handling
  *
  * The bgp_adj_out object lives on the related bgp_node (rn) rn->adj_out list,
- * and the peer's adj_out_head[afi][safi] list.  It represents the state of
+ * and the peer's adj_out[afi][safi] list.  It represents the state of
  * any advertisement sent (in the most recent UPDATE message for the prefix)
  * for the peer for the prefix.
  *
@@ -396,23 +399,24 @@ bgp_advertise_redux(struct bgp_advertise * adv,
 
 /* BGP adjacency keeps minimal advertisement information.  */
 
-int
+extern bool
 bgp_adj_out_lookup (struct peer *peer, struct prefix *p,
                     afi_t afi, safi_t safi, struct bgp_node *rn)
 {
-  struct bgp_adj_out *adj;
+  struct bgp_adj_out *adj_out;
 
-  for (adj = rn->adj_out; adj; adj = adj->adj_next)
-    if (adj->peer == peer)
-      break;
+  for (adj_out = sdl_head(rn->adj_outs) ; adj_out != NULL;
+                                          adj_out = sdl_next(adj_out, rn_list))
+    if (adj_out->peer == peer)
+      {
+        if (adj_out->adv == NULL)
+          return (adj_out->attr != NULL) ;      /* steady state, with attr */
+        else
+          return (adj_out->adv->baa != NULL) ;  /* in flux, with attr   */
+      } ;
 
-  if (! adj)
-    return 0;
-
-  return (adj->adv
-          ? (adj->adv->baa ? 1 : 0)
-          : (adj->attr ? 1 : 0));
-}
+  return false ;
+} ;
 
 /*------------------------------------------------------------------------------
  * Set adj-out for the given bgp_node, peer, prefix, attributes, etc.
@@ -436,9 +440,10 @@ bgp_adj_out_set (struct bgp_node *rn, struct peer *peer, struct prefix *p,
                  struct attr *attr, afi_t afi, safi_t safi,
                  struct bgp_info *binfo)
 {
-  struct bgp_adj_out*   adj;
-  struct bgp_adj_out**  adj_out_head ;
-  struct bgp_advertise *adv;
+  struct bgp_adj_out*        adj_out;
+  struct bgp_advertise*      adv;
+  struct bgp_advertise_attr* baa;
+  struct bgp_synchronize*    sync ;
 
   assert(rn != NULL) ;
   assert((afi == rn->table->afi) && (safi == rn->table->safi)) ;
@@ -476,69 +481,83 @@ bgp_adj_out_set (struct bgp_node *rn, struct peer *peer, struct prefix *p,
 
   /* Look for adjacency information.
    */
-  for (adj = rn->adj_out; adj; adj = adj->adj_next)
-    if (adj->peer == peer)
+  for (adj_out = sdl_head(rn->adj_outs); adj_out != NULL;
+                                         adj_out = sdl_next(adj_out, rn_list))
+    if (adj_out->peer == peer)
       break;
 
-  if (adj != NULL)
-    adv = adj->adv ;
+  sync = peer->sync[afi][safi] ;
+
+  if (adj_out != NULL)
+    {
+      /* We have an existing adjacency.
+       *
+       * If there is an advertisement already scheduled, unset that so can
+       * reschedule whatever the new requirement is.  We preserve and reuse
+       * the exiting adv structure.
+       */
+      adv = adj_out->adv ;
+
+      if (adv != NULL)
+        {
+          /* The unset operation empties out everything, and undoes locks on
+           * rn and binfo.
+           */
+          assert(adv->adj == adj_out) ;
+          bgp_advertise_unset (adv, sync, false /* !free_adv */);
+        } ;
+    }
   else
     {
-      adj = XCALLOC (MTYPE_BGP_ADJ_OUT, sizeof (struct bgp_adj_out));
+      adj_out = adj_out_calloc() ;
 
-      /* Add to list of adj_out stuff for the peer
+      /* Zeroizing has set:
+       *
+       *   * rn                 -- X            -- set below
+       *   * rn_list            -- NULLs        -- set below
+       *
+       *   * peer               -- X            -- set below
+       *   * peer_list          -- NULLs        -- set below
+       *
+       *   * attr               -- NULL         -- none, yet
+       *   * adv                -- NULL         -- none, yet
        */
-      adj->peer = bgp_peer_lock (peer);
+      adj_out->peer = bgp_peer_lock (peer);
+      sdl_push(peer->adj_outs[afi][safi], adj_out, peer_list) ;
 
-      adj_out_head = &(peer->adj_out_head[afi][safi]) ;
-
-      adj->route_next = *adj_out_head ;
-      adj->route_prev = NULL ;
-      if (*adj_out_head != NULL)
-        (*adj_out_head)->route_prev = adj ;
-      *adj_out_head = adj ;
-
-      /* Add to list of adj out stuff for the bgp_node
-       */
-      adj->rn = bgp_lock_node (rn);
-
-      adj->adj_next = rn->adj_out ;
-      adj->adj_prev = NULL ;
-      if (rn->adj_out != NULL)
-        rn->adj_out->adj_prev = adj ;
-      rn->adj_out = adj ;
+      adj_out->rn = bgp_lock_node (rn);
+      sdl_push(rn->adj_outs, adj_out, rn_list) ;
 
       adv = NULL ;
     } ;
 
   /* The adj_out contains:  pointer to owner peer, and list pointers for same
    *                        pointer to parent bgp_node, and list pointers ditto
-   *                        pointer to bgp_advertise (adv)
    *                        pointer to attributes (attr)
    *
-   * We here discard any current adv and make a new one, rescheduling
-   * everything.
+   * The adj_out->attr are those actually sent to the peer, so we don't care
+   * about them here -- if this is a new adj_out, then the attr have been set
+   * NULL.  When the update is actually sent, will set/replace the
+   * adj_out->attr.
    *
-   * The adj->attr are those actually sent to the peer, so we don't care about
-   * those here.
+   * Now set/create the adv for the new update, this sets everything except
+   * adv->binfo and adv->baa -- which are set NULL -- and dealt with below.
+   *
+   * This also sets adj_out->adv.
    */
-  if (adv != NULL)
-    {
-      assert(adv->adj == adj) ;
-      bgp_advertise_unset (adv, peer, afi, safi, false /* !free_adv */);
-    } ;
+  adv = bgp_advertise_set (adv, rn, adj_out, &sync->update) ;
 
-  adv = bgp_advertise_set (adv, rn, adj, binfo) ;
-
-  /* Add new advertisement's attributes to advertisement attribute list.
+  /* bgp_advertise_set() has put what looks like a withdraw onto the
+   * update list.  Time to complete the update adv object:
+   *
+   *   * set pointer to the binfo and take lock
+   *
+   *   * find or create a baa for the attributes, and attach to same.
    */
-  adv->baa = bgp_advertise_intern (peer->hash[afi][safi], attr);
-  bgp_advertise_add (adv->baa, adv);
-
-  /* Finally, add new advertisement to the peer's update list
-   */
-  bgp_advertise_fifo_add(&peer->sync[afi][safi]->update, adv);
-}
+  adv->binfo = bgp_info_lock (binfo) ;
+  adv->baa   = baa = hash_get(sync->hash, attr, baa_hash_alloc) ;
+  ddl_append(baa->base, adv, baa_list) ;
+} ;
 
 /*------------------------------------------------------------------------------
  * If there is an adj-out for this prefix for this peer, either schedule a
@@ -548,7 +567,10 @@ extern void
 bgp_adj_out_unset (struct bgp_node *rn, struct peer *peer, struct prefix *p,
                    afi_t afi, safi_t safi)
 {
-  struct bgp_adj_out *adj;
+  struct bgp_adj_out *adj_out;
+
+  qassert((afi  == rn->table->afi)) ;
+  qassert((safi == rn->table->safi)) ;
 
   if (qdebug)
     {
@@ -577,23 +599,28 @@ bgp_adj_out_unset (struct bgp_node *rn, struct peer *peer, struct prefix *p,
 
   /* Lookup existing adjacency, if it is not there return immediately.
    */
-  for (adj = rn->adj_out; adj; adj = adj->adj_next)
-    if (adj->peer == peer)
-      break;
+  adj_out = sdl_head(rn->adj_outs) ;
+  while (1)
+    {
+      if (adj_out == NULL)
+        return ;                /* nothing to remove    */
 
-  if (adj == NULL)
-    return;
+      if (adj_out->peer == peer)
+        break ;                 /* found it             */
 
-  assert(rn == adj->rn) ;
+      adj_out = sdl_next(adj_out, rn_list) ;
+    } ;
+
+  assert(rn == adj_out->rn) ;
 
   /* Clear up previous advertisement, if any.
    */
-  if (adj->attr == NULL)
+  if (adj_out->attr == NULL)
     {
       /* Nothing actually advertised to the peer, so can simply discard the
        * adj-out -- discarding any pending advertisement.
        */
-      bgp_adj_out_remove(rn, adj, peer, afi, safi) ;
+      bgp_adj_out_remove(adj_out, afi, safi) ;
     }
   else
     {
@@ -602,23 +629,24 @@ bgp_adj_out_unset (struct bgp_node *rn, struct peer *peer, struct prefix *p,
        * Note that we don't change the adj->attr -- that's done when the
        * withdraw is actually sent.
        */
-      struct bgp_advertise *adv;
+      struct bgp_advertise*   adv;
+      struct bgp_synchronize* sync ;
 
-      adv = (adj->adv) ;
+      sync = peer->sync[afi][safi] ;
+
+      adv = adj_out->adv ;
       if (adv != NULL)
         {
-          assert(adv->adj == adj) ;
-          bgp_advertise_unset (adv, peer, afi, safi, false /* !free_adv */);
+          assert(adv->adj == adj_out) ;
+          bgp_advertise_unset (adv, sync, false /* !free_adv */);
         } ;
 
-      adv = bgp_advertise_set (adv, rn, adj, NULL) ;
-
-      /* Add to synchronization entry for withdraw announcement
+      /* Add adv for withdraw announcement
        *
        * Withdraws live on their own queue, but also adv->baa   == NULL
        *                                         and adv->binfo == NULL
        */
-      bgp_advertise_fifo_add(&peer->sync[afi][safi]->withdraw, adv);
+      bgp_advertise_set (adv, rn, adj_out, &sync->withdraw) ;
 
       /* Schedule flush of withdraws
        */
@@ -632,50 +660,44 @@ bgp_adj_out_unset (struct bgp_node *rn, struct peer *peer, struct prefix *p,
  * Discard any attributes known to have been sent to the peer.
  *
  * Discard and advertisement which may be scheduled for the prefix for the peer.
+ *
+ * This is done either when the session has gone down, or when a withdraw
+ * has been sent, so the adjacency is now redundant.
  */
 extern void
-bgp_adj_out_remove (struct bgp_node *rn, struct bgp_adj_out *adj,
-                    struct peer *peer, afi_t afi, safi_t safi)
+bgp_adj_out_remove (struct bgp_adj_out *adj_out, afi_t afi, safi_t safi)
 {
   struct bgp_advertise *adv;
+  bgp_peer peer ;
 
-  assert((rn == adj->rn) && (peer == adj->peer)) ;
+  qassert((afi  == adj_out->rn->table->afi)) ;
+  qassert((safi == adj_out->rn->table->safi)) ;
 
-  if (adj->attr)
-    bgp_attr_unintern (adj->attr) ;     /* about to discard the adj, so
+  peer = adj_out->peer ;
+
+  if (adj_out->attr != NULL)
+    bgp_attr_unintern (adj_out->attr) ; /* about to discard the adj, so
                                          * don't care about ->attr      */
-  adv = adj->adv;
+  adv = adj_out->adv;
   if (adv != NULL)
     {
-      assert(adv->adj == adj) ;
-      bgp_advertise_unset (adv, peer, afi, safi, true /* free_adv */) ;
+      assert(adv->adj == adj_out) ;
+      bgp_advertise_unset (adv, peer->sync[afi][safi], true /* free_adv */) ;
     } ;
 
   /* Unhook from peer
    */
-  if (adj->route_next != NULL)
-    adj->route_next->route_prev = adj->route_prev ;
-  if (adj->route_prev != NULL)
-    adj->route_prev->route_next = adj->route_next ;
-  else
-    peer->adj_out_head[afi][safi] = adj->route_next ;
-
+  sdl_del(peer->adj_outs[afi][safi], adj_out, peer_list) ;
   bgp_peer_unlock (peer);
 
   /* Unhook from bgp_node
    */
-  if (adj->adj_next)
-    adj->adj_next->adj_prev = adj->adj_prev;
-  if (adj->adj_prev)
-    adj->adj_prev->adj_next = adj->adj_next;
-  else
-    rn->adj_out = adj->adj_next;
-
-  bgp_unlock_node (rn);
+  sdl_del(adj_out->rn->adj_outs, adj_out, rn_list) ;
+  bgp_unlock_node (adj_out->rn);
 
   /* now can release memory.
    */
-  XFREE (MTYPE_BGP_ADJ_OUT, adj);
+  adj_out_free(adj_out);
 }
 
 /*==============================================================================
@@ -691,140 +713,168 @@ extern void
 bgp_adj_in_set (struct bgp_node *rn, struct peer *peer, struct attr *attr,
                                                                const uchar* tag)
 {
-  struct bgp_adj_in *adj;
-  struct bgp_adj_in**  adj_in_head ;
+  struct bgp_adj_in *adj_in;
 
   qassert(bgp_sub_attr_are_interned(attr)) ;
 
-  for (adj = rn->adj_in; adj; adj = adj->adj_next)
+  for (adj_in = sdl_head(rn->adj_ins); adj_in != NULL;
+                                       adj_in = sdl_next(adj_in, rn_list))
     {
-      if (adj->peer == peer)
+      if (adj_in->peer == peer)
         {
-          if (adj->attr != attr)
+          if (adj_in->attr != attr)
             {
-              if (adj->attr != NULL)            /* paranoia     */
-                bgp_attr_unintern (adj->attr);
-              adj->attr = bgp_attr_intern (attr);
+              if (adj_in->attr != NULL)            /* paranoia     */
+                bgp_attr_unintern (adj_in->attr);
+
+              adj_in->attr = bgp_attr_intern (attr);
             }
 
           if (tag == NULL)
-            memset(&adj->tag[0], 0, sizeof(adj->tag)) ;
+            memset(&adj_in->tag[0], 0, sizeof(adj_in->tag)) ;
           else
-            memcpy(&adj->tag[0], tag, sizeof(adj->tag)) ;
+            memcpy(&adj_in->tag[0], tag, sizeof(adj_in->tag)) ;
 
           return;
         }
     }
 
   /* Need to create a brand new bgp_adj_in
+   *
+   * Zeroizing sets:
+   *
+   *   * rn             -- X            -- set below
+   *   * rn_list        -- NULLs        -- set below
+   *
+   *   * peer           -- X            -- set below
+   *   * peer_list      -- NULLs        -- set below
+   *
+   *   * attr           -- X            -- set below
+   *   * tag            -- all zero     -- set if required
    */
-  adj = XCALLOC (MTYPE_BGP_ADJ_IN, sizeof (struct bgp_adj_in));
+  adj_in = XCALLOC (MTYPE_BGP_ADJ_IN, sizeof (struct bgp_adj_in));
+
+  adj_in->peer = bgp_peer_lock (peer);
+  sdl_push(peer->adj_ins[rn->table->afi][rn->table->safi], adj_in, peer_list) ;
+
+  adj_in->rn = bgp_lock_node (rn);
+  sdl_push(rn->adj_ins, adj_in, rn_list) ;
 
   /* Set the interned attributes and tag, if any.
    */
-  adj->attr = bgp_attr_intern (attr);
+  adj_in->attr = bgp_attr_intern (attr);
+
   if (tag != NULL)
-    memcpy(&adj->tag[0], tag, sizeof(adj->tag)) ;
-
-  /* Add to list of adj in stuff for the peer
-   */
-  adj->peer = bgp_peer_lock (peer);
-
-  adj_in_head = &(peer->adj_in_head[rn->table->afi][rn->table->safi]) ;
-
-  adj->route_next = *adj_in_head ;
-  adj->route_prev = NULL ;
-  if (*adj_in_head != NULL)
-    (*adj_in_head)->route_prev = adj ;
-  *adj_in_head = adj ;
-
-  /* Add to list of adj in stuff for the bgp_node
-   */
-  adj->rn = bgp_lock_node (rn);
-
-  adj->adj_next = rn->adj_in ;
-  adj->adj_prev = NULL ;
-  if (rn->adj_in != NULL)
-    rn->adj_in->adj_prev = adj ;
-  rn->adj_in = adj ;
+    memcpy(&adj_in->tag[0], tag, sizeof(adj_in->tag)) ;
+  confirm(sizeof(adj_in->tag) == 3) ;
 }
 
-void
-bgp_adj_in_remove (struct bgp_node *rn, struct bgp_adj_in *bai)
+/*------------------------------------------------------------------------------
+ * Remove the given adj-in from its respective rib-node and peer.
+ */
+extern void
+bgp_adj_in_remove (struct bgp_adj_in *adj_in, afi_t afi, safi_t safi)
 {
-  bgp_peer peer = bai->peer ;
-  struct bgp_adj_in**  adj_in_head ;
+  qassert((afi  == adj_in->rn->table->afi)) ;
+  qassert((safi == adj_in->rn->table->safi)) ;
 
-  adj_in_head = &(peer->adj_in_head[rn->table->afi][rn->table->safi]) ;
-
-  assert(rn == bai->rn) ;
-
-  /* Done with this copy of attributes
-   *
-   * About to discard the adj-in entry, so don't care about bai->attr.
+  /* About to discard the adj-in entry, so don't care about adj_in->attr.
+   * (Don't expect that to be NULL ... but don't really care it is !
    */
-  bgp_attr_unintern (bai->attr);
+  if (adj_in->attr != NULL)
+    bgp_attr_unintern (adj_in->attr);
 
-  /* Unhook from peer                                   */
-  if (bai->route_next != NULL)
-    bai->route_next->route_prev = bai->route_prev ;
-  if (bai->route_prev != NULL)
-    bai->route_prev->route_next = bai->route_next ;
-  else
-    *adj_in_head = bai->route_next ;
+  /* Unhook from peer
+   */
+  sdl_del(adj_in->peer->adj_ins[afi][safi], adj_in, peer_list) ;
+  bgp_peer_unlock (adj_in->peer);
 
-  bgp_peer_unlock (peer);
+  /* Unhook from bgp_node
+   */
+  sdl_del(adj_in->rn->adj_ins, adj_in, rn_list) ;
+  bgp_unlock_node (adj_in->rn);
 
-  /* Unhook from bgp_node                               */
-  if (bai->adj_next)
-    bai->adj_next->adj_prev = bai->adj_prev;
-  if (bai->adj_prev)
-    bai->adj_prev->adj_next = bai->adj_next;
-  else
-    rn->adj_in = bai->adj_next;
-
-  bgp_unlock_node (rn);
-
-  /* now can release memory.                            */
-  XFREE (MTYPE_BGP_ADJ_IN, bai);
+  /* now can release memory.
+   */
+  XFREE (MTYPE_BGP_ADJ_IN, adj_in);
 }
 
-void
+/*------------------------------------------------------------------------------
+ * If there is an adj-in for the given peer in the given node, remove it.
+ */
+extern void
 bgp_adj_in_unset (struct bgp_node *rn, struct peer *peer)
 {
-  struct bgp_adj_in *adj;
+  struct bgp_adj_in *adj_in;
 
-  for (adj = rn->adj_in; adj; adj = adj->adj_next)
-    if (adj->peer == peer)
-      break;
+  adj_in = sdl_head(rn->adj_ins) ;
 
-  if (! adj)
-    return;
+  while (1)
+    {
+      if (adj_in == NULL)
+        return ;
 
-  bgp_adj_in_remove (rn, adj);
+      if (adj_in->peer == peer)
+        break ;
+
+      adj_in = sdl_next(adj_in, rn_list) ;
+    }
+
+  bgp_adj_in_remove (adj_in, rn->table->afi, rn->table->safi);
 }
 
-void
+/*==============================================================================
+ * Data structures for managing updates/withdraws.
+ */
+static void bgp_sync_new(struct peer *peer, afi_t afi, safi_t safi, bool afc) ;
+static struct hash* bgp_sync_new_hash(afi_t afi, safi_t safi) ;
+static void bgp_sync_reset(struct peer *peer, afi_t afi, safi_t safi,
+                                                                     bool afc) ;
+static void bgp_sync_clean(void* p) ;
+
+/*------------------------------------------------------------------------------
+ * Initialise the peer->sync and peer->hash structures for all address families.
+ *
+ * NB: does not create the hash for bgp_advertise_attr -- that is done by
+ *     bgp_sync_start(), which is called when a session is established.
+ */
+extern void
 bgp_sync_init (struct peer *peer)
 {
   afi_t afi;
   safi_t safi;
-  struct bgp_synchronize *sync;
 
   for (afi = AFI_IP; afi < AFI_MAX; afi++)
     for (safi = SAFI_UNICAST; safi < SAFI_MAX; safi++)
-      {
-        sync = XCALLOC (MTYPE_BGP_SYNCHRONISE,
-                        sizeof (struct bgp_synchronize));
-        bgp_advertise_fifo_init(&sync->update);
-        bgp_advertise_fifo_init(&sync->withdraw);
-        bgp_advertise_fifo_init(&sync->withdraw_low);
-        peer->sync[afi][safi] = sync;
-        peer->hash[afi][safi] = hash_create (baa_hash_key, baa_hash_cmp);
-      }
+      bgp_sync_new(peer, afi, safi, false /* not active */) ;
 }
 
-void
+/*------------------------------------------------------------------------------
+ * Reset the peer->sync structures for all active address families.
+ *
+ * This is done as a new session becomes established, so all the structures
+ * should be empty.
+ *
+ * This makes sure everything which currently exists is empty, and creates
+ * new empty structures for the now active/negotiated address families.
+ */
+extern void
+bgp_sync_start(struct peer *peer)
+{
+  afi_t afi;
+  safi_t safi;
+
+  for (afi = AFI_IP; afi < AFI_MAX; afi++)
+    for (safi = SAFI_UNICAST; safi < SAFI_MAX; safi++)
+      bgp_sync_reset(peer, afi, safi, peer->afc[afi][safi]) ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Discard the peer->sync and peer->hash structures.
+ *
+ * NB: assumes that any hashes for bgp_advertise_attr are, by now, empty.
+ */
+extern void
 bgp_sync_delete (struct peer *peer)
 {
   afi_t afi;
@@ -833,12 +883,491 @@ bgp_sync_delete (struct peer *peer)
   for (afi = AFI_IP; afi < AFI_MAX; afi++)
     for (safi = SAFI_UNICAST; safi < SAFI_MAX; safi++)
       {
-        if (peer->sync[afi][safi])
-          XFREE (MTYPE_BGP_SYNCHRONISE, peer->sync[afi][safi]);
-        peer->sync[afi][safi] = NULL;
+        if (peer->sync[afi][safi] != NULL)
+          {
+            bgp_sync_reset(peer, afi, safi, false /* not active*/) ;
 
-        if (peer->hash[afi][safi])
-          hash_free (peer->hash[afi][safi]);
-        peer->hash[afi][safi] = NULL;
-      }
+            XFREE (MTYPE_BGP_SYNCHRONISE, peer->sync[afi][safi]);
+                                /* sets peer->sync[afi][safi] = NULL    */
+          } ;
+      } ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Create a new, empty sync object -- with hash if required.
+ *
+ * Sets the peer->sync[afi][safi].
+ */
+static void
+bgp_sync_new(struct peer *peer, afi_t afi, safi_t safi, bool afc)
+{
+  struct bgp_synchronize* sync ;
+
+  sync = XCALLOC (MTYPE_BGP_SYNCHRONISE, sizeof (struct bgp_synchronize)) ;
+
+  ddl_init(sync->update);
+  ddl_init(sync->withdraw);
+#if 0
+  ddl_init(sync->withdraw_low) ;
+#endif
+
+  if (afc)
+    sync->hash = bgp_sync_new_hash(afi, safi) ;
+  else
+    sync->hash = NULL ;
+
+  peer->sync[afi][safi] = sync ;
 }
+
+/*------------------------------------------------------------------------------
+ * Create a new, empty sync hash for the given afi/safi
+ *
+ * Returns:  address of the hash
+ */
+static struct hash*
+bgp_sync_new_hash(afi_t afi, safi_t safi)
+{
+  uint size ;
+
+  size = 1024 ;                 /* default !    */
+
+  switch (afi)
+    {
+      case AFI_IP:
+        switch (safi)
+          {
+            case SAFI_UNICAST:
+              size = 64 * 1024 ;
+              break ;
+
+            case SAFI_MULTICAST:
+              break ;
+
+            case SAFI_MPLS_VPN:
+              break ;
+
+            default:
+              break ;
+          } ;
+        break ;
+
+#if HAVE_IPV6
+      case AFI_IP6:
+        switch (safi)
+          {
+            case SAFI_UNICAST:
+              size =  4 * 1024 ;
+              break ;
+
+            case SAFI_MULTICAST:
+              break ;
+
+            case SAFI_MPLS_VPN:
+              break ;
+
+            default:
+              break ;
+          } ;
+#endif
+       default:
+         break ;
+    } ;
+
+  return hash_create_size(size, baa_hash_key, baa_hash_equal);
+} ;
+
+/*------------------------------------------------------------------------------
+ * Reset the adj_out and the sync for the given peer in the given afi/safi
+ *
+ * When we get here, the adj_out and all related peer->sync stuff really
+ * should be empty... but we ensure that it is here.
+ *
+ * If is "afc", then make sure we have a hash for marshalling updates.
+ */
+static void
+bgp_sync_reset(struct peer *peer, afi_t afi, safi_t safi, bool afc)
+{
+  struct bgp_synchronize* sync ;
+  struct hash* hash ;
+
+  /* Worry about the state of the adj-out for the peer.
+   *
+   * Really should be empty... but if not, make it so !
+   */
+  qassert(sdl_head(peer->adj_outs[afi][safi]) == NULL) ;
+
+  if (sdl_head(peer->adj_outs[afi][safi]) != NULL)
+    {
+      struct bgp_adj_out*  adj_out_next ;
+
+      zlog_err("Adj-Out for peer %s (afi=%u/safi=%u)"
+                 " is not empty when a new session becomes established",
+                                                  peer->host, afi, safi) ;
+
+      adj_out_next = sdl_head(peer->adj_outs[afi][safi]) ;
+      while (adj_out_next != NULL)
+        {
+          /* We start at the head of the list, and we depend on bgp_adj_out_remove()
+           * removing that -- so that the current next becomes the head.
+           *
+           * We are in deep trouble if that is not the case.
+           */
+          struct bgp_adj_out*  adj_out ;
+
+          adj_out      = adj_out_next ;
+          adj_out_next = sdl_next(adj_out, peer_list) ;
+
+          assert(sdl_prev(adj_out, peer_list) == NULL) ;
+          assert(adj_out->peer == peer) ;
+
+          bgp_adj_out_remove (adj_out, afi, safi) ;
+
+          assert(adj_out_next == sdl_head(peer->adj_outs[afi][safi])) ;
+        } ;
+    } ;
+
+  /* Allow for the entire sync object to be absent when the address family
+   * is not in use.
+   */
+  sync = peer->sync[afi][safi] ;
+
+  if (sync == NULL)
+    {
+      if (afc)
+        bgp_sync_new(peer, afi, safi, afc /* active */) ;
+
+      return ;
+    } ;
+
+  /* Now that the adj-out is empty, there really should be nothing
+   * left in any fifo.
+   *
+   * If there is, then we annul same.
+   */
+  if (ddl_head(sync->update) != NULL)
+    {
+      struct bgp_advertise* adv ;
+
+      zlog_err("sync->update for peer %s (afi=%u/safi=%u)"
+                  " is not empty when a new session becomes established",
+                                                  peer->host, afi, safi) ;
+
+      /* So empty out the fifo... the implication is that there are
+       * somehow some adj_out objects lying around, which we've lost
+       * track of... this at least tidies away advertisements which
+       * the adj_out objects point to, and sets those into steady state.
+       */
+      while ((adv = ddl_head(sync->update)) != NULL)
+        {
+          assert(adv->baa != NULL) ;
+          bgp_advertise_unset(adv, sync, true /* free */) ;
+        } ;
+    } ;
+
+  if (ddl_tail(sync->update) != NULL)
+    {
+      zlog_err("sync->update.tail for peer %s (afi=%u/safi=%u)"
+                  " is not empty when a new session becomes established",
+                                                  peer->host, afi, safi) ;
+    } ;
+
+  if (ddl_head(sync->withdraw ) != NULL)
+    {
+      struct bgp_advertise* adv ;
+
+      zlog_err("sync->withdraw for peer %s (afi=%u/safi=%u)"
+                  " is not empty when a new session becomes established",
+                                                  peer->host, afi, safi) ;
+
+      /* as for update... at least make sure we clear out the
+       * advertisements.
+       */
+      while ((adv = ddl_head(sync->withdraw)) != NULL)
+        {
+          assert(adv->baa == NULL) ;
+          bgp_advertise_unset(adv, sync, true /* free */) ;
+        } ;
+    } ;
+
+  if (ddl_tail(sync->withdraw ))
+    {
+      zlog_err("sync->withdraw.tail for peer %s (afi=%u/safi=%u)"
+                  " is not empty when a new session becomes established",
+                                                  peer->host, afi, safi) ;
+    } ;
+
+  ddl_init(sync->update) ;              /* belt and...                  */
+  ddl_init(sync->withdraw) ;            /* ...braces                    */
+
+  /* Now worry about the hash.
+   */
+  hash = sync->hash ;
+
+  if (hash != NULL)
+    {
+      /* The hash *really* should be empty by now... all known adv
+       * objects have been destroyed, so all baa should have gone
+       * with.
+       */
+      if (hash->count != 0)
+        {
+          zlog_err("sync->hash for peer %s (afi=%u/safi=%u)"
+                   " is not empty when a new session becomes established",
+                                                  peer->host, afi, safi) ;
+
+          hash_clean (hash, bgp_sync_clean) ;
+        } ;
+
+      /* The hash is now empty...
+       *
+       * ...if peer is configured for the afi/safi, make sure it is
+       *    empty -- in case hash->count is unreliable !
+       *
+       * ...otherwise, discard the hash.
+       */
+      if (afc)
+        hash_reset(hash) ;
+      else
+        hash = hash_free(hash) ;
+    }
+  else
+    {
+      if (afc)
+        hash = bgp_sync_new_hash(afi, safi) ;
+    } ;
+
+  sync->hash = hash ;
+} ;
+
+/*------------------------------------------------------------------------------
+ * Discard bgp_advertise_attr structure, from the hash.
+ */
+static void
+bgp_sync_clean(void* item)
+{
+  baa_free (item) ;
+} ;
+
+/*==============================================================================
+ * Pools for bgp_advertise and bgp_advertise_attr structures.
+ */
+enum
+{
+  adj_out_pool_size = 1024,
+  adv_pool_size     = 1024,
+  baa_pool_size     = 1024
+} ;
+
+union adj_out_union
+{
+  struct bgp_adj_out    adj_out ;
+  union  adj_out_union* next ;
+} ;
+
+struct adj_out_pool
+{
+  struct adj_out_pool* next ;
+  union  adj_out_union adj_outs[adj_out_pool_size] ;
+};
+
+union adv_union
+{
+  struct bgp_advertise adv ;
+  union  adv_union*    next ;
+} ;
+
+struct adv_pool
+{
+  struct adv_pool* next ;
+  union  adv_union advs[adv_pool_size] ;
+};
+
+union baa_union
+{
+  struct bgp_advertise_attr baa ;
+  union  baa_union*         next ;
+} ;
+
+struct baa_pool
+{
+  struct baa_pool* next ;
+  union  baa_union baas[baa_pool_size] ;
+};
+
+struct adj_out_pool*  adj_out_pools = NULL ;
+union  adj_out_union* adj_out_frees = NULL ;
+
+struct adv_pool*   adv_pools = NULL ;
+union  adv_union*  adv_frees = NULL ;
+
+struct baa_pool*   baa_pools = NULL ;
+union  baa_union*  baa_frees = NULL ;
+
+static struct bgp_adj_out*
+adj_out_calloc (void)
+{
+  union  adj_out_union* u ;
+
+  u = adj_out_frees ;
+
+  if (u == NULL)
+    {
+      struct adj_out_pool* pool ;
+      uint i ;
+
+      pool = XCALLOC(MTYPE_BGP_ADJ_OUT, sizeof(struct adj_out_pool)) ;
+
+      pool->next = adj_out_pools ;
+      adj_out_pools  = pool ;
+
+      for (i = 0 ; i < adj_out_pool_size ; ++i)
+        {
+          u = &pool->adj_outs[i] ;
+
+          u->next   = adj_out_frees ;
+          adj_out_frees = u ;
+        } ;
+    } ;
+
+  adj_out_frees = u->next ;
+
+  memset(u, 0, sizeof(union adj_out_union)) ;
+  confirm(sizeof(union adj_out_union) == sizeof(struct bgp_adj_out)) ;
+
+  return &u->adj_out ;
+} ;
+
+static void
+adj_out_free (struct bgp_adj_out *adj_out)
+{
+  union adj_out_union* u ;
+
+  u = (void*)adj_out ;
+
+  u->next   = adj_out_frees ;
+  adj_out_frees = u ;
+} ;
+
+static struct bgp_advertise *
+adv_malloc (void)
+{
+  union  adv_union* u ;
+
+  u = adv_frees ;
+
+  if (u == NULL)
+    {
+      struct adv_pool* pool ;
+      uint i ;
+
+      pool = XCALLOC(MTYPE_BGP_ADVERTISE, sizeof(struct adv_pool)) ;
+
+      pool->next = adv_pools ;
+      adv_pools  = pool ;
+
+      for (i = 0 ; i < adv_pool_size ; ++i)
+        {
+          u = &pool->advs[i] ;
+
+          u->next   = adv_frees ;
+          adv_frees = u ;
+        } ;
+    } ;
+
+  adv_frees = u->next ;
+
+  return &u->adv ;
+} ;
+
+static void
+adv_free (struct bgp_advertise *adv)
+{
+  union adv_union* u ;
+
+  u = (void*)adv ;
+
+  u->next   = adv_frees ;
+  adv_frees = u ;
+} ;
+
+static struct bgp_advertise_attr *
+baa_calloc (void)
+{
+  union  baa_union* u ;
+
+  u = baa_frees ;
+
+  if (u == NULL)
+    {
+      struct baa_pool* pool ;
+      uint i ;
+
+      pool = XCALLOC(MTYPE_BGP_ADVERTISE_ATTR, sizeof(struct baa_pool)) ;
+
+      pool->next = baa_pools ;
+      baa_pools  = pool ;
+
+      for (i = 0 ; i < baa_pool_size ; ++i)
+        {
+          u = &pool->baas[i] ;
+
+          u->next   = baa_frees ;
+          baa_frees = u ;
+        } ;
+    } ;
+
+  baa_frees = u->next ;
+
+  memset(u, 0, sizeof(union baa_union)) ;
+  confirm(sizeof(union baa_union) == sizeof(struct bgp_advertise_attr)) ;
+
+  return &u->baa ;
+} ;
+
+static void
+baa_free (struct bgp_advertise_attr *baa)
+{
+  union baa_union* u ;
+
+  u = (void*)baa ;
+
+  u->next   = baa_frees ;
+  baa_frees = u ;
+} ;
+
+extern void
+bgp_advertise_finish(void)
+{
+  struct adj_out_pool*  adj_out_p ;
+  struct adv_pool*      adv_p ;
+  struct baa_pool*      baa_p ;
+
+  adj_out_frees = NULL ;
+
+  while ((adj_out_p = adj_out_pools) != NULL)
+    {
+      adj_out_pools = adj_out_p->next ;
+
+      XFREE(MTYPE_BGP_ADJ_OUT, adj_out_p) ;
+    } ;
+
+  adv_frees = NULL ;
+
+  while ((adv_p = adv_pools) != NULL)
+    {
+      adv_pools = adv_p->next ;
+
+      XFREE(MTYPE_BGP_ADVERTISE, adv_p) ;
+    } ;
+
+  baa_frees = NULL ;
+
+  while ((baa_p = baa_pools) != NULL)
+    {
+      baa_pools = baa_p->next ;
+
+      XFREE(MTYPE_BGP_ADVERTISE_ATTR, baa_p) ;
+    } ;
+} ;
+
+

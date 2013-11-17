@@ -80,8 +80,6 @@ bgp_update_packet (bgp_advertise adv, bgp_peer peer, afi_t afi, safi_t safi)
   ulen   attr_lp ;
   ulen   attr_len ;
   struct prefix_rd *prd ;
-  u_char *tag ;
-  struct peer *from ;
   qstring updates ;
   uint    count ;
   bool    ipv4_unicast ;
@@ -126,6 +124,10 @@ bgp_update_packet (bgp_advertise adv, bgp_peer peer, afi_t afi, safi_t safi)
        * run out of possibilities there, trie the (new) head of the update
        * fifo.
        */
+      struct bgp_synchronize *sync ;
+
+      sync = peer->sync[afi][safi] ;
+
       updates = qs_new(100) ;
       count   = 0 ;
 
@@ -138,7 +140,7 @@ bgp_update_packet (bgp_advertise adv, bgp_peer peer, afi_t afi, safi_t safi)
           if (adv->adj->attr == NULL)
             adv = bgp_updated(adv, peer, afi, safi, NULL, false) ;
           else
-            adv = bgp_advertise_redux(adv, peer, afi, safi) ;
+            adv = bgp_advertise_redux(adv, sync) ;
 
           if (adv != NULL)
             {
@@ -147,7 +149,7 @@ bgp_update_packet (bgp_advertise adv, bgp_peer peer, afi_t afi, safi_t safi)
                 continue ;      /* another with the same attributes     */
             } ;
 
-          adv = bgp_advertise_fifo_head(&peer->sync[afi][safi]->update) ;
+          adv = bgp_advertise_fifo_head(&sync->update) ;
           if (adv != NULL)
             {
               binfo = adv->binfo ;
@@ -196,13 +198,6 @@ bgp_update_packet (bgp_advertise adv, bgp_peer peer, afi_t afi, safi_t safi)
   else
     prd = (struct prefix_rd *) &rn->prn->p ;
 
-  from = binfo->peer;
-
-  if (binfo->extra == NULL)
-    tag = NULL ;
-  else
-    tag = binfo->extra->tag;
-
   bgp_packet_set_marker (s, BGP_MSG_UPDATE);
   stream_putw (s, 0);   /* No AFI_IP/SAFI_UNICAST withdrawn     */
 
@@ -214,7 +209,7 @@ bgp_update_packet (bgp_advertise adv, bgp_peer peer, afi_t afi, safi_t safi)
   attr_len = bgp_packet_attribute (NULL, peer, s,
                                          adv->baa->attr,
                                          &rn->p, afi, safi,
-                                         from, prd, tag);
+                                         binfo->peer, prd, binfo->tag);
   stream_putw_at (s, attr_lp, attr_len) ;
 
   /* For AFI_IP/SAFI_UNICAST, append the first prefix.
@@ -447,7 +442,7 @@ bgp_updated(bgp_advertise adv, bgp_peer peer, afi_t afi, safi_t safi,
       adj->attr = bgp_attr_intern (adv->baa->attr);
     } ;
 
-  return bgp_advertise_unset (adv, peer, afi, safi, true /* free_adv */) ;
+  return bgp_advertise_unset (adv, peer->sync[afi][safi], true /* free_adv */) ;
 } ;
 
 #if 0                           // Replaced by the above
@@ -669,6 +664,9 @@ bgp_withdraw_packet (struct peer *peer, afi_t afi, safi_t safi)
       adj = adv->adj;
       rn  = adv->rn;
       assert (rn != NULL);
+      qassert((adj != NULL) && (adv == adj->adv)) ;
+      qassert(rn == adj->rn) ;
+      qassert(adj->peer == peer) ;
 
       if (adj->attr != NULL)
         {
@@ -698,7 +696,7 @@ bgp_withdraw_packet (struct peer *peer, afi_t afi, safi_t safi)
             } ;
         } ;
 
-      bgp_adj_out_remove (rn, adj, peer, afi, safi);
+      bgp_adj_out_remove (adj, afi, safi);
     }
 
   if (withdrawn == 0)

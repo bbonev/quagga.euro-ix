@@ -28,6 +28,7 @@
 #include "bgpd/bgp_notification.h"
 
 #include "lib/plist.h"
+#include "lib/list_util.h"
 
 /*==============================================================================
  *
@@ -212,13 +213,13 @@ struct peer
   struct bgp_table *rib[AFI_MAX][SAFI_MAX];
 
   /* Collection of routes originated by peer                    */
-  struct bgp_info* routes_head[AFI_MAX][SAFI_MAX] ;
+  struct bgp_info* routes[AFI_MAX][SAFI_MAX] ;
 
   /* Collection of adj_in routes                                */
-  struct bgp_adj_in* adj_in_head[AFI_MAX][SAFI_MAX] ;
+  struct bgp_adj_in* adj_ins[AFI_MAX][SAFI_MAX] ;
 
-  /* Collection of adj_out routes                               */
-  struct bgp_adj_out* adj_out_head[AFI_MAX][SAFI_MAX] ;
+  /* Collection of adj_out routes -- base of sdl-list           */
+  struct bgp_adj_out* adj_outs[AFI_MAX][SAFI_MAX] ;
 
   /* Packet receive buffer. */
   struct stream *ibuf;
@@ -400,9 +401,6 @@ struct peer
 
   /* Send prefix count.                                 */
   unsigned long scount[AFI_MAX][SAFI_MAX];
-
-  /* Announcement attribute hash.                       */
-  struct hash *hash[AFI_MAX][SAFI_MAX];
 
   /* Filter structure.                                  */
   struct bgp_filter filter[AFI_MAX][SAFI_MAX];

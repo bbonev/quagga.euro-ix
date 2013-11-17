@@ -68,10 +68,11 @@ struct aspath
 extern void aspath_init (void);
 extern void aspath_finish (void);
 extern struct aspath *aspath_parse (struct stream *, size_t, bool, bool);
-extern struct aspath *aspath_dup (struct aspath *);
+extern struct aspath *aspath_dup (const struct aspath *);
 extern struct aspath *aspath_aggregate (struct aspath *, struct aspath *);
 extern struct aspath *aspath_prepend (struct aspath *, struct aspath *);
-extern struct aspath *aspath_filter_exclude (struct aspath *, struct aspath *);
+extern struct aspath *aspath_filter_exclude (const struct aspath *,
+                                                         const struct aspath *);
 extern struct aspath *aspath_add_seq (struct aspath *, as_t);
 extern struct aspath *aspath_add_confed_seq (struct aspath *, as_t);
 extern int aspath_cmp_left (const struct aspath *, const struct aspath *);
@@ -85,7 +86,7 @@ extern struct aspath *aspath_unintern (struct aspath **);
 extern const char *aspath_print (struct aspath *);
 extern void aspath_print_vty (struct vty *, const char *, struct aspath *, const char *);
 extern void aspath_print_all_vty (struct vty *);
-extern unsigned int aspath_key_make (void *);
+extern unsigned int aspath_key_make (const void *);
 extern int aspath_loop_check (struct aspath *, as_t);
 extern int aspath_private_as_check (struct aspath *);
 extern int aspath_firstas_check (struct aspath *, as_t);

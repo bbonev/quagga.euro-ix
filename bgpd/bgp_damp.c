@@ -201,8 +201,7 @@ bgp_damp_withdraw (struct bgp_info *binfo, struct bgp_node *rn,
   t_now = bgp_clock ();
 
   /* Processing Unreachable Messages.  */
-  if (binfo->extra)
-    bdi = binfo->extra->damp_info;
+  bdi = binfo->damp_info;
 
   if (bdi == NULL)
     {
@@ -214,6 +213,7 @@ bgp_damp_withdraw (struct bgp_info *binfo, struct bgp_node *rn,
          3. withdraw the route.  */
 
       bdi =  XCALLOC (MTYPE_BGP_DAMP_INFO, sizeof (struct bgp_damp_info));
+      binfo->damp_info = bdi;
       bdi->binfo = binfo;
       bdi->rn = rn;
       bdi->penalty = (attr_change ? DEFAULT_PENALTY / 2 : DEFAULT_PENALTY);
@@ -223,7 +223,6 @@ bgp_damp_withdraw (struct bgp_info *binfo, struct bgp_node *rn,
       bdi->index = -1;
       bdi->afi = afi;
       bdi->safi = safi;
-      (bgp_info_extra_get (binfo))->damp_info = bdi;
       BGP_DAMP_LIST_ADD (damp, bdi);
     }
   else
@@ -282,7 +281,7 @@ bgp_damp_update (struct bgp_info *binfo, struct bgp_node *rn,
   struct bgp_damp_info *bdi;
   int status;
 
-  if (!binfo->extra || !((bdi = binfo->extra->damp_info)))
+  if ((bdi = binfo->damp_info) == NULL)
     return BGP_DAMP_USED;
 
   t_now = bgp_clock ();
@@ -321,10 +320,10 @@ bgp_damp_scan (struct bgp_info *binfo, afi_t afi, safi_t safi)
   time_t t_now, t_diff;
   struct bgp_damp_info *bdi;
 
-  assert (binfo->extra && binfo->extra->damp_info);
+  assert (binfo->damp_info);
 
   t_now = bgp_clock ();
-  bdi = binfo->extra->damp_info;
+  bdi = binfo->damp_info;
 
   if (CHECK_FLAG (binfo->flags, BGP_INFO_DAMPED))
     {
@@ -372,7 +371,7 @@ bgp_damp_info_free (struct bgp_damp_info *bdi, int withdraw)
     return;
 
   binfo = bdi->binfo;
-  binfo->extra->damp_info = NULL;
+  binfo->damp_info = NULL;
 
   if (CHECK_FLAG (binfo->flags, BGP_INFO_DAMPED))
     bgp_reuse_list_delete (bdi);
@@ -598,11 +597,8 @@ bgp_damp_info_vty (struct vty *vty, struct bgp_info *binfo)
   char timebuf[BGP_UPTIME_LEN];
   int penalty;
 
-  if (!binfo->extra)
-    return;
-
   /* BGP dampening information.  */
-  bdi = binfo->extra->damp_info;
+  bdi = binfo->damp_info;
 
   /* If dampening is not enabled or there is no dampening information,
      return immediately.  */
@@ -634,11 +630,8 @@ bgp_damp_reuse_time_vty (struct vty *vty, struct bgp_info *binfo,
   time_t t_now, t_diff;
   int penalty;
 
-  if (!binfo->extra)
-    return NULL;
-
   /* BGP dampening information.  */
-  bdi = binfo->extra->damp_info;
+  bdi = binfo->damp_info;
 
   /* If dampening is not enabled or there is no dampening information,
      return immediately.  */

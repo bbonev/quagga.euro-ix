@@ -725,7 +725,7 @@ bgp_dump_routes_family(bgp_dump bd, struct bgp *bgp, afi_t afi)
       int sizep ;
       uint16_t entry_count ;
 
-      if (rn->info == NULL)
+      if (rn->u.info == NULL)
         continue;
 
       /* MRT header for MRT_MT_TABLE_DUMP_V2 type message
@@ -734,15 +734,17 @@ bgp_dump_routes_family(bgp_dump bd, struct bgp *bgp, afi_t afi)
 
       stream_putl(s, bd->seq) ;                 /* Sequence number      */
       stream_putc(s, rn->p.prefixlen) ;         /* Prefix length        */
-      stream_put(s, &rn->p.u.prefix,          /* Prefix               */
+      stream_put(s, &rn->p.u.prefix,            /* Prefix               */
                       (rn->p.prefixlen+7)/8) ;  /* (zero is OK)         */
 
       sizep = stream_get_endp(s);               /* will set count later */
       entry_count = 0;
       stream_putw(s, entry_count);              /* entry count, so far  */
 
-      /* Cycle through the known attributes for this prefix             */
-      for (info = rn->info ; info != NULL ; info = info->info_next)
+      /* Cycle through the known attributes for this prefix
+       */
+      for (info = sdl_head(rn->u.binfos) ; info != NULL ;
+                                           info = sdl_next(info, rn_list))
         {
           entry_count++;
 

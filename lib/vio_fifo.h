@@ -37,11 +37,12 @@
  * Sort out VIO_FIFO_DEBUG.
  *
  *   Set to 1 if defined, but blank.
- *   Set to QDEBUG if not defined.
+ *   Set to 0 if not defined -- current state appears reliable, so avoid the
+ *                              (huge) overhead of all the consistency checking.
  *
  *   Force to 0 if VIO_FIFO_NO_DEBUG is defined and not zero.
  *
- * So: defaults to same as QDEBUG, but no matter what QDEBUG is set to:
+ * So: no matter what QDEBUG is set to:
  *
  *       * can set VIO_FIFO_DEBUG    == 0 to turn off debug
  *       *  or set VIO_FIFO_DEBUG    != 0 to turn on debug
@@ -53,8 +54,8 @@
 #  undef  VIO_FIFO_DEBUG
 #  define VIO_FIFO_DEBUG 1
 # endif
-#else                           /* If not defined, follow QDEBUG        */
-# define VIO_FIFO_DEBUG QDEBUG
+#else                           /* If not defined, turn off             */
+# define VIO_FIFO_DEBUG 0
 #endif
 
 #ifdef VIO_FIFO_NO_DEBUG        /* Override, if defined                 */

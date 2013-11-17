@@ -90,10 +90,12 @@ distribute_list_delete_hook (void (*func) (struct distribute *))
 }
 
 static void *
-distribute_hash_alloc (struct distribute *arg)
+distribute_hash_alloc (const void* data)
 {
+  const struct distribute *arg ;
   struct distribute *dist;
 
+  arg  = data ;
   dist = distribute_new ();
   if (arg->ifname)
     dist->ifname = XSTRDUP (MTYPE_DISTRIBUTE_IFNAME, arg->ifname);
@@ -111,28 +113,34 @@ distribute_get (const char *ifname)
   /* temporary reference */
   key.ifname = miyagi(ifname) ;
 
-  return hash_get (disthash, &key, (void * (*) (void *))distribute_hash_alloc);
+  return hash_get (disthash, &key, distribute_hash_alloc);
 }
 
 static unsigned int
-distribute_hash_make (void *arg)
+distribute_hash_make (const void* data)
 {
-  const struct distribute *dist = arg;
+  const struct distribute *dist = data ;
 
   return dist->ifname ? string_hash_make (dist->ifname) : 0;
 }
 
 /* If two distribute-list have same value then return 1 else return
    0. This function is used by hash package. */
-static int
-distribute_cmp (const struct distribute *dist1, const struct distribute *dist2)
+static bool
+distribute_equal (const void* item, const void* data)
 {
-  if (dist1->ifname && dist2->ifname)
-    if (strcmp (dist1->ifname, dist2->ifname) == 0)
-      return 1;
-  if (! dist1->ifname && ! dist2->ifname)
-    return 1;
-  return 0;
+  const struct distribute *dist1 ;
+  const struct distribute *dist2 ;
+
+  dist1 = item ;
+  dist2 = data ;                /* same as item */
+
+  if ((dist1->ifname != NULL) && (dist2->ifname != NULL))
+    return (strcmp (dist1->ifname, dist2->ifname) == 0) ;
+
+  /* One or both names is NULL... equal only if both are
+   */
+  return (dist1->ifname == dist2->ifname) ;
 }
 
 /* Set access-list name to the distribute list. */
@@ -637,7 +645,7 @@ config_show_distribute (struct vty *vty)
   for (i = 0; i < disthash->size; i++)
     for (mp = disthash->index[i]; mp; mp = mp->next)
       {
-        dist = mp->data;
+        dist = mp->item;
         if (dist->ifname)
           if (dist->list[DISTRIBUTE_OUT] || dist->prefix[DISTRIBUTE_OUT])
             {
@@ -672,7 +680,7 @@ config_show_distribute (struct vty *vty)
   for (i = 0; i < disthash->size; i++)
     for (mp = disthash->index[i]; mp; mp = mp->next)
       {
-        dist = mp->data;
+        dist = mp->item;
         if (dist->ifname)
           if (dist->list[DISTRIBUTE_IN] || dist->prefix[DISTRIBUTE_IN])
             {
@@ -702,7 +710,7 @@ config_write_distribute (struct vty *vty)
       {
         struct distribute *dist;
 
-        dist = mp->data;
+        dist = mp->item;
 
         if (dist->list[DISTRIBUTE_IN])
           {
@@ -798,6 +806,5 @@ distribute_list_cmd_init (void)
 extern void
 distribute_list_init (void)
 {
-  disthash = hash_create (distribute_hash_make,
-                         (int (*) (const void *, const void *)) distribute_cmp);
+  disthash = hash_create (distribute_hash_make, distribute_equal);
 } ;

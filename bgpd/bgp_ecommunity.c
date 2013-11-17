@@ -47,6 +47,8 @@ ecommunity_free (struct ecommunity *ecom)
 {
   if (ecom != NULL)
     {
+      qassert(ecom->refcnt == 0) ;
+
       if (ecom->val)
         XFREE (MTYPE_ECOMMUNITY_VAL, ecom->val);
       if (ecom->str)
@@ -262,7 +264,9 @@ ecommunity_unintern (struct ecommunity **p_ecom)
               zlog_err("BUG: failed to find interned ecommunity -- found %s",
                                  (ret == NULL) ? "nothing" : "something else") ;
               ecom = NULL ;     /* leaky but safer      */
-            } ;
+            }
+          else if (qdebug)
+            ecom->refcnt = 0 ;  /* for completeness     */
         } ;
 
       *p_ecom = ecommunity_free (ecom);
@@ -271,40 +275,43 @@ ecommunity_unintern (struct ecommunity **p_ecom)
   return NULL ;
 } ;
 
-/* Utinity function to make hash key.  */
-unsigned int
-ecommunity_hash_make (void *arg)
+/* Utility function to make hash key.  */
+extern unsigned int
+ecommunity_hash_make (const void *arg)
 {
   const struct ecommunity *ecom = arg;
   int c;
   unsigned int key;
-  u_int8_t *pnt;
+  uint32_t *pnt;
 
-  key = 0;
-  pnt = ecom->val;
+  key = 0x31415926 ;
+  pnt = (uint32_t*)ecom->val ;          /* is malloc'd, so can do this  */
 
-  for (c = 0; c < ecom->size * ECOMMUNITY_SIZE; c++)
-    key += pnt[c];
+  for (c = 0; c < ecom->size * (ECOMMUNITY_SIZE / 4) ; c++)
+    key = (key * 5) ^ pnt[c];
+
+  confirm((ECOMMUNITY_SIZE % 4) == 0) ;
 
   return key;
 }
 
 /* Compare two Extended Communities Attribute structure.  */
-int
-ecommunity_cmp (const void *arg1, const void *arg2)
+extern bool
+ecommunity_equal (const void *arg1, const void *arg2)
 {
   const struct ecommunity *ecom1 = arg1;
   const struct ecommunity *ecom2 = arg2;
 
-  return (ecom1->size == ecom2->size
-          && memcmp (ecom1->val, ecom2->val, ecom1->size * ECOMMUNITY_SIZE) == 0);
+  return (ecom1->size == ecom2->size)
+      && (memcmp (ecom1->val, ecom2->val, ecom1->size * ECOMMUNITY_SIZE) == 0);
 }
 
 /* Initialize Extended Comminities related hash. */
 void
 ecommunity_init (void)
 {
-  ecomhash = hash_create (ecommunity_hash_make, ecommunity_cmp);
+  ecomhash = hash_create_size(128 * 1024, ecommunity_hash_make,
+                                                             ecommunity_equal);
 }
 
 void

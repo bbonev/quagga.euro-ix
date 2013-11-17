@@ -23,6 +23,7 @@ Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
 
 #include "bgp_table.h"
 
+#if 0
 /* Ancillary information to struct bgp_info,
  * used for uncommonly used data (aggregation, MPLS, etc.)
  * and lazily allocated to save memory.
@@ -41,24 +42,29 @@ struct bgp_info_extra
   /* MPLS label.  */
   u_char tag[3];
 };
+#endif
 
 struct bgp_info
 {
   /* For linked list.                           */
   struct bgp_node* rn ;
-  struct bgp_info *info_next;
-  struct bgp_info *info_prev;
+  struct dl_list_pair(struct bgp_info*) rn_list ;
 
   /* Peer structure.                            */
   struct peer *peer;
-  struct bgp_info* routes_next ;
-  struct bgp_info* routes_prev ;
+  struct dl_list_pair(struct bgp_info*) peer_list ;
 
   /* Attribute structure.                       */
   struct attr *attr;
 
-  /* Extra information                          */
-  struct bgp_info_extra *extra;
+  /* Pointer to dampening structure.  */
+  struct bgp_damp_info *damp_info;
+
+  /* This route is suppressed with aggregation.  */
+  int suppress;
+
+  /* Nexthop reachability check.  */
+  u_int32_t igpmetric;
 
   /* Uptime.                                    */
   time_t uptime;
@@ -92,6 +98,9 @@ struct bgp_info
 #define BGP_ROUTE_STATIC       1
 #define BGP_ROUTE_AGGREGATE    2
 #define BGP_ROUTE_REDISTRIBUTE 3
+
+  /* MPLS label.                */
+  u_char tag[3];
 };
 
 /* BGP static route configuration. */
@@ -195,11 +204,13 @@ extern void bgp_clear_stale_route (struct peer *, afi_t, safi_t);
 
 extern struct bgp_info *bgp_info_lock (struct bgp_info *);
 extern struct bgp_info *bgp_info_unlock (struct bgp_info *);
-extern void bgp_info_add (struct bgp_node *rn, struct bgp_info *ri);
+extern void bgp_info_add (struct bgp_info *ri, struct bgp_node *rn,
+                                                             struct peer* peer);
 extern void bgp_info_delete (struct bgp_node *rn, struct bgp_info *ri);
-extern struct bgp_info_extra *bgp_info_extra_get (struct bgp_info *);
 extern void bgp_info_set_flag (struct bgp_node *, struct bgp_info *, u_int32_t);
 extern void bgp_info_unset_flag (struct bgp_node *, struct bgp_info *, u_int32_t);
+
+extern void bgp_info_finish(void) ;
 
 extern int bgp_nlri_sanity_check (struct peer *, int, u_char *, bgp_size_t);
 extern int bgp_nlri_parse (struct peer *, struct attr *, struct bgp_nlri *);

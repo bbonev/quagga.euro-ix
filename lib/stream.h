@@ -149,6 +149,10 @@ struct stream_fifo
  * l: long (two words)
  * q: quad (four words)
  */
+extern void stream_start_up(void) ;
+extern void stream_init_r(void) ;
+extern void stream_finish(void) ;
+
 extern struct stream *stream_new (size_t);
 extern void stream_free (struct stream *);
 extern struct stream * stream_copy (struct stream *, struct stream *src);

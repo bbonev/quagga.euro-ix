@@ -76,9 +76,9 @@ extern struct ecommunity *ecommunity_dup (struct ecommunity *);
 extern struct ecommunity *ecommunity_merge (struct ecommunity *,
                                                            struct ecommunity *);
 extern struct ecommunity *ecommunity_intern (struct ecommunity *);
-extern int ecommunity_cmp (const void *, const void *);
+extern bool ecommunity_equal (const void *, const void *);
 extern struct ecommunity *ecommunity_unintern (struct ecommunity **);
-extern unsigned int ecommunity_hash_make (void *);
+extern unsigned int ecommunity_hash_make (const void *);
 extern struct ecommunity *ecommunity_str2com (const char *, int, int);
 extern char *ecommunity_ecom2str (struct ecommunity *, int);
 extern int ecommunity_match (const struct ecommunity *,

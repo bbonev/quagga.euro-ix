@@ -22,57 +22,68 @@ Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
 #define _QUAGGA_BGP_ADVERTISE_H
 
 #include "lib/misc.h"
+#include "lib/list_util.h"
 
-/* BGP advertise FIFO.  */
+/* BGP advertise FIFOs.
+ */
 typedef struct bgp_advertise* bgp_advertise ;
 
-typedef struct bgp_advertise_fifo_base* bgp_advertise_fifo_base ;
-
-struct bgp_advertise_fifo
-{
-  bgp_advertise_fifo_base base ;
-  bgp_advertise next;
-  bgp_advertise prev;
-};
-
-struct bgp_advertise_fifo_base
-{
-  bgp_advertise head;
-  bgp_advertise tail;
-};
+struct bgp_advertise_fifo_base dl_base_pair(bgp_advertise) ;
 
 /* BGP advertise attribute.  */
 struct bgp_advertise_attr
 {
-  /* Head of advertisement pointer. */
-  struct bgp_advertise_fifo_base base ;
-
-  /* Reference counter.  */
-  attr_refcnt_t refcnt;
-
-  /* Attribute pointer to be announced.  */
+  /* Attribute pointer to be announced.
+   *
+   * NB: each item on the fifo below owns its own lock on the attr, so the
+   *     bgp_advertise_attr does *not* own a lock.
+   */
   struct attr *attr;
+
+  /* List of bgp_advertise_attr which share the attributes.
+   *
+   * When this list becomes empty, the bgp_advertise_attr object is removed
+   * from the sync->hash and destroyed.
+   */
+  struct bgp_advertise_fifo_base base ;
 };
 
 struct bgp_advertise
 {
-  /* FIFO for advertisement.  */
-  struct bgp_advertise_fifo fifo;
+  /* FIFO for advertisement.
+   *
+   * Will be on the peer's update fifo for updates and withdraw fifo for
+   * withdraws.
+   */
+  struct dl_list_pair(bgp_advertise) fifo ;
 
-  /* Link list for same attribute advertise.  */
-  bgp_advertise adv_next;
-  bgp_advertise adv_prev;
+  /* Link list for same attribute advertisements.
+   */
+  struct dl_list_pair(bgp_advertise) baa_list ;
 
-  /* Prefix information.  */
+  /* Prefix information
+   */
   struct bgp_node *rn;
 
-  /* Reference pointer.  */
+  /* The adj-out this is an advertisement for.
+   */
   struct bgp_adj_out *adj;
 
-  /* Advertisement attribute.  */
+  /* Advertisement attribute.
+   *
+   * NB: withdraw <=> NULL   -- when a bgp_advertise object is annulled,
+   *                            is removed from the withdraw fifo if this
+   *                            is NULL, otherwise from the update fifo !
+   *
+   * Note that the attr are those after the 'out' filtering, so may not be
+   * the same as the attr in the bgp_info.
+   */
   struct bgp_advertise_attr *baa;
 
-  /* BGP info.  */
+  /* BGP info.
+   *
+   * NB: withdraw <=> NULL
+   */
   struct bgp_info *binfo;
 };
 
@@ -81,13 +92,11 @@ struct bgp_adj_out
 {
   /* Linked list pointer.       */
   struct bgp_node*   rn ;
-  struct bgp_adj_out *adj_next;
-  struct bgp_adj_out *adj_prev;
+  struct dl_list_pair(struct bgp_adj_out*) rn_list ;
 
   /* Advertised peer.           */
   struct peer *peer;
-  struct bgp_adj_out* route_next ;
-  struct bgp_adj_out* route_prev ;
+  struct dl_list_pair(struct bgp_adj_out*) peer_list ;
 
   /* Advertised attribute.      */
   struct attr *attr;
@@ -101,13 +110,11 @@ struct bgp_adj_in
 {
   /* Linked list pointer.       */
   struct bgp_node*   rn ;
-  struct bgp_adj_in *adj_next;
-  struct bgp_adj_in *adj_prev;
+  struct dl_list_pair(struct bgp_adj_in*) rn_list ;
 
   /* Received peer.             */
   struct peer *peer;
-  struct bgp_adj_in* route_next ;
-  struct bgp_adj_in* route_prev ;
+  struct dl_list_pair(struct bgp_adj_in*) peer_list ;
 
   /* Received attribute.        */
   struct attr *attr;
@@ -121,72 +128,20 @@ struct bgp_synchronize
 {
   struct bgp_advertise_fifo_base update;
   struct bgp_advertise_fifo_base withdraw;
+#if 0
   struct bgp_advertise_fifo_base withdraw_low;
+#endif
+
+  struct hash *hash ;
 };
 
-/* bgp_advertise_fifo handling
- *
- * Rules: base->head == NULL => empty
- *        base->tail -- only valid if base->head != NULL
- *
- *        adv->fifo.base == NULL => not on fifo
- *
- *        adv->fifo.next == NULL => last   (if fifo.base != NULL)
- *        adv->fifo.prev == NULL => first  (if fifo.base != NULL)
- */
-Inline void
-bgp_advertise_fifo_init(bgp_advertise_fifo_base base)
-{
-  base->head = NULL ;
-} ;
-
 Inline bgp_advertise
-bgp_advertise_fifo_head(bgp_advertise_fifo_base base)
+bgp_advertise_fifo_head(struct bgp_advertise_fifo_base* base)
 {
-  return base->head ;
+  return ddl_head(*base) ;
 } ;
 
-Inline void
-bgp_advertise_fifo_add(bgp_advertise_fifo_base base, bgp_advertise adv)
-{
-  adv->fifo.next = NULL ;
-  adv->fifo.base = base ;
-
-  if (base->head == NULL)
-    {
-      adv->fifo.prev  = NULL ;
-      base->head      = adv ;
-    }
-  else
-    {
-      adv->fifo.prev  = base->tail ;
-      base->tail->fifo.next = adv ;
-    } ;
-
-  base->tail = adv ;
-} ;
-
-Inline void
-bgp_advertise_fifo_del(bgp_advertise adv)
-{
-  bgp_advertise_fifo_base base = adv->fifo.base ;
-
-  if (base != NULL)
-    {
-      if (adv->fifo.next == NULL)
-        base->tail = adv->fifo.prev ;
-      else
-        adv->fifo.next->fifo.prev = adv->fifo.prev ;
-
-      if (adv->fifo.prev == NULL)
-        base->head = adv->fifo.next ;
-      else
-        adv->fifo.prev->fifo.next = adv->fifo.next ;
-
-      adv->fifo.base = NULL ;
-    } ;
- } ;
-
+#if 0
 /* BGP adjacency linked list.  */
 #define BGP_INFO_ADD(N,A,TYPE)                        \
   do {                                                \
@@ -212,27 +167,32 @@ bgp_advertise_fifo_del(bgp_advertise adv)
 #define BGP_ADJ_OUT_ADD(N,A)   BGP_INFO_ADD(N,A,adj_out)
 #define BGP_ADJ_OUT_DEL(N,A)   BGP_INFO_DEL(N,A,adj_out)
 
+#endif
+
 /* Prototypes.  */
 extern void bgp_adj_out_set (struct bgp_node *, struct peer *, struct prefix *,
                       struct attr *, afi_t, safi_t, struct bgp_info *);
 extern void bgp_adj_out_unset (struct bgp_node *, struct peer *, struct prefix *,
                         afi_t, safi_t);
-extern void bgp_adj_out_remove (struct bgp_node *, struct bgp_adj_out *,
-                         struct peer *, afi_t, safi_t);
-extern int bgp_adj_out_lookup (struct peer *, struct prefix *, afi_t, safi_t,
+extern void bgp_adj_out_remove (struct bgp_adj_out *, afi_t, safi_t);
+extern bool bgp_adj_out_lookup (struct peer *, struct prefix *, afi_t, safi_t,
                         struct bgp_node *);
 
 extern void bgp_adj_in_set (struct bgp_node *, struct peer *, struct attr *,
                                                                   const uchar*);
 extern void bgp_adj_in_unset (struct bgp_node *, struct peer *);
-extern void bgp_adj_in_remove (struct bgp_node *, struct bgp_adj_in *);
+extern void bgp_adj_in_remove (struct bgp_adj_in *adj_in, afi_t afi,
+                                                                   safi_t safi);
 
 extern struct bgp_advertise* bgp_advertise_unset(struct bgp_advertise * adv,
-                     struct peer *peer, afi_t afi, safi_t safi, bool free_adv) ;
+                                  struct bgp_synchronize* sync, bool free_adv) ;
 extern struct bgp_advertise* bgp_advertise_redux(struct bgp_advertise * adv,
-                                    struct peer *peer, afi_t afi, safi_t safi) ;
+                                                 struct bgp_synchronize* sync) ;
 
 extern void bgp_sync_init (struct peer *);
+extern void bgp_sync_start(struct peer *peer) ;
 extern void bgp_sync_delete (struct peer *);
+
+extern void bgp_advertise_finish(void) ;
 
 #endif /* _QUAGGA_BGP_ADVERTISE_H */

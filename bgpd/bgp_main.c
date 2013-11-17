@@ -44,8 +44,10 @@ Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
 #include "bgpd/bgp_attr.h"
 #include "bgpd/bgp_mplsvpn.h"
 #include "bgpd/bgp_aspath.h"
+#include "bgpd/bgp_advertise.h"
 #include "bgpd/bgp_dump.h"
 #include "bgpd/bgp_route.h"
+#include "bgpd/bgp_table.h"
 #include "bgpd/bgp_nexthop.h"
 #include "bgpd/bgp_regex.h"
 #include "bgpd/bgp_clist.h"
@@ -802,6 +804,9 @@ bgp_exit (int status)
     } ;
   cli_nexus = qpn_reset(cli_nexus, free_it);
 
+  bgp_info_finish() ;
+  bgp_table_all_finish() ;
+  bgp_advertise_finish() ;
   host_finish() ;
 
   qexit (status, (CONF_BGP_DEBUG (normal, NORMAL) || qdebug)) ;

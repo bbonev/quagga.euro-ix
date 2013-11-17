@@ -6704,11 +6704,13 @@ DEFUN (show_bgp_memory,
            mtype_memstr (memstrbuf, sizeof (memstrbuf),
                          count * sizeof (struct bgp_info)),
            VTY_NEWLINE);
+#if 0
   if ((count = mem_get_alloc(mst, MTYPE_BGP_ROUTE_EXTRA)))
     vty_out (vty, "%ld BGP route ancillaries, using %s of memory%s", count,
              mtype_memstr (memstrbuf, sizeof (memstrbuf),
                            count * sizeof (struct bgp_info_extra)),
              VTY_NEWLINE);
+#endif
 
   if ((count = mem_get_alloc(mst, MTYPE_BGP_STATIC)))
     vty_out (vty, "%ld Static routes, using %s of memory%s", count,
@@ -8152,7 +8154,7 @@ community_show_all_iterator (struct hash_backet *backet, struct vty *vty)
 {
   struct community *com;
 
-  com = (struct community *) backet->data;
+  com = (struct community *) backet->item;
   vty_out (vty, "[%p] (%ld) %s%s", backet, com->refcnt,
            community_str (com), VTY_NEWLINE);
 }

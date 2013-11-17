@@ -37,6 +37,8 @@
 #include "pthread_safe.h"
 #include "log_local.h"
 #include "qiovec.h"
+#include "stream.h"
+#include "hash.h"
 
 /*==============================================================================
  * Quagga Library Initialise/Closedown
@@ -196,6 +198,7 @@ qlib_init_first_stage(mode_t cmask)
   qiovec_start_up(qlib_iov_max) ;
   thread_start_up();
   qpn_wd_start_up() ;
+  stream_start_up() ;
 } ;
 
 /*------------------------------------------------------------------------------
@@ -223,6 +226,7 @@ qlib_init_second_stage(bool pthreaded)
   zprivs_init_r();
   mqueue_initialise();
   safe_init_r();
+  stream_init_r() ;
 }
 
 /*------------------------------------------------------------------------------
@@ -252,6 +256,8 @@ qexit(int exit_code, bool mem_stats)
   log_finish();
   thread_finish();
   qt_finish() ;
+  stream_finish() ;
+  hash_finish() ;
   memory_finish(mem_stats);
   exit (exit_code);
 }

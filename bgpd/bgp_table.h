@@ -55,11 +55,16 @@ struct bgp_node
 #define l_left   link[0]
 #define l_right  link[1]
 
-  void *info;
+  union
+    {
+      void*     info;
+      struct bgp_info*  binfos ;
+      struct bgp_table* table ;
+    } u ;
 
-  struct bgp_adj_out *adj_out;
+  struct bgp_adj_out *adj_outs;
 
-  struct bgp_adj_in *adj_in;
+  struct bgp_adj_in *adj_ins;
 
   struct bgp_node *prn;
 
@@ -92,4 +97,7 @@ extern struct bgp_node *bgp_node_match_ipv6 (const struct bgp_table *,
                                           struct in6_addr *);
 #endif /* HAVE_IPV6 */
 extern unsigned long bgp_table_count (const struct bgp_table *const);
+
+extern void bgp_table_all_finish(void) ;
+
 #endif /* _QUAGGA_BGP_TABLE_H */

@@ -74,11 +74,8 @@ bgp_table_finish (struct bgp_table **rt)
     }
 }
 
-static struct bgp_node *
-bgp_node_create (void)
-{
-  return XCALLOC (MTYPE_BGP_NODE, sizeof (struct bgp_node));
-}
+static struct bgp_node * bgp_node_calloc (void) ;
+static void bgp_node_free (struct bgp_node *rn) ;
 
 /* Allocate new route node with prefix set.
  */
@@ -87,21 +84,12 @@ bgp_node_set (struct bgp_table *table, struct prefix *prefix)
 {
   struct bgp_node *node;
 
-  node = bgp_node_create ();
+  node = bgp_node_calloc ();            /* Returns zeriozed node        */
 
   prefix_copy (&node->p, prefix);
   node->table = table;
 
   return node;
-}
-
-/* Free route node.
- */
-static void
-bgp_node_free (struct bgp_node *node)
-{
-  node->lock = 0 ;
-  XFREE (MTYPE_BGP_NODE, node);
 }
 
 /* Free route table.
@@ -134,9 +122,9 @@ bgp_table_free (struct bgp_table *rt)
           continue;
         }
 
-      qassert(  (node->info     == NULL)
-             && (node->adj_out  == NULL)
-             && (node->adj_in   == NULL)
+      qassert(  (node->u.info    == NULL)
+             && (node->adj_outs  == NULL)
+             && (node->adj_ins   == NULL)
              && (!node->on_wq) ) ;
 
       tmp_node = node;
@@ -257,7 +245,7 @@ bgp_node_match (const struct bgp_table *table, struct prefix *p)
   while (node && node->p.prefixlen <= p->prefixlen &&
          prefix_match (&node->p, p))
     {
-      if (node->info)
+      if (node->u.info)
         matched = node;
       node = node->link[prefix_bit(&p->u.prefix, node->p.prefixlen)];
     }
@@ -305,10 +293,10 @@ bgp_node_lookup (const struct bgp_table *table, struct prefix *p)
 
   node = table->top;
 
-  while (node && node->p.prefixlen <= p->prefixlen &&
-         prefix_match (&node->p, p))
+  while ((node != NULL) && (node->p.prefixlen <= p->prefixlen)
+                        && prefix_match (&node->p, p))
     {
-      if (node->p.prefixlen == p->prefixlen && node->info)
+      if ((node->p.prefixlen == p->prefixlen) && (node->u.info != NULL))
         return bgp_lock_node (node);
 
       node = node->link[prefix_bit(&p->u.prefix, node->p.prefixlen)];
@@ -363,7 +351,8 @@ bgp_node_get (struct bgp_table *const table, struct prefix *p,
     }
   else
     {
-      new = bgp_node_create ();
+      new = bgp_node_calloc ();         /* returns zeroized node        */
+
       route_common (&node->p, p, &new->p);
       new->p.family = p->family;
       new->table = table;
@@ -398,8 +387,8 @@ bgp_node_delete (struct bgp_node *node)
   struct bgp_node *child;
   struct bgp_node *parent;
 
-  assert (node->lock == 0);
-  assert (node->info == NULL);
+  assert (node->lock   == 0);
+  assert (node->u.info == NULL);
   assert (!node->on_wq) ;
 
   if (node->l_left && node->l_right)
@@ -571,7 +560,7 @@ bgp_table_check(const struct bgp_table *table)
   node  = table->top ;
   count = table->count ;
   if (node != NULL)
-    count = bgp_table_node_check(node, table->count) ;
+    count = bgp_table_node_check(node, count) ;
 
   qassert(count == 0) ;
 } ;
@@ -600,14 +589,84 @@ bgp_table_node_check(const struct bgp_node* rn, uint count)
           qassert(rn == cn->parent) ;
           qassert(rn->p.prefixlen < cn->p.prefixlen) ;
           qassert(prefix_match(&rn->p, &cn->p)) ;
-          qassert(bit == prefix_bit(&rn->p.u.prefix, rn->p.prefixlen)) ;
+          qassert(bit == prefix_bit(&cn->p.u.prefix, rn->p.prefixlen)) ;
 
-          bgp_table_node_check(cn, count) ;
+          count = bgp_table_node_check(cn, count) ;
         } ;
     } ;
 
   return count ;
 } ;
 
+/*==============================================================================
+ * Pool for bgp_nodes.
+ */
+enum
+{
+  rn_pool_size = 1024,
+} ;
 
+struct rn_pool
+{
+  struct rn_pool*  next ;
+  struct bgp_node  rns[rn_pool_size] ;
+};
 
+struct rn_pool*   rn_pools = NULL ;
+struct bgp_node*  rn_frees = NULL ;
+
+static struct bgp_node *
+bgp_node_calloc (void)
+{
+  struct bgp_node* rn;
+
+  rn = rn_frees ;
+
+  if (rn == NULL)
+    {
+      struct rn_pool* pool ;
+      uint i ;
+
+      pool = XCALLOC(MTYPE_BGP_NODE, sizeof(struct rn_pool)) ;
+
+      pool->next = rn_pools ;
+      rn_pools   = pool ;
+
+      for (i = 0 ; i < rn_pool_size ; ++i)
+        {
+          rn = &pool->rns[i] ;
+
+          rn->wq_next = rn_frees ;
+          rn_frees    = rn ;
+        } ;
+    } ;
+
+  rn_frees = rn->wq_next ;
+
+  memset(rn, 0, sizeof(struct bgp_node)) ;
+  return rn ;
+} ;
+
+/* Free route node.
+ */
+static void
+bgp_node_free (struct bgp_node *rn)
+{
+  rn->wq_next = rn_frees ;
+  rn_frees    = rn ;
+} ;
+
+extern void
+bgp_table_all_finish(void)
+{
+  struct rn_pool* pool ;
+
+  rn_frees = NULL ;
+
+  while ((pool = rn_pools) != NULL)
+    {
+      rn_pools = rn_pools->next ;
+
+      XFREE(MTYPE_BGP_NODE, pool) ;
+    } ;
+} ;

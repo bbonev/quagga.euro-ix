@@ -1354,21 +1354,23 @@ static route_map_result_t
 route_set_aspath_exclude (void *rule, struct prefix *dummy,
                                           route_map_object_t type, void *object)
 {
-  struct aspath * new_path, * exclude_path;
+  struct aspath * old_path, * exclude_path;
   struct bgp_info *binfo;
 
   if (type == RMAP_BGP)
     {
       exclude_path = rule;
-      binfo = object;
+      binfo        = object;
 
-      if ((binfo->attr->aspath != NULL) && (binfo->attr->aspath->refcnt != 0))
-        new_path = aspath_dup (binfo->attr->aspath);
-      else
-        new_path = binfo->attr->aspath;
+      old_path = binfo->attr->aspath;
 
-      if (new_path != NULL)
-        binfo->attr->aspath = aspath_filter_exclude (new_path, exclude_path);
+      if (old_path != NULL)
+        {
+          binfo->attr->aspath = aspath_filter_exclude (old_path, exclude_path);
+
+          if (old_path->refcnt == 0)
+            aspath_free (old_path) ;
+        }
     }
   return RMAP_OKAY;
 }
@@ -1428,19 +1430,16 @@ route_set_community (void *rule, struct prefix *prefix,
 
   if (type == RMAP_BGP)
     {
-      rcs = rule;
+      rcs   = rule;
       binfo = object;
-      attr = binfo->attr;
-      old = attr->community;
+      attr  = binfo->attr;
+      old   = attr->community;
 
       if (rcs->none)
         {
           /* "none" case.
            */
           new = NULL;
-
-          if ((old != NULL) && (old->refcnt != 0))
-            old = NULL ;                /* forget interned old  */
         }
       else if (rcs->additive && (old != NULL))
         {
@@ -1457,26 +1456,23 @@ route_set_community (void *rule, struct prefix *prefix,
            * freed after we create the new value.
            */
           if (old->refcnt != 0)
-            old = community_dup (old) ;
+            old = community_dup (old) ;         /* result refcnt == 0   */
 
-          community_merge (old, rcs->com);
+          community_merge (old, rcs->com);      /* extends old->val     */
 
-          new = community_uniq_sort (old);
+          new = community_uniq_sort (old);      /* creates brand new    */
         }
       else
         {
           /* replace case, or "additive", but nothing to add to
            */
           new = community_dup (rcs->com);
-
-          if ((old != NULL) && (old->refcnt == 0))
-            old = NULL ;                /* forget interned old  */
         } ;
 
       /* Discard old uninterned value, or copy of interned value made in
        * "additive" case.
        */
-      if (old != NULL)
+      if ((old != NULL) && (old->refcnt == 0))
         community_free (old);
 
       /* will be interned by caller if required
@@ -1584,7 +1580,7 @@ route_set_community_delete (void *rule, struct prefix *prefix,
            * work with that.
            */
           if (old->refcnt != 0)
-            old = community_dup (old) ;
+            old = community_dup (old) ; /* result refcnt == 0   */
 
           /* community_list_match_delete() operates directly on the old
            * or the copy we made of same.
@@ -1592,9 +1588,9 @@ route_set_community_delete (void *rule, struct prefix *prefix,
            * community_uniq_sort() makes another community object, so we
            * need to discard the merge once that's complete.
            */
-          community_list_match_delete (old, list);
-          new = community_uniq_sort (old);
-          community_free(old) ;
+          community_list_match_delete (old, list) ;
+          new = community_uniq_sort (old) ;     /* creates new          */
+          community_free(old) ;                 /* so discard old       */
 
           if (new->size == 0)
             new = community_free(new) ;
@@ -1683,6 +1679,11 @@ route_set_ecommunity_rt (void *rule, struct prefix *prefix,
            *
            * If the existing ecom is uninterned, then we merge straight into
            * it.
+           *
+           * Note that ecommunity_merge() assumes that the old_ecom is
+           * uninterned, appends to body of that and returns it as the
+           * new_ecom.  So the result is the new or current uninterned
+           * old_ecom.
            */
           if (old_ecom->refcnt != 0)
             old_ecom = ecommunity_dup (old_ecom) ;
@@ -2545,7 +2546,7 @@ bgp_route_map_update (const char *unused)
         for (safi = SAFI_UNICAST; safi < SAFI_MAX; safi++)
           for (bn = bgp_table_top (bgp->route[afi][safi]); bn;
                bn = bgp_route_next (bn))
-            if ((bgp_static = bn->info) != NULL)
+            if ((bgp_static = bn->u.info) != NULL)
               {
                 if (bgp_static->rmap.name)
                   bgp_static->rmap.map =

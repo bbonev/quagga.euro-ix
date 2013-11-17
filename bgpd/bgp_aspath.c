@@ -307,6 +307,11 @@ assegment_normalise (struct assegment *head)
   return head;
 }
 
+/*------------------------------------------------------------------------------
+ * Create new, completely empty, aspath
+ *
+ * NB: inter alia, refcnt == 0
+ */
 static struct aspath *
 aspath_new (void)
 {
@@ -319,6 +324,8 @@ aspath_free (struct aspath *aspath)
 {
   if (aspath != NULL)
     {
+      qassert(aspath->refcnt == 0) ;
+
       if (aspath->segments)
         assegment_free_all (aspath->segments);
       if (aspath->str)
@@ -361,7 +368,9 @@ aspath_unintern (struct aspath **p_asp)
               zlog_err("BUG: failed to find interned aspath -- found %s",
                                  (ret == NULL) ? "nothing" : "something else") ;
               asp = NULL ;      /* leaky but safer      */
-            } ;
+            }
+          else if (qdebug)
+            asp->refcnt = 0 ;   /* for completeness     */
         } ;
 
       *p_asp = aspath_free (asp);
@@ -625,7 +634,16 @@ aspath_str_update (struct aspath *as)
   as->str = aspath_make_str_count (as);
 }
 
-/* Intern allocated AS path. */
+/*------------------------------------------------------------------------------
+ * Intern allocated AS path.
+ *
+ * NB: if the given aspath is a duplicate of an intern's one, then will
+ *     free the given aspath.
+ *
+ *     if the given aspath is a new one, it is now stored in the hash.
+ *
+ *     Either way, this function takes responsibility for the given aspath.
+ */
 struct aspath *
 aspath_intern (struct aspath *aspath)
 {
@@ -648,32 +666,42 @@ aspath_intern (struct aspath *aspath)
   return find;
 }
 
-/* Duplicate aspath structure.  Created same aspath structure but
-   reference count and AS path string is cleared. */
+/*------------------------------------------------------------------------------
+ * Duplicate aspath structure.
+ *
+ * Makes a new set of aspath->segments which are a copy of the existing ones.
+ *
+ * Creates a new aspath->str.
+ *
+ * Returns:  new aspath structure with refcnt == 0.
+ */
 struct aspath *
-aspath_dup (struct aspath *aspath)
+aspath_dup (const struct aspath *aspath)
 {
   struct aspath *new;
 
-  new = XCALLOC (MTYPE_AS_PATH, sizeof (struct aspath));
+  new = aspath_new() ;
 
   if (aspath->segments)
     new->segments = assegment_dup_all (aspath->segments);
-  else
-    new->segments = NULL;
 
-  new->str = aspath_make_str_count (aspath);
+  new->str = aspath_make_str_count (new);
 
   return new;
 }
 
+/*------------------------------------------------------------------------------
+ * Allocate a new aspath object and copy the given one to it.
+ *
+ * Requires: an existing aspath object, but only the aspath->segments
+ */
 static void *
-aspath_hash_alloc (void *arg)
+aspath_hash_alloc (const void* data)
 {
   struct aspath *aspath;
 
   /* New aspath structure is needed. */
-  aspath = aspath_dup (arg);
+  aspath = aspath_dup (data);
 
   /* Malformed AS path value. */
   if (! aspath->str)
@@ -827,7 +855,14 @@ aspath_parse (struct stream *s, size_t length, bool use32bit, bool as4_path)
         return NULL ;   /* Invalid AS_PATH or AS4_PATH  */
     } ;
 
-  /* If already same aspath exist then return it.               */
+  /* If already same aspath exist then return it.
+   *
+   * NB: does not call aspath_intern(), because that requires a malloc'd
+   *     aspath, which it will free if not already interned.
+   *
+   *     uses aspath_hash_alloc, which will create a new malloc'd aspath
+   *     if required.
+   */
   find = hash_get (ashash, &as, aspath_hash_alloc);
 
   assert(find) ;        /* valid aspath, so must find or create */
@@ -1337,7 +1372,8 @@ aspath_prepend (struct aspath *as1, struct aspath *as2)
  * data, not the original. The new AS path is returned.
  */
 struct aspath *
-aspath_filter_exclude (struct aspath * source, struct aspath * exclude_list)
+aspath_filter_exclude (const struct aspath * source,
+                       const struct aspath * exclude_list)
 {
   struct assegment * srcseg, * exclseg, * lastseg;
   struct aspath * newpath;
@@ -1395,13 +1431,14 @@ aspath_filter_exclude (struct aspath * source, struct aspath * exclude_list)
     else
       lastseg->next = newseg;
     lastseg = newseg;
-  }
-  aspath_str_update (newpath);
+  } ;
+
   /* We are happy returning even an empty AS_PATH, because the administrator
    * might expect this very behaviour. There's a mean to avoid this, if necessary,
    * by having a match rule against certain AS_PATH regexps in the route-map index.
    */
-  aspath_free (source);
+  aspath_str_update (newpath);
+
   return newpath;
 }
 
@@ -1492,11 +1529,12 @@ aspath_cmp_left (const struct aspath *aspath1, const struct aspath *aspath2)
 struct aspath *
 aspath_reconcile_as4 ( struct aspath *aspath, struct aspath *as4path)
 {
-  struct assegment *seg, *newseg, *prevseg = NULL;
-  struct aspath *newpath = NULL, *mergedpath;
+  struct assegment *seg ;
+  struct assegment** p_nextseg ;
+  struct aspath *newpath, *mergedpath;
   int hops, cpasns = 0;
 
-  if (!aspath)
+  if (aspath == NULL)
     return NULL;
 
   seg = aspath->segments;
@@ -1516,15 +1554,20 @@ aspath_reconcile_as4 ( struct aspath *aspath, struct aspath *as4path)
        hops = aspath_count_hops (aspath);
     }
 
-  if (!hops)
+  if (hops == 0)
    return aspath_dup (as4path);
 
   if ( BGP_DEBUG(as4, AS4))
     zlog_debug("[AS4] got AS_PATH %s and AS4_PATH %s synthesizing now",
                aspath->str, as4path->str);
 
-  while (seg && hops > 0)
+  newpath = aspath_new ();
+  p_nextseg = &newpath->segments ;
+
+  while ((seg != NULL) && (hops > 0))
     {
+      struct assegment *newseg ;
+
       switch (seg->type)
         {
           case AS_SET:
@@ -1559,17 +1602,9 @@ aspath_reconcile_as4 ( struct aspath *aspath, struct aspath *as4path)
       assert (cpasns <= seg->length);
 
       newseg = assegment_new (seg->type, 0);
-      newseg = assegment_append_asns (newseg, seg->as, cpasns);
+      *p_nextseg = assegment_append_asns (newseg, seg->as, cpasns);
 
-      if (!newpath)
-        {
-          newpath = aspath_new ();
-          newpath->segments = newseg;
-        }
-      else
-        prevseg->next = newseg;
-
-      prevseg = newseg;
+      p_nextseg = &newseg->next ;
       seg = seg->next;
     }
 
@@ -1579,6 +1614,7 @@ aspath_reconcile_as4 ( struct aspath *aspath, struct aspath *as4path)
    */
   mergedpath = aspath_merge (newpath, aspath_dup(as4path));
   aspath_free (newpath);
+
   mergedpath->segments = assegment_normalise (mergedpath->segments);
   aspath_str_update (mergedpath);
 
@@ -1865,49 +1901,53 @@ aspath_str2aspath (const char *str)
 
 /* Make hash value by raw aspath data. */
 unsigned int
-aspath_key_make (void *p)
+aspath_key_make (const void* data)
 {
-  struct aspath * aspath = (struct aspath *) p;
-  unsigned int key = 0;
+  const struct aspath* aspath ;
+
+  aspath = data ;
 
   if (!aspath->str)
-    aspath_str_update (aspath);
+    aspath_str_update (miyagi(aspath));
 
-  key = jhash (aspath->str, strlen(aspath->str), 2334325);
-
-  return key;
+  return jhash (aspath->str, strlen(aspath->str), 2334325);
 }
 
 /* If two aspath have same value then return 1 else return 0 */
-static int
-aspath_cmp (const void *arg1, const void *arg2)
+static bool
+aspath_equal (const void *arg1, const void *arg2)
 {
   const struct assegment *seg1 = ((const struct aspath *)arg1)->segments;
   const struct assegment *seg2 = ((const struct aspath *)arg2)->segments;
 
-  while (seg1 || seg2)
+  while ((seg1 != NULL) && (seg2 != NULL))
     {
       int i;
-      if ((!seg1 && seg2) || (seg1 && !seg2))
-        return 0;
+
       if (seg1->type != seg2->type)
-        return 0;
+        return false ;
+
       if (seg1->length != seg2->length)
-        return 0;
+        return false ;
+
       for (i = 0; i < seg1->length; i++)
         if (seg1->as[i] != seg2->as[i])
-          return 0;
+          return false ;
+
       seg1 = seg1->next;
       seg2 = seg2->next;
     }
-  return 1;
+
+  /* One or both is NULL -- equal if are both NULL
+   */
+  return (seg1 == seg2) ;
 }
 
 /* AS path hash initialize. */
 void
 aspath_init (void)
 {
-  ashash = hash_create_size (32767, aspath_key_make, aspath_cmp);
+  ashash = hash_create_size (256 * 1024, aspath_key_make, aspath_equal);
 }
 
 void
@@ -1945,7 +1985,7 @@ aspath_show_all_iterator (struct hash_backet *backet, struct vty *vty)
 {
   struct aspath *as;
 
-  as = (struct aspath *) backet->data;
+  as = (struct aspath *) backet->item;
 
   vty_out (vty, "[%p:%u] (%ld) ", backet, backet->key, as->refcnt);
   vty_out (vty, "%s%s", as->str, VTY_NEWLINE);

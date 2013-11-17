@@ -131,29 +131,40 @@ static attr_flags_check_t attr_flags_check_array[attr_flags_check_limit] =
 
 static struct hash *cluster_hash;
 
+/*------------------------------------------------------------------------------
+ * Allocate a new cluster-list object, and copy the contents of the given
+ * cluster-list to it.
+ *
+ * NB: requires only the  val->length and the val->list.
+ */
 static void *
-cluster_hash_alloc (void *p)
+cluster_hash_alloc (const void *data)
 {
-  struct cluster_list * val = (struct cluster_list *) p;
+  const struct cluster_list * val ;
   struct cluster_list *cluster;
 
-  cluster = XMALLOC (MTYPE_CLUSTER, sizeof (struct cluster_list));
-  cluster->length = val->length;
+  cluster = XCALLOC (MTYPE_CLUSTER, sizeof (struct cluster_list));
 
-  if (cluster->length)
+  val = data ;
+  if (val->length != 0)
     {
-      cluster->list = XMALLOC (MTYPE_CLUSTER_VAL, val->length);
+      cluster->length = val->length;
+      cluster->list   = XCALLOC (MTYPE_CLUSTER_VAL, val->length);
       memcpy (cluster->list, val->list, val->length);
-    }
-  else
-    cluster->list = NULL;
+    } ;
 
-  cluster->refcnt = 0;
+  qassert(cluster->refcnt == 0) ;
 
   return cluster;
 }
 
 /* Cluster list related functions. */
+
+/*------------------------------------------------------------------------------
+ * Parse the given cluster-list, return interned value with refcnt incremented
+ *
+ * NB: does no real parsing -- and assumes the length is valid.
+ */
 static struct cluster_list *
 cluster_parse (struct in_addr * pnt, int length)
 {
@@ -161,10 +172,17 @@ cluster_parse (struct in_addr * pnt, int length)
   struct cluster_list *cluster;
 
   tmp.length = length;
-  tmp.list = pnt;
+  tmp.list   = pnt;
 
+  /* intern the value -- creating new interned cluster-list if required.
+   *
+   * NB: does not use cluster_intern() because that expects a malloc'd
+   *     cluster-list, which it will free if finds the cluster_list in the
+   *     hash.
+   */
   cluster = hash_get (cluster_hash, &tmp, cluster_hash_alloc);
   cluster->refcnt++;
+
   return cluster;
 }
 
@@ -180,20 +198,20 @@ cluster_loop_check (struct cluster_list *cluster, struct in_addr originator)
 }
 
 static unsigned int
-cluster_hash_key_make (void *p)
+cluster_hash_key_make (const void *data)
 {
-  const struct cluster_list *cluster = p;
+  const struct cluster_list *cluster = data;
   return jhash(cluster->list, cluster->length, 0);
 }
 
-static int
-cluster_hash_cmp (const void *p1, const void *p2)
+static bool
+cluster_hash_equal (const void *p1, const void *p2)
 {
   const struct cluster_list * cluster1 = p1;
   const struct cluster_list * cluster2 = p2;
 
-  return (cluster1->length == cluster2->length &&
-          memcmp (cluster1->list, cluster2->list, cluster1->length) == 0);
+  return (cluster1->length == cluster2->length) &&
+          (memcmp (cluster1->list, cluster2->list, cluster1->length) == 0);
 }
 
 static struct cluster_list *
@@ -201,6 +219,8 @@ cluster_free (struct cluster_list *cluster)
 {
   if (cluster != NULL)
     {
+      qassert(cluster->refcnt == 0) ;
+
       if (cluster->list)
         XFREE (MTYPE_CLUSTER_VAL, cluster->list);
       XFREE (MTYPE_CLUSTER, cluster);
@@ -229,12 +249,27 @@ cluster_dup (struct cluster_list *cluster)
 }
 #endif
 
+/*------------------------------------------------------------------------------
+ * Does a lookup/create of the given cluster-list and increments the refcnt.
+ *
+ * NB: if the given cluster-list is a duplicate of an existing interned one,
+ *     the given one is *freed*.
+ *
+ * Returns:  the interned cluster-list with incremented refcnt
+ *           (So refcnt >= 1).
+ */
 static struct cluster_list *
 cluster_intern (struct cluster_list *cluster)
 {
   struct cluster_list *find;
 
+  assert(cluster->refcnt == 0) ;
+
   find = hash_get (cluster_hash, cluster, cluster_hash_alloc);
+
+  if (find != cluster)
+    cluster_free (cluster);
+
   find->refcnt++;
 
   return find;
@@ -276,8 +311,10 @@ cluster_unintern (struct cluster_list **p_cluster)
             {
               zlog_err("BUG: failed to find interned cluster -- found %s",
                                  (ret == NULL) ? "nothing" : "something else") ;
-              cluster = NULL ;  /* leaky but safer      */
-            } ;
+              cluster = NULL ;          /* leaky but safer      */
+            }
+          else if (qdebug)
+            cluster->refcnt = 0 ;       /* for completeness     */
         } ;
 
       *p_cluster = cluster_free (cluster);
@@ -289,7 +326,8 @@ cluster_unintern (struct cluster_list **p_cluster)
 static void
 cluster_init (void)
 {
-  cluster_hash = hash_create (cluster_hash_key_make, cluster_hash_cmp);
+  cluster_hash = hash_create_size (64 * 1024, cluster_hash_key_make,
+                                              cluster_hash_equal);
 }
 
 static void
@@ -314,20 +352,26 @@ transit_free (struct transit *transit)
   return NULL ;
 }
 
-
-static void *
-transit_hash_alloc (void *p)
-{
-  /* Transit structure is already allocated.  */
-  return p;
-}
-
+/*------------------------------------------------------------------------------
+ * Intern the given transit object.
+ *
+ * NB: if the given transit object is a duplicate of an already intern'd one,
+ *     then the object is freed.
+ *
+ *     if the given transit object is a new one, it is added to the hash.
+ *
+ *     Either way, this function takes responsibility for the transit object.
+ *
+ * Returns:  transit object with incremented refcnt.
+ */
 static struct transit *
 transit_intern (struct transit *transit)
 {
   struct transit *find;
 
-  find = hash_get (transit_hash, transit, transit_hash_alloc);
+  assert(transit->refcnt == 0) ;
+
+  find = hash_get (transit_hash, transit, hash_alloc_intern);
   if (find != transit)
     transit_free (transit);
   find->refcnt++;
@@ -369,8 +413,10 @@ transit_unintern (struct transit **p_transit)
             {
               zlog_err("BUG: failed to find interned transit -- found %s",
                                  (ret == NULL) ? "nothing" : "something else") ;
-              transit = NULL ;  /* leaky but safer      */
-            } ;
+              transit = NULL ;          /* leaky but safer      */
+            }
+          else if (qdebug)
+            transit->refcnt = 0 ;       /* for completeness     */
         } ;
 
       *p_transit = transit_free (transit);
@@ -380,26 +426,29 @@ transit_unintern (struct transit **p_transit)
 }
 
 static unsigned int
-transit_hash_key_make (void *p)
+transit_hash_key_make (const void *data)
 {
-  const struct transit * transit = p ;
+  const struct transit * transit ;
+
+  transit = data ;
   return jhash(transit->val, transit->length, 0);
 }
 
-static int
-transit_hash_cmp (const void *p1, const void *p2)
+static bool
+transit_hash_equal (const void *p1, const void *p2)
 {
   const struct transit * transit1 = p1;
   const struct transit * transit2 = p2;
 
-  return (transit1->length == transit2->length &&
-          memcmp (transit1->val, transit2->val, transit1->length) == 0);
+  return (transit1->length == transit2->length) &&
+          (memcmp (transit1->val, transit2->val, transit1->length) == 0);
 }
 
 static void
 transit_init (void)
 {
-  transit_hash = hash_create (transit_hash_key_make, transit_hash_cmp);
+  transit_hash = hash_create_size (16 * 1024, transit_hash_key_make,
+                                              transit_hash_equal);
 }
 
 static void
@@ -510,11 +559,14 @@ attr_unknown_count (void)
 }
 
 unsigned int
-attrhash_key_make (void *p)
+attrhash_key_make (const void *data)
 {
-  const struct attr * attr = (struct attr *) p;
-  uint32_t key = 0;
+  const struct attr * attr ;
+  uint32_t key ;
 #define MIX(val)       key = jhash_1word(val, key)
+
+  attr = data ;
+  key  = 0x31415926 ;
 
   MIX(attr->origin);
   MIX(attr->nexthop.s_addr);
@@ -553,50 +605,55 @@ attrhash_key_make (void *p)
   return key;
 }
 
-int
-attrhash_cmp (const void *p1, const void *p2)
+/*------------------------------------------------------------------------------
+ * Compare the values of the two attr objects.
+ *
+ * Returns:  true <=> equal
+ */
+extern bool
+attrhash_equal (const void *p1, const void *p2)
 {
   const struct attr * attr1 = p1;
   const struct attr * attr2 = p2;
 
-  if (attr1->flag == attr2->flag
-      && attr1->origin == attr2->origin
-      && attr1->nexthop.s_addr == attr2->nexthop.s_addr
-      && attr1->aspath == attr2->aspath
-      && attr1->community == attr2->community
-      && attr1->med == attr2->med
-      && attr1->local_pref == attr2->local_pref)
+  if (   (attr1->flag == attr2->flag)
+      && (attr1->origin == attr2->origin)
+      && (attr1->nexthop.s_addr == attr2->nexthop.s_addr)
+      && (attr1->aspath == attr2->aspath)
+      && (attr1->community == attr2->community)
+      && (attr1->med == attr2->med)
+      && (attr1->local_pref == attr2->local_pref))
     {
       const struct attr_extra *ae1 = attr1->extra;
       const struct attr_extra *ae2 = attr2->extra;
 
-      if (ae1 && ae2
-          && ae1->aggregator_as == ae2->aggregator_as
-          && ae1->aggregator_addr.s_addr == ae2->aggregator_addr.s_addr
-          && ae1->weight == ae2->weight
+      if ((ae1 != NULL) && (ae2 != NULL))
+        return (ae1->aggregator_as == ae2->aggregator_as)
+            && (ae1->aggregator_addr.s_addr == ae2->aggregator_addr.s_addr)
+            && (ae1->weight == ae2->weight)
 #ifdef HAVE_IPV6
-          && ae1->mp_nexthop_len == ae2->mp_nexthop_len
-          && IPV6_ADDR_SAME (&ae1->mp_nexthop_global, &ae2->mp_nexthop_global)
-          && IPV6_ADDR_SAME (&ae1->mp_nexthop_local, &ae2->mp_nexthop_local)
+            && (ae1->mp_nexthop_len == ae2->mp_nexthop_len)
+            && IPV6_ADDR_SAME (&ae1->mp_nexthop_global, &ae2->mp_nexthop_global)
+            && IPV6_ADDR_SAME (&ae1->mp_nexthop_local, &ae2->mp_nexthop_local)
 #endif /* HAVE_IPV6 */
-          && IPV4_ADDR_SAME (&ae1->mp_nexthop_global_in, &ae2->mp_nexthop_global_in)
-          && ae1->ecommunity == ae2->ecommunity
-          && ae1->cluster == ae2->cluster
-          && ae1->transit == ae2->transit)
-        return 1;
-      else if (ae1 || ae2)
-        return 0;
-      /* neither attribute has extra attributes, so they're same */
-      return 1;
+            && IPV4_ADDR_SAME (&ae1->mp_nexthop_global_in,
+                               &ae2->mp_nexthop_global_in)
+            && (ae1->ecommunity == ae2->ecommunity)
+            && (ae1->cluster == ae2->cluster)
+            && (ae1->transit == ae2->transit) ;
+
+      /* One or both attr_extra is NULL -- is equal iff both are.
+       */
+      return (ae1 == ae2) ;
     }
-  else
-    return 0;
+
+  return false ;
 }
 
 static void
 attrhash_init (void)
 {
-  attrhash = hash_create (attrhash_key_make, attrhash_cmp);
+  attrhash = hash_create_size(256 * 1024, attrhash_key_make, attrhash_equal);
 }
 
 static void
@@ -609,7 +666,7 @@ attrhash_finish (void)
 static void
 attr_show_all_iterator (struct hash_backet *backet, struct vty *vty)
 {
-  struct attr *attr = backet->data;
+  struct attr *attr = backet->item;
 
   vty_out (vty, "attr[%ld] nexthop %s%s", attr->refcnt,
            safe_inet_ntoa (attr->nexthop), VTY_NEWLINE);
@@ -637,18 +694,22 @@ attr_show_all (struct vty *vty)
  * those references.
  */
 static void *
-bgp_attr_hash_alloc (void *p)
+bgp_attr_hash_alloc (const void* data)
 {
-  struct attr * val = (struct attr *) p;
+  const struct attr* val ;
   struct attr *attr;
 
+  val  = data ;
   attr = XMALLOC (MTYPE_ATTR, sizeof (struct attr));
-  *attr = *val;
+
+  memcpy(attr, val, sizeof (struct attr)) ;
+
   if (val->extra)
     {
       attr->extra = bgp_attr_extra_new ();
-      *attr->extra = *val->extra;
-    }
+      memcpy(attr->extra, val->extra,  sizeof (struct attr_extra)) ;
+    } ;
+
   attr->refcnt = 0;
   return attr;
 }
@@ -745,17 +806,17 @@ bgp_attr_intern (struct attr *attr)
 
   /* Intern referenced structure and/or increment the reference count.
    */
-  if (attr->aspath)
+  if (attr->aspath != NULL)
     {
-      if (! attr->aspath->refcnt)
+      if (attr->aspath->refcnt == 0)
         attr->aspath = aspath_intern (attr->aspath);
       else
         attr->aspath->refcnt++;
     } ;
 
-  if (attr->community)
+  if (attr->community != NULL)
     {
-      if (! attr->community->refcnt)
+      if (attr->community->refcnt == 0)
         attr->community = community_intern (attr->community);
       else
         attr->community->refcnt++;
@@ -764,24 +825,24 @@ bgp_attr_intern (struct attr *attr)
   attre = attr->extra ;
   if (attre != NULL)
     {
-      if (attre->ecommunity)
+      if (attre->ecommunity != NULL)
         {
-          if (! attre->ecommunity->refcnt)
+          if (attre->ecommunity->refcnt == 0)
             attre->ecommunity = ecommunity_intern (attre->ecommunity);
           else
             attre->ecommunity->refcnt++;
 
         }
-      if (attre->cluster)
+      if (attre->cluster != NULL)
         {
-          if (! attre->cluster->refcnt)
+          if (attre->cluster->refcnt == 0)
             attre->cluster = cluster_intern (attre->cluster);
           else
             attre->cluster->refcnt++;
         }
-      if (attre->transit)
+      if (attre->transit != NULL)
         {
-          if (! attre->transit->refcnt)
+          if (attre->transit->refcnt == 0)
             attre->transit = transit_intern (attre->transit);
           else
             attre->transit->refcnt++;
@@ -1108,23 +1169,23 @@ bgp_attr_flush (struct attr *attr)
 {
   qassert(attr->refcnt == 0) ;
 
-  if (attr->aspath && (attr->aspath->refcnt == 0))
-    aspath_free (attr->aspath);
-  if (attr->community && (attr->community->refcnt == 0))
-    community_free (attr->community);
+  if ((attr->aspath != NULL) && (attr->aspath->refcnt == 0))
+    attr->aspath    = aspath_free (attr->aspath);
+  if ((attr->community != NULL) && (attr->community->refcnt == 0))
+    attr->community = community_free (attr->community);
 
-  if (attr->extra)
+  if (attr->extra != NULL)
     {
       struct attr_extra *attre = attr->extra;
 
-      if (attre->ecommunity && (attre->ecommunity->refcnt == 0))
+      if ((attre->ecommunity != NULL) && (attre->ecommunity->refcnt == 0))
         ecommunity_free (attre->ecommunity);
-      if (attre->cluster && (attre->cluster->refcnt == 0))
+      if ((attre->cluster != NULL) && (attre->cluster->refcnt == 0))
         cluster_free (attre->cluster);
-      if (attre->transit && (attre->transit->refcnt == 0))
+      if ((attre->transit != NULL) && (attre->transit->refcnt == 0))
         transit_free (attre->transit);
 
-      bgp_attr_extra_free (attr) ;
+      bgp_attr_extra_free (attr) ;      /* sets attr->extra = NULL      */
     } ;
 
   return NULL ;
@@ -2580,7 +2641,7 @@ bgp_attr_parse (restrict bgp_attr_parser_args args)
     } ;
 
   /* Finally intern unknown attribute. */
-  if (args->attr.extra && args->attr.extra->transit)
+  if ((args->attr.extra != NULL) && (args->attr.extra->transit != NULL))
     args->attr.extra->transit = transit_intern (args->attr.extra->transit);
 
   /* Done everything we are going to do -- return the result.

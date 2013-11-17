@@ -203,8 +203,8 @@ extern void bgp_packet_withdraw_vpn_prefix(struct stream *s, struct prefix *p,
 
 extern void bgp_dump_routes_attr (struct stream *, struct attr *,
                                   struct prefix *);
-extern int attrhash_cmp (const void *, const void *);
-extern unsigned int attrhash_key_make (void *);
+extern bool attrhash_equal (const void *, const void *);
+extern unsigned int attrhash_key_make (const void *);
 extern void attr_show_all (struct vty *);
 extern unsigned long int attr_count (void);
 extern unsigned long int attr_unknown_count (void);

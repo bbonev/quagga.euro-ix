@@ -301,11 +301,11 @@ community_list_entry_lookup (struct community_list *list, const void *arg,
       switch (entry->style)
         {
         case COMMUNITY_LIST_STANDARD:
-          if (community_cmp (entry->u.com, arg))
+          if (community_equal(entry->u.com, arg))
             return entry;
           break;
         case EXTCOMMUNITY_LIST_STANDARD:
-          if (ecommunity_cmp (entry->u.ecom, arg))
+          if (ecommunity_equal (entry->u.ecom, arg))
             return entry;
           break;
         case COMMUNITY_LIST_EXPANDED:
@@ -486,7 +486,7 @@ community_list_exact_match (struct community *com,
           if (community_include (entry->u.com, COMMUNITY_INTERNET))
             return entry->direct == COMMUNITY_PERMIT ? 1 : 0;
 
-          if (community_cmp (com, entry->u.com))
+          if (community_equal(com, entry->u.com))
             return entry->direct == COMMUNITY_PERMIT ? 1 : 0;
         }
       else if (entry->style == COMMUNITY_LIST_EXPANDED)
@@ -569,11 +569,11 @@ community_list_dup_check (struct community_list *list,
       switch (entry->style)
         {
         case COMMUNITY_LIST_STANDARD:
-          if (community_cmp (entry->u.com, new->u.com))
+          if (community_equal(entry->u.com, new->u.com))
             return 1;
           break;
         case EXTCOMMUNITY_LIST_STANDARD:
-          if (ecommunity_cmp (entry->u.ecom, new->u.ecom))
+          if (ecommunity_equal (entry->u.ecom, new->u.ecom))
             return 1;
           break;
         case COMMUNITY_LIST_EXPANDED:

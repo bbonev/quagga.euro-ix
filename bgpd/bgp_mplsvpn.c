@@ -339,12 +339,12 @@ show_adj_route_vpn (struct vty *vty, struct peer *peer, struct prefix_rd *prd)
       if (prd && memcmp (rn->p.u.val, prd->val, 8) != 0)
         continue;
 
-      if ((table = rn->info) != NULL)
+      if ((table = rn->u.table) != NULL)
         {
           rd_header = 1;
 
           for (rm = bgp_table_top (table); rm; rm = bgp_route_next (rm))
-            if ((attr = rm->info) != NULL)
+            if ((attr = rm->u.info) != NULL)
               {
                 if (header)
                   {
@@ -434,18 +434,20 @@ bgp_show_mpls_vpn (struct vty *vty, struct prefix_rd *prd, enum bgp_show_type ty
       if (prd && memcmp (rn->p.u.val, prd->val, 8) != 0)
         continue;
 
-      if ((table = rn->info) != NULL)
+      if ((table = rn->u.table) != NULL)
         {
           rd_header = 1;
 
           for (rm = bgp_table_top (table); rm; rm = bgp_route_next (rm))
-            for (ri = rm->info; ri; ri = ri->info_next)
+            for (ri = sdl_head(rm->u.binfos); ri != NULL ;
+                                              ri = sdl_next(ri, rn_list))
               {
                 if (type == bgp_show_type_neighbor)
                   {
                     union sockunion *su = output_arg;
 
-                    if (ri->peer->su_remote == NULL || ! sockunion_same(ri->peer->su_remote, su))
+                    if (ri->peer->su_remote == NULL ||
+                                      ! sockunion_same(ri->peer->su_remote, su))
                       continue;
                   }
                 if (header)

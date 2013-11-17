@@ -85,9 +85,9 @@ if_rmap_hook_delete (void (*func) (struct if_rmap *))
 }
 
 static void *
-if_rmap_hash_alloc (void *arg)
+if_rmap_hash_alloc (const void *arg)
 {
-  struct if_rmap *ifarg = arg;
+  const struct if_rmap *ifarg = arg;
   struct if_rmap *if_rmap;
 
   if_rmap = if_rmap_new ();
@@ -108,15 +108,15 @@ if_rmap_get (const char *ifname)
 }
 
 static unsigned int
-if_rmap_hash_make (void *data)
+if_rmap_hash_make (const void *data)
 {
   const struct if_rmap *if_rmap = data;
 
   return string_hash_make (if_rmap->ifname);
 }
 
-static int
-if_rmap_hash_cmp (const void *arg1, const void* arg2)
+static bool
+if_rmap_hash_equal (const void *arg1, const void* arg2)
 {
   const struct if_rmap *if_rmap1 = arg1;
   const struct if_rmap *if_rmap2 = arg2;
@@ -288,7 +288,7 @@ config_write_if_rmap (struct vty *vty)
       {
         struct if_rmap *if_rmap;
 
-        if_rmap = mp->data;
+        if_rmap = mp->item;
 
         if (if_rmap->routemap[IF_RMAP_IN])
           {
@@ -344,5 +344,5 @@ if_rmap_cmd_init (void)
 extern void
 if_rmap_init (void)
 {
-  ifrmaphash = hash_create (if_rmap_hash_make, if_rmap_hash_cmp);
+  ifrmaphash = hash_create (if_rmap_hash_make, if_rmap_hash_equal);
 }

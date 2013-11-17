@@ -311,7 +311,8 @@ bgp_session_enable(bgp_peer peer)
       assert(!bgp_session_is_active(session)) ;
     } ;
 
-  /* Initialise what we need to make and run connections                */
+  /* Initialise what we need to make and run connections
+   */
   session->state        = bgp_session_sIdle ;
   session->delete_me    = false ;
   session->flow_control = 0 ;
@@ -695,7 +696,8 @@ bgp_session_do_update_send(mqueue_block mqb, mqb_flag_t flag)
 extern bool
 bgp_session_is_XON(bgp_peer peer)
 {
-  return peer->session->flow_control > 0 ;
+  return (peer->session->flow_control > 0) &&
+                                        (peer->state == bgp_peer_pEstablished) ;
 } ;
 
 /*------------------------------------------------------------------------------

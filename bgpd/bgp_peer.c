@@ -391,6 +391,8 @@ bgp_session_has_established(bgp_session session)
    */
   peer->uptime = bgp_clock ();
 
+  bgp_sync_start(peer) ;
+
   bgp_announce_route_all (peer);
 
   BGP_TIMER_ON (peer->t_routeadv, bgp_routeadv_timer, 1);
@@ -1807,17 +1809,21 @@ bgp_withdraw_event (struct thread *thread)
   peer = THREAD_ARG (thread);
   peer->t_withdraw = NULL;
 
-  if (BGP_DEBUG (events, EVENTS))
-    zlog (peer->log, LOG_DEBUG, "%s bgp_withdraw_event", peer->host);
+  if (peer->state == bgp_peer_pEstablished)
+    {
+      if (BGP_DEBUG (events, EVENTS))
+        zlog (peer->log, LOG_DEBUG, "%s bgp_withdraw_event", peer->host);
 
-  bgp_write(peer, NULL);
+      bgp_write(peer, NULL) ;
+    } ;
+
   return 0;
 }
 
 extern void
 bgp_withdraw_schedule(bgp_peer peer)
 {
-  if (peer->t_withdraw == NULL)
+  if ((peer->t_withdraw == NULL) && (peer->state == bgp_peer_pEstablished))
     {
       /* TODO: replace legacy event use
        */

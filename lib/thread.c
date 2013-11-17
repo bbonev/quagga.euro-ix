@@ -234,21 +234,30 @@ recent_relative_time (void)
  * key.  (The function name is for display, only.)
  */
 static unsigned int
-cpu_record_hash_key (struct cpu_thread_history *a)
+cpu_record_hash_key (const void* data)
 {
-  return (uintptr_t) a->func;
+  const struct cpu_thread_history *a ;
+
+  a = data ;
+  return (uintptr_t)a->func % UINT_MAX ;
 }
 
-static int
-cpu_record_hash_cmp (const struct cpu_thread_history *a,
-                     const struct cpu_thread_history *b)
+static bool
+cpu_record_hash_equal(const void* p1, const void* p2)
 {
+  const struct cpu_thread_history *a ;
+  const struct cpu_thread_history *b ;
+
+  a = p1 ;
+  b = p2 ;
+
   return a->func == b->func;
 }
 
 static void *
-cpu_record_hash_alloc (struct cpu_thread_history *a)
+cpu_record_hash_alloc (const void* data)
 {
+  const struct cpu_thread_history *a ;
   const char* b ;
   const char* e ;
   char* n ;
@@ -258,6 +267,8 @@ cpu_record_hash_alloc (struct cpu_thread_history *a)
   /* Establish start and length of name, removing leading/trailing
    * spaces and any enclosing (...) -- recursively.
    */
+  a = data ;
+
   b = a->funcname ;
   e = b + strlen(b) - 1 ;
 
@@ -329,9 +340,9 @@ cpu_record_hash_print(struct hash_backet *bucket,
   struct cpu_thread_history *totals = args[0];
   struct vty *vty = args[1];
   thread_type *filter = args[2];
-  struct cpu_thread_history *a = bucket->data;
+  struct cpu_thread_history *a = bucket->item;
 
-  a = bucket->data;
+  a = bucket->item;
   if ( !(a->types & *filter) )
        return;
   vty_out_cpu_thread_history(vty,a);
@@ -443,13 +454,13 @@ static void
 cpu_record_hash_clear (struct hash_backet *bucket, void *args)
 {
   thread_type *filter = args;
-  struct cpu_thread_history *a = bucket->data;
+  struct cpu_thread_history *a = bucket->item;
 
-  a = bucket->data;
+  a = bucket->item;
   if ( !(a->types & *filter) )
        return;
 
-  hash_release (cpu_record, bucket->data);
+  hash_release (cpu_record, bucket->item);
 }
 
 static void
@@ -710,8 +721,7 @@ thread_get_hist(struct thread* thread, const char* funcname)
    * If does not find one, allocates a new one -- taking a copy of the
    * funcname.
    */
-  hist = hash_get (cpu_record, &tmp,
-                  (void * (*) (void *))cpu_record_hash_alloc);
+  hist = hash_get (cpu_record, &tmp, cpu_record_hash_alloc);
   UNLOCK
 
   return hist ;
@@ -1521,10 +1531,8 @@ thread_start_up(void)
 
   master = thread_master_create ();
 
-  cpu_record = hash_create_size (1011,
-                    (unsigned int (*) (void *))cpu_record_hash_key,
-                    (int (*) (const void *, const void *))cpu_record_hash_cmp) ;
-
+  cpu_record = hash_create_size (1011, cpu_record_hash_key,
+                                                        cpu_record_hash_equal) ;
   thread_mutex        = NULL ;
 
   use_qtimer_pile     = NULL ;

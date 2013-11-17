@@ -23,80 +23,91 @@
 
 #include "hash.h"
 #include "memory.h"
+#include "miyagi.h"
+
+static struct hash_backet* hash_backet_malloc(void) ;
+static void hash_backet_free(struct hash_backet* hb) ;
 
 /* Allocate a new hash.  */
 struct hash *
-hash_create_size (unsigned int size, unsigned int (*hash_key) (void *),
-                                     int (*hash_cmp) (const void *, const void *))
+hash_create_size (unsigned int size,
+                           hash_key_func* hash_key, hash_equal_func* hash_equal)
 {
   struct hash *hash;
 
-  hash = XMALLOC (MTYPE_HASH, sizeof (struct hash));
-  hash->index = XCALLOC (MTYPE_HASH_INDEX,
-                         sizeof (struct hash_backet *) * size);
-  hash->size = size;
-  hash->hash_key = hash_key;
-  hash->hash_cmp = hash_cmp;
-  hash->count = 0;
+  size |= 1 ;           /* make sure is ODD !   */
+
+  hash = XCALLOC (MTYPE_HASH, sizeof (struct hash));
+
+  hash->index    = XCALLOC (MTYPE_HASH_INDEX,
+                                        sizeof (struct hash_backet *) * size);
+  hash->size       = size;
+  hash->hash_key   = hash_key;
+  hash->hash_equal = hash_equal;
+  hash->count      = 0;
 
   return hash;
 }
 
 /* Allocate a new hash with default hash size.  */
 struct hash *
-hash_create (unsigned int (*hash_key) (void *),
-             int (*hash_cmp) (const void *, const void *))
+hash_create (hash_key_func* hash_key, hash_equal_func* hash_equal)
 {
-  return hash_create_size (HASHTABSIZE, hash_key, hash_cmp);
+  return hash_create_size (HASHTABSIZE, hash_key, hash_equal);
 }
 
-/* Utility function for hash_get().  When this function is specified
-   as alloc_func, return arugment as it is.  This function is used for
-   intern already allocated value.  */
+/*------------------------------------------------------------------------------
+ * Utility function for hash_get().  When this function is specified
+ * as alloc_func, return argument as it is.  This function is used for
+ * intern already allocated value.
+ */
 void *
-hash_alloc_intern (void *arg)
+hash_alloc_intern (const void* data)
 {
-  return arg;
+  return miyagi(data) ;
 }
 
 /* Lookup and return hash backet in hash.  If there is no
    corresponding hash backet and alloc_func is specified, create new
    hash backet.  */
 void *
-hash_get (struct hash *hash, void *data, void * (*alloc_func) (void *))
+hash_get (struct hash *hash, const void *data, hash_alloc_func* alloc_func)
 {
   unsigned int key;
-  unsigned int index;
-  void *newdata;
+  unsigned int index ;
+  void *new_item;
   struct hash_backet *backet;
 
-  key = (*hash->hash_key) (data);
-  index = key % hash->size;
+  key   = (*hash->hash_key)(data);
+  index = key % hash->size ;
 
-  for (backet = hash->index[index]; backet != NULL; backet = backet->next)
-    if (backet->key == key && (*hash->hash_cmp) (backet->data, data))
-      return backet->data;
+  for (backet = hash->index[index]; backet != NULL;
+                                               backet = backet->next)
+    if ((backet->key == key) && (*hash->hash_equal)(backet->item, data))
+      return backet->item;
 
   if (alloc_func)
     {
-      newdata = (*alloc_func) (data);
-      if (newdata == NULL)
+      new_item = (*alloc_func) (data);
+      if (new_item == NULL)
         return NULL;
 
-      backet = XMALLOC (MTYPE_HASH_BACKET, sizeof (struct hash_backet));
-      backet->data = newdata;
-      backet->key = key;
+      backet = hash_backet_malloc() ;
+      backet->item = new_item;
+      backet->key  = key;
+
       backet->next = hash->index[index];
       hash->index[index] = backet;
+
       hash->count++;
-      return backet->data;
+      return backet->item;
     }
   return NULL;
 }
 
 /* Hash lookup.  */
 void *
-hash_lookup (struct hash *hash, void *data)
+hash_lookup (struct hash *hash, const void *data)
 {
   return hash_get (hash, data, NULL);
 }
@@ -116,34 +127,38 @@ unsigned int string_hash_make (const char *str)
    release is successfully finished, return the data pointer in the
    hash backet.  */
 void *
-hash_release (struct hash *hash, void *data)
+hash_release (struct hash *hash, const void *data)
 {
-  void *ret;
+  void *item;
   unsigned int key;
-  unsigned int index;
   struct hash_backet *backet;
-  struct hash_backet *pp;
+  struct hash_backet** pp;
 
   key = (*hash->hash_key) (data);
-  index = key % hash->size;
 
-  for (backet = pp = hash->index[index]; backet; backet = backet->next)
+  pp = &hash->index[key % hash->size] ;
+  while (1)
     {
-      if (backet->key == key && (*hash->hash_cmp) (backet->data, data))
-        {
-          if (backet == pp)
-            hash->index[index] = backet->next;
-          else
-            pp->next = backet->next;
+      backet = *pp ;
 
-          ret = backet->data;
-          XFREE (MTYPE_HASH_BACKET, backet);
-          hash->count--;
-          return ret;
-        }
-      pp = backet;
-    }
-  return NULL;
+      if (backet == NULL)
+        return NULL ;
+
+      if (backet->key == key)
+        {
+          item = backet->item ;
+          if ((*hash->hash_equal)(item, data))
+            break ;
+        } ;
+
+      pp = &backet->next ;
+    } ;
+
+  *pp = backet->next;
+  hash->count--;
+  hash_backet_free(backet) ;
+
+  return item ;
 }
 
 /* Iterator function for hash.  */
@@ -166,9 +181,9 @@ hash_iterate (struct hash *hash,
       }
 }
 
-/* Clean up hash.  */
+/* Clean up hash.       */
 void
-hash_clean (struct hash *hash, void (*free_func) (void *))
+hash_clean (struct hash *hash, hash_free_func* free_func)
 {
   unsigned int i;
   struct hash_backet *hb;
@@ -180,21 +195,102 @@ hash_clean (struct hash *hash, void (*free_func) (void *))
         {
           next = hb->next;
 
-          if (free_func)
-            (*free_func) (hb->data);
+          if (free_func != NULL)
+            (*free_func) (hb->item);
 
-          XFREE (MTYPE_HASH_BACKET, hb);
+          hash_backet_free(hb) ;
           hash->count--;
         }
       hash->index[i] = NULL;
     }
 }
 
+/* Reset hash.          */
+void
+hash_reset (struct hash *hash)
+{
+  memset(hash->index, 0, (hash->size * sizeof(struct hash_backet*))) ;
+  hash->count = 0 ;
+}
+
 /* Free hash memory.  You may call hash_clean before call this
    function.  */
-void
+extern struct hash*
 hash_free (struct hash *hash)
 {
   XFREE (MTYPE_HASH_INDEX, hash->index);
   XFREE (MTYPE_HASH, hash);
+  return NULL ;
 }
+
+/*==============================================================================
+ * Pool of "hash backets".
+ *
+ * Note that each pool is zeroized when it is created, so any padding inside
+ * each hash_backet is zeroized.  But when a backet is "malloc'd" it is not
+ * zeroized, but all fields are immediately filled in.
+ */
+enum { hash_backet_pool_size = 1024 } ;
+
+struct hash_backet_pool
+{
+  struct hash_backet_pool* next ;
+
+  struct hash_backet backets[hash_backet_pool_size] ;
+};
+
+static struct hash_backet_pool* hb_pools     = NULL ;
+static struct hash_backet*      hb_free      = NULL ;
+
+static struct hash_backet*
+hash_backet_malloc(void)
+{
+  struct hash_backet* hb ;
+
+  hb = hb_free ;
+
+  if (hb == NULL)
+    {
+      struct hash_backet_pool* pool ;
+      uint i ;
+
+      pool = XCALLOC(MTYPE_HASH_BACKET, sizeof(struct hash_backet_pool)) ;
+
+      pool->next = hb_pools ;
+      hb_pools   = pool ;
+
+      for (i = 0 ; i < hash_backet_pool_size ; ++i)
+        {
+          hb = &pool->backets[i] ;
+
+          hb->next = hb_free ;
+          hb_free  = hb ;
+        } ;
+    } ;
+
+  hb_free = hb->next ;
+  return hb ;
+} ;
+
+static void
+hash_backet_free(struct hash_backet* hb)
+{
+  hb->next = hb_free ;
+  hb_free  = hb ;
+} ;
+
+extern void
+hash_finish(void)
+{
+  struct hash_backet_pool* pool ;
+
+  hb_free = NULL ;
+
+  while ((pool = hb_pools) != NULL)
+    {
+      hb_pools = pool->next ;
+
+      XFREE(MTYPE_HASH_BACKET, pool) ;
+    } ;
+} ;
+

@@ -43,6 +43,8 @@ community_free (struct community *com)
 {
   if (com != NULL)
     {
+      qassert(com->refcnt == 0) ;
+
       if (com->val)
         XFREE (MTYPE_COMMUNITY_VAL, com->val);
       if (com->str)
@@ -304,7 +306,18 @@ community_lookup (struct community *com)
    return (struct community *) hash_lookup (comhash, com);
 }
 
-/* Intern communities attribute.  */
+/*------------------------------------------------------------------------------
+ * Intern communities attribute.
+ *
+ * NB: if given community is a duplicate of an existing intern'd one, the
+ *     given community is freed.
+ *
+ *     if given community is a new one, the given community is stored in the
+ *     hash.
+ *
+ *     Either way, this function takes responsibility for the given community
+ *     object.
+ */
 struct community *
 community_intern (struct community *com)
 {
@@ -316,8 +329,9 @@ community_intern (struct community *com)
   /* Lookup community hash. */
   find = (struct community *) hash_get (comhash, com, hash_alloc_intern);
 
-  /* Arguemnt com is allocated temporary.  So when it is not used in
-     hash, it should be freed.  */
+  /* Argument com is allocated temporary.  So when it is not used in
+   * hash, it should be freed.
+   */
   if (find != com)
     community_free (com);
 
@@ -366,7 +380,9 @@ community_unintern (struct community **p_com)
               zlog_err("BUG: failed to find interned community -- found %s",
                                  (ret == NULL) ? "nothing" : "something else") ;
               com = NULL ;      /* leaky but safer      */
-            } ;
+            }
+          else if (qdebug)
+            com->refcnt = 0 ;   /* for completeness     */
         } ;
 
       *p_com = community_free (com) ;
@@ -386,7 +402,11 @@ community_parse (u_int32_t *pnt, u_short length)
   if (length % 4)
     return NULL;
 
-  /* Make temporary community for hash look up. */
+  /* Make temporary community for hash look up.
+   *
+   * Creates a shiny new malloc'd community, which community_intern() will
+   * either discard (if community already intern'd) or adopt.
+   */
   tmp.size = length / 4;
   tmp.val  = pnt;
 
@@ -395,20 +415,37 @@ community_parse (u_int32_t *pnt, u_short length)
   return community_intern (new);
 }
 
+/*------------------------------------------------------------------------------
+ * Duplicate the given community.
+ *
+ * NB: does not create the com->str -- left NULL
+ *
+ * Returns:  new community object with refcnt == 0
+ */
 struct community *
 community_dup (struct community *com)
 {
   struct community *new;
 
   new = XCALLOC (MTYPE_COMMUNITY, sizeof (struct community));
-  new->size = com->size;
-  if (new->size)
+
+  /* Zeroizing has set:
+   *
+   *  * refcnt          -- 0            )
+   *  * size            -- 0            ) an empty community.
+   *  * val             -- NULL         )
+   *  * str             -- NULL         )
+   */
+
+  if (com->size != 0)
     {
-      new->val = XMALLOC (MTYPE_COMMUNITY_VAL, com->size * 4);
+      new->size = com->size;
+      new->val  = XMALLOC (MTYPE_COMMUNITY_VAL, com->size * 4);
       memcpy (new->val, com->val, com->size * 4);
-    }
-  else
-    new->val = NULL;
+    } ;
+
+  qassert(new->refcnt == 0) ;
+
   return new;
 }
 
@@ -427,17 +464,20 @@ community_str (struct community *com)
 /* Make hash value of community attribute. This function is used by
    hash package.*/
 unsigned int
-community_hash_make (struct community *com)
+community_hash_make (const void* data)
 {
+  const struct community *com ;
   int c;
   unsigned int key;
-  unsigned char *pnt;
+  const uint32_t *pnt;
 
-  key = 0;
-  pnt = (unsigned char *)com->val;
+  com = data ;
 
-  for(c = 0; c < com->size * 4; c++)
-    key += pnt[c];
+  key = 0x31415926 ;
+  pnt = com->val;
+
+  for(c = 0; c < com->size ; c++)
+    key = (key * 5) ^ pnt[c] ;
 
   return key;
 }
@@ -471,21 +511,30 @@ community_match (const struct community *com1, const struct community *com2)
     return 0;
 }
 
-/* If two aspath have same value then return 1 else return 0. This
+/* If two communities have same value then return 1 else return 0. This
    function is used by hash package. */
-int
-community_cmp (const struct community *com1, const struct community *com2)
+extern bool
+community_equal(const struct community *com1, const struct community *com2)
 {
-  if (com1 == NULL && com2 == NULL)
-    return 1;
-  if (com1 == NULL || com2 == NULL)
-    return 0;
+  if ((com1 != NULL) && (com2 != NULL))
+    return (com1->size == com2->size) &&
+                     (memcmp (com1->val, com2->val, com1->size * 4) == 0) ;
 
-  if (com1->size == com2->size)
-    if (memcmp (com1->val, com2->val, com1->size * 4) == 0)
-      return 1;
-  return 0;
+  return com1 == com2 ;
 }
+
+static bool
+community_hash_equal(const void* item, const void* data)
+{
+  const struct community *com1 ;
+  const struct community *com2 ;
+
+  com1 = item ;
+  com2 = data ;
+
+  return community_equal(com1, com2) ;
+} ;
+
 
 /* Add com2 to the end of com1. */
 struct community *
@@ -669,8 +718,8 @@ community_hash (void)
 void
 community_init (void)
 {
-  comhash = hash_create ((unsigned int (*) (void *))community_hash_make,
-                         (int (*) (const void *, const void *))community_cmp);
+  comhash = hash_create_size(128 * 1024, community_hash_make,
+                                                          community_hash_equal);
 }
 
 void
