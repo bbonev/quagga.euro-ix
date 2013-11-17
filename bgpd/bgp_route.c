@@ -3666,7 +3666,9 @@ bgp_announce_route_table (struct peer *peer, afi_t afi, safi_t safi,
   for (rn = bgp_table_top (table); rn; rn = bgp_route_next(rn))
     {
       struct bgp_info *ri;
+      bool found ;
 
+      found = false ;
       for (ri = sdl_head(rn->u.binfos); ri != NULL; ri = sdl_next(ri, rn_list))
         {
           struct attr* attr ;
@@ -3698,10 +3700,12 @@ bgp_announce_route_table (struct peer *peer, afi_t afi, safi_t safi,
           if (!(ri->flags & BGP_INFO_SELECTED))
             continue ;
 
-          if (BGP_INFO_HOLDDOWN (ri))
+          if (BGP_INFO_HOLDDOWN (ri) || found)
             {
               /* If the current selection is in "HOLDDOWN" then the rn really
                * should be queued for processing.
+               *
+               * If more than one SELECTED route... then things are in a mess.
                *
                * If it is queued for processing, then the route selection
                * should sweep up and make a new selection.
@@ -3711,6 +3715,23 @@ bgp_announce_route_table (struct peer *peer, afi_t afi, safi_t safi,
                * expect to be re-announced RSN.
                */
               qassert(rn->on_wq) ;
+
+              if (found)
+                {
+                  zlog_err("While announcing routes to %s, for prefix %s"
+                                                " found more than one SELECTED",
+                                              peer->host, spfxtoa(&rn->p).str) ;
+                }
+
+              if (!rn->on_wq)
+                {
+                  if (BGP_INFO_HOLDDOWN (ri) && !rn->on_wq)
+                    zlog_err("While announcing routes to %s, for prefix %s"
+                               " 'HOLDDOWN', but not marked to be processed !",
+                                              peer->host, spfxtoa(&rn->p).str) ;
+
+                  bgp_process(peer->bgp, rn, afi, safi) ;
+                } ;
 
               attr = NULL ;
             }
@@ -3726,6 +3747,8 @@ bgp_announce_route_table (struct peer *peer, afi_t afi, safi_t safi,
             bgp_adj_out_set (rn, peer, &rn->p, attr, afi, safi, ri);
           else
             bgp_adj_out_unset (rn, peer, &rn->p, afi, safi);
+
+          found = true ;
         } ;
     } ;
 } ;
