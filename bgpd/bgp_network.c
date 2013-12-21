@@ -249,7 +249,7 @@ bgp_listeners_init(const char* addresses, const char* port_str)
   next = bgp_listener_addresses ;
   end  = next + len ;
 
-  for (i = 0 ; i <= vector_length(bgp_listener_address_list) ; ++i)
+  for (i = 0 ; i < vector_length(bgp_listener_address_list) ; ++i)
     {
       const char* str ;
 
