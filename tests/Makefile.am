@@ -7,7 +7,8 @@ AM_LDFLAGS = $(PILDFLAGS)
 noinst_PROGRAMS = testsig testbuffer testmemory heavy heavywq heavythread \
                   aspathtest testprivs teststream testbgpcap ecommtest \
                   testbgpmpattr testchecksum testvector testheap testsymtab \
-		              testlistutil testqpath testavl testqfs testprefix
+                  testlistutil testqpath testavl testqfs testprefix \
+                  testbgpmpath
 
 testsig_SOURCES = test-sig.c
 testbuffer_SOURCES = test-buffer.c
@@ -30,6 +31,7 @@ testqpath_SOURCES = test-qpath.c
 testavl_SOURCES = test-avl.c
 testqfs_SOURCES = test-qfs.c
 testprefix_SOURCES = test-prefix.c
+testbgpmpath_SOURCES = bgp_mpath_test.c
 
 testsig_LDADD = ../lib/libzebra.la @LIBCAP@
 testbuffer_LDADD = ../lib/libzebra.la @LIBCAP@
@@ -52,3 +54,4 @@ testqpath_LDADD = ../lib/libzebra.la @LIBCAP@
 testavl_LDADD = ../lib/libzebra.la @LIBCAP@ 
 testqfs_LDADD = ../lib/libzebra.la @LIBCAP@ 
 testprefix_LDADD = ../lib/libzebra.la @LIBCAP@ 
+testbgpmpath_LDADD = ../lib/libzebra.la @LIBCAP@   ../bgpd/libbgp.a -lm

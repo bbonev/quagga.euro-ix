@@ -66,6 +66,10 @@ struct bgp_info
   /* Nexthop reachability check.  */
   u_int32_t igpmetric;
 
+
+  /* Multipath information */
+  struct bgp_info_mpath *mpath;
+
   /* Uptime.                                    */
   time_t uptime;
 
@@ -85,6 +89,8 @@ struct bgp_info
 #define BGP_INFO_STALE          (1 << 8)
 #define BGP_INFO_REMOVED        (1 << 9)
 #define BGP_INFO_COUNTED        (1 << 10)
+#define BGP_INFO_MULTIPATH      (1 << 11)
+#define BGP_INFO_MULTIPATH_CHG  (1 << 12)
 
 #define BGP_INFO_REAPED         (1 << 15)
 

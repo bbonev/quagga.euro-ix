@@ -52,6 +52,7 @@ Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
 #include "bgpd/bgp_vty.h"
 #include "bgpd/bgp_session.h"
 #include "bgpd/bgp_names.h"
+#include "bgpd/bgp_mpath.h"
 
 extern struct in_addr router_id_zebra;
 
@@ -669,6 +670,149 @@ DEFUN (no_bgp_confederation_peers,
       bgp_confederation_peers_remove (bgp, as);
     }
   return CMD_SUCCESS;
+}
+
+/* Maximum-paths configuration */
+DEFUN (bgp_maxpaths,
+       bgp_maxpaths_cmd,
+       "maximum-paths <1-255>",
+       "Forward packets over multiple paths\n"
+       "Number of paths\n")
+{
+  struct bgp *bgp;
+  u_int16_t maxpaths;
+  int ret;
+
+  bgp = vty->index;
+
+  VTY_GET_INTEGER_RANGE ("maximum-paths", maxpaths, argv[0], 1, 255);
+
+  ret = bgp_maximum_paths_set (bgp, bgp_node_afi (vty), bgp_node_safi(vty),
+			       BGP_PEER_EBGP, maxpaths);
+  if (ret < 0)
+    {
+      vty_out (vty,
+	       "%% Failed to set maximum-paths %u for afi %u, safi %u%s",
+	       maxpaths, bgp_node_afi (vty), bgp_node_safi(vty), VTY_NEWLINE);
+      return CMD_WARNING;
+    }
+
+  return CMD_SUCCESS;
+}
+
+DEFUN (bgp_maxpaths_ibgp,
+       bgp_maxpaths_ibgp_cmd,
+       "maximum-paths ibgp <1-255>",
+       "Forward packets over multiple paths\n"
+       "iBGP-multipath\n"
+       "Number of paths\n")
+{
+  struct bgp *bgp;
+  u_int16_t maxpaths;
+  int ret;
+
+  bgp = vty->index;
+
+  VTY_GET_INTEGER_RANGE ("maximum-paths", maxpaths, argv[0], 1, 255);
+
+  ret = bgp_maximum_paths_set (bgp, bgp_node_afi (vty), bgp_node_safi(vty),
+			       BGP_PEER_IBGP, maxpaths);
+  if (ret < 0)
+    {
+      vty_out (vty,
+	       "%% Failed to set maximum-paths ibgp %u for afi %u, safi %u%s",
+	       maxpaths, bgp_node_afi (vty), bgp_node_safi(vty), VTY_NEWLINE);
+      return CMD_WARNING;
+    }
+
+  return CMD_SUCCESS;
+}
+
+DEFUN (no_bgp_maxpaths,
+       no_bgp_maxpaths_cmd,
+       "no maximum-paths",
+       NO_STR
+       "Forward packets over multiple paths\n"
+       "Number of paths\n")
+{
+  struct bgp *bgp;
+  int ret;
+
+  bgp = vty->index;
+
+  ret = bgp_maximum_paths_unset (bgp, bgp_node_afi (vty), bgp_node_safi(vty),
+				 BGP_PEER_EBGP);
+  if (ret < 0)
+    {
+      vty_out (vty,
+	       "%% Failed to unset maximum-paths for afi %u, safi %u%s",
+	       bgp_node_afi (vty), bgp_node_safi(vty), VTY_NEWLINE);
+      return CMD_WARNING;
+    }
+
+  return CMD_SUCCESS;
+}
+
+ALIAS (no_bgp_maxpaths,
+       no_bgp_maxpaths_arg_cmd,
+       "no maximum-paths <1-255>",
+       NO_STR
+       "Forward packets over multiple paths\n"
+       "Number of paths\n")
+
+DEFUN (no_bgp_maxpaths_ibgp,
+       no_bgp_maxpaths_ibgp_cmd,
+       "no maximum-paths ibgp",
+       NO_STR
+       "Forward packets over multiple paths\n"
+       "iBGP-multipath\n"
+       "Number of paths\n")
+{
+  struct bgp *bgp;
+  int ret;
+
+  bgp = vty->index;
+
+  ret = bgp_maximum_paths_unset (bgp, bgp_node_afi (vty), bgp_node_safi(vty),
+				 BGP_PEER_IBGP);
+  if (ret < 0)
+    {
+      vty_out (vty,
+	       "%% Failed to unset maximum-paths ibgp for afi %u, safi %u%s",
+	       bgp_node_afi (vty), bgp_node_safi(vty), VTY_NEWLINE);
+      return CMD_WARNING;
+    }
+
+  return CMD_SUCCESS;
+}
+
+ALIAS (no_bgp_maxpaths_ibgp,
+       no_bgp_maxpaths_ibgp_arg_cmd,
+       "no maximum-paths ibgp <1-255>",
+       NO_STR
+       "Forward packets over multiple paths\n"
+       "iBGP-multipath\n"
+       "Number of paths\n")
+
+int
+bgp_config_write_maxpaths (struct vty *vty, struct bgp *bgp, afi_t afi,
+			   safi_t safi, int *write)
+{
+  if (bgp->maxpaths[afi][safi].maxpaths_ebgp != BGP_DEFAULT_MAXPATHS)
+    {
+      bgp_config_write_family_header (vty, afi, safi, write);
+      vty_out (vty, " maximum-paths %d%s",
+	       bgp->maxpaths[afi][safi].maxpaths_ebgp, VTY_NEWLINE);
+    }
+
+  if (bgp->maxpaths[afi][safi].maxpaths_ibgp != BGP_DEFAULT_MAXPATHS)
+    {
+      bgp_config_write_family_header (vty, afi, safi, write);
+      vty_out (vty, " maximum-paths ibgp %d%s",
+	       bgp->maxpaths[afi][safi].maxpaths_ibgp, VTY_NEWLINE);
+    }
+
+  return 0;
 }
 
 /* BGP timers.  */
@@ -9018,6 +9162,20 @@ CMD_INSTALL_TABLE(static, bgp_vty_cmd_table, BGPD) =
   /* "bgp confederation peers" commands. */
   { BGP_NODE,        &bgp_confederation_peers_cmd                       },
   { BGP_NODE,        &no_bgp_confederation_peers_cmd                    },
+
+  /* "maximum-paths" commands. */
+  { BGP_NODE,        &bgp_maxpaths_cmd                                  },
+  { BGP_NODE,        &no_bgp_maxpaths_cmd                               },
+  { BGP_NODE,        &no_bgp_maxpaths_arg_cmd                           },
+  { BGP_IPV4_NODE,   &bgp_maxpaths_cmd                                  },
+  { BGP_IPV4_NODE,   &no_bgp_maxpaths_cmd                               },
+  { BGP_IPV4_NODE,   &no_bgp_maxpaths_arg_cmd                           },
+  { BGP_NODE,        &bgp_maxpaths_ibgp_cmd                             },
+  { BGP_NODE,        &no_bgp_maxpaths_ibgp_cmd                          },
+  { BGP_NODE,        &no_bgp_maxpaths_ibgp_arg_cmd                      },
+  { BGP_IPV4_NODE,   &bgp_maxpaths_ibgp_cmd                             },
+  { BGP_IPV4_NODE,   &no_bgp_maxpaths_ibgp_cmd                          },
+  { BGP_IPV4_NODE,   &no_bgp_maxpaths_ibgp_arg_cmd                      },
 
   /* "timers bgp" commands. */
   { BGP_NODE,        &bgp_timers_cmd                                    },

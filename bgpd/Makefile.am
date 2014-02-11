@@ -20,7 +20,7 @@ libbgp_a_SOURCES = \
 	bgp_open_state.c bgp_packet.c bgp_peer.c bgp_peer_index.c \
 	bgp_regex.c bgp_route.c bgp_routemap.c bgp_route_refresh.c \
 	bgp_session.c bgp_snmp.c bgp_table.c bgp_vty.c \
-	bgp_zebra.c
+	bgp_zebra.c bgp_mpath.c
 
 noinst_HEADERS = \
   bgp.h \
@@ -33,7 +33,7 @@ noinst_HEADERS = \
 	bgp_open_state.h bgp_packet.h bgp_peer.h bgp_peer_index.h \
 	bgp_regex.h bgp_route.h bgp_route_refresh.h \
 	bgp_session.h bgp_snmp.h bgp_table.h bgp_vty.h \
-	bgp_zebra.h
+	bgp_zebra.h bgp_mpath.h
 
 bgpd_SOURCES = bgp_main.c
 bgpd_LDADD = libbgp.a ../lib/libzebra.la @LIBCAP@ @LIBM@

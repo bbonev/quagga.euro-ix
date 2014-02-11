@@ -36,6 +36,7 @@ Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
 #include "routemap.h"
 #include "filter.h"
 #include "plist.h"
+#include "stream.h"
 #include "qpnexus.h"
 #include "qlib_init.h"
 #include "qfstring.h"
@@ -792,6 +793,8 @@ bgp_exit (int status)
     zclient_free (zclient);
   if (zlookup)
     zclient_free (zlookup);
+  if (bgp_nexthop_buf)
+    stream_free (bgp_nexthop_buf);
 
   if (zlog_default)
     closezlog (zlog_default);

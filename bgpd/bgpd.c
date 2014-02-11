@@ -61,6 +61,7 @@ Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
 #include "bgpd/bgp_advertise.h"
 #include "bgpd/bgp_network.h"
 #include "bgpd/bgp_vty.h"
+#include "bgpd/bgp_mpath.h"
 #ifdef HAVE_SNMP
 #include "bgpd/bgp_snmp.h"
 #endif /* HAVE_SNMP */
@@ -1635,6 +1636,8 @@ bgp_create (as_t *as, const char *name)
         bgp->route[afi][safi] = bgp_table_init (afi, safi);
         bgp->aggregate[afi][safi] = bgp_table_init (afi, safi);
         bgp->rib[afi][safi] = bgp_table_init (afi, safi);
+	bgp->maxpaths[afi][safi].maxpaths_ebgp = BGP_DEFAULT_MAXPATHS;
+	bgp->maxpaths[afi][safi].maxpaths_ibgp = BGP_DEFAULT_MAXPATHS;
       }
 
   bgp->default_local_pref = BGP_DEFAULT_LOCAL_PREF;
@@ -4619,6 +4622,9 @@ bgp_config_write_family (struct vty *vty, struct bgp *bgp, afi_t afi,
           bgp_config_write_peer (vty, bgp, peer, afi, safi);
         }
     }
+
+  bgp_config_write_maxpaths (vty, bgp, afi, safi, &write);
+
   if (write)
     {
       vty_out (vty, " exit-address-family%s", VTY_NEWLINE);
@@ -4804,6 +4810,9 @@ bgp_config_write (struct vty *vty)
        */
       for (ALL_LIST_ELEMENTS (bgp->peer, node, nnode, peer))
         bgp_config_write_peer (vty, bgp, peer, AFI_IP, SAFI_UNICAST);
+
+      /* maximum-paths */
+      bgp_config_write_maxpaths (vty, bgp, AFI_IP, SAFI_UNICAST, &write);
 
       /* Distance configuration. */
       bgp_config_write_distance (vty, bgp);
