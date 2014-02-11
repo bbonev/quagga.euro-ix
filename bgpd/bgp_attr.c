@@ -579,6 +579,7 @@ attrhash_key_make (const void *data)
       MIX(attr->extra->aggregator_addr.s_addr);
       MIX(attr->extra->weight);
       MIX(attr->extra->mp_nexthop_global_in.s_addr);
+      MIX(attr->extra->originator_id.s_addr);
     }
 
   if (attr->aspath)
@@ -640,7 +641,8 @@ attrhash_equal (const void *p1, const void *p2)
                                &ae2->mp_nexthop_global_in)
             && (ae1->ecommunity == ae2->ecommunity)
             && (ae1->cluster == ae2->cluster)
-            && (ae1->transit == ae2->transit) ;
+            && (ae1->transit == ae2->transit)
+            && IPV4_ADDR_SAME (&ae1->originator_id, &ae2->originator_id);
 
       /* One or both attr_extra is NULL -- is equal iff both are.
        */
