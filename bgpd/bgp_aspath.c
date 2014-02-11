@@ -1914,11 +1914,11 @@ aspath_key_make (const void* data)
 }
 
 /* If two aspath have same value then return 1 else return 0 */
-static bool
-aspath_equal (const void *arg1, const void *arg2)
+bool
+aspath_cmp (const struct aspath *arg1, const struct aspath *arg2)
 {
-  const struct assegment *seg1 = ((const struct aspath *)arg1)->segments;
-  const struct assegment *seg2 = ((const struct aspath *)arg2)->segments;
+  const struct assegment *seg1 = arg1->segments;
+  const struct assegment *seg2 = arg2->segments;
 
   while ((seg1 != NULL) && (seg2 != NULL))
     {
@@ -1947,7 +1947,7 @@ aspath_equal (const void *arg1, const void *arg2)
 void
 aspath_init (void)
 {
-  ashash = hash_create_size (256 * 1024, aspath_key_make, aspath_equal);
+  ashash = hash_create_size (256 * 1024, aspath_key_make, (hash_equal_func *)aspath_cmp);
 }
 
 void
