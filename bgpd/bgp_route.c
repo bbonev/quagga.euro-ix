@@ -2789,7 +2789,7 @@ bgp_update_rsclient (struct peer *rsclient, struct rs_route* rt,
   /* AS path loop check.
    */
   if (aspath_loop_check (rt->rs_in_attr->aspath, rsclient->as) >
-                                        rt->peer->allowas_in[rt->afi][rt->safi])
+                                        rsclient->allowas_in[rt->afi][rt->safi])
     {
       reason = "as-path contains rs-client AS;";
       goto filtered;
