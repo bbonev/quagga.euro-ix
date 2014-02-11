@@ -1895,6 +1895,52 @@ struct route_map_rule_cmd route_set_atomic_aggregate_cmd =
   route_set_atomic_aggregate_free,
 };
 
+/* `set as-path compact' */
+
+/* For as-path compact set. */
+static route_map_result_t
+route_set_aspath_compact (void *rule, struct prefix *prefix,
+			  route_map_object_t type, void *object)
+{
+  struct aspath *new_path;
+  struct bgp_info *binfo;
+
+  if (type == RMAP_BGP)
+    {
+      binfo = object;
+      if (binfo->attr->aspath->refcnt)
+	new_path = aspath_dup (binfo->attr->aspath);
+      else
+	new_path = binfo->attr->aspath;
+      binfo->attr->aspath = aspath_compact (new_path);
+    }
+
+  return RMAP_OKAY;
+}
+
+/* Compile function for as-path compact. */
+static void *
+route_set_aspath_compact_compile (const char *arg)
+{
+  return (void *)1;
+}
+
+/* Compile function for as-path compact. */
+static void
+route_set_aspath_compact_free (void *rule)
+{
+  return;
+}
+
+/* Set atomic aggregate rule structure. */
+struct route_map_rule_cmd route_set_aspath_compact_cmd =
+{
+  "as-path compact",
+  route_set_aspath_compact,
+  route_set_aspath_compact_compile,
+  route_set_aspath_compact_free,
+};
+
 /* `set aggregator as AS A.B.C.D' */
 struct aggregator
 {
@@ -3347,6 +3393,27 @@ DEFUN (set_aspath_exclude,
   return ret;
 }
 
+DEFUN (set_aspath_compact,
+       set_aspath_compact_cmd,
+       "set as-path compact",
+       SET_STR
+       "Transform BGP AS-path attribute\n"
+       "Compact the as-path\n")
+{
+  return bgp_route_set_add (vty, vty->index, "as-path compact", NULL);
+}
+
+DEFUN (no_set_aspath_compact,
+       no_set_aspath_compact_cmd,
+       "no set as-path compact",
+       NO_STR
+       SET_STR
+       "Transform BGP AS-path attribute\n"
+       "Compact the as-path\n")
+{
+  return bgp_route_set_delete (vty, vty->index, "as-path compact", NULL);
+}
+
 DEFUN (no_set_aspath_exclude,
        no_set_aspath_exclude_cmd,
        "no set as-path exclude",
@@ -4101,8 +4168,10 @@ CMD_INSTALL_TABLE(static, bgp_routemap_cmd_table, BGPD) =
   { RMAP_NODE,       &set_metric_addsub_cmd                             },
   { RMAP_NODE,       &no_set_metric_cmd                                 },
   { RMAP_NODE,       &no_set_metric_val_cmd                             },
+  { RMAP_NODE,       &set_aspath_compact_cmd                            },
   { RMAP_NODE,       &set_aspath_prepend_cmd                            },
   { RMAP_NODE,       &set_aspath_exclude_cmd                            },
+  { RMAP_NODE,       &no_set_aspath_compact_cmd                         },
   { RMAP_NODE,       &no_set_aspath_prepend_cmd                         },
   { RMAP_NODE,       &no_set_aspath_prepend_val_cmd                     },
   { RMAP_NODE,       &no_set_aspath_exclude_cmd                         },
@@ -4189,6 +4258,7 @@ bgp_route_map_cmd_init (void)
   route_map_install_set (&route_set_local_pref_cmd);
   route_map_install_set (&route_set_weight_cmd);
   route_map_install_set (&route_set_metric_cmd);
+  route_map_install_set (&route_set_aspath_compact_cmd);
   route_map_install_set (&route_set_aspath_prepend_cmd);
   route_map_install_set (&route_set_aspath_exclude_cmd);
   route_map_install_set (&route_set_origin_cmd);

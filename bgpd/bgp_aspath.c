@@ -1603,6 +1603,61 @@ aspath_prepend (struct aspath *as1, struct aspath *as2)
   /* Not reached */
 }
 
+/* Iterate over AS_PATH segments and compact all multiple occurences of
+ * the same AS number. Hence some segments may lose some data on the
+ * way, the operation is implemented as a smarter version of
+ * aspath_dup(), which allocates memory to hold the new data, not the
+ * original. The new AS path is returned.
+ */
+struct aspath *
+aspath_compact (struct aspath *source)
+{
+  struct assegment *srcseg, *lastseg;
+  struct aspath *newpath;
+
+  newpath = aspath_new();
+  lastseg = NULL;
+
+  for (srcseg = source->segments; srcseg; srcseg = srcseg->next)
+  {
+    unsigned i, newlen = 0, done = 0;
+    struct assegment * newseg;
+
+    /* Find out, how much ASns are we going to pick from this segment.
+     * We can't perform filtering right inline, because the size of
+     * the new segment isn't known at the moment yet.
+     */
+    for (i = 0; i < srcseg->length; i++)
+      if (!(i > 0 && srcseg->as[i] == srcseg->as[i - 1]))
+        newlen++;
+
+    /* newlen is now the number of ASns to copy */
+    if (!newlen)
+      continue;
+
+    /* Actual copying. Allocate memory and iterate once more, performing filtering. */
+    newseg = assegment_new (srcseg->type, newlen);
+    for (i = 0; i < srcseg->length; i++)
+      if (!(i > 0 && srcseg->as[i] == srcseg->as[i - 1]))
+	newseg->as[done++] = srcseg->as[i];
+
+    /* At his point newlen must be equal to done, and both must be positive. Append
+     * the filtered segment to the gross result. */
+    if (!lastseg)
+      newpath->segments = newseg;
+    else
+      lastseg->next = newseg;
+    lastseg = newseg;
+  }
+  aspath_str_update (newpath);
+  /* We are happy returning even an empty AS_PATH, because the administrator
+   * might expect this very behaviour. There's a mean to avoid this, if necessary,
+   * by having a match rule against certain AS_PATH regexps in the route-map index.
+   */
+  aspath_free (source);
+  return newpath;
+}
+
 /* Iterate over AS_PATH segments and wipe all occurences of the
  * listed AS numbers. Hence some segments may lose some or even
  * all data on the way, the operation is implemented as a smarter
