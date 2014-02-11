@@ -6976,7 +6976,7 @@ bgp_show_summary (struct vty *vty, struct bgp *bgp, int afi, int safi)
   struct bgp_session_stats stats;
 
   /* Header string for each address family. */
-  static char header[] = "Neighbor        V    AS MsgRcvd MsgSent   TblVer  InQ OutQ Up/Down  State/PfxRcd";
+  static char header[] = "Neighbor        Description     V     AS MsgRcvd MsgSent   TblVer  InQ OutQ Up/Down  State/PfxRcd";
 
   for (ALL_LIST_ELEMENTS (bgp->peer, node, nnode, peer))
     {
@@ -7036,9 +7036,20 @@ bgp_show_summary (struct vty *vty, struct bgp *bgp, int afi, int safi)
           else
             vty_out (vty, "%*s", len, " ");
 
+	  if (peer->desc)
+		len = vty_out (vty, "%s", peer->desc);
+	  else
+		len = 0;
+
+	  len = 16 - len;
+	  if (len < 1)
+	    vty_out (vty, "%s%*s", VTY_NEWLINE, 32, " ");
+	  else
+	    vty_out (vty, "%*s", len, " ");
+
           vty_out (vty, "4 ");
 
-          vty_out (vty, "%5u %7d %7d %8d %4d %4lu ",
+	  vty_out (vty, "%6u %7d %7d %8d %4d %4lu ",
                    peer->as,
                    stats.open_in + stats.update_in + stats.keepalive_in
                    + stats.notify_in + stats.refresh_in + stats.dynamic_cap_in,
