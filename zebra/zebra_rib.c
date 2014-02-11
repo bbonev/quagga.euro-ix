@@ -1567,6 +1567,10 @@ rib_add_ipv4 (int type, int flags, struct prefix_ipv4 *p,
   rib->uptime = time (NULL);
 
   /* Nexthop settings. */
+  if (flags & ZEBRA_FLAG_BLACKHOLE)
+    nexthop_blackhole_add(rib);
+  else
+    {
   if (gate)
     {
       if (ifindex)
@@ -1576,6 +1580,7 @@ rib_add_ipv4 (int type, int flags, struct prefix_ipv4 *p,
     }
   else
     nexthop_ifindex_add (rib, ifindex);
+    }
 
   /* If this route is kernel route, set FIB flag to the route. */
   if (type == ZEBRA_ROUTE_KERNEL || type == ZEBRA_ROUTE_CONNECT)
@@ -2359,6 +2364,10 @@ rib_add_ipv6 (int type, int flags, struct prefix_ipv6 *p,
   rib->uptime = time (NULL);
 
   /* Nexthop settings. */
+  if (flags & ZEBRA_FLAG_BLACKHOLE)
+    nexthop_blackhole_add(rib);
+  else
+    {
   if (gate)
     {
       if (ifindex)
@@ -2368,6 +2377,7 @@ rib_add_ipv6 (int type, int flags, struct prefix_ipv6 *p,
     }
   else
     nexthop_ifindex_add (rib, ifindex);
+    }
 
   /* If this route is kernel route, set FIB flag to the route. */
   if (type == ZEBRA_ROUTE_KERNEL || type == ZEBRA_ROUTE_CONNECT)
