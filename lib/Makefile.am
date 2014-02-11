@@ -48,7 +48,7 @@ pkginclude_HEADERS = \
 	vty_io_file.h  vty_io_std.h  vty_io_term.h  vty_io_vtysh.h \
 	vty_local.h  vty_log.h  vty_vtysh.h  vty_vtysh_content.h \
 	workqueue.h  zassert.h  zclient.h \
-	zconfig.h  zebra.h
+	zconfig.h  zebra.h  checksum.h
 		
 EXTRA_DIST = regex.c regex-gnu.h memtypes.awk route_types.pl route_types.txt
 
