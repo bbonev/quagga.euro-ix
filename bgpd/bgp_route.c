@@ -2730,7 +2730,17 @@ bgp_update_rsclient (struct peer *rsclient, struct rs_route* rt,
 
   /* Apply export policy.
    */
-  if (rt->peer->af_flags[rt->afi][rt->safi] & PEER_FLAG_RSERVER_CLIENT)
+#define ALWAYS_EXPORT_FILTER
+  enum { always_export_filter =
+#ifdef ALWAYS_EXPORT_FILTER
+                                true
+#else
+                                false
+#endif
+  } ;
+
+  if (always_export_filter ||
+        (rt->peer->af_flags[rt->afi][rt->safi] & PEER_FLAG_RSERVER_CLIENT))
     {
       client_attr = bgp_export_modifier (rsclient, rt, client_attr) ;
       if (client_attr == NULL)
@@ -2755,7 +2765,7 @@ bgp_update_rsclient (struct peer *rsclient, struct rs_route* rt,
   if ( (rt->afi == AFI_IP) &&
                   ((rt->safi == SAFI_UNICAST) || (rt->safi == SAFI_MULTICAST)) )
     {
-      /* Next hop must not be 0.0.0.0 nor Class E address.
+      /* Next hop must not be 0.0.0.0 nor Class D/E address.
        */
       if ((client_attr->nexthop.s_addr == 0)
                           || IPV4_CLASS_DE(ntohl(client_attr->nexthop.s_addr)))
