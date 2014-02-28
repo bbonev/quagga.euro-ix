@@ -1652,6 +1652,8 @@ bgp_msg_route_refresh_receive(bgp_connection connection, bgp_size_t body_size)
     {
       bgp_fsm_exception(connection, bgp_session_eInvalid_msg,
                        bgp_notify_new(BGP_NOMC_CEASE, BGP_NOMS_UNSPECIFIC)) ;
+
+      bgp_route_refresh_free(rr) ;
       return ;
     }
 
