@@ -48,16 +48,30 @@ struct thread_list
   int count;
 };
 
-/* Master of the theads. */
+/* Thread types
+ */
+typedef enum thread_type thread_type_t ;
+enum thread_type
+{
+  THREAD_READ,
+  THREAD_WRITE,
+  THREAD_TIMER,
+  THREAD_EVENT,
+  THREAD_READY,
+  THREAD_BACKGROUND,
+  THREAD_UNUSED,
+
+  THREAD_EXECUTE,       /* Dummy type for thread_execute()      */
+
+  THREAD_LIST_COUNT = THREAD_EXECUTE,
+  THREAD_LIST_NONE  = THREAD_LIST_COUNT
+} ;
+
+/* Master of the threads. */
 struct thread_master
 {
-  struct thread_list read;
-  struct thread_list write;
-  struct thread_list timer;
-  struct thread_list event;
-  struct thread_list ready;
-  struct thread_list unuse;
-  struct thread_list background;
+  struct thread_list list[THREAD_LIST_COUNT];
+
   fd_set readfd;
   fd_set writefd;
   fd_set exceptfd;
@@ -69,10 +83,10 @@ typedef unsigned char thread_type;
 /* Thread itself. */
 struct thread
 {
-  thread_type type;             /* thread type */
-  thread_type add_type;         /* thread type */
-  struct thread *next;          /* next pointer of the thread */
-  struct thread *prev;          /* previous pointer of the thread */
+  thread_type queue;            /* queue that thread is on, if any      */
+  thread_type type;             /* thread actual type                   */
+  struct thread *next;          /* next pointer of the thread           */
+  struct thread *prev;          /* previous pointer of the thread       */
   struct thread_master *master; /* pointer to the struct thread_master. */
   int (*func) (struct thread *); /* event function */
   void *arg;                    /* event argument */
@@ -103,22 +117,14 @@ struct cpu_thread_history
 
 /* Clocks supported by Quagga */
 enum quagga_clkid {
-  QUAGGA_CLK_REALTIME = 0,      /* ala gettimeofday() */
+  QUAGGA_CLK_REALTIME = 0,      /* aka gettimeofday() */
   QUAGGA_CLK_MONOTONIC,         /* monotonic, against an indeterminate base */
   QUAGGA_CLK_REALTIME_STABILISED, /* like realtime, but non-decrementing */
 };
 
 /*==============================================================================
- * Thread types and the workhorse macros.
+ * Thread workhorse macros.
  */
-#define THREAD_READ           0
-#define THREAD_WRITE          1
-#define THREAD_TIMER          2
-#define THREAD_EVENT          3
-#define THREAD_READY          4
-#define THREAD_BACKGROUND     5
-#define THREAD_UNUSED         6
-#define THREAD_EXECUTE        7
 
 /* Thread yield time.  */
 #define THREAD_YIELD_TIME_SLOT     10 * 1000L /* 10ms */

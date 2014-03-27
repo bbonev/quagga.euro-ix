@@ -546,17 +546,17 @@ thread_master_debug (struct thread_master *m)
 {
   printf ("-----------\n");
   printf ("readlist  : ");
-  thread_list_debug (&m->read);
+  thread_list_debug (&m->list[THREAD_READ]);
   printf ("writelist : ");
-  thread_list_debug (&m->write);
+  thread_list_debug (&m->list[THREAD_WRITE]);
   printf ("timerlist : ");
-  thread_list_debug (&m->timer);
+  thread_list_debug (&m->list[THREAD_TIMER]);
   printf ("eventlist : ");
-  thread_list_debug (&m->event);
+  thread_list_debug (&m->list[THREAD_EVENT]);
   printf ("unuselist : ");
-  thread_list_debug (&m->unuse);
+  thread_list_debug (&m->list[THREAD_UNUSED]);
   printf ("bgndlist : ");
-  thread_list_debug (&m->background);
+  thread_list_debug (&m->list[THREAD_BACKGROUND]);
   printf ("total alloc: [%ld]\n", m->alloc);
   printf ("-----------\n");
 }
@@ -570,9 +570,22 @@ thread_master_create ()
 }
 
 /* Add a new thread to the list.  */
-static void
-thread_list_add (struct thread_list *list, struct thread *thread)
+static struct thread *
+thread_list_add (struct thread_master *m, struct thread *thread,
+                                                            thread_type_t queue)
 {
+  struct thread_list *list ;
+
+  qassert(queue < THREAD_LIST_COUNT) ;
+  qassert(thread->master == m) ;
+  qassert(thread->queue  == THREAD_LIST_NONE) ;
+
+  if (queue >= THREAD_LIST_COUNT)
+    return thread ;
+
+  thread->queue = queue ;
+  list          = &m->list[queue] ;
+
   thread->next = NULL;
   thread->prev = list->tail;
   if (list->tail)
@@ -581,14 +594,30 @@ thread_list_add (struct thread_list *list, struct thread *thread)
     list->head = thread;
   list->tail = thread;
   list->count++;
+
+  return thread ;
 }
 
 /* Add a new thread just before the point.  */
-static void
-thread_list_add_before (struct thread_list *list,
+static struct thread *
+thread_list_add_before (struct thread_master *m,
                         struct thread *point,
-                        struct thread *thread)
+                        struct thread *thread,
+                        thread_type_t queue)
 {
+  struct thread_list *list ;
+
+  qassert(queue < THREAD_LIST_COUNT) ;
+  qassert(thread->master == m) ;
+  qassert(thread->queue  == THREAD_LIST_NONE) ;
+  qassert(point->queue   == queue) ;
+
+  if (queue >= THREAD_LIST_COUNT)
+    return thread ;
+
+  thread->queue = queue ;
+  list          = &m->list[queue] ;
+
   thread->next = point;
   thread->prev = point->prev;
   if (point->prev)
@@ -597,12 +626,52 @@ thread_list_add_before (struct thread_list *list,
     list->head = thread;
   point->prev = thread;
   list->count++;
+
+  return thread ;
 }
+
+static void thread_qtimer_unset(struct thread* thread) ;
 
 /* Delete a thread from the list. */
 static struct thread *
-thread_list_delete (struct thread_list *list, struct thread *thread)
+thread_list_delete (struct thread_master *m, struct thread *thread)
 {
+  struct thread_list* list ;
+  thread_type_t queue ;
+
+  qassert(thread->master == m) ;
+
+  queue = thread->queue ;
+
+  switch (queue)
+    {
+      case THREAD_READ:
+        assert (FD_ISSET (thread->u.fd, &m->readfd));
+        FD_CLR (thread->u.fd, &m->readfd);
+        break;
+      case THREAD_WRITE:
+        assert (FD_ISSET (thread->u.fd, &m->writefd));
+        FD_CLR (thread->u.fd, &m->writefd);
+        break;
+      case THREAD_TIMER:
+        if (use_qtimer_pile != NULL)
+          thread_qtimer_unset(thread) ;
+        break;
+      case THREAD_EVENT:
+      case THREAD_READY:
+      case THREAD_BACKGROUND:
+      case THREAD_UNUSED:
+        break;
+
+      default:
+        qassert(false) ;
+        return thread ;
+    } ;
+
+  thread->queue = THREAD_LIST_NONE ;
+
+  list = &m->list[queue] ;
+
   if (thread->next)
     thread->next->prev = thread->prev;
   else
@@ -620,34 +689,44 @@ thread_list_delete (struct thread_list *list, struct thread *thread)
 static void
 thread_add_unuse (struct thread_master *m, struct thread *thread)
 {
-  assert (m != NULL && thread != NULL);
-  assert (thread->next == NULL);
-  assert (thread->prev == NULL);
-  assert (thread->type == THREAD_UNUSED);
-  thread_list_add (&m->unuse, thread);
+  assert ((m != NULL) && (thread != NULL));
+  qassert((thread->next == NULL) && (thread->prev == NULL));
+  thread_list_add (m, thread, THREAD_UNUSED) ;
 }
+
+static struct thread* thread_head(struct thread_master *m, thread_type_t queue);
 
 /* Free all unused thread. */
 static void
-thread_list_free (struct thread_master *m, struct thread_list *list)
+thread_list_free (struct thread_master *m, thread_type_t queue)
 {
-  struct thread *t;
+  struct thread *thread;
   struct thread *next;
+  bool  qtimer ;
+  int count ;
 
-  for (t = list->head; t; t = next)
+  qtimer = ((queue == THREAD_TIMER) && (use_qtimer_pile != NULL)) ;
+
+  count = 0 ;
+  for (thread = thread_head(m, queue); thread; thread = next)
     {
-      next = t->next;
+      qassert(thread->queue  == queue) ;
+      qassert(thread->master == m) ;
 
-      if (   (use_qtimer_pile != NULL)
-          && ( (t->type == THREAD_TIMER || t->type == THREAD_BACKGROUND) )
-          && (t->u.qtr != NULL)
-         )
-        qtimer_free(t->u.qtr) ;
+      next = thread->next;
 
-      XFREE (MTYPE_THREAD, t);
-      list->count--;
-      m->alloc--;
+      if (qtimer && (thread->u.qtr != NULL))
+        qtimer_free(thread->u.qtr) ;
+
+      XFREE (MTYPE_THREAD, thread);
+      count += 1 ;
     }
+
+  qassert(m->list[queue].count == count) ;
+
+  m->list[queue].head   = m->list[queue].tail = NULL ;
+  m->list[queue].count -= count ;
+  m->alloc             -= count ;
 }
 
 /*------------------------------------------------------------------------------
@@ -660,13 +739,10 @@ thread_master_free (struct thread_master *m)
 {
   if (m != NULL)
     {
-      thread_list_free (m, &m->read);
-      thread_list_free (m, &m->write);
-      thread_list_free (m, &m->timer);
-      thread_list_free (m, &m->event);
-      thread_list_free (m, &m->ready);
-      thread_list_free (m, &m->unuse);
-      thread_list_free (m, &m->background);
+      thread_type_t queue ;
+
+      for (queue = 0 ; queue < THREAD_LIST_COUNT ; ++queue)
+        thread_list_free (m, queue);
 
       XFREE (MTYPE_THREAD_MASTER, m);   /* sets m = NULL        */
     } ;
@@ -675,18 +751,33 @@ thread_master_free (struct thread_master *m)
 }
 
 /* Thread list is empty or not.  */
-static int
-thread_empty (struct thread_list *list)
+static struct thread*
+thread_head(struct thread_master *m, thread_type_t queue)
 {
-  return  list->head ? 0 : 1;
+  struct thread* head ;
+
+  if (queue >= THREAD_LIST_COUNT)
+    return NULL ;
+
+  head = m->list[queue].head ;
+
+  if (head != NULL)
+    qassert((head->queue == queue) && (head->master == m)) ;
+
+  return head ;
 }
 
 /* Delete top of the list and return it. */
 static struct thread *
-thread_trim_head (struct thread_list *list)
+thread_trim_head (struct thread_master *m, thread_type_t queue)
 {
-  if (!thread_empty (list))
-    return thread_list_delete (list, list->head);
+  struct thread* head ;
+
+  head = thread_head(m, queue) ;
+
+  if (head != NULL)
+    return thread_list_delete (m, head);
+
   return NULL;
 }
 
@@ -727,16 +818,20 @@ thread_get_hist(struct thread* thread, const char* funcname)
   return hist ;
 } ;
 
-/* Get new thread.              */
+/* Get new thread.
+ *
+ * Sets thread->queue == THREAD_LIST_NONE -- to be tidy !
+ */
 static struct thread *
 thread_get (struct thread_master *m, u_char type,
             int (*func) (struct thread *), void *arg, const char* funcname)
 {
   struct thread *thread;
 
-  if (!thread_empty (&m->unuse))
+  thread = thread_trim_head (m, THREAD_UNUSED) ;
+
+  if (thread != NULL)
     {
-      thread = thread_trim_head (&m->unuse);
       memset(thread, 0, sizeof (struct thread)) ;
     }
   else
@@ -744,8 +839,8 @@ thread_get (struct thread_master *m, u_char type,
       thread = XCALLOC (MTYPE_THREAD, sizeof (struct thread));
       m->alloc++;
     }
+  thread->queue    = THREAD_LIST_NONE;
   thread->type     = type;
-  thread->add_type = type;
   thread->master   = m;
   thread->func     = func;
   thread->arg      = arg;
@@ -773,9 +868,7 @@ funcname_thread_add_read (struct thread_master *m,
   thread = thread_get (m, THREAD_READ, func, arg, funcname);
   FD_SET (fd, &m->readfd);
   thread->u.fd = fd;
-  thread_list_add (&m->read, thread);
-
-  return thread;
+  return thread_list_add (m, thread, THREAD_READ);
 }
 
 /* Add new write thread. */
@@ -796,9 +889,7 @@ funcname_thread_add_write (struct thread_master *m,
   thread = thread_get (m, THREAD_WRITE, func, arg, funcname);
   FD_SET (fd, &m->writefd);
   thread->u.fd = fd;
-  thread_list_add (&m->write, thread);
-
-  return thread;
+  return thread_list_add (m, thread, THREAD_WRITE);
 }
 
 /*==============================================================================
@@ -857,7 +948,10 @@ static void
 thread_qtimer_unset(struct thread* thread)
 {
   qtimer qtr ;
-  assert (thread->type == THREAD_TIMER || thread->type == THREAD_BACKGROUND);
+  assert (thread->queue == THREAD_TIMER );
+  assert ( (thread->type == THREAD_TIMER) ||
+           (thread->type == THREAD_BACKGROUND)) ;
+  qassert(use_qtimer_pile != NULL) ;
 
   qtr = thread->u.qtr ;
   if (qtr != NULL)
@@ -885,18 +979,19 @@ thread_qtimer_dispatch(qtimer qtr, void* timer_info, qtime_mono_t when)
 {
   struct thread* thread = timer_info ;
 
-  thread_list_delete (&thread->master->timer, thread) ;
-  thread_qtimer_unset(thread) ;
+  qassert(thread->queue == THREAD_TIMER) ;
+  qassert(thread->u.qtr == qtr) ;
+
+  thread_list_delete (thread->master, thread) ;
 
   switch (thread->type)
   {
     case THREAD_TIMER:
-      thread->type = THREAD_READY;
-      thread_list_add (&thread->master->ready, thread);
+      thread_list_add (thread->master, thread, THREAD_READY);
       break ;
 
     case THREAD_BACKGROUND:
-      thread_list_add (&thread->master->background, thread);
+      thread_list_add (thread->master, thread, THREAD_BACKGROUND);
       break ;
 
     default:
@@ -908,13 +1003,19 @@ thread_qtimer_dispatch(qtimer qtr, void* timer_info, qtime_mono_t when)
  * For standard timers, return time left on first timer on the given list.
  */
 static struct timeval *
-thread_timer_wait (struct thread_list *tlist, struct timeval *timer_val)
+thread_timer_wait (struct thread_master *m, thread_type_t queue,
+                                                      struct timeval *timer_val)
 {
-  if (!thread_empty (tlist))
+  struct thread* head ;
+
+  head = thread_head(m, queue) ;
+
+  if (head != NULL)
     {
-      *timer_val = timeval_subtract (tlist->head->u.sands, relative_time);
+      *timer_val = timeval_subtract (head->u.sands, relative_time);
       return timer_val;
     }
+
   return NULL;
 }
 
@@ -934,15 +1035,16 @@ funcname_thread_add_timer_timeval(struct thread_master *m,
   struct thread *thread;
 
   assert (m != NULL);
-
   assert (time_relative != NULL);
-  assert (type == THREAD_TIMER || type == THREAD_BACKGROUND);
+
+  qassert ((type == THREAD_TIMER) || (type == THREAD_BACKGROUND));
+  if ((type != THREAD_TIMER) && (type != THREAD_BACKGROUND))
+    return NULL ;
 
   thread = thread_get (m, type, func, arg, funcname);
 
   if (use_qtimer_pile == NULL)
     {
-      struct thread_list *list;
       struct timeval alarm_time;
       struct thread *tt;
 
@@ -953,15 +1055,15 @@ funcname_thread_add_timer_timeval(struct thread_master *m,
       thread->u.sands = timeval_adjust(alarm_time);
 
       /* Sort by timeval. */
-      list = ((type == THREAD_TIMER) ? &m->timer : &m->background);
-      for (tt = list->head; tt; tt = tt->next)
+
+      for (tt = thread_head(m, type); tt; tt = tt->next)
         if (timeval_cmp (thread->u.sands, tt->u.sands) <= 0)
           break;
 
       if (tt)
-        thread_list_add_before (list, tt, thread);
+        thread_list_add_before (m, tt, thread, type);
       else
-        thread_list_add (list, thread);
+        thread_list_add (m, thread, type);
 
       used_standard_timer = true ;
     }
@@ -976,7 +1078,7 @@ funcname_thread_add_timer_timeval(struct thread_master *m,
 
       qtimer_set_interval(qtr, timeval2qtime(time_relative),
                                                        thread_qtimer_dispatch) ;
-      thread_list_add(&m->timer, thread) ;
+      thread_list_add(m, thread, THREAD_TIMER) ;
     } ;
 
   return thread;
@@ -1051,9 +1153,7 @@ funcname_thread_add_background (struct thread_master *m,
       assert (m != NULL);
 
       thread = thread_get (m, THREAD_BACKGROUND, func, arg, funcname);
-      thread_list_add (&m->background, thread) ;
-
-      return thread ;
+      return thread_list_add (m, thread, THREAD_BACKGROUND) ;
     } ;
 }
 
@@ -1070,9 +1170,7 @@ funcname_thread_add_event (struct thread_master *m,
 
   thread = thread_get (m, THREAD_EVENT, func, arg, funcname);
   thread->u.val = val;
-  thread_list_add (&m->event, thread);
-
-  return thread;
+  return thread_list_add (m, thread, THREAD_EVENT);
 }
 
 /*------------------------------------------------------------------------------
@@ -1083,48 +1181,7 @@ funcname_thread_add_event (struct thread_master *m,
 void
 thread_cancel (struct thread *thread)
 {
-  struct thread_list *list;
-
-  switch (thread->type)
-    {
-    case THREAD_READ:
-      assert (FD_ISSET (thread->u.fd, &thread->master->readfd));
-      FD_CLR (thread->u.fd, &thread->master->readfd);
-      list = &thread->master->read;
-      break;
-    case THREAD_WRITE:
-      assert (FD_ISSET (thread->u.fd, &thread->master->writefd));
-      FD_CLR (thread->u.fd, &thread->master->writefd);
-      list = &thread->master->write;
-      break;
-    case THREAD_TIMER:
-      if ((use_qtimer_pile != NULL) && (thread->u.qtr != NULL))
-        thread_qtimer_unset(thread) ;
-      list = &thread->master->timer;
-      break;
-    case THREAD_EVENT:
-      list = &thread->master->event;
-      break;
-    case THREAD_READY:
-      list = &thread->master->ready;
-      break;
-    case THREAD_BACKGROUND:
-      if ((use_qtimer_pile != NULL) && (thread->u.qtr != NULL))
-        {
-          thread_qtimer_unset(thread) ;
-          list = &thread->master->timer;
-        }
-      else
-        list = &thread->master->background;
-      break;
-
-    default:
-      return ;
-    }
-
-  thread_list_delete (list, thread);
-
-  thread->type = THREAD_UNUSED;
+  thread_list_delete (thread->master, thread);
   thread_add_unuse (thread->master, thread);
 }
 
@@ -1135,21 +1192,22 @@ thread_cancel_event (struct thread_master *m, void *arg)
   unsigned int ret = 0;
   struct thread *thread;
 
-  thread = m->event.head;
+  thread = thread_head(m, THREAD_EVENT);
   while (thread)
     {
-      struct thread *t;
+      struct thread *next;
 
-      t = thread;
-      thread = t->next;
+      qassert(thread->queue == THREAD_EVENT) ;
 
-      if (t->arg == arg)
+      next = thread->next;
+
+      if (thread->arg == arg)
         {
+          thread_cancel (thread) ;
           ret++;
-          thread_list_delete (&m->event, t);
-          t->type = THREAD_UNUSED;
-          thread_add_unuse (m, t);
         }
+
+      thread = next ;
     }
   return ret;
 }
@@ -1158,32 +1216,32 @@ static struct thread *
 thread_run (struct thread_master *m, struct thread *thread,
             struct thread *fetch)
 {
+  qassert(thread->queue  == THREAD_LIST_NONE) ;
+  qassert(thread->master == m) ;
+
   *fetch = *thread;
-  thread->type = THREAD_UNUSED;
   thread_add_unuse (m, thread);
   return fetch;
 }
 
 static int
-thread_process_fd (struct thread_list *list, fd_set *fdset, fd_set *mfdset)
+thread_process_fd (struct thread_master *m, thread_type_t queue, fd_set *fdset)
 {
   struct thread *thread;
   struct thread *next;
   int ready = 0;
 
-  assert (list);
-
-  for (thread = list->head; thread; thread = next)
+  for (thread = thread_head(m, queue); thread; thread = next)
     {
+      qassert(thread->queue  == queue) ;
+      qassert(thread->master == m) ;
+
       next = thread->next;
 
       if (FD_ISSET (THREAD_FD (thread), fdset))
         {
-          assert (FD_ISSET (THREAD_FD (thread), mfdset));
-          FD_CLR(THREAD_FD (thread), mfdset);
-          thread_list_delete (list, thread);
-          thread_list_add (&thread->master->ready, thread);
-          thread->type = THREAD_READY;
+          thread_list_delete (m, thread);
+          thread_list_add (m, thread, THREAD_READY);
           ready++;
         }
     }
@@ -1192,20 +1250,23 @@ thread_process_fd (struct thread_list *list, fd_set *fdset, fd_set *mfdset)
 
 /* Add all timers that have popped to the ready list. */
 static unsigned int
-thread_timer_process (struct thread_list *list, struct timeval *timenow)
+thread_timer_process (struct thread_master *m, thread_type_t queue,
+                                                        struct timeval *timenow)
 {
   struct thread *thread;
   struct thread *next;
   unsigned int ready = 0;
 
-  for (thread = list->head; thread; thread = next)
+  for (thread = thread_head(m, queue); thread; thread = next)
     {
+      qassert(thread->queue  == queue) ;
+      qassert(thread->master == m) ;
+
       next = thread->next;
       if (timeval_cmp (*timenow, thread->u.sands) < 0)
         return ready;
-      thread_list_delete (list, thread);
-      thread->type = THREAD_READY;
-      thread_list_add (&thread->master->ready, thread);
+      thread_list_delete (m, thread);
+      thread_list_add (m, thread, THREAD_READY);
       ready++;
     }
   return ready;
@@ -1215,18 +1276,20 @@ thread_timer_process (struct thread_list *list, struct timeval *timenow)
  * Move the given list of threads to the back of the THREAD_READY queue.
  */
 static unsigned int
-thread_process (struct thread_list *list)
+thread_process (struct thread_master *m, thread_type_t queue)
 {
   struct thread *thread;
   struct thread *next;
   unsigned int ready = 0;
 
-  for (thread = list->head; thread; thread = next)
+  for (thread = thread_head(m, queue); thread; thread = next)
     {
+      qassert(thread->queue  == queue) ;
+      qassert(thread->master == m) ;
+
       next = thread->next;
-      thread_list_delete (list, thread);
-      thread->type = THREAD_READY;
-      thread_list_add (&thread->master->ready, thread);
+      thread_list_delete (m, thread);
+      thread_list_add (m, thread, THREAD_READY);
       ready++;
     }
   return ready;
@@ -1259,7 +1322,7 @@ thread_fetch (struct thread_master *m, struct thread *fetch)
       /* Drain the ready queue of already scheduled jobs, before scheduling
        * more.
        */
-      if ((thread = thread_trim_head (&m->ready)) != NULL)
+      if ((thread = thread_trim_head (m, THREAD_READY)) != NULL)
         return thread_run (m, thread, fetch);
 
       /* To be fair to all kinds of threads, and avoid starvation, we
@@ -1268,7 +1331,7 @@ thread_fetch (struct thread_master *m, struct thread *fetch)
        */
 
       /* Normal event are the next highest priority.  */
-      thread_process (&m->event);
+      thread_process (m, THREAD_EVENT);
 
       /* Structure copy.  */
       readfd = m->readfd;
@@ -1276,11 +1339,11 @@ thread_fetch (struct thread_master *m, struct thread *fetch)
       exceptfd = m->exceptfd;
 
       /* Calculate select wait timer if nothing else to do */
-      if (m->ready.count == 0)
+      if (m->list[THREAD_READY].count == 0)
         {
           quagga_get_relative (NULL);
-          timer_wait = thread_timer_wait (&m->timer, &timer_val);
-          timer_wait_bg = thread_timer_wait (&m->background, &timer_val_bg);
+          timer_wait = thread_timer_wait (m, THREAD_TIMER, &timer_val);
+          timer_wait_bg = thread_timer_wait (m, THREAD_BACKGROUND, &timer_val_bg);
 
           if (timer_wait_bg &&
               (!timer_wait || (timeval_cmp (*timer_wait, *timer_wait_bg) > 0)))
@@ -1308,15 +1371,15 @@ thread_fetch (struct thread_master *m, struct thread *fetch)
          priority than I/O threads, so let's push them onto the ready
          list in front of the I/O threads. */
       quagga_get_relative (NULL);
-      thread_timer_process (&m->timer, &relative_time);
+      thread_timer_process (m, THREAD_TIMER, &relative_time);
 
       /* Got IO, process it */
       if (num > 0)
         {
           /* Normal priority read thead. */
-          thread_process_fd (&m->read, &readfd, &m->readfd);
+          thread_process_fd (m, THREAD_READ, &readfd);
           /* Write thead. */
-          thread_process_fd (&m->write, &writefd, &m->writefd);
+          thread_process_fd (m, THREAD_WRITE, &writefd);
         }
 
 #if 0
@@ -1329,9 +1392,9 @@ thread_fetch (struct thread_master *m, struct thread *fetch)
 #endif
 
       /* Background timer/events, lowest priority */
-      thread_timer_process (&m->background, &relative_time);
+      thread_timer_process (m, THREAD_BACKGROUND, &relative_time);
 
-      if ((thread = thread_trim_head (&m->ready)) != NULL)
+      if ((thread = thread_trim_head (m, THREAD_READY)) != NULL)
         return thread_run (m, thread, fetch);
     }
 }
@@ -1354,17 +1417,18 @@ thread_fetch (struct thread_master *m, struct thread *fetch)
 extern int
 thread_dispatch(struct thread_master *m)
 {
-  struct thread_list* list ;
-  struct thread fetch ;
   int   count = 0 ;
 
   while (1)
     {
-      if (thread_empty(list = &m->event))
-        if (thread_empty(list = &m->ready))
+      struct thread* thread ;
+      struct thread fetch ;
+
+      if ((thread = thread_trim_head(m, THREAD_EVENT)) == NULL)
+        if ((thread = thread_trim_head(m, THREAD_READY)) == NULL)
           return count ;
 
-      thread_call(thread_run(m, thread_list_delete(list, list->head), &fetch)) ;
+      thread_call(thread_run(m, thread, &fetch)) ;
 
       ++count ;
     } ;
@@ -1388,7 +1452,7 @@ thread_dispatch_background(struct thread_master *m)
   struct thread* thread ;
   struct thread fetch ;
 
-  if ((thread = thread_trim_head (&m->background)) == NULL)
+  if ((thread = thread_trim_head (m, THREAD_BACKGROUND)) == NULL)
     return 0 ;
 
   thread_call(thread_run(m, thread, &fetch)) ;
@@ -1475,7 +1539,7 @@ thread_call (struct thread *thread)
 #endif
 
       ++(thread->hist->total_calls);
-      thread->hist->types |= (1 << thread->add_type);
+      thread->hist->types |= (1 << thread->type);
       UNLOCK
     } ;
 
@@ -1508,8 +1572,8 @@ funcname_thread_execute (struct thread_master *m,
 
   memset (&dummy, 0, sizeof (struct thread));
 
-  dummy.type = THREAD_EVENT;
-  dummy.add_type = THREAD_EXECUTE;
+  dummy.queue  = THREAD_LIST_NONE;
+  dummy.type   = THREAD_EXECUTE;
   dummy.master = NULL;
   dummy.func = func;
   dummy.arg = arg;
